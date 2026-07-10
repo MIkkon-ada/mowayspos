@@ -164,9 +164,9 @@ function getDraftSummary(tasks: TaskItem[], subtasks: SubTaskWithParent[], proje
     objectives: project.objectives?.trim() ? 1 : 0,
     taskCount: tasks.length,
     subtaskCount: subtasks.length,
-    ownerConfigured: tasks.filter((t) => (t.owner ?? '').trim()).length,
-    planConfigured: tasks.filter((t) => (t.plan_time ?? '').trim()).length,
-    taskTotal: tasks.length,
+    ownerConfigured: subtasks.filter((s) => (s.assignee ?? '').trim()).length,
+    planConfigured: subtasks.filter((s) => (s.plan_time ?? '').trim()).length,
+    taskTotal: subtasks.length,
   }
 }
 
@@ -204,7 +204,7 @@ function buildDraftRows(tasks: TaskItem[], subtasks: SubTaskWithParent[], projec
         const { start, end } = splitPlanTime(sub.plan_time)
         rows.push({
           objective, keyTask: task.key_task || '—', standard, seq: String(idx + 1),
-          subTask: sub.title || '—', assignee: sub.assignee?.trim() || task.owner?.trim() || '—',
+          subTask: sub.title || '—', assignee: sub.assignee?.trim() || '—',
           planStart: start, planEnd: end, collaborator, note: sub.notes?.trim() || '—', isTaskOnly: false,
         })
       })
@@ -923,7 +923,7 @@ function LifecycleCard({
   const stageDesc = STAGE_DESCRIPTIONS[status] ?? ''
   const draftText = summary.taskTotal === 0
     ? '推进表草案未完善'
-    : `目标 ${summary.objectives}｜重点工作 ${summary.taskCount}｜关键任务 ${summary.subtaskCount}｜责任人 ${summary.ownerConfigured}/${summary.taskTotal}｜计划 ${summary.planConfigured}/${summary.taskTotal}`
+    : `目标 ${summary.objectives}｜重点工作 ${summary.taskCount}｜关键任务 ${summary.subtaskCount}｜已指派 ${summary.ownerConfigured}/${summary.taskTotal}｜计划 ${summary.planConfigured}/${summary.taskTotal}`
 
   return (
     <div
@@ -1166,7 +1166,7 @@ function DetailPanel({
               { label: '目标', val: summary.objectives },
               { label: '重点工作', val: summary.taskCount },
               { label: '关键任务', val: summary.subtaskCount },
-              { label: '责任人', val: `${summary.ownerConfigured}/${summary.taskTotal}` },
+              { label: '已指派', val: `${summary.ownerConfigured}/${summary.taskTotal}` },
               { label: '计划', val: `${summary.planConfigured}/${summary.taskTotal}` },
             ].map((item) => (
               <span key={item.label} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600">

@@ -254,6 +254,25 @@ class ProjectPatchPayload(BaseModel):
     lifecycle_status: str | None = None
 
 
+class ProjectWorkProgressSubTaskDraft(BaseModel):
+    title: str = Field("", max_length=200)
+    evaluation_standard: str = ""
+    assignee: str = Field("", max_length=50)
+    helper: str = Field("", max_length=100)
+    plan_start: str = Field("", max_length=20)
+    plan_end: str = Field("", max_length=20)
+
+
+class ProjectWorkProgressTaskDraft(BaseModel):
+    title: str = Field("", max_length=200)
+    description: str = ""
+    owner: str = Field("", max_length=50)
+    helper: str = Field("", max_length=200)
+    plan_start: str = Field("", max_length=20)
+    plan_end: str = Field("", max_length=20)
+    subtasks: list[ProjectWorkProgressSubTaskDraft] = Field(default_factory=list)
+
+
 class ProjectProfilePayload(BaseModel):
     """负责人填报立项信息（不含名称/状态等管理字段）。"""
     project_type: str | None = None
@@ -264,6 +283,7 @@ class ProjectProfilePayload(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     description: str | None = None
+    work_progress_draft: list[ProjectWorkProgressTaskDraft] = Field(default_factory=list)
 
 
 class MeetingPayload(BaseModel):

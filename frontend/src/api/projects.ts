@@ -85,6 +85,26 @@ export type ProjectProfilePayload = {
   start_date?: string
   end_date?: string
   description?: string
+  work_progress_draft?: ProjectWorkProgressTaskDraft[]
+}
+
+export type ProjectWorkProgressSubTaskDraft = {
+  title: string
+  evaluation_standard?: string
+  assignee?: string
+  helper?: string
+  plan_start?: string
+  plan_end?: string
+}
+
+export type ProjectWorkProgressTaskDraft = {
+  title: string
+  description?: string
+  owner?: string
+  helper?: string
+  plan_start?: string
+  plan_end?: string
+  subtasks?: ProjectWorkProgressSubTaskDraft[]
 }
 
 export function ownerSubmitProfile(

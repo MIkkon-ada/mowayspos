@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .. import crud, models, schemas
 from ..database import get_db
 from ..domain import source_type as ST
+from ..domain import task_status as TS
 from ..permissions import (
     PROJECT_ROLE_COLLABORATOR,
     PROJECT_ROLE_COORDINATOR,
@@ -52,6 +53,27 @@ def _join_names(names) -> str:
         if n and n not in seen:
             seen.append(n)
     return "、".join(seen)
+
+
+def _format_work_progress_plan_time(start: str | None, end: str | None) -> str:
+    start_value = (start or "").strip()
+    end_value = (end or "").strip()
+    if start_value and end_value:
+        return f"{start_value} ~ {end_value}"
+    return start_value or end_value
+
+
+def _person_id_for_name(name: str | None, db: Session) -> int | None:
+    value = (name or "").strip()
+    if not value:
+        return None
+    row = db.query(models.Person).filter(models.Person.name == value, models.Person.is_active.is_(True)).first()
+    return row.id if row else None
+
+
+def _helper_note(helper: str | None) -> str:
+    value = (helper or "").strip()
+    return f"协助人：{value}" if value else ""
 
 
 def _normalize_lifecycle_status(value: str | None, default: str = "draft") -> str:
@@ -515,6 +537,74 @@ def _init_project_members(project_id: int, payload: "schemas.ProjectCreatePayloa
 
 
 # ── 5A：项目改名前置检查 ───────────────────────────────────────
+
+def _save_work_progress_draft(
+    project: models.Project,
+    payload: schemas.ProjectProfilePayload,
+    *,
+    current_user: str,
+    db: Session,
+) -> None:
+    drafts = payload.work_progress_draft or []
+    if not drafts:
+        return
+
+    project_name = project.name or ""
+    for task_draft in drafts:
+        task_title = (task_draft.title or "").strip()
+        if not task_title:
+            continue
+
+        task = (
+            db.query(models.Task)
+            .filter(
+                models.Task.project_id == project.id,
+                models.Task.key_task == task_title[:200],
+                models.Task.is_deleted.is_(False),
+            )
+            .first()
+        )
+        if task is None:
+            task = models.Task(project_id=project.id, key_task=task_title[:200])
+            db.add(task)
+
+        task.special_project = project_name
+        task.completion_standard = (task_draft.description or "").strip()
+        task.owner = (task_draft.owner or "").strip()
+        task.owner_id = _person_id_for_name(task.owner, db)
+        task.collaborators = (task_draft.helper or "").strip()
+        task.plan_time = _format_work_progress_plan_time(task_draft.plan_start, task_draft.plan_end)
+        task.status = task.status or TS.S_NOT_STARTED
+        task.source_type = ST.MANUAL
+        task.submitter = current_user
+        task.edit_count = (task.edit_count or 0) + 1
+        db.flush()
+
+        for sub_draft in task_draft.subtasks or []:
+            sub_title = (sub_draft.title or "").strip()
+            if not sub_title:
+                continue
+            subtask = (
+                db.query(models.SubTask)
+                .filter(
+                    models.SubTask.task_id == task.id,
+                    models.SubTask.title == sub_title[:200],
+                    models.SubTask.is_deleted.is_(False),
+                )
+                .first()
+            )
+            if subtask is None:
+                subtask = models.SubTask(task_id=task.id, title=sub_title[:200], assignee="")
+                db.add(subtask)
+
+            subtask.title = sub_title[:200]
+            subtask.assignee = (sub_draft.assignee or "").strip()
+            subtask.assignee_id = _person_id_for_name(subtask.assignee, db)
+            subtask.plan_time = _format_work_progress_plan_time(sub_draft.plan_start, sub_draft.plan_end)
+            subtask.status = subtask.status or TS.S_NOT_STARTED
+            subtask.completion_criteria = (sub_draft.evaluation_standard or "").strip()
+            subtask.notes = _helper_note(sub_draft.helper)
+
 
 def _extract_special_project_from_json(raw_json: str | None) -> list[str]:
     """
@@ -1409,6 +1499,7 @@ def owner_submit_project_profile(
         end_date=(payload.end_date or "").strip() if payload.end_date is not None else None,
         description=(payload.description or "").strip() if payload.description is not None else None,
     )
+    _save_work_progress_draft(project, payload, current_user=current_user, db=db)
     crud.log(db, current_user, "owner_submit_project", "project", project_id, {"status": lifecycle}, {"status": "pending_review"})
     db.commit()
 

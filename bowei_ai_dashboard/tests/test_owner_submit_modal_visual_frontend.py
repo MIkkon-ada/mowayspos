@@ -23,10 +23,11 @@ def test_owner_submit_modal_width_is_optimized():
     """弹窗宽度不应再是 820px 窄布局，应 ≥ 920px。"""
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
-    # 宽度至少应该是 920px 或更宽
-    assert "w-[920px]" in source or "w-[960px]" in source or "w-[940px]" in source \
+    # 宽度至少应该是 920px 或更宽；新版允许响应式工作台宽度。
+    assert "w-[96vw]" in source or "w-[920px]" in source or "w-[960px]" in source or "w-[940px]" in source \
         or "w-[980px]" in source or "w-[1000px]" in source or "w-[1040px]" in source, \
-        "弹窗宽度应 ≥ 920px，不再使用 820px 窄布局"
+        "弹窗宽度应 ≥ 920px 或使用 96vw 工作台宽度，不再使用 820px 窄布局"
+    assert "max-w-[1280px]" in source, "工作台弹窗应有最大宽度限制"
     assert "w-[820px]" not in source, "不应再使用旧 820px 宽度"
 
 

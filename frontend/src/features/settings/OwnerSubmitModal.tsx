@@ -29,6 +29,11 @@ type LocalTaskDraft = {
   subtasks: LocalSubTaskDraft[]
 }
 
+type ParsedPeriod = {
+  start: string
+  end: string
+}
+
 const EMPTY_SUBTASK: LocalSubTaskDraft = {
   title: '',
   evaluation_standard: '',
@@ -48,18 +53,50 @@ const EMPTY_TASK: LocalTaskDraft = {
   subtasks: [{ ...EMPTY_SUBTASK }],
 }
 
-const FIELDS: { key: keyof ProjectProfilePayload; label: string; placeholder: string }[] = [
-  { key: 'project_type', label: '项目类型', placeholder: '博维内部项目' },
-  { key: 'client_name', label: '客户名称', placeholder: '内部项目可留空' },
-  { key: 'background', label: '项目背景', placeholder: '说明项目的背景和来源…' },
-  { key: 'objectives', label: '项目目标', placeholder: '描述需要达成的目标…' },
-  { key: 'expected_outcomes', label: '预期交付物', placeholder: '列出预期交付成果…' },
-  { key: 'start_date', label: '开始日期', placeholder: '' },
-  { key: 'end_date', label: '结束日期', placeholder: '' },
-]
-
 function cloneEmptyTask(): LocalTaskDraft {
   return { ...EMPTY_TASK, subtasks: [{ ...EMPTY_SUBTASK }] }
+}
+
+function composeProjectPeriod(startDate?: string, endDate?: string): string {
+  const start = (startDate ?? '').trim()
+  const end = (endDate ?? '').trim()
+  if (start && end) return `${start} 至 ${end}`
+  return start || end
+}
+
+function parseProjectPeriod(value: string): ParsedPeriod {
+  return parsePeriodValue(value)
+}
+
+function composeTaskPeriod(startDate?: string, endDate?: string): string {
+  const start = (startDate ?? '').trim()
+  const end = (endDate ?? '').trim()
+  if (start && end) return `${start} - ${end}`
+  return start || end
+}
+
+function parseTaskPeriod(value: string): ParsedPeriod {
+  return parsePeriodValue(value)
+}
+
+function parsePeriodValue(value: string): ParsedPeriod {
+  const text = value.trim()
+  if (!text) return { start: '', end: '' }
+
+  for (const delimiter of ['至', '~', '到']) {
+    if (!text.includes(delimiter)) continue
+    const parts = text.split(delimiter).map((part) => part.trim()).filter(Boolean)
+    if (parts.length >= 2) {
+      return { start: parts[0], end: parts.slice(1).join(' ') }
+    }
+  }
+
+  const spacedDashMatch = text.match(/^(.+?)\s+[-–—]\s+(.+)$/)
+  if (spacedDashMatch) {
+    return { start: spacedDashMatch[1].trim(), end: spacedDashMatch[2].trim() }
+  }
+
+  return { start: text, end: '' }
 }
 
 function toPayloadDraft(tasks: LocalTaskDraft[]): ProjectWorkProgressTaskDraft[] {
@@ -95,6 +132,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
     start_date: project.start_date ?? '',
     end_date: project.end_date ?? '',
   }))
+  const [projectPeriod, setProjectPeriod] = useState(() => composeProjectPeriod(project.start_date, project.end_date))
   const [draftTasks, setDraftTasks] = useState<LocalTaskDraft[]>([cloneEmptyTask()])
   const [fillLoading, setFillLoading] = useState(false)
 
@@ -143,6 +181,22 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
     )
   }
 
+  function updateSubTaskPeriod(taskIndex: number, subIndex: number, value: string) {
+    const parsed = parseTaskPeriod(value)
+    setDraftTasks((prev) =>
+      prev.map((task, idx) =>
+        idx === taskIndex
+          ? {
+              ...task,
+              subtasks: task.subtasks.map((subtask, sidx) =>
+                sidx === subIndex ? { ...subtask, plan_start: parsed.start, plan_end: parsed.end } : subtask,
+              ),
+            }
+          : task,
+      ),
+    )
+  }
+
   async function handleSubmit() {
     if (!project?.id) return
     const workProgressDraft = toPayloadDraft(draftTasks)
@@ -155,10 +209,14 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
       toast.error('请至少添加一个关键任务')
       return
     }
+
+    const parsedProjectPeriod = parseProjectPeriod(projectPeriod)
     setFillLoading(true)
     try {
       const result = await ownerSubmitProfile(project.id, {
         ...fillForm,
+        start_date: parsedProjectPeriod.start,
+        end_date: parsedProjectPeriod.end,
         work_progress_draft: workProgressDraft,
       })
       toast.success('已提交审核，等待企业教练审核通过后正式启动')
@@ -173,213 +231,266 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
       style={{ background: 'rgba(15,23,42,0.45)' }}
       onClick={() => !fillLoading && onClose()}
     >
-      <div className="flex max-h-[92vh] w-[960px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        {/* 固定标题栏 */}
-        <div className="flex-shrink-0 border-b px-8 py-4" style={{ borderColor: '#E9EFF6' }}>
-          <div className="flex items-center gap-3">
-            <div className="flex-1">
-              <div className="text-base font-bold text-slate-800">填写立项信息 — {project.name}</div>
-              <div className="mt-1 text-xs leading-relaxed text-slate-500">
-                补全项目资料并维护工作推进表雏形，提交后由企业教练审核。
-              </div>
+      <div
+        className="flex h-[90vh] w-[96vw] max-w-[1280px] flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex flex-shrink-0 items-center justify-between border-b border-slate-200 px-6 py-4">
+          <div className="min-w-0">
+            <div className="truncate text-base font-bold text-slate-900">填写立项信息 — {project.name}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-medium text-slate-600">
+                待负责人完善
+              </span>
+              <span>补全项目资料，提交后进入企业教练审核。</span>
             </div>
-            <span className="flex-shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-500">
-              状态：待负责人完善
-            </span>
           </div>
-        </div>
-
-        {/* 滚动内容区 */}
-        <div className="flex-1 space-y-6 overflow-y-auto px-8 py-5">
-          {/* A. 项目基础信息 */}
-          <section>
-            <div className="mb-3 flex items-center gap-2">
-              <div className="h-3 w-0.5 rounded-full bg-slate-400" />
-              <div className="text-xs font-bold uppercase tracking-wider text-slate-500">项目基础信息</div>
-            </div>
-            <div className="grid gap-2.5 md:grid-cols-2">
-              {FIELDS.map(({ key, label, placeholder }) => {
-                const isLongText = key === 'background' || key === 'objectives' || key === 'expected_outcomes'
-                if (isLongText) {
-                  return (
-                    <div key={key} className="md:col-span-2">
-                      <label className="mb-1 block text-[11px] font-semibold text-slate-500">{label}</label>
-                      <textarea
-                        value={(fillForm as any)[key] ?? ''}
-                        onChange={(e) => setFillForm((prev) => ({ ...prev, [key]: e.target.value }))}
-                        placeholder={placeholder}
-                        rows={2}
-                        className="w-full resize-none rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 text-sm placeholder:text-slate-400 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-300"
-                      />
-                    </div>
-                  )
-                }
-                return (
-                  <div key={key}>
-                    <label className="mb-1 block text-[11px] font-semibold text-slate-500">{label}</label>
-                    <input
-                      type={key.includes('date') ? 'date' : 'text'}
-                      value={(fillForm as any)[key] ?? ''}
-                      onChange={(e) => setFillForm((prev) => ({ ...prev, [key]: e.target.value }))}
-                      placeholder={placeholder}
-                      className="w-full rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 text-sm placeholder:text-slate-400 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-300"
-                    />
-                  </div>
-                )
-              })}
-            </div>
-          </section>
-
-          {/* B. 工作推进表雏形 */}
-          <section>
-            <div className="mb-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="h-3 w-0.5 rounded-full bg-amber-400" />
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-500">工作推进表雏形</div>
-              </div>
-              <button
-                type="button"
-                onClick={addTaskDraft}
-                className="cursor-pointer flex-shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-600 transition-colors hover:border-amber-300 hover:bg-amber-50"
-              >
-                + 新增重点工作
-              </button>
-            </div>
-            <p className="mb-3 text-[11px] leading-relaxed text-slate-400">
-              重点工作用于归类工作方向；关键任务才需要明确责任人、协助人和计划时间。
-            </p>
-
-            <div className="space-y-3">
-              {draftTasks.map((task, taskIndex) => (
-                <div key={taskIndex} className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-                  {/* Task 组头 */}
-                  <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-4 py-2">
-                    <div className="text-xs font-semibold text-slate-600">重点工作 {taskIndex + 1}</div>
-                    <button
-                      type="button"
-                      onClick={() => removeTaskDraft(taskIndex)}
-                      disabled={draftTasks.length <= 1}
-                      className="cursor-pointer text-[11px] text-slate-400 transition-colors hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-30"
-                    >
-                      删除
-                    </button>
-                  </div>
-
-                  {/* Task 字段：标题 + 说明 */}
-                  <div className="grid gap-2 px-4 py-2.5 md:grid-cols-2">
-                    <input
-                      value={task.title}
-                      onChange={(e) => updateTaskDraft(taskIndex, 'title', e.target.value)}
-                      placeholder="重点工作标题（如：开发并应用项目运营系统）"
-                      className="rounded-md border border-slate-200 bg-slate-50/50 px-3 py-2 text-sm placeholder:text-slate-400 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-300"
-                    />
-                    <input
-                      value={task.description}
-                      onChange={(e) => updateTaskDraft(taskIndex, 'description', e.target.value)}
-                      placeholder="重点工作说明 / 评价标准"
-                      className="rounded-md border border-slate-200 bg-slate-50/50 px-3 py-2 text-sm placeholder:text-slate-400 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-300"
-                    />
-                  </div>
-
-                  {/* Subtask 表格区域 */}
-                  <div className="border-t border-slate-100 px-4 py-2.5">
-                    <div className="mb-2 flex items-center justify-between">
-                      <div className="text-xs font-semibold text-slate-500">关键任务</div>
-                      <button
-                        type="button"
-                        onClick={() => addSubTaskDraft(taskIndex)}
-                        className="cursor-pointer text-[11px] font-medium text-amber-600 transition-colors hover:text-amber-700"
-                      >
-                        + 新增关键任务
-                      </button>
-                    </div>
-
-                    {/* 列表头 */}
-                    <div className="mb-1.5 grid grid-cols-[1fr_1fr_0.8fr_0.8fr_1fr_1fr_28px] gap-1.5 px-1">
-                      <span className="text-[10px] font-semibold text-slate-400">关键任务</span>
-                      <span className="text-[10px] font-semibold text-slate-400">评价标准</span>
-                      <span className="text-[10px] font-semibold text-slate-400">责任人</span>
-                      <span className="text-[10px] font-semibold text-slate-400">协助人</span>
-                      <span className="text-[10px] font-semibold text-slate-400">开始</span>
-                      <span className="text-[10px] font-semibold text-slate-400">结束</span>
-                      <span />
-                    </div>
-
-                    {/* 数据行 */}
-                    {task.subtasks.map((subtask, subIndex) => (
-                      <div
-                        key={subIndex}
-                        className="mb-1 grid grid-cols-[1fr_1fr_0.8fr_0.8fr_1fr_1fr_28px] gap-1.5"
-                      >
-                        <input
-                          value={subtask.title}
-                          onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'title', e.target.value)}
-                          placeholder="标题"
-                          className="min-w-0 rounded border border-slate-200 bg-slate-50/50 px-2 py-1.5 text-xs placeholder:text-slate-400 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-300"
-                        />
-                        <input
-                          value={subtask.evaluation_standard}
-                          onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'evaluation_standard', e.target.value)}
-                          placeholder="评价标准"
-                          className="min-w-0 rounded border border-slate-200 bg-slate-50/50 px-2 py-1.5 text-xs placeholder:text-slate-400 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-300"
-                        />
-                        <input
-                          value={subtask.assignee}
-                          onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'assignee', e.target.value)}
-                          placeholder="责任人"
-                          className="min-w-0 rounded border border-slate-200 bg-slate-50/50 px-2 py-1.5 text-xs placeholder:text-slate-400 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-300"
-                        />
-                        <input
-                          value={subtask.helper}
-                          onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'helper', e.target.value)}
-                          placeholder="协助人"
-                          className="min-w-0 rounded border border-slate-200 bg-slate-50/50 px-2 py-1.5 text-xs placeholder:text-slate-400 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-300"
-                        />
-                        <input
-                          type="date"
-                          value={subtask.plan_start}
-                          onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'plan_start', e.target.value)}
-                          aria-label="计划开始"
-                          className="min-w-0 rounded border border-slate-200 bg-slate-50/50 px-1.5 py-1.5 text-xs text-slate-600 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-300"
-                        />
-                        <div className="flex items-center gap-0.5">
-                          <input
-                            type="date"
-                            value={subtask.plan_end}
-                            onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'plan_end', e.target.value)}
-                            aria-label="计划结束"
-                            className="min-w-0 flex-1 rounded border border-slate-200 bg-slate-50/50 px-1.5 py-1.5 text-xs text-slate-600 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-300"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeSubTaskDraft(taskIndex, subIndex)}
-                            disabled={task.subtasks.length <= 1}
-                            className="cursor-pointer flex-shrink-0 rounded px-0.5 text-xs leading-none text-slate-300 transition-colors hover:text-slate-500 disabled:cursor-not-allowed disabled:opacity-20"
-                            title="删除"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        </div>
-
-        {/* 固定底部按钮 */}
-        <div className="flex-shrink-0 flex items-center justify-end gap-3 border-t px-8 py-3.5" style={{ borderColor: '#E9EFF6' }}>
           <button
             type="button"
             onClick={onClose}
             disabled={fillLoading}
-            className="cursor-pointer rounded-lg px-5 py-2 text-sm text-slate-500 transition-colors hover:bg-slate-50 disabled:opacity-50"
+            className="ml-4 rounded-lg px-3 py-1.5 text-sm text-slate-500 transition-colors hover:bg-slate-100 disabled:opacity-50"
+          >
+            关闭
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto bg-slate-50/60 px-6 py-5">
+          <div className="mx-auto max-w-[1120px] space-y-5">
+            <section className="rounded-xl border border-slate-200 bg-white p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">项目核心信息</h3>
+                  <p className="mt-1 text-xs text-slate-500">先确认项目名称、周期和最终验收口径。</p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-600">项目名称</label>
+                  <input
+                    value={project.name}
+                    disabled
+                    className="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-600">项目周期 / 时间段</label>
+                  <input
+                    value={projectPeriod}
+                    onChange={(e) => setProjectPeriod(e.target.value)}
+                    placeholder="例如：2026-07-01 至 2026-12-31"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-600">项目完成准则 / 验收标准</label>
+                  <textarea
+                    value={fillForm.objectives ?? ''}
+                    onChange={(e) => setFillForm((prev) => ({ ...prev, objectives: e.target.value }))}
+                    placeholder="描述项目完成后如何验收，例如关键结果、通过标准、交付边界等"
+                    rows={3}
+                    className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                  />
+                </div>
+              </div>
+
+              <details className="mt-4 rounded-lg border border-slate-200 bg-slate-50/70">
+                <summary className="cursor-pointer select-none px-4 py-3 text-xs font-semibold text-slate-600">
+                  补充详细信息
+                </summary>
+                <div className="grid gap-4 border-t border-slate-200 bg-white px-4 py-4 md:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-slate-600">客户名称</label>
+                    <input
+                      value={fillForm.client_name ?? ''}
+                      onChange={(e) => setFillForm((prev) => ({ ...prev, client_name: e.target.value }))}
+                      placeholder="内部项目可留空"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-slate-600">项目类型</label>
+                    <input
+                      value={fillForm.project_type ?? ''}
+                      onChange={(e) => setFillForm((prev) => ({ ...prev, project_type: e.target.value }))}
+                      placeholder="博维内部项目"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-slate-600">项目背景</label>
+                    <textarea
+                      value={fillForm.background ?? ''}
+                      onChange={(e) => setFillForm((prev) => ({ ...prev, background: e.target.value }))}
+                      placeholder="说明项目来源及必要性，可选"
+                      rows={3}
+                      className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold text-slate-600">补充说明</label>
+                    <textarea
+                      value={fillForm.expected_outcomes ?? ''}
+                      onChange={(e) => setFillForm((prev) => ({ ...prev, expected_outcomes: e.target.value }))}
+                      placeholder="其他需要备注的信息，可选"
+                      rows={3}
+                      className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                    />
+                  </div>
+                </div>
+              </details>
+            </section>
+
+            <section className="space-y-3">
+              <div className="flex items-center justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">工作推进方案</h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    规划重点工作方向，并细化关键任务执行计划。重点工作用于归类工作方向；关键任务才需要明确责任人、协助人和时间段。
+                  </p>
+              </div>
+                <button
+                  type="button"
+                  onClick={addTaskDraft}
+                  className="flex-shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                >
+                  新增重点工作
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {draftTasks.map((task, taskIndex) => (
+                  <div key={taskIndex} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                    <div className="grid gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 md:grid-cols-[48px_1fr_1fr_auto]">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-md bg-white text-sm font-bold text-slate-600 ring-1 ring-slate-200">
+                        {taskIndex + 1}
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-500">重点工作名称</label>
+                        <input
+                          value={task.title}
+                          onChange={(e) => updateTaskDraft(taskIndex, 'title', e.target.value)}
+                          placeholder="请输入重点工作名称"
+                          className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-500">目标成果 / 验收标准</label>
+                        <input
+                          value={task.description}
+                          onChange={(e) => updateTaskDraft(taskIndex, 'description', e.target.value)}
+                          placeholder="请输入目标成果或验收标准"
+                          className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeTaskDraft(taskIndex)}
+                        disabled={draftTasks.length <= 1}
+                        className="self-end rounded-md px-2 py-2 text-xs text-slate-400 transition-colors hover:bg-white hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-30"
+                      >
+                        删除
+                      </button>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[900px] border-collapse text-left">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-white text-[11px] font-semibold text-slate-500">
+                            <th className="w-[260px] px-4 py-2">关键任务</th>
+                            <th className="w-[120px] px-3 py-2">责任人</th>
+                            <th className="w-[120px] px-3 py-2">协助人</th>
+                            <th className="w-[180px] px-3 py-2">时间段</th>
+                            <th className="px-3 py-2">备注 / 标准</th>
+                            <th className="w-[72px] px-3 py-2">操作</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {task.subtasks.map((subtask, subIndex) => (
+                            <tr key={subIndex} className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50/70">
+                              <td className="px-4 py-2">
+                                <input
+                                  value={subtask.title}
+                                  onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'title', e.target.value)}
+                                  placeholder="例如：梳理主流程"
+                                  className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <input
+                                  value={subtask.assignee}
+                                  onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'assignee', e.target.value)}
+                                  placeholder="责任人"
+                                  className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <input
+                                  value={subtask.helper}
+                                  onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'helper', e.target.value)}
+                                  placeholder="协助人"
+                                  className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <input
+                                  value={composeTaskPeriod(subtask.plan_start, subtask.plan_end)}
+                                  onChange={(e) => updateSubTaskPeriod(taskIndex, subIndex, e.target.value)}
+                                  placeholder="7.1 - 7.5"
+                                  className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <input
+                                  value={subtask.evaluation_standard}
+                                  onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'evaluation_standard', e.target.value)}
+                                  placeholder="补充说明，可选"
+                                  className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-300"
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <button
+                                  type="button"
+                                  onClick={() => removeSubTaskDraft(taskIndex, subIndex)}
+                                  disabled={task.subtasks.length <= 1}
+                                  className="rounded px-2 py-1 text-xs text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-30"
+                                >
+                                  删除
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-2">
+                      <button
+                        type="button"
+                        onClick={() => addSubTaskDraft(taskIndex)}
+                        className="text-xs font-semibold text-slate-600 transition-colors hover:text-slate-900"
+                      >
+                        新增关键任务
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div className="flex flex-shrink-0 items-center justify-end gap-3 border-t border-slate-200 bg-white px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={fillLoading}
+            className="rounded-lg border border-slate-200 bg-white px-5 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
           >
             取消
           </button>
@@ -387,8 +498,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
             type="button"
             onClick={handleSubmit}
             disabled={fillLoading}
-            className="cursor-pointer rounded-lg px-6 py-2 text-sm font-semibold text-white transition-colors disabled:opacity-50"
-            style={{ background: 'linear-gradient(135deg,#D97706,#F59E0B)' }}
+            className="rounded-lg bg-amber-600 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-700 disabled:opacity-50"
           >
             {fillLoading ? '提交中…' : '提交立项审核'}
           </button>

@@ -6,7 +6,9 @@ Repository: `https://github.com/MIkkon-ada/mowayspos`
 
 Branch: `main`
 
-Current commit: `d5b89b8` (`initial import`)
+Current commit: `415ba68` (`public release audit`)
+
+Audit baseline used for the checks below: `d5b89b8` (`initial import`)
 
 ## 1. Git 状态
 

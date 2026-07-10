@@ -344,8 +344,8 @@ def _ensure_not_removing_last_owner(
 
 def _read_project_raw(project_id: int, db: Session) -> dict | None:
     """
-    ? raw SQL ??????????? legacy / ?????
-    ?????????????????????????????
+    使用 raw SQL 读取项目基础字段，兼容 legacy / 旧库结构。
+    保持对缺失列的容错，不改变现有接口返回。
     """
     cols = _project_columns(db)
 
@@ -449,7 +449,7 @@ def _member_summary(project_id: int, db: Session) -> dict:
 
 
 def _project_response(raw: dict, user_roles: list[str], db: Session) -> dict:
-    """? raw SQL ???????????"""
+    """将 raw SQL 结果整理成项目响应。"""
     project_id = raw["id"]
     member_counts = _member_summary(project_id, db)
     lifecycle_status = _project_row_lifecycle(raw)
@@ -476,7 +476,7 @@ def _project_response(raw: dict, user_roles: list[str], db: Session) -> dict:
         "updated_at": str(raw["updated_at"] or ""),
         "user_roles": user_roles,
         "member_counts": member_counts,
-        # ???????????
+        # coordinator 字段仅用于前端兼容展示。
         "coordinator": raw["coordinator"],
         "owners": _split_names(raw["owners"]),
         "collaborators": _split_names(raw["collaborators"]),

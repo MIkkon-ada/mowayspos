@@ -9,6 +9,7 @@ from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
+from ..domain import task_status as TS
 from ..database import get_db
 from ..llm_config import get_provider_config
 
@@ -149,7 +150,7 @@ def create_meeting(
         row.related_special_project = project_name
     db.add(row)
     db.flush()
-    crud.log(db, current_user, "??????", "meeting", row.id, {}, crud.to_dict(row))
+    crud.log(db, current_user, "meeting_create", "meeting", row.id, {}, crud.to_dict(row))
     db.commit()
     db.refresh(row)
     return crud.to_dict(row)
@@ -171,13 +172,13 @@ async def analyze_meeting(
         require_project_access(current_user, payload.project_id, db)
 
     if not payload.text.strip():
-        raise HTTPException(422, "text ??????")
+        raise HTTPException(422, "text 不能为空")
 
-    # ???????????"?????"?????????????????????????????????
+    # 如果转写文本里有说话人编号，就使用带成员背景的提示词。
     has_speakers = bool(re.search(r"\d+", payload.text))
     if has_speakers:
         prompt = _PROMPT_REPORT.format(
-            member_context='????????????????????????????????????"???????????',
+            member_context="请结合说话人映射与成员背景，分析每位成员的汇报内容。",
             text=payload.text[:10000],
         )
     else:
@@ -263,7 +264,7 @@ def update_meeting(
         row.project_id = payload.project_id
     if context.get("is_tech_admin") and payload.related_special_project:
         row.related_special_project = payload.related_special_project
-    crud.log(db, current_user, "??????", "meeting", row.id, before, payload.model_dump())
+    crud.log(db, current_user, "meeting_update", "meeting", row.id, before, payload.model_dump())
     db.commit()
     return crud.to_dict(row)
 
@@ -297,7 +298,11 @@ def patch_meeting_status(
 
     before = {"publish_status": row.publish_status}
     row.publish_status = payload.publish_status
-    action = {"published": "?????????", "returned": "??????????", "draft": "????????"}.get(payload.publish_status, "???????")
+    action = {
+        "published": "meeting_publish",
+        "returned": "meeting_return",
+        "draft": "meeting_save_draft",
+    }.get(payload.publish_status, "meeting_update_status")
     crud.log(db, current_user, action, "meeting", row.id, before, {"publish_status": payload.publish_status})
 
     if payload.publish_status == "published":
@@ -312,7 +317,7 @@ def patch_meeting_status(
         from ..services.notify import person_id_for_name as _pid_for_name
         import re as _re
         notified: set[str] = set()
-        # ????????????????????????
+        # 向参会人发送已发布会议通知。
         participant_str = row.participants or ""
         participants = [p.strip() for p in _re.split(r"[,??\n]+", participant_str) if p.strip()]
         for p in participants:
@@ -320,19 +325,19 @@ def patch_meeting_status(
                 notified.add(p)
                 _notify(db, recipient_id=_pid_for_name(p, db), recipient=p,
                         ntype="meeting_published",
-                        title=f"????????????{row.title or '????????'}",
-                        body=f"??????{caller_name}?????????{row.meeting_date or '???'}",
+                        title=f"会议已发布：{row.title or '未命名会议'}",
+                        body=f"会议《{row.title or '未命名会议'}》已由 {caller_name} 发布，日期：{row.meeting_date or '未填写'}",
                         link=f"/project/{project_id}/meeting" if project_id else "",
                         project_id=project_id)
-        # ???????????????
+        # 向需要执行行动项的成员发送任务通知。
         for item in action_items:
             member = (item.get("member") or "").strip()
             if member and member != caller_name and member not in notified:
                 notified.add(member)
                 _notify(db, recipient_id=_pid_for_name(member, db), recipient=member,
                         ntype="meeting_action",
-                        title=f"?????{row.title or '(???)'}",
-                        body=f"???{item.get('task', '')}????{item.get('deadline') or '??'}",
+                        title=f"会议行动项：{row.title or '未命名会议'}",
+                        body=f"请处理事项：{item.get('task', '')}，截止时间：{item.get('deadline') or '未填写'}",
                         link=f"/project/{project_id}/meeting" if project_id else "",
                         project_id=project_id)
 
@@ -358,7 +363,7 @@ def delete_meeting(
 
     require_project_not_archived(project_id, db)
     before = crud.to_dict(row)
-    crud.log(db, current_user, "??????", "meeting", row_id, before, {})
+    crud.log(db, current_user, "meeting_delete", "meeting", row_id, before, {})
     db.delete(row)
     db.commit()
     return {"ok": True}
@@ -370,7 +375,44 @@ class GenerateTaskCardsRequest(BaseModel):
     speaker_map: dict[str, str]
 
 
-_PROMPT_TASK_CARDS = "??????????"
+_PROMPT_TASK_CARDS = """你是会议任务卡生成助手。
+请根据 speaker_map、tasks_context 和 text 生成任务卡，只输出严格 JSON，不要输出任何解释。
+
+speaker_map:
+{speaker_map}
+
+tasks_context:
+{tasks_context}
+
+text:
+{text}
+
+输出格式：
+{
+  "task_cards": [
+    {
+      "action": "create | update_status | add_note",
+      "parent_task_id": 123,
+      "subtask_id": 456,
+      "title": "任务标题",
+      "subtask_title": "子任务标题",
+      "assignee": "负责人",
+      "plan_time": "YYYY-MM-DD 或空字符串",
+      "new_status": "状态值",
+      "notes": "补充说明",
+      "note": "备注",
+      "evidence": "原文证据"
+    }
+  ]
+}
+
+要求：
+- 只输出 JSON
+- 如果没有可执行任务，返回 {"task_cards": []}
+- action 只能是 create、update_status、add_note
+- 优先匹配 tasks_context 中已有任务和子任务
+- evidence 用原文短句支持判断
+"""
 
 
 def _build_tasks_context(project_id: int, db: Session) -> str:
@@ -379,7 +421,7 @@ def _build_tasks_context(project_id: int, db: Session) -> str:
         .filter(
             models.Task.project_id == project_id,
             models.Task.is_deleted.is_(False),
-            models.Task.status.notin_(["???", "???"]),
+            models.Task.status.notin_([TS.S_COMPLETED, TS.S_ARCHIVED]),
         )
         .order_by(models.Task.id.asc())
         .all()
@@ -387,8 +429,8 @@ def _build_tasks_context(project_id: int, db: Session) -> str:
     lines: list[str] = []
     for task in tasks:
         lines.append(
-            f"???? #{task.id}?{task.key_task}"
-            f"?????{task.owner or '???'}????{task.status or '??'}?"
+            f"关键任务 #{task.id}：{task.key_task}"
+            f"｜负责人：{task.owner or '未填写'}｜状态：{task.status or '未填写'}"
         )
         subtasks = (
             db.query(models.SubTask)
@@ -398,10 +440,10 @@ def _build_tasks_context(project_id: int, db: Session) -> str:
         )
         for st in subtasks:
             lines.append(
-                f"  ??? #{st.id}?{st.title}"
-                f"????{st.status or '???'}?????{st.assignee or '???'}?"
+                f"  - 子任务 #{st.id}：{st.title}"
+                f"｜状态：{st.status or '未填写'}｜负责人：{st.assignee or '未填写'}"
             )
-    return "\n".join(lines) if lines else "????????????"
+    return "\n".join(lines) if lines else "暂无可参考的关键任务"
 
 
 @router.post("/generate-task-cards")
@@ -419,9 +461,9 @@ async def generate_task_cards(
     )
 
     if not payload.transcript_text.strip():
-        raise HTTPException(422, "transcript_text ??????")
+        raise HTTPException(422, "transcript_text 不能为空")
     if not payload.speaker_map:
-        raise HTTPException(422, "speaker_map ??????")
+        raise HTTPException(422, "speaker_map 不能为空")
 
     tasks_context = _build_tasks_context(payload.project_id, db)
     speaker_context = "\n".join(

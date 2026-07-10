@@ -132,13 +132,14 @@ def list_issues(
     result = []
     for row in q.limit(500).all():
         if issue_type:
-            if issue_type in {"?????", "???", "decision"}:
+            normalized_filter_type = IF.normalize_type(issue_type)
+            if normalized_filter_type == IF.TYPE_DECISION:
                 if not _is_decision_issue(row):
                     continue
             elif issue_type == "problem":
                 if _is_decision_issue(row):
                     continue
-            elif IF.normalize_type(row.issue_type) != IF.normalize_type(issue_type):
+            elif IF.normalize_type(row.issue_type) != normalized_filter_type:
                 continue
         if owner and row.owner != owner:
             continue

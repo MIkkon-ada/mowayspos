@@ -123,8 +123,7 @@ def _is_privileged_write(context: dict, task: models.Task, db: Session) -> bool:
 
 
 def _check_project_member_create(context: dict, task: models.Task, db: Session) -> None:
-    """??????????? owner??????????????
-    ??????member ????????????????"""
+    """只有 owner、coordinator 或 tech_admin 才能创建成员子任务。"""
     if context.get("is_tech_admin"):
         return
     project_id = task.project_id
@@ -240,7 +239,7 @@ def list_subtasks_global(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """? assignee / project_id ???????????????????????"""
+    """按 assignee / project_id 过滤子任务列表（全局接口）。"""
     current_user = require_login(current_user, db)
     context = get_user_context_from_db(current_user, db)
     if project_id is None:
@@ -310,7 +309,7 @@ def get_subtask_detail(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """??????????????????"""
+    """返回子任务详情，供前端详情抽屉使用。"""
     current_user = require_login(current_user, db)
     context = get_user_context_from_db(current_user, db)
     row = db.get(models.SubTask, row_id)

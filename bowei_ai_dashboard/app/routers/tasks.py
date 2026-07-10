@@ -36,7 +36,7 @@ def _require_global_read_scope(context: dict) -> None:
 
 
 def _check_write(context: dict, project_id: int | None, proj_name: str, db: Session) -> None:
-    """super_admin??? owner ???????????"""
+    """只有 super_admin、owner 或 coordinator 才能写入任务。"""
     if context.get("is_tech_admin"):
         return
 
@@ -55,7 +55,7 @@ def _check_write(context: dict, project_id: int | None, proj_name: str, db: Sess
 
 
 def _check_batch_write(context: dict, project_id: int | None, proj_name: str, db: Session) -> None:
-    """????????? owner ???????"""
+    """批量导入任务仅允许 owner 或 tech_admin。"""
     if context.get("is_tech_admin"):
         return
 
@@ -72,7 +72,7 @@ def _check_batch_write(context: dict, project_id: int | None, proj_name: str, db
 
 
 def _check_trash_access(context: dict, project_id: int | None, proj_name: str, db: Session) -> None:
-    """?????????? owner ??????????"""
+    """回收站相关操作仅允许 owner 或 tech_admin。"""
     if context.get("is_tech_admin"):
         return
 
@@ -119,14 +119,13 @@ def _write_task_project_id(row: models.Task, db: Session) -> int | None:
 def _assert_can_complete_from_subtasks(row: models.Task, db: Session) -> None:
     subtasks = db.query(models.SubTask).filter_by(task_id=row.id).filter(models.SubTask.is_deleted.is_(False)).all()
     if not subtasks:
-        raise HTTPException(409, "??????????????????")
+        raise HTTPException(409, "当前关键任务没有可完成的子任务")
     if not all(TS.is_completed(sub.status) for sub in subtasks):
-        raise HTTPException(409, "?????????????????")
+        raise HTTPException(409, "子任务未全部完成，不能关闭关键任务")
 
 
 def _check_close_task(context: dict, project_id: int | None, proj_name: str, db: Session) -> None:
-    """??????????????????? owner ???????
-    ????coordinator???????????????"""
+    """关闭关键任务仅允许 owner 或 tech_admin。"""
     if context.get("is_tech_admin"):
         return
     person_id = context.get("person_id")
@@ -281,7 +280,7 @@ def create_task(
         row.special_project = payload.special_project or ""
     db.add(row)
     db.flush()
-    crud.log(db, current_user, "????", "task", row.id, {}, crud.to_dict(row))
+    crud.log(db, current_user, "task_create", "task", row.id, {}, crud.to_dict(row))
     db.commit()
     db.refresh(row)
     return crud.to_dict(row)
@@ -363,7 +362,7 @@ def update_task(
         row.special_project = payload.special_project.strip()
     row.edit_count = (row.edit_count or 0) + 1
     effective_pid = row.project_id or project_id
-    action = "???????????" if closing else "????"
+    action = "task_close" if closing else "task_update"
     crud.log(db, current_user, action, "task", row.id, before, payload.model_dump(), project_id=effective_pid)
     db.commit()
     return crud.to_dict(row)
@@ -390,8 +389,8 @@ def delete_task(
 
     before = crud.to_dict(row)
     batch_id = _soft_delete_task(row, current_user, reason)
-    crud.log(db, current_user, "????(???)", "task", row_id, before, crud.to_dict(row),
-             project_id=project_id, note=reason or "?????")
+    crud.log(db, current_user, "task_delete", "task", row_id, before, crud.to_dict(row),
+             project_id=project_id, note=reason or "任务删除")
 
     child_rows = (
         db.query(models.SubTask)
@@ -401,8 +400,8 @@ def delete_task(
     for child in child_rows:
         child_before = crud.to_dict(child)
         _soft_delete_subtask(child, current_user, batch_id, row_id, reason)
-        crud.log(db, current_user, "?????(???????)", "subtask", child.id, child_before, crud.to_dict(child),
-                 project_id=project_id, note=reason or "??????????")
+        crud.log(db, current_user, "subtask_delete", "subtask", child.id, child_before, crud.to_dict(child),
+                 project_id=project_id, note=reason or "子任务删除")
 
     db.commit()
     return {"ok": True}
@@ -436,7 +435,7 @@ def patch_status(
     before_status = row.status
     row.status = TS.normalize(payload.status)
     row.edit_count = (row.edit_count or 0) + 1
-    action = "???????????" if closing else "??????"
+    action = "task_close" if closing else "task_update_status"
     crud.log(db, current_user, action, "task", row.id,
              {"status": before_status}, {"status": payload.status},
              project_id=project_id)
@@ -465,7 +464,7 @@ def restore_task(
     before = crud.to_dict(row)
     batch_id = row.delete_batch_id or ""
     _restore_task(row)
-    crud.log(db, current_user, "????", "task", row.id, before, crud.to_dict(row), project_id=project_id)
+    crud.log(db, current_user, "task_restore", "task", row.id, before, crud.to_dict(row), project_id=project_id)
 
     child_rows = (
         db.query(models.SubTask)
@@ -484,7 +483,7 @@ def restore_task(
         crud.log(
             db,
             current_user,
-            "?????(???????)",
+            "subtask_restore",
             "subtask",
             child.id,
             child_before,

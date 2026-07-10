@@ -326,7 +326,7 @@ async def create_update(
         source_type=payload.source_type,
         submitter=submitter or "",
         submitter_id=submitter_id,
-        title=payload.title or "?????",
+        title=payload.title or "工作汇报",
         transcript_text=payload.transcript_text,
         ai_result_json=json.dumps(result, ensure_ascii=False),
         human_result_json=json.dumps(human_result, ensure_ascii=False),

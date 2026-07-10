@@ -96,6 +96,32 @@ def test_project_cards_show_next_actions_and_key_lifecycle_info():
     assert "rounded-xl border bg-white" in source
 
 
+def test_project_queue_card_hierarchy_is_action_queue_not_archive_card():
+    source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
+
+    for expected in [
+        "projects-lifecycle-card-title-row",
+        "projects-lifecycle-card-stage-row",
+        "projects-lifecycle-card-people-line",
+        "projects-lifecycle-card-meta-row",
+        "projects-lifecycle-card-action-row",
+    ]:
+        assert expected in source
+
+    title_idx = source.index("projects-lifecycle-card-title-row")
+    stage_idx = source.index("projects-lifecycle-card-stage-row")
+    people_idx = source.index("projects-lifecycle-card-people-line")
+    meta_idx = source.index("projects-lifecycle-card-meta-row")
+    action_idx = source.index("projects-lifecycle-card-action-row")
+    assert title_idx < stage_idx < people_idx < meta_idx < action_idx
+
+    assert "rounded-lg border border-slate-100 bg-slate-50/80" not in source, \
+        "左侧项目队列不应再出现大灰色人员信息框"
+    assert "border-2 border-[#2170e4]" not in source, \
+        "当前选中卡片不要过重，只保留左侧竖线和浅蓝边框"
+    assert "border-sky-200" in source or "border-[#b9d7ff]" in source
+
+
 def test_project_action_panel_contains_processing_sections():
     source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
 
@@ -123,6 +149,30 @@ def test_project_action_panel_contains_processing_sections():
     assert "projects-lifecycle-panel-section" in source
     assert "projects-lifecycle-panel-pills" in source
     assert "bg-error-container" not in source, "不要照搬原型里的错误色大提醒块"
+
+
+def test_project_action_panel_is_action_first_not_archive_drawer():
+    source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
+
+    for expected in [
+        "projects-lifecycle-panel-next-actions",
+        "projects-lifecycle-panel-core-info",
+        "projects-lifecycle-panel-roles",
+        "projects-lifecycle-panel-readiness",
+    ]:
+        assert expected in source
+
+    header_idx = source.index("projects-lifecycle-panel-header")
+    next_idx = source.index("projects-lifecycle-panel-next-actions")
+    core_idx = source.index("projects-lifecycle-panel-core-info")
+    roles_idx = source.index("projects-lifecycle-panel-roles")
+    readiness_idx = source.index("projects-lifecycle-panel-readiness")
+    assert header_idx < next_idx < core_idx < roles_idx < readiness_idx
+
+    assert "projects-lifecycle-panel-reminder" not in source[source.index("projects-lifecycle-panel-next-actions"):core_idx], \
+        "右侧面板应先呈现下一步操作，再进入信息说明"
+    assert "bg-slate-50/60 px-4 py-3" not in source, \
+        "右侧不要堆太多灰底信息卡"
 
 
 def test_projects_management_defaults_to_first_filtered_project():

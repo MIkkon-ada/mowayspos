@@ -392,6 +392,17 @@ export function ProjectsMgmtSection() {
   const selectedProject = selectedProjectId != null
     ? projects.find((p) => p.id === selectedProjectId) ?? null
     : null
+  const approveProjectRow = approveModal
+    ? projects.find((p) => p.id === approveModal.pid) ?? null
+    : null
+  const approveTasks = approveModal ? projectTasksMap[approveModal.pid] ?? [] : []
+  const approveSubtasks = approveModal ? projectSubtasksMap[approveModal.pid] ?? [] : []
+  const approveDraftSummary = approveProjectRow
+    ? getDraftSummary(approveTasks, approveSubtasks, approveProjectRow)
+    : { objectives: 0, taskCount: 0, subtaskCount: 0, ownerConfigured: 0, planConfigured: 0, taskTotal: 0 }
+  const approveDraftRows = approveProjectRow
+    ? buildDraftRows(approveTasks, approveSubtasks, approveProjectRow)
+    : []
 
   // ── Handlers ──
 
@@ -838,6 +849,8 @@ export function ProjectsMgmtSection() {
           loading={approveLoading}
           name={approveModal.name}
           form={approveForm}
+          draftSummary={approveDraftSummary}
+          draftRows={approveDraftRows}
           onChangeForm={setApproveForm}
           onClose={() => !approveLoading && setApproveModal(null)}
           onConfirm={handleApprove}
@@ -1241,12 +1254,14 @@ function DraftProgressTable({ rows }: { rows: DraftRow[] }) {
 // ── 审核弹窗 ──────────────────────────────────────────────────
 
 function ProjectApproveModal({
-  open, loading, name, form, onChangeForm, onClose, onConfirm,
+  open, loading, name, form, draftSummary, draftRows, onChangeForm, onClose, onConfirm,
 }: {
   open: boolean
   loading: boolean
   name: string
   form: ProjectProfilePayload
+  draftSummary: DraftSummary
+  draftRows: DraftRow[]
   onChangeForm: (next: ProjectProfilePayload) => void
   onClose: () => void
   onConfirm: () => void
@@ -1266,12 +1281,40 @@ function ProjectApproveModal({
       <div className="w-[520px] overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="border-b px-6 py-4" style={{ borderColor: '#E9EFF6' }}>
           <div className="text-sm font-bold text-slate-800">审核立项与推进表草案</div>
-          <div className="mt-0.5 text-xs text-slate-400">负责人提交的信息可在这里修正后再确立，推进表草案请在左侧详情面板查看</div>
+          <div className="mt-0.5 text-xs text-slate-400">负责人提交的信息可在这里修正后再确立，详细内容可在项目详情面板查看</div>
         </div>
         <div className="max-h-[60vh] space-y-3 overflow-y-auto px-6 py-5">
           <div className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-2.5">
             <span className="text-sm font-semibold text-slate-700">{name}</span>
           </div>
+          <section className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-xs font-bold text-slate-700">工作推进表雏形</div>
+              <div className="text-[11px] text-slate-400">详细内容可在项目详情面板查看</div>
+            </div>
+            <div className="mb-2 flex flex-wrap gap-2">
+              <span className="rounded-md bg-white px-2 py-1 text-[11px] font-semibold text-slate-600">
+                重点工作数量 <span className="text-amber-600">{draftSummary.taskCount}</span>
+              </span>
+              <span className="rounded-md bg-white px-2 py-1 text-[11px] font-semibold text-slate-600">
+                关键任务数量 <span className="text-amber-600">{draftSummary.subtaskCount}</span>
+              </span>
+            </div>
+            {draftRows.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-amber-200 bg-white/70 px-3 py-3 text-center text-xs text-slate-400">
+                暂无工作推进表雏形
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {draftRows.slice(0, 3).map((row, index) => (
+                  <div key={`${row.keyTask}-${row.subTask}-${index}`} className="rounded-lg bg-white px-3 py-2 text-xs text-slate-600">
+                    <div className="font-semibold text-slate-700">{row.keyTask}</div>
+                    <div className="mt-0.5 text-slate-500">关键任务：{row.subTask}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
           {fields.map(({ key, label, type }) => (
             <div key={key}>
               <label className="mb-1 block text-xs font-semibold text-slate-600">{label}</label>

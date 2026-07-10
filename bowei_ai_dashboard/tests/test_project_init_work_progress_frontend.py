@@ -81,3 +81,34 @@ def test_project_review_view_contains_work_progress_draft_summary_and_list():
         "draftRows.length",
     ]:
         assert expected in source
+
+
+def test_owner_submit_modal_requires_at_least_one_subtask_before_submit():
+    source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
+
+    for expected in [
+        "const workProgressDraft = toPayloadDraft(draftTasks)",
+        "workProgressDraft.reduce",
+        "task.subtasks?.length",
+        "请至少添加一个关键任务",
+        "ownerSubmitProfile(project.id, {",
+        "work_progress_draft: workProgressDraft",
+    ]:
+        assert expected in source
+
+
+def test_project_approve_modal_contains_work_progress_draft_summary():
+    source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
+
+    for expected in [
+        "function ProjectApproveModal",
+        "draftSummary",
+        "draftRows",
+        "工作推进表雏形",
+        "重点工作数量",
+        "关键任务数量",
+        "暂无工作推进表雏形",
+        "详细内容可在项目详情面板查看",
+        "draftRows.slice(0, 3)",
+    ]:
+        assert expected in source

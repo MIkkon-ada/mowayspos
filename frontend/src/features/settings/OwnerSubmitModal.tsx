@@ -150,6 +150,11 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
       toast.error('请至少新增一条重点工作')
       return
     }
+    const subtaskCount = workProgressDraft.reduce((total, task) => total + (task.subtasks?.length ?? 0), 0)
+    if (subtaskCount === 0) {
+      toast.error('请至少添加一个关键任务')
+      return
+    }
     setFillLoading(true)
     try {
       const result = await ownerSubmitProfile(project.id, {

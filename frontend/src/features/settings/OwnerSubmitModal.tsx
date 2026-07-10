@@ -177,39 +177,62 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
       style={{ background: 'rgba(15,23,42,0.45)' }}
       onClick={() => !fillLoading && onClose()}
     >
-      <div className="bg-white rounded-2xl shadow-2xl w-[760px] overflow-hidden" onClick={(e) => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b" style={{ borderColor: '#E9EFF6' }}>
+      <div className="flex max-h-[92vh] w-[820px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        {/* 固定标题栏 */}
+        <div className="flex-shrink-0 border-b px-6 py-3.5" style={{ borderColor: '#E9EFF6' }}>
           <div className="text-sm font-bold text-slate-800">填写立项信息 — {project.name}</div>
-          <div className="text-xs text-slate-400 mt-0.5">提交后进入企业教练审核；工作推进表雏形会随立项信息一起保存。</div>
+          <div className="mt-0.5 text-xs text-slate-400">提交后进入企业教练审核；工作推进表雏形会随立项信息一起保存。</div>
         </div>
 
-        <div className="px-6 py-5 space-y-5 overflow-y-auto" style={{ maxHeight: '70vh' }}>
-          <section className="space-y-3">
-            <div className="text-xs font-bold text-slate-500">立项信息</div>
-            {FIELDS.map(({ key, label, placeholder }) => (
-              <div key={key}>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">{label}</label>
-                <input
-                  type={key.includes('date') ? 'date' : 'text'}
-                  value={(fillForm as any)[key] ?? ''}
-                  onChange={(e) => setFillForm((prev) => ({ ...prev, [key]: e.target.value }))}
-                  placeholder={placeholder}
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/30"
-                />
-              </div>
-            ))}
+        {/* 滚动内容区 */}
+        <div className="flex-1 space-y-5 overflow-y-auto px-6 py-4">
+          {/* A. 立项信息 — 两列紧凑布局 */}
+          <section>
+            <div className="mb-2 text-xs font-bold text-slate-500">立项信息</div>
+            <div className="grid gap-2.5 md:grid-cols-2">
+              {FIELDS.map(({ key, label, placeholder }) => {
+                const isLongText = key === 'background' || key === 'objectives' || key === 'expected_outcomes'
+                if (isLongText) {
+                  return (
+                    <div key={key} className="md:col-span-2">
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">{label}</label>
+                      <textarea
+                        value={(fillForm as any)[key] ?? ''}
+                        onChange={(e) => setFillForm((prev) => ({ ...prev, [key]: e.target.value }))}
+                        placeholder={placeholder}
+                        rows={2}
+                        className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/30"
+                      />
+                    </div>
+                  )
+                }
+                return (
+                  <div key={key}>
+                    <label className="mb-1 block text-xs font-semibold text-slate-600">{label}</label>
+                    <input
+                      type={key.includes('date') ? 'date' : 'text'}
+                      value={(fillForm as any)[key] ?? ''}
+                      onChange={(e) => setFillForm((prev) => ({ ...prev, [key]: e.target.value }))}
+                      placeholder={placeholder}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/30"
+                    />
+                  </div>
+                )
+              })}
+            </div>
           </section>
 
+          {/* B. 工作推进表雏形 */}
           <section className="rounded-2xl border border-amber-200 bg-amber-50/40 p-4">
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <div className="text-sm font-bold text-slate-800">工作推进表雏形</div>
-                <div className="mt-0.5 text-xs text-slate-500">先维护重点工作和关键任务草案，审核通过后作为推进表基础数据。</div>
+                <div className="mt-0.5 text-xs text-slate-500">先维护重点工作和关键任务草案。重点工作用于归类工作方向；关键任务才需要明确责任人、协助人和计划时间。</div>
               </div>
               <button
                 type="button"
                 onClick={addTaskDraft}
-                className="cursor-pointer rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600"
+                className="cursor-pointer flex-shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600"
               >
                 新增重点工作
               </button>
@@ -230,47 +253,23 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                     </button>
                   </div>
 
+                  {/* 重点工作仅保留：标题 + 说明 */}
                   <div className="grid gap-2 md:grid-cols-2">
                     <input
                       value={task.title}
                       onChange={(e) => updateTaskDraft(taskIndex, 'title', e.target.value)}
-                      placeholder="重点工作标题"
+                      placeholder="重点工作标题（如：开发并应用项目运营系统）"
                       className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
                     />
                     <input
                       value={task.description}
                       onChange={(e) => updateTaskDraft(taskIndex, 'description', e.target.value)}
-                      placeholder="重点工作说明"
-                      className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                    />
-                    <input
-                      value={task.owner}
-                      onChange={(e) => updateTaskDraft(taskIndex, 'owner', e.target.value)}
-                      placeholder="责任人"
-                      className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                    />
-                    <input
-                      value={task.helper}
-                      onChange={(e) => updateTaskDraft(taskIndex, 'helper', e.target.value)}
-                      placeholder="协助人"
-                      className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                    />
-                    <input
-                      type="date"
-                      value={task.plan_start}
-                      onChange={(e) => updateTaskDraft(taskIndex, 'plan_start', e.target.value)}
-                      aria-label="重点工作计划开始"
-                      className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                    />
-                    <input
-                      type="date"
-                      value={task.plan_end}
-                      onChange={(e) => updateTaskDraft(taskIndex, 'plan_end', e.target.value)}
-                      aria-label="重点工作计划结束"
+                      placeholder="重点工作说明 / 评价标准"
                       className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
                     />
                   </div>
 
+                  {/* 关键任务：保留全部可执行字段 */}
                   <div className="mt-3 space-y-2">
                     <div className="flex items-center justify-between">
                       <div className="text-xs font-semibold text-slate-500">关键任务</div>
@@ -284,7 +283,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                     </div>
 
                     {task.subtasks.map((subtask, subIndex) => (
-                      <div key={subIndex} className="grid gap-2 rounded-lg bg-slate-50 p-2 md:grid-cols-2">
+                      <div key={subIndex} className="grid gap-2 rounded-lg bg-slate-50 p-2 md:grid-cols-3">
                         <input
                           value={subtask.title}
                           onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'title', e.target.value)}
@@ -328,7 +327,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                             type="button"
                             onClick={() => removeSubTaskDraft(taskIndex, subIndex)}
                             disabled={task.subtasks.length <= 1}
-                            className="cursor-pointer rounded-lg px-2 text-xs text-slate-400 hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="cursor-pointer flex-shrink-0 rounded-lg px-2 text-xs text-slate-400 hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             删除
                           </button>
@@ -342,12 +341,13 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
           </section>
         </div>
 
-        <div className="flex gap-2 px-6 pb-5 pt-1">
+        {/* 固定底部按钮 */}
+        <div className="flex-shrink-0 flex gap-2 border-t px-6 py-3.5" style={{ borderColor: '#E9EFF6' }}>
           <button
             type="button"
             onClick={onClose}
             disabled={fillLoading}
-            className="cursor-pointer flex-1 py-2 rounded-xl border border-slate-200 text-slate-500 text-sm hover:bg-slate-50"
+            className="cursor-pointer flex-1 rounded-xl border border-slate-200 py-2 text-sm text-slate-500 hover:bg-slate-50"
           >
             取消
           </button>
@@ -355,7 +355,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
             type="button"
             onClick={handleSubmit}
             disabled={fillLoading}
-            className="cursor-pointer flex-1 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50"
+            className="cursor-pointer flex-1 rounded-xl py-2 text-sm font-semibold text-white disabled:opacity-50"
             style={{ background: 'linear-gradient(135deg,#D97706,#F59E0B)' }}
           >
             {fillLoading ? '提交中…' : '提交立项审核'}

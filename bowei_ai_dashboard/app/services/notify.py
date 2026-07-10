@@ -107,8 +107,8 @@ def project_owner_ids(project_id: int, db: Session) -> list[int]:
     return [m.person_id for m in members if m.person_id]
 
 
-def ceo_person_ids(db: Session) -> list[int]:
-    """返回 CEO（system_role=company_ceo 或 project_ceo 角色）的 person_id 列表（去重）。"""
+def company_ceo_person_ids(db: Session) -> list[int]:
+    """返回系统层 company_ceo 的 person_id 列表（去重）。"""
     ids: list[int] = []
     seen: set[int] = set()
 
@@ -120,13 +120,29 @@ def ceo_person_ids(db: Session) -> list[int]:
             seen.add(person.id)
             ids.append(person.id)
 
-    if not ids:
-        for m in db.query(models.ProjectMember).filter(
-            models.ProjectMember.role == "project_ceo"
-        ).all():
-            if m.person_id and m.person_id not in seen:
-                seen.add(m.person_id)
-                ids.append(m.person_id)
     return ids
 
+
+def project_coach_person_ids(project_id: int, db: Session) -> list[int]:
+    """返回当前项目内 project_ceo 的 person_id 列表（去重）。"""
+    ids: list[int] = []
+    seen: set[int] = set()
+    members = (
+        db.query(models.ProjectMember)
+        .filter(
+            models.ProjectMember.project_id == project_id,
+            models.ProjectMember.role == "project_ceo",
+        )
+        .all()
+    )
+    for member in members:
+        if member.person_id and member.person_id not in seen:
+            seen.add(member.person_id)
+            ids.append(member.person_id)
+    return ids
+
+
+def ceo_person_ids(db: Session) -> list[int]:
+    """兼容旧调用方的 company_ceo 收件人查询别名。"""
+    return company_ceo_person_ids(db)
 

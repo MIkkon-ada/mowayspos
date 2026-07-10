@@ -493,12 +493,12 @@ def request_ceo(
     row.edit_count = (row.edit_count or 0) + 1
     project_id = row.project_id
     crud.log(db, current_user, "上报企业教练决策", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
-    from ..services.notify import send as _notify, person_name_for_account, person_id_for_account, ceo_person_ids
+    from ..services.notify import send as _notify, person_name_for_account, person_id_for_account, project_coach_person_ids
     caller_name = person_name_for_account(current_user, db)
     caller_id = person_id_for_account(current_user, db)
-    for ceo_id in ceo_person_ids(db):
-        if ceo_id != caller_id:
-            _notify(db, recipient_id=ceo_id, ntype="issue_needs_decision",
+    for coach_id in project_coach_person_ids(project_id, db):
+        if coach_id != caller_id:
+            _notify(db, recipient_id=coach_id, ntype="issue_needs_decision",
                     title=f"有问题需要您决策：{row.description[:40]}{'…' if len(row.description) > 40 else ''}",
                     body=f"上报人：{caller_name}，决策人：{payload.need_decision_by or '待定'}，专项：{row.special_project or ''}",
                     link=f"/project/{project_id}/issues" if project_id else "",

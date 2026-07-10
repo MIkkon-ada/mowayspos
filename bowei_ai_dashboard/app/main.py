@@ -148,8 +148,7 @@ def _public_project_roles(raw_roles: list[str], *, is_ceo: bool = False) -> list
         if public_role and public_role not in seen:
             seen.add(public_role)
             result.append(public_role)
-    if is_ceo and "project_ceo" not in seen:
-        result.append("project_ceo")
+    # 兼容保留 is_ceo 参数，但不再把全局 CEO 自动映射成 project_ceo。
     return result
 
 

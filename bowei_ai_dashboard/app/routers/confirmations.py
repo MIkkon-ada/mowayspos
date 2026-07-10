@@ -1247,12 +1247,12 @@ def escalate_ceo(
     if payload.note:
         row.reject_reason = payload.note
     crud.log(db, payload.operator, "上报企业教练决策", "confirmation", row.id, before, {"note": payload.note})
-    from ..services.notify import send as _notify, ceo_person_ids, person_name_for_account, person_id_for_account
+    from ..services.notify import send as _notify, project_coach_person_ids, person_name_for_account, person_id_for_account
     caller_name = person_name_for_account(current_user or payload.operator, db)
     caller_id = person_id_for_account(current_user or payload.operator, db)
-    for ceo_id in ceo_person_ids(db):
-        if ceo_id != caller_id:
-            _notify(db, recipient_id=ceo_id, ntype="escalate_ceo",
+    for coach_id in project_coach_person_ids(project_id, db):
+        if coach_id != caller_id:
+            _notify(db, recipient_id=coach_id, ntype="escalate_ceo",
                     title=f"有提交需要您决策：{row.title or '（无标题）'}",
                     body=f"上报人：{caller_name}，备注：{payload.note or '无'}",
                     link=f"/project/{project_id}/confirm" if project_id else "",

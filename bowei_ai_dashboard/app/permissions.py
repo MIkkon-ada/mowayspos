@@ -481,10 +481,10 @@ def can_escalate_to_ceo(ctx: dict, data: dict) -> bool:
 
 def can_ceo_decide(ctx: dict) -> bool:
     """
-    CEO批示：全局组长CEO 或 超级管理员。
-    第一阶段保留全局判断；第三批接口重构时改为基于 project_members.project_ceo 精细判断。
+    CEO批示：仅超级管理员 / tech_admin。
+    项目层 project_ceo 决策走 can_ceo_decide_by_project。
     """
-    return ctx["is_ceo"] or ctx["can_confirm_all"]
+    return bool(ctx.get("is_tech_admin"))
 
 
 # ── 新增：基于 person_id 的项目级权限工具函数 ─────────────────────
@@ -785,7 +785,7 @@ def can_confirm_submission_by_project(ctx: dict, project_id: int | None, db) -> 
     project_members 未迁移时回落旧字符串逻辑（旧 owner 可用），
     但 project_ceo 单独追踪不在 project_roles 中，因此不会被误授权。
     """
-    if ctx["can_confirm_all"]:
+    if ctx.get("is_tech_admin"):
         return True
     person_id = ctx.get("person_id")
     if project_id is None or person_id is None:
@@ -799,7 +799,7 @@ def can_confirm_submission_by_project(ctx: dict, project_id: int | None, db) -> 
 
 def can_coordinator_feedback_by_project(ctx: dict, project_id: int | None, db) -> bool:
     """统筹人反馈：super_admin 或该项目的 coordinator。"""
-    if ctx["can_confirm_all"]:
+    if ctx.get("is_tech_admin"):
         return True
     person_id = ctx.get("person_id")
     if project_id is None or person_id is None:
@@ -813,7 +813,7 @@ def can_coordinator_feedback_by_project(ctx: dict, project_id: int | None, db) -
 
 def can_escalate_to_ceo_by_project(ctx: dict, project_id: int | None, db) -> bool:
     """上报企业教练：super_admin 或该项目的 owner。"""
-    if ctx["can_confirm_all"]:
+    if ctx.get("is_tech_admin"):
         return True
     person_id = ctx.get("person_id")
     if project_id is None or person_id is None:
@@ -827,21 +827,16 @@ def can_escalate_to_ceo_by_project(ctx: dict, project_id: int | None, db) -> boo
 
 def can_ceo_decide_by_project(ctx: dict, project_id: int | None, db) -> bool:
     """
-    CEO 批示：super_admin 或该项目的 project_ceo。
-    回落：project_members 为空时保留全局 is_ceo 判断（历史数据兼容）。
-    TODO(3C): project_id 全量回填且 project_members 全量迁移后可移除全局 is_ceo 回落。
+    CEO 批示：仅 super_admin / tech_admin 或该项目的 project_ceo。
+    company_ceo 只能保留全局查看能力，不能自动进入项目教练决策流。
     """
-    if ctx["can_confirm_all"]:
+    if ctx.get("is_tech_admin"):
         return True
     person_id = ctx.get("person_id")
     if project_id is None or person_id is None:
-        # TODO(3C): 历史数据兼容，改为严格拒绝
-        return bool(ctx.get("is_ceo"))
+        return False
     roles = get_all_project_roles(person_id, project_id, db)
-    if roles:
-        return "project_ceo" in roles
-    # TODO(3C): project_members 未迁移，全局 is_ceo 回落
-    return bool(ctx.get("is_ceo"))
+    return "project_ceo" in roles
 
 
 def can_view_submission_in_confirmation_by_project(

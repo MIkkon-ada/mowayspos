@@ -133,6 +133,7 @@ WAITING_COORDINATOR_FEEDBACK: frozenset[str] = frozenset({
 })
 
 # 流转中：等待 CEO 决策
+# legacy name；当前业务语义是“等待项目企业教练决策”
 WAITING_CEO_DECISION: frozenset[str] = frozenset({
     S_WAITING_CEO,
     # legacy

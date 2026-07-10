@@ -162,7 +162,7 @@ def _effective_roles(context: dict, project_id: int, proj_name: str | None, db) 
     super_admin 返回全量集合表示无限制。
     project_members 未迁移时回落 ctx["project_roles"] 旧字符串逻辑。
     """
-    if context["can_view_all"] or context.get("is_tech_admin"):
+    if context.get("is_tech_admin"):
         return {"super_admin", "owner", "coordinator", "member", "project_ceo"}
 
     person_id = context.get("person_id")
@@ -182,10 +182,8 @@ def _effective_roles(context: dict, project_id: int, proj_name: str | None, db) 
         elif old_role == PROJECT_ROLE_COLLABORATOR:
             roles.add("member")
 
-    # project_ceo 来自 ceo_projects 或全局 is_ceo
+    # project_ceo 只来自真实 project_members/project_roles，不再由全局 is_ceo 回落。
     if proj_name and proj_name in context.get("ceo_projects", []):
-        roles.add("project_ceo")
-    if context.get("is_ceo"):
         roles.add("project_ceo")
 
     return roles
@@ -274,10 +272,11 @@ def _project_overview(
     roles     = _effective_roles(context, project_id, proj_name, db)
     is_super  = "super_admin" in roles
     is_owner  = "owner" in roles
-    is_ceo    = "project_ceo" in roles
+    is_project_ceo = "project_ceo" in roles
+    is_global_ceo = bool(context.get("is_ceo"))
     is_coord  = "coordinator" in roles
     # member only: has member role but none of the higher roles
-    is_member = "member" in roles and not is_owner and not is_coord and not is_ceo and not is_super
+    is_member = "member" in roles and not is_owner and not is_coord and not is_project_ceo and not is_super
 
     # ── Tasks ──────────────────────────────────────────────
     task_q = db.query(models.Task).filter(
@@ -345,9 +344,9 @@ def _project_overview(
     # coordinator: 只看转交给自己的待统筹反馈事项（sub_q 已过滤）
     # member: 只看自己任务和提交
 
-    can_see_submissions  = is_super or is_owner
-    can_see_decisions    = is_super or is_owner or is_ceo
-    can_see_risks        = is_super or is_owner or is_coord or is_ceo
+    can_see_submissions  = is_super or is_owner or is_global_ceo
+    can_see_decisions    = is_super or is_owner or is_project_ceo or is_global_ceo
+    can_see_risks        = is_super or is_owner or is_coord or is_project_ceo or is_global_ceo
 
     # 本月重点：plan_time 包含当前月、且未完成/未暂缓的任务
     # 超期任务排在前面，其次进行中，最后未开始
@@ -402,7 +401,7 @@ def _project_overview(
         }
 
     # 5D：project_ceo 裁剪——不显示 owner 待确认队列和打回明细
-    if is_ceo and not is_owner and not is_super:
+    if is_project_ceo and not is_owner and not is_super:
         sub_s = {
             "total_submissions":          sub_s["total_submissions"],
             "pending_owner_confirmation":  None,   # CEO 不看 owner 待确认队列
@@ -413,7 +412,10 @@ def _project_overview(
     completion_rate = round(task_s["completed"] / task_s["total_tasks"] * 100) if task_s["total_tasks"] else 0
 
     # ── 角色队列：仪表盘右下面板按角色展示不同内容 ────────────
-    if is_ceo and not is_owner and not is_super:
+    if is_project_ceo and not is_owner and not is_super:
+        queue_type  = "pending_decisions"
+        queue_items = [s for s in all_subs if (s.confirm_status or "") in SS.WAITING_CEO_DECISION]
+    elif is_global_ceo and not is_owner and not is_super:
         queue_type  = "pending_decisions"
         queue_items = [s for s in all_subs if (s.confirm_status or "") in SS.WAITING_CEO_DECISION]
     elif is_owner or is_super:

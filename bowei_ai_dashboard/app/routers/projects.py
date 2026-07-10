@@ -20,7 +20,7 @@ from ..permissions import (
     require_tech_admin,
 )
 from ..time_utils import utc_now
-from ..services.notify import ceo_person_ids, project_owner_ids, send
+from ..services.notify import project_owner_ids, send
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 

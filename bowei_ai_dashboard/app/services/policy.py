@@ -44,9 +44,6 @@ def user_roles_in_project(
         if db_roles:
             return set(db_roles)
 
-    if context.get("is_ceo"):
-        return {"project_ceo"}
-
     return set()
 
 
@@ -140,13 +137,10 @@ def preload_user_project_roles(context: dict, db) -> dict[int, set[str]]:
     return result
 
 
-def _cached_roles(project_id: int | None, cache: dict[int, set[str]], is_ceo: bool) -> set[str]:
+def _cached_roles(project_id: int | None, cache: dict[int, set[str]]) -> set[str]:
     if project_id is None:
         return set()
-    roles = cache.get(project_id, set())
-    if roles:
-        return roles
-    return {"project_ceo"} if is_ceo else set()
+    return cache.get(project_id, set())
 
 
 def can_view_batch(
@@ -164,7 +158,7 @@ def can_view_batch(
         return True
     if project_id is None:
         return False
-    return bool(_cached_roles(project_id, cache, False) & {"owner", "coordinator", "project_ceo"})
+    return bool(_cached_roles(project_id, cache) & {"owner", "coordinator", "project_ceo"})
 
 
 def role_allows_batch(
@@ -178,8 +172,9 @@ def role_allows_batch(
     from ..domain import submission_status as SS
     if context.get("is_tech_admin"):
         return True
-    is_ceo = bool(context.get("is_ceo"))
-    roles = _cached_roles(project_id, cache, is_ceo)
+    if context.get("can_view_all"):
+        return True
+    roles = _cached_roles(project_id, cache)
     if "owner" in roles or "super_admin" in roles:
         return True
     norm = SS.normalize(raw_status)

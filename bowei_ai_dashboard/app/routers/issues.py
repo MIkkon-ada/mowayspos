@@ -209,7 +209,7 @@ def create_issue(
     row.reporter = current_user
     db.add(row)
     db.flush()
-    crud.log(db, current_user, "新建问题", "issue", row.id, {}, crud.to_dict(row))
+    crud.log(db, current_user, "issue_create", "issue", row.id, {}, crud.to_dict(row))
 
     # 通知项目负责人/统筹人
     from ..services.notify import send as _notify, person_name_for_account, person_id_for_account, project_owner_ids
@@ -305,7 +305,7 @@ def update_issue(
     row.owner_id = _pid_for_name(row.owner or "", db)
     _sync_issue_closed_at(row)
     row.edit_count = (row.edit_count or 0) + 1
-    crud.log(db, current_user, "修改问题", "issue", row.id, before, payload.model_dump(), project_id=project_id)
+    crud.log(db, current_user, "issue_update", "issue", row.id, before, payload.model_dump(), project_id=project_id)
     db.commit()
     return crud.to_dict(row)
 
@@ -327,7 +327,7 @@ def delete_issue(
 
     require_project_not_archived(project_id, db)
     before = crud.to_dict(row)
-    crud.log(db, current_user, "删除问题", "issue", row_id, before, {})
+    crud.log(db, current_user, "issue_delete", "issue", row_id, before, {})
     db.delete(row)
     db.commit()
     return {"ok": True}
@@ -360,7 +360,7 @@ def patch_status(
     row.status = IF.normalize_status(payload.status)
     _sync_issue_closed_at(row)
     row.edit_count = (row.edit_count or 0) + 1
-    crud.log(db, current_user, "更新问题状态", "issue", row.id,
+    crud.log(db, current_user, "issue_update_status", "issue", row.id,
              {"status": before_status}, {"status": payload.status},
              project_id=project_id)
     db.commit()
@@ -398,7 +398,7 @@ def resolve_issue(
     _sync_issue_closed_at(row)
     row.edit_count = (row.edit_count or 0) + 1
     project_id = row.project_id
-    crud.log(db, current_user, "标记已解决", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
+    crud.log(db, current_user, "issue_resolve", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
     if (row.reporter or "").strip() and row.reporter != current_user:
         from ..services.notify import send as _notify, person_id_for_account
         reply_text = payload.handler_reply or payload.resolution or "无"
@@ -437,7 +437,7 @@ def close_issue(
     _sync_issue_closed_at(row)
     row.edit_count = (row.edit_count or 0) + 1
     project_id = row.project_id
-    crud.log(db, current_user, "关闭问题", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
+    crud.log(db, current_user, "issue_close", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
     if (row.reporter or "").strip() and row.reporter != current_user:
         from ..services.notify import send as _notify, person_id_for_account
         reply_text = payload.handler_reply or payload.reason or "无"
@@ -477,7 +477,7 @@ def assign_helper(
     row.helper = payload.helper
     row.edit_count = (row.edit_count or 0) + 1
     project_id = row.project_id
-    crud.log(db, current_user, "指派协助人", "issue", row.id, before,
+    crud.log(db, current_user, "issue_assign_helper", "issue", row.id, before,
              {"helper": payload.helper}, project_id=project_id)
     db.commit()
     return crud.to_dict(row)
@@ -513,7 +513,7 @@ def request_ceo(
         row.resolution = (existing + "\n" + payload.note).strip() if existing else payload.note
     row.edit_count = (row.edit_count or 0) + 1
     project_id = row.project_id
-    crud.log(db, current_user, "上报企业教练决策", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
+    crud.log(db, current_user, "issue_escalate_to_coach", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
     from ..services.notify import send as _notify, person_name_for_account, person_id_for_account, project_coach_person_ids
     caller_name = person_name_for_account(current_user, db)
     caller_id = person_id_for_account(current_user, db)

@@ -27,6 +27,8 @@ llm_configs.json
 *.db-journal
 *.sqlite-journal
 *.backup*.db
+*.backup
+*.dump
 *.db.bak*
 
 # Logs
@@ -78,10 +80,12 @@ _tmp_*.docx
 *_backup*.db
 backup/
 unpacked_*/
+*backup_before*/
 _backup_before_*/
 Reference document/
 project-init-preview.html
 bowei_ai_dashboard/_audit_temp/
+**/__pycache__/
 
 # Local archive / generated reports
 _local_archive/

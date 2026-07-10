@@ -6,9 +6,11 @@ Repository: `https://github.com/MIkkon-ada/mowayspos`
 
 Branch: `main`
 
-Current commit: `415ba68` (`public release audit`)
+Current commit: `b220b7d` (`fix: remove default production database password`)
 
 Audit baseline used for the checks below: `d5b89b8` (`initial import`)
+
+Security remediation status: `SECURITY-P0` 已修复，相关提交为 `b220b7d` (`fix: remove default production database password`)
 
 ## 1. Git 状态
 
@@ -163,6 +165,24 @@ Audit baseline used for the checks below: `d5b89b8` (`initial import`)
 - Git 历史没有出现敏感文件
 - 敏感本地产物均未被跟踪，且已被 `.gitignore` 排除
 - 文档没有个人隐私泄露
+
+## 8.1 SECURITY-P0 修复记录
+
+问题：
+
+- `docker-compose.prod.yml` 曾存在 `DB_PASSWORD:-postgres` 的默认密码回退
+- 根目录 `docker-compose.yml` 曾硬编码 `POSTGRES_PASSWORD: postgres`
+
+修复：
+
+- `docker-compose.prod.yml` 已改为 `DB_PASSWORD:?DB_PASSWORD is required`
+- `docker-compose.yml` 已改为 `DB_PASSWORD:?DB_PASSWORD is required`
+- 新增 [.env.example](../.env.example)，仅提供公开模板值 `DB_PASSWORD=change_me_to_a_strong_password`
+
+结果：
+
+- 公开仓库中不再保留生产数据库默认密码回退
+- 该问题已标记为 `SECURITY-P0 已修复`
 
 ## 9. 需要保留的注意事项
 

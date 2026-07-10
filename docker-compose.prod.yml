@@ -10,7 +10,7 @@ services:
     environment:
       POSTGRES_DB: bowei_ai_dashboard
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}   # 生产环境请修改密码！
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}   # 生产环境请修改密码！
     ports:
       - "127.0.0.1:5432:5432"    # 仅本地访问，不暴露到公网
     volumes:
@@ -29,7 +29,7 @@ services:
     container_name: bowei-backend
     restart: always
     environment:
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres}@postgres:5432/bowei_ai_dashboard
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/bowei_ai_dashboard
     depends_on:
       postgres:
         condition: service_healthy

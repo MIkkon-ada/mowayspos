@@ -11,7 +11,7 @@ def _frontend_source(relative_path: str) -> str:
 # ── OwnerSubmitModal 视觉布局验收 ──────────────────────────────
 
 def test_owner_submit_modal_has_three_zone_layout():
-    """弹窗应按确认原型呈现 Header / Main / Footer 工作台结构。"""
+    """弹窗应按最新确认原型呈现 Header / 左右 Main / Footer 工作台结构。"""
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
     assert "owner-submit-workbench-shell" in source
@@ -20,24 +20,38 @@ def test_owner_submit_modal_has_three_zone_layout():
     assert "h-[72px]" in source, "Header/Footer 高度应贴近原型 72px"
     assert "owner-submit-workbench-main" in source
     assert "overflow-y-auto" in source, "Main 应滚动"
+    assert "owner-submit-workbench-columns" in source, "Main 应是左右两栏工作台"
+    assert "flex gap-6 items-start" in source or "flex gap-6" in source, "Main 内容应使用左右 flex 布局"
     assert "owner-submit-workbench-footer" in source
     assert "shrink-0" in source, "Header/Footer 应在 flex 结构中不收缩"
     assert "pb-8" in source or "pb-section-margin" in source, "Main 底部应给 footer 留出空间"
 
 
 def test_owner_submit_modal_width_is_optimized():
-    """弹窗内容宽度应接近原型 max-w-[1100px] 居中容器。"""
+    """弹窗内容宽度应接近最新原型 max-w-[1440px] 左右工作台容器。"""
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
     assert "w-[96vw]" in source, "外层仍应是宽弹窗/工作台"
     assert "max-w-[1280px]" in source, "弹窗最大宽度保持合理上限"
-    assert "max-w-[1100px]" in source, "主体内容容器必须接近原型 max-w-[1100px]"
+    assert "max-w-[1440px]" in source, "主体内容容器必须接近最新原型 max-w-[1440px]"
     assert "mx-auto" in source, "主体内容应居中"
     assert "w-[820px]" not in source, "不应再使用旧 820px 宽度"
 
 
+def test_project_core_info_is_left_sidebar():
+    """项目核心信息应迁移到左侧 360-400px 工作台栏。"""
+    source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
+
+    assert "owner-submit-left-pane" in source
+    assert "w-[400px]" in source or "w-[380px]" in source or "w-[360px]" in source
+    assert "shrink-0" in source
+    assert "sticky" in source
+    assert "owner-submit-right-pane" in source
+    assert "flex-1 min-w-0" in source
+
+
 def test_project_info_area_uses_compact_grid():
-    """项目核心信息区应高保真贴近原型白底卡片。"""
+    """项目核心信息区应贴近原型左侧白底卡片。"""
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
     assert "owner-submit-core-card" in source
@@ -45,7 +59,7 @@ def test_project_info_area_uses_compact_grid():
     assert "border" in source
     assert "rounded-xl" in source
     assert "shadow-sm" in source
-    assert "md:grid-cols-2" in source, "项目名称和项目周期应同一行两列"
+    assert "space-y-6" in source, "左侧栏内项目字段应纵向紧凑排列"
     assert "rows={3}" in source or "rows={2}" in source, "项目完成准则 textarea 应低高度"
     assert "项目完成准则 / 验收标准" in source
 

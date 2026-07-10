@@ -266,98 +266,98 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
         </header>
 
         <main className="owner-submit-workbench-main flex-1 overflow-y-auto bg-[#f6f9ff] pb-8">
-          <div className="mx-auto max-w-[1100px] px-6 py-6">
-            <section className="owner-submit-core-card mb-6 overflow-hidden rounded-xl border border-[#e0c0b1]/70 bg-white shadow-sm">
-              <h3 className="sr-only">项目核心信息</h3>
-              <div className="p-6">
-                <div className="mb-6 grid grid-cols-1 gap-6 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                      项目名称
-                    </label>
-                  <input
-                    value={project.name}
-                    disabled
-                      className="w-full border-none p-0 bg-transparent text-lg font-semibold text-slate-900 placeholder:text-slate-300 focus:ring-0 disabled:opacity-100"
-                  />
-                </div>
-                  <div className="space-y-2">
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                      项目周期 / 时间段
-                    </label>
-                  <input
-                    value={projectPeriod}
-                    onChange={(e) => setProjectPeriod(e.target.value)}
-                    placeholder="例如：2026-07-01 至 2026-12-31"
-                      className="w-full border-none p-0 bg-transparent text-base text-slate-800 placeholder:text-slate-300 focus:ring-0"
-                  />
-                </div>
-                </div>
-                <div className="space-y-2">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                    项目完成准则 / 验收标准
-                  </label>
-                  <textarea
-                    value={fillForm.objectives ?? ''}
-                    onChange={(e) => setFillForm((prev) => ({ ...prev, objectives: e.target.value }))}
-                    placeholder="描述项目完成后如何验收，例如关键结果、通过标准、交付边界等"
-                    rows={3}
-                    className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                  />
-                </div>
+          <div className="owner-submit-workbench-columns mx-auto flex gap-6 items-start max-w-[1440px] px-6 py-6">
+            <aside className="owner-submit-left-pane sticky top-6 w-[400px] shrink-0 space-y-6">
+              <section className="owner-submit-core-card overflow-hidden rounded-xl border border-[#e0c0b1]/70 bg-white shadow-sm">
+                <h3 className="sr-only">项目核心信息</h3>
+                <div className="p-6">
+                  <div className="space-y-6">
+                    <div className="space-y-2">
+                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        项目名称
+                      </label>
+                      <input
+                        value={project.name}
+                        disabled
+                        className="w-full border-none p-0 bg-transparent text-lg font-semibold text-slate-900 placeholder:text-slate-300 focus:ring-0 disabled:opacity-100"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        项目周期 / 时间段
+                      </label>
+                      <input
+                        value={projectPeriod}
+                        onChange={(e) => setProjectPeriod(e.target.value)}
+                        placeholder="例如：2026-07-01 至 2026-12-31"
+                        className="w-full border-none p-0 bg-transparent text-base text-slate-800 placeholder:text-slate-300 focus:ring-0"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        项目完成准则 / 验收标准
+                      </label>
+                      <textarea
+                        value={fillForm.objectives ?? ''}
+                        onChange={(e) => setFillForm((prev) => ({ ...prev, objectives: e.target.value }))}
+                        placeholder="描述项目完成后如何验收，例如关键结果、通过标准、交付边界等"
+                        rows={3}
+                        className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                      />
+                    </div>
+                  </div>
 
-                <details className="group mt-4">
-                  <summary className="flex cursor-pointer select-none items-center gap-2 text-sm font-semibold text-orange-700 transition-opacity hover:opacity-80">
-                    <span className="text-base leading-none transition-transform group-open:rotate-90">›</span>
-                  补充详细信息
-                </summary>
-                  <div className="mt-4 grid grid-cols-1 gap-6 border-t border-slate-200/80 pt-4 md:grid-cols-2">
-                    <div className="space-y-4">
+                  <details className="group mt-4">
+                    <summary className="flex cursor-pointer select-none items-center gap-2 text-sm font-semibold text-orange-700 transition-opacity hover:opacity-80">
+                      <span className="text-base leading-none transition-transform group-open:rotate-90">›</span>
+                      补充详细信息
+                    </summary>
+                    <div className="mt-4 space-y-4 border-t border-slate-200/80 pt-4">
                       <div className="space-y-1.5">
                         <label className="block text-[11px] font-semibold text-slate-500">客户名称</label>
-                    <input
-                      value={fillForm.client_name ?? ''}
-                      onChange={(e) => setFillForm((prev) => ({ ...prev, client_name: e.target.value }))}
-                      placeholder="内部项目可留空"
+                        <input
+                          value={fillForm.client_name ?? ''}
+                          onChange={(e) => setFillForm((prev) => ({ ...prev, client_name: e.target.value }))}
+                          placeholder="内部项目可留空"
                           className="h-9 w-full rounded border border-slate-200 bg-white px-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                    />
-                  </div>
+                        />
+                      </div>
                       <div className="space-y-1.5">
                         <label className="block text-[11px] font-semibold text-slate-500">项目类型</label>
-                    <input
-                      value={fillForm.project_type ?? ''}
-                      onChange={(e) => setFillForm((prev) => ({ ...prev, project_type: e.target.value }))}
-                      placeholder="博维内部项目"
+                        <input
+                          value={fillForm.project_type ?? ''}
+                          onChange={(e) => setFillForm((prev) => ({ ...prev, project_type: e.target.value }))}
+                          placeholder="博维内部项目"
                           className="h-9 w-full rounded border border-slate-200 bg-white px-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                    />
-                  </div>
+                        />
+                      </div>
                       <div className="space-y-1.5">
                         <label className="block text-[11px] font-semibold text-slate-500">项目背景</label>
-                    <textarea
-                      value={fillForm.background ?? ''}
-                      onChange={(e) => setFillForm((prev) => ({ ...prev, background: e.target.value }))}
-                      placeholder="说明项目来源及必要性，可选"
-                      rows={3}
+                        <textarea
+                          value={fillForm.background ?? ''}
+                          onChange={(e) => setFillForm((prev) => ({ ...prev, background: e.target.value }))}
+                          placeholder="说明项目来源及必要性，可选"
+                          rows={3}
                           className="w-full resize-none rounded border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                    />
-                  </div>
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="block text-[11px] font-semibold text-slate-500">补充说明</label>
+                        <textarea
+                          value={fillForm.expected_outcomes ?? ''}
+                          onChange={(e) => setFillForm((prev) => ({ ...prev, expected_outcomes: e.target.value }))}
+                          placeholder="其他需要备注的信息，可选"
+                          rows={5}
+                          className="w-full resize-none rounded border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                        />
+                      </div>
                     </div>
-                    <div className="space-y-1.5">
-                      <label className="block text-[11px] font-semibold text-slate-500">补充说明</label>
-                    <textarea
-                      value={fillForm.expected_outcomes ?? ''}
-                      onChange={(e) => setFillForm((prev) => ({ ...prev, expected_outcomes: e.target.value }))}
-                      placeholder="其他需要备注的信息，可选"
-                      rows={5}
-                      className="w-full resize-none rounded border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                    />
-                  </div>
+                  </details>
                 </div>
-              </details>
-              </div>
-            </section>
+              </section>
+            </aside>
 
-            <section>
+            <section className="owner-submit-right-pane flex-1 min-w-0">
               <div className="owner-submit-workplan-heading mb-4 flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <h3 className="text-lg font-semibold text-slate-900">工作推进方案</h3>

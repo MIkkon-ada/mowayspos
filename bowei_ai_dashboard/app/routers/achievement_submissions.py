@@ -78,7 +78,7 @@ def create_submission(
     )
     db.add(row)
     db.flush()
-    crud.log(db, current_user, "提交成果审核", "achievement_submission", row.id, {}, crud.to_dict(row),
+    crud.log(db, current_user, "achievement_submission_create", "achievement_submission", row.id, {}, crud.to_dict(row),
              project_id=payload.project_id)
     db.commit()
     db.refresh(row)
@@ -152,7 +152,7 @@ def confirm_submission(
     )
     db.add(ach)
     db.flush()
-    crud.log(db, current_user, "确认成果入库", "achievement_submission", row.id,
+    crud.log(db, current_user, "achievement_submission_approve", "achievement_submission", row.id,
              {"status": _STATUS_PENDING}, {"status": _STATUS_CONFIRMED},
              project_id=row.project_id)
     if row.submitter and row.submitter != current_user:
@@ -190,7 +190,7 @@ def reject_submission(
     row.reviewer = current_user
     row.reviewed_at = utc_now()
     row.reject_reason = payload.reject_reason or ""
-    crud.log(db, current_user, "退回成果", "achievement_submission", row.id,
+    crud.log(db, current_user, "achievement_submission_return", "achievement_submission", row.id,
              {"status": _STATUS_PENDING}, {"status": _STATUS_REJECTED, "reject_reason": row.reject_reason},
              project_id=row.project_id)
     if row.submitter:
@@ -222,7 +222,7 @@ def withdraw_submission(
         raise HTTPException(422, f"当前状态 [{row.status}] 不可撤回，只有待确认状态可以操作")
 
     row.status = _STATUS_WITHDRAWN
-    crud.log(db, current_user, "撤回成果提交", "achievement_submission", row.id,
+    crud.log(db, current_user, "achievement_submission_withdraw", "achievement_submission", row.id,
              {"status": _STATUS_PENDING}, {"status": _STATUS_WITHDRAWN},
              project_id=row.project_id)
     db.commit()

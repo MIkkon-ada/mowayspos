@@ -112,7 +112,7 @@ def create_achievement(
         )["project_name"] or payload.special_project or ""
     db.add(row)
     db.flush()
-    crud.log(db, current_user, "新建成果", "achievement", row.id, {}, crud.to_dict(row))
+    crud.log(db, current_user, "achievement_create", "achievement", row.id, {}, crud.to_dict(row))
     db.commit()
     db.refresh(row)
     return crud.to_dict(row)
@@ -175,7 +175,7 @@ def update_achievement(
         )["project_name"] or payload.special_project or ""
 
     row.edit_count = (row.edit_count or 0) + 1
-    crud.log(db, current_user, "修改成果", "achievement", row.id, before, payload.model_dump(), project_id=row.project_id or project_id)
+    crud.log(db, current_user, "achievement_update", "achievement", row.id, before, payload.model_dump(), project_id=row.project_id or project_id)
     db.commit()
     return crud.to_dict(row)
 
@@ -201,7 +201,7 @@ def delete_achievement(
 
     require_project_not_archived(project_id, db)
     before = crud.to_dict(row)
-    crud.log(db, current_user, "删除成果", "achievement", row_id, before, {})
+    crud.log(db, current_user, "achievement_delete", "achievement", row_id, before, {})
     db.delete(row)
     db.commit()
     return {"ok": True}

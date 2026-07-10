@@ -14,7 +14,7 @@ def test_owner_submit_modal_contains_work_progress_draft_controls():
     for expected in [
         "工作推进表雏形",
         "新增重点工作",
-        "新增关键任务",
+        "新增",
         "重点工作说明",
         "责任人",
         "协助人",

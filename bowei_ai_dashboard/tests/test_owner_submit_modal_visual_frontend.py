@@ -20,14 +20,14 @@ def test_owner_submit_modal_has_three_zone_layout():
 
 
 def test_owner_submit_modal_width_is_optimized():
-    """弹窗宽度不应再是 820px 窄布局，应 ≥ 920px。"""
+    """弹窗宽度应升级到工作台级别（1280px / 96vw）。"""
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
-    # 宽度至少应该是 920px 或更宽
-    assert "w-[920px]" in source or "w-[960px]" in source or "w-[940px]" in source \
-        or "w-[980px]" in source or "w-[1000px]" in source or "w-[1040px]" in source, \
-        "弹窗宽度应 ≥ 920px，不再使用 820px 窄布局"
+    # 工作台级别宽度：1280px / 96vw 或类似响应式
+    assert "min(1280px, 96vw)" in source or "1280px" in source or "w-[1280px]" in source, \
+        "弹窗宽度应升级到约 1280px（工作台级别）"
     assert "w-[820px]" not in source, "不应再使用旧 820px 宽度"
+    assert "w-[960px]" not in source, "不应再使用 N4-P0-F 的 960px 中间态宽度"
 
 
 def test_project_info_area_uses_compact_grid():

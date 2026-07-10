@@ -17,6 +17,9 @@ def test_owner_submit_modal_has_three_zone_layout():
     assert "flex-shrink-0" in source, "应有固定区域（标题或底部）"
     assert "overflow-y-auto" in source, "内容应可滚动"
     assert "flex-col" in source, "应使用纵向 flex 布局"
+    assert "owner-submit-modal-body" in source, "滚动内容区应有稳定结构标识"
+    assert "pb-6" in source or "pb-8" in source, "滚动区底部应给 footer 留出呼吸空间"
+    assert "owner-submit-modal-footer" in source, "footer 应作为 flex shrink 区域而非覆盖内容"
 
 
 def test_owner_submit_modal_width_is_optimized():
@@ -37,6 +40,8 @@ def test_project_info_area_uses_compact_grid():
 
     # 应有 grid 布局
     assert "grid" in source
+    assert "owner-submit-core-compact" in source, "项目核心信息区应使用 compact 结构标识"
+    assert "rows={2}" in source, "项目完成准则 textarea 应控制为较低高度"
     assert (
         "col-span-2" in source
         or "grid-cols-2" in source
@@ -62,17 +67,20 @@ def test_task_group_has_compact_style():
 
     # 应仍有"重点工作"的序号标识
     assert "重点工作" in source
-    # 不应有过大的卡片 padding（bg-white p-3 等大卡片）
-    # 允许紧凑的 border/rung 样式
+    assert "owner-submit-workplan-compact" in source
+    assert "owner-submit-task-group-compact" in source
+    assert "h-6 w-6" in source or "h-7 w-7" in source, "重点工作序号块应缩小"
+    assert "shadow-2xl" not in source, "视觉对齐阶段不应使用重阴影"
 
 
 def test_subtask_uses_table_like_layout():
     """关键任务区域应使用类表格横向排列，而非纵向堆叠卡片。"""
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
-    # 应存在更紧凑的 grid 列布局（至少有 5 列以上）
-    assert "grid-cols-7" in source or "grid-cols-6" in source or "grid-cols-[" in source, \
-        "关键任务行应采用多列表格布局"
+    assert "<table" in source, "关键任务应使用表格化编辑"
+    assert "owner-submit-subtask-table-compact" in source
+    assert "py-1" in source, "关键任务表格行高应压缩"
+    assert "时间段" in source and "备注 / 标准" in source
 
 
 def test_instruction_text_remains_correct():

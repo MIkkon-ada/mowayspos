@@ -173,14 +173,14 @@ class Project(Base, TimestampMixin):
     name = Column(String(100), nullable=False, unique=True, index=True)
     code = Column(String(50), default="")
     description = Column(Text, default="")
-    status = Column(String(20), default="active", index=True)
+    status = Column(String(20), default="draft", index=True)
     start_date = Column(String(20), default="")
     end_date = Column(String(20), default="")
     coordinator = Column(String(50), default="")
     owners = Column(String(200), default="")
     collaborators = Column(Text, default="")
     sort_order = Column(Integer, default=0)
-    is_active = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=False)
 
 
 class Person(Base, TimestampMixin):

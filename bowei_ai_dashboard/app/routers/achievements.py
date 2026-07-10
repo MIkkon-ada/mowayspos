@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
+from ..domain import source_type as ST
 from ..permissions import (
     get_current_user_name,
     get_user_context_from_db,
@@ -100,6 +101,7 @@ def create_achievement(
 
     data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
     row = models.Achievement(**data)
+    row.source_type = ST.normalize(payload.source_type or "人工录入")
     row.project_id = project_id
     row.owner_id = _pid_for_name(row.owner or "", db)
     if not row.special_project:
@@ -158,6 +160,8 @@ def update_achievement(
     require_project_not_archived(project_id, db)
     before = crud.to_dict(row)
     update_data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
+    if "source_type" in update_data:
+        update_data["source_type"] = ST.normalize(update_data["source_type"] or "人工录入")
     crud.update_model(row, update_data)
     row.owner_id = _pid_for_name(row.owner or "", db)
 

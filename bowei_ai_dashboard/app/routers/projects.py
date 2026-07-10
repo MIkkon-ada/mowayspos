@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
+from ..domain import source_type as ST
 from ..permissions import (
     PROJECT_ROLE_COLLABORATOR,
     PROJECT_ROLE_COORDINATOR,
@@ -796,7 +797,7 @@ def batch_import_projects(
             collaborators=row.collaborators or "",
             plan_time=row.plan_time or "",
             status=row.status or "未开始",
-            source_type="批量导入",
+            source_type=ST.normalize("批量导入"),
             submitter=current_user,
         )
         db.add(task)
@@ -813,7 +814,7 @@ def batch_import_projects(
                 related_task_id=task.id,
                 description=issue_text,
                 owner=row.owner or "",
-                source_type="批量导入",
+                source_type=ST.normalize("批量导入"),
                 status="待处理",
                 priority="中",
             )

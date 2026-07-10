@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
+from ..domain import source_type as ST
 from ..domain import submission_status as SS
 from sqlalchemy import or_ as sql_or
 
@@ -210,10 +211,11 @@ async def extract(
         require_project_access(current_user, payload.project_id, db)
     user_subtasks = [s.model_dump() for s in payload.user_subtasks] if payload.user_subtasks else None
     ceo_name = _ceo_name(db)
+    source_type_raw = payload.source_type or "人工录入"
     try:
         result = await asyncio.to_thread(
             extract_update,
-            payload.source_type,
+            source_type_raw,
             payload.transcript_text,
             payload.submitter,
             payload.llm_provider,
@@ -236,6 +238,8 @@ async def create_update(
     context = get_user_context_from_db(current_user, db)
     submitter = payload.submitter or current_user
     project_id = payload.project_id
+    source_type_raw = payload.source_type or "人工录入"
+    source_type_key = ST.normalize(source_type_raw)
 
     if not context.get("person_id"):
         context = dict(context, person_id=get_person_id(current_user, db))
@@ -286,7 +290,7 @@ async def create_update(
     dup = db.query(models.UpdateSubmission).filter(
         models.UpdateSubmission.submitter == (submitter or ""),
         models.UpdateSubmission.transcript_text == (payload.transcript_text or ""),
-        models.UpdateSubmission.source_type == (payload.source_type or ""),
+        models.UpdateSubmission.source_type.in_(ST.aliases_for(source_type_key)),
         models.UpdateSubmission.created_at >= cutoff,
     ).first()
     if dup:
@@ -301,7 +305,7 @@ async def create_update(
         ceo_name = _ceo_name(db)
         result = await asyncio.to_thread(
             extract_update,
-            payload.source_type,
+            source_type_raw,
             payload.transcript_text,
             submitter,
             None,
@@ -323,7 +327,7 @@ async def create_update(
     submitter_id = _pid_for_account(current_user, db) or context.get("person_id") or get_person_id(submitter, db)
     row = models.UpdateSubmission(
         project_id=project_id,
-        source_type=payload.source_type,
+        source_type=source_type_key,
         submitter=submitter or "",
         submitter_id=submitter_id,
         title=payload.title or "工作汇报",

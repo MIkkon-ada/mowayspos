@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from .. import crud, models, schemas
 from ..database import get_db
 from ..domain import issue_flow as IF
+from ..domain import source_type as ST
 from ..permissions import (
     PROJECT_ROLE_COORD_KEY,
     PROJECT_ROLE_COORDINATOR,
@@ -172,6 +173,7 @@ def create_issue(
     data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
     row = models.Issue(**data)
     row.issue_type = normalized_type
+    row.source_type = ST.normalize(payload.source_type or "人工录入")
     # Derive status: normalize explicit value, then apply type-specific default
     # when status is still the generic "待处理" (schema default or explicit).
     normalized_status = IF.normalize_status(payload.status)
@@ -280,6 +282,8 @@ def update_issue(
         update_data["issue_type"] = IF.normalize_type(update_data["issue_type"])
     if "status" in update_data and update_data["status"]:
         update_data["status"] = IF.normalize_status(update_data["status"])
+    if "source_type" in update_data:
+        update_data["source_type"] = ST.normalize(update_data["source_type"] or "人工录入")
     crud.update_model(row, update_data)
     row.owner_id = _pid_for_name(row.owner or "", db)
     _sync_issue_closed_at(row)

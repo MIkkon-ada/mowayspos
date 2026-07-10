@@ -9,6 +9,7 @@ from .. import crud, models, schemas
 from .subtasks import _sync_parent_task_status
 from ..database import get_db
 from ..domain import issue_flow as IF
+from ..domain import source_type as ST
 from ..domain import submission_result_type as RT
 from ..domain import submission_status as SS
 from ..domain import task_status as TS
@@ -352,7 +353,7 @@ def _write_single_task_report(
                 priority=parsed["priority"],
                 status=IF.default_status_for_type(norm_type),
                 special_project=project,
-                source_type=row.source_type,
+                source_type=ST.normalize(row.source_type or "人工录入"),
                 confirmed_by=operator,
                 source_submission_id=row.id,
                 related_task_id=subtask.task_id,
@@ -634,7 +635,7 @@ def confirm(
     task = None
     if write_task and task_data.get("key_task"):
         task = models.Task(**W.filtered_fields(models.Task, task_data))
-        task.source_type = row.source_type
+        task.source_type = ST.normalize(row.source_type or "人工录入")
         task.submitter = row.submitter
         task.confirmed_by = payload.operator
         task.confirmed_at = now
@@ -772,7 +773,7 @@ def confirm(
                         priority=parsed["priority"],
                         status=IF.default_status_for_type(norm_type),
                         special_project=project,
-                        source_type=row.source_type,
+                        source_type=ST.normalize(row.source_type or "人工录入"),
                         confirmed_by=payload.operator,
                         source_submission_id=row.id,
                         related_task_id=subtask.task_id if subtask else None,
@@ -795,7 +796,7 @@ def confirm(
                     priority=ki.get("priority") or "中",
                     status=IF.default_status_for_type(norm_type),
                     special_project=project,
-                    source_type=row.source_type,
+                    source_type=ST.normalize(row.source_type or "人工录入"),
                     confirmed_by=payload.operator,
                     source_submission_id=row.id,
                 )
@@ -825,7 +826,7 @@ def confirm(
             write_item = str(item.pop("write_issue", "true")).lower() != "false"
             if write_item and item.get("description"):
                 issue = models.Issue(**W.filtered_fields(models.Issue, item))
-                issue.source_type = row.source_type
+                issue.source_type = ST.normalize(row.source_type or "人工录入")
                 issue.confirmed_by = payload.operator
                 issue.source_submission_id = row.id
                 if effective_project_id and not issue.project_id:
@@ -845,7 +846,7 @@ def confirm(
                 priority=ki.get("priority") or "中",
                 status=IF.default_status_for_type(norm_type),
                 special_project=project,
-                source_type=row.source_type,
+                source_type=ST.normalize(row.source_type or "人工录入"),
                 confirmed_by=payload.operator,
                 source_submission_id=row.id,
             )

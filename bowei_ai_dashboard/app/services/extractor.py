@@ -720,6 +720,7 @@ def _build_pending_items(
 
 
 def _normalize_llm_result(llm_data: dict, source_type: str, text: str, submitter: str | None, ceo_name: str = "", user_subtasks: list[dict] | None = None) -> dict:
+    from ..domain import source_type as ST
     from ..domain import issue_flow as IF
     # LLM 提取的 special_project 仅作展示用，不再用关键词猜测兜底
     project = (llm_data.get("special_project") or "").strip()
@@ -812,7 +813,7 @@ def _normalize_llm_result(llm_data: dict, source_type: str, text: str, submitter
             "achievement_links": "",
         },
     }
-    if source_type == "meeting":
+    if ST.is_meeting(source_type):
         result["meeting"] = {
             "title": f"{project or '专项'}会议纪要",
             "date": str(date.today()),
@@ -827,6 +828,7 @@ def _normalize_llm_result(llm_data: dict, source_type: str, text: str, submitter
 
 
 def _rule_extract(source_type: str, text: str, submitter: str | None, ceo_name: str = "") -> dict:
+    from ..domain import source_type as ST
     from ..domain import issue_flow as IF
     clean_text = _clean_text(text)
     project = _pick_project(clean_text)
@@ -907,7 +909,7 @@ def _rule_extract(source_type: str, text: str, submitter: str | None, ceo_name: 
             "achievement_links": "",
         },
     }
-    if source_type == "meeting":
+    if ST.is_meeting(source_type):
         result["meeting"] = {
             "title": f"{project or '专项'}会议纪要",
             "date": str(date.today()),

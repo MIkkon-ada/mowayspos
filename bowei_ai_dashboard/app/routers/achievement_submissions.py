@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
+from ..domain import source_type as ST
 from ..permissions import (
     PROJECT_ROLE_OWNER,
     get_all_project_roles,
@@ -73,7 +74,7 @@ def create_submission(
         scenario=payload.scenario,
         reuse_tag=payload.reuse_tag,
         status=_STATUS_PENDING,
-        source_type="人工补录",
+        source_type=ST.normalize("人工补录"),
     )
     db.add(row)
     db.flush()
@@ -144,7 +145,7 @@ def confirm_submission(
         reuse_tag=row.reuse_tag or "",
         owner=row.submitter or "",
         status="草稿",
-        source_type="人工补录确认",
+        source_type=ST.normalize("人工补录确认"),
         confirmed_by=current_user,
         confirmed_at=now,
         source_achievement_submission_id=row.id,

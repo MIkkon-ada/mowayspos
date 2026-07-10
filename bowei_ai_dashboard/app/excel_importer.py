@@ -6,6 +6,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from . import models
+from .domain import source_type as ST
 from .permissions import ROLE_CEO
 
 NS = {
@@ -287,7 +288,7 @@ def import_tasks_and_planned_achievements(db: Session, reader: XlsxReader) -> tu
             status=normalize_status(item.get("当前状态", "")),
             problem_note=item.get("问题与需协调事项", ""),
             achievement_links="",
-            source_type="Excel导入",
+            source_type=ST.normalize("Excel导入"),
         )
         db.add(task)
         db.flush()
@@ -307,7 +308,7 @@ def import_tasks_and_planned_achievements(db: Session, reader: XlsxReader) -> tu
                     scenario=item.get("阶段", "") or project,
                     reuse_tag=guess_reuse_tag(project, achievement_name),
                     status="计划中",
-                    source_type="Excel预定成果",
+                    source_type=ST.normalize("Excel预定成果"),
                 )
             )
             achievement_count += 1
@@ -375,7 +376,7 @@ def import_monthly_review_issues(db: Session, reader: XlsxReader) -> int:
                     status=normalize_status(item.get("状态", "未启动")),
                     expected_resolve_time=month,
                     special_project=project,
-                    source_type="Excel导入",
+                    source_type=ST.normalize("Excel导入"),
                 )
             )
             count += 1
@@ -391,7 +392,7 @@ def import_monthly_review_issues(db: Session, reader: XlsxReader) -> int:
                     need_decision_by=ceo_name,
                     expected_resolve_time=month,
                     special_project=project,
-                    source_type="Excel导入",
+                    source_type=ST.normalize("Excel导入"),
                 )
             )
             count += 1

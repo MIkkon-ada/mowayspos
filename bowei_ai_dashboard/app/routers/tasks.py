@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
+from ..domain import source_type as ST
 from ..domain import task_status as TS
 from ..permissions import (
     PROJECT_ROLE_COORDINATOR,
@@ -271,6 +272,7 @@ def create_task(
 
     data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
     row = models.Task(**data)
+    row.source_type = ST.normalize(row.source_type or "人工录入")
     row.project_id = effective_project_id
     row.owner_id = _pid_for_name(row.owner or "", db)
     if effective_project_id is not None:
@@ -353,6 +355,8 @@ def update_task(
     update_data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
     if "status" in update_data:
         update_data["status"] = TS.normalize(update_data["status"])
+    if "source_type" in update_data:
+        update_data["source_type"] = ST.normalize(update_data["source_type"] or "人工录入")
     crud.update_model(row, update_data)
     row.owner_id = _pid_for_name(row.owner or "", db)
     if target_project_id is not None:
@@ -606,7 +610,7 @@ def batch_create(
             status=draft.status or "未开始",
             key_achievement=draft.key_achievement,
             completion_standard=draft.completion_standard,
-            source_type="大纲导入",
+            source_type=ST.normalize("大纲导入"),
         )
         db.add(row)
         db.flush()

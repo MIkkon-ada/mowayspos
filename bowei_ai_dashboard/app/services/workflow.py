@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain import source_type as ST
 from ..domain import submission_status as SS
 
 
@@ -71,7 +72,7 @@ def find_planned_achievement(
     project: str,
 ) -> models.Achievement | None:
     query = db.query(models.Achievement).filter(
-        models.Achievement.source_type == "Excel预定成果"
+        models.Achievement.source_type.in_(ST.aliases_for("import"))
     )
     if task_id:
         query = query.filter(models.Achievement.related_task_id == task_id)
@@ -101,7 +102,7 @@ def fulfill_or_create_achievement(
             item.get("status") if item.get("status") and item.get("status") != "计划中"
             else "已形成"
         )
-        planned.source_type = "Excel预定成果 + AI确认"
+        planned.source_type = ST.normalize("Excel预定成果")
         planned.owner = item.get("owner") or planned.owner
         planned.version = item.get("version") or planned.version or "V0.1"
         planned.file_link = item.get("file_link") or planned.file_link
@@ -116,7 +117,7 @@ def fulfill_or_create_achievement(
     achievement.related_task_id = clean.get("related_task_id") or task_id
     achievement.special_project = clean.get("special_project") or project
     achievement.status = clean.get("status") or "补充成果"
-    achievement.source_type = source_type or "AI确认"
+    achievement.source_type = ST.normalize(source_type or "人工录入")
     if submission_id is not None:
         achievement.source_submission_id = submission_id
     db.add(achievement)

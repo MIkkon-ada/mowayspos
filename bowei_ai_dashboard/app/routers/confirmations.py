@@ -305,7 +305,7 @@ def _write_single_task_report(
             task_id = parent_task.id
             row.related_task_id = parent_task.id
             crud.log(
-                db, operator, "confirm task card create subtask", "subtask", new_sub.id,
+                db, operator, "confirmation_card_create_subtask", "subtask", new_sub.id,
                 {}, {"title": new_sub.title, "task_id": parent_task.id, "from_submission": row.id},
                 project_id=effective_project_id,
             )
@@ -531,7 +531,7 @@ def save(
     before = crud.to_dict(row)
     row.human_result_json = json.dumps(payload.human_result, ensure_ascii=False)
     row.confirm_status = SS.S_NEEDS_REVISION
-    crud.log(db, current_user or "管理员", "保存确认修改", "confirmation", row.id, before, payload.human_result)
+    crud.log(db, current_user or "管理员", "confirmation_update", "confirmation", row.id, before, payload.human_result)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
 
@@ -713,7 +713,7 @@ def confirm(
                         task_id = parent_task.id
                         row.related_task_id = parent_task.id
                     crud.log(
-                        db, payload.operator, "项目负责人确认新增关键任务", "subtask", new_sub.id,
+                        db, payload.operator, "confirmation_card_create_subtask", "subtask", new_sub.id,
                         {}, {"title": new_sub.title, "task_id": parent_task.id,
                               "from_submission": row.id},
                         project_id=effective_project_id,
@@ -891,9 +891,9 @@ def confirm(
             "achievement": data.get("achievements", []),
             "issue": data.get("issues", []),
         }
-        crud.log(db, payload.operator, "AI确认写入", "task", task_id, task_before, task_log_after,
+        crud.log(db, payload.operator, "confirmation_ai_write_task", "task", task_id, task_before, task_log_after,
                  project_id=effective_project_id)
-    crud.log(db, payload.operator, "确认写入业务数据", "confirmation", row.id, before, data,
+    crud.log(db, payload.operator, "confirmation_approve", "confirmation", row.id, before, data,
              project_id=effective_project_id)
     if row.submitter:
         from ..services.notify import send as _notify, person_id_for_account
@@ -952,7 +952,7 @@ def confirm_task_card(
         row.confirm_status = SS.S_PENDING_OWNER
 
     crud.log(
-        db, payload.operator, "confirm task card", "confirmation", row.id,
+        db, payload.operator, "confirmation_card_approve", "confirmation", row.id,
         before, {"card_index": card_index, "task_id": task_id},
         project_id=effective_project_id,
     )
@@ -984,7 +984,7 @@ def reject_task_card(
     row.confirm_status = SS.S_PENDING_OWNER
     row.reject_reason = payload.reason
     crud.log(
-        db, payload.operator, "reject task card", "confirmation", row.id,
+        db, payload.operator, "confirmation_card_return", "confirmation", row.id,
         before, {"card_index": card_index, "reason": payload.reason},
         project_id=effective_project_id,
     )
@@ -1017,7 +1017,7 @@ def transfer_task_card_to_coordinator(
     )
     row.confirm_status = SS.S_PENDING_OWNER
     crud.log(
-        db, payload.operator, "transfer task card to coordinator", "confirmation", row.id,
+        db, payload.operator, "confirmation_card_forward_to_coordinator", "confirmation", row.id,
         before, {"card_index": card_index, "note": payload.note or ""},
         project_id=effective_project_id,
     )
@@ -1050,7 +1050,7 @@ def escalate_task_card_to_ceo(
     )
     row.confirm_status = SS.S_PENDING_OWNER
     crud.log(
-        db, payload.operator, "escalate task card to ceo", "confirmation", row.id,
+        db, payload.operator, "confirmation_card_escalate_to_coach", "confirmation", row.id,
         before, {"card_index": card_index, "note": payload.note or ""},
         project_id=effective_project_id,
     )
@@ -1078,7 +1078,7 @@ def reject(
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_RETURNED
     row.reject_reason = payload.reason
-    crud.log(db, payload.operator, "打回提交人补充", "confirmation", row.id, before, {"reason": payload.reason})
+    crud.log(db, payload.operator, "confirmation_return", "confirmation", row.id, before, {"reason": payload.reason})
     if row.submitter:
         from ..services.notify import send as _notify, person_id_for_account
         _notify(db, recipient_id=person_id_for_account(row.submitter, db),
@@ -1119,7 +1119,7 @@ def resubmit(
         row.human_result_json = json.dumps(existing, ensure_ascii=False)
     row.confirm_status = SS.S_PENDING_OWNER
     row.reject_reason = None
-    crud.log(db, operator, "提交人重新提交", "confirmation", row.id, before, {"note": payload.supplement_note or ""})
+    crud.log(db, operator, "confirmation_resubmit", "confirmation", row.id, before, {"note": payload.supplement_note or ""})
     if project_id:
         from ..services.notify import send as _notify, project_owner_ids, person_id_for_account
         submitter_id = person_id_for_account(operator, db)
@@ -1150,7 +1150,7 @@ def withdraw(
     W.require_submission_status(row, _WITHDRAWABLE_STATUSES)
     before = crud.to_dict(row)
     row.confirm_status = SS.S_WITHDRAWN
-    crud.log(db, current_user, "提交人撤回", "confirmation", row.id, before, {})
+    crud.log(db, current_user, "confirmation_withdraw", "confirmation", row.id, before, {})
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
 
@@ -1174,7 +1174,7 @@ def reject_final(
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_PERMANENTLY_REJECTED
     row.reject_reason = payload.reason
-    crud.log(db, payload.operator, "标记不入库", "confirmation", row.id, before, {"reason": payload.reason})
+    crud.log(db, payload.operator, "confirmation_mark_not_imported", "confirmation", row.id, before, {"reason": payload.reason})
     if row.submitter:
         from ..services.notify import send as _notify, person_id_for_account
         _notify(db, recipient_id=person_id_for_account(row.submitter, db),
@@ -1208,7 +1208,7 @@ def transfer_coordinator(
     row.confirm_status = SS.S_WAITING_COORDINATOR
     if payload.note:
         row.reject_reason = payload.note
-    crud.log(db, payload.operator, "转交统筹人给意见", "confirmation", row.id, before, {"note": payload.note})
+    crud.log(db, payload.operator, "confirmation_forward_to_coordinator", "confirmation", row.id, before, {"note": payload.note})
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
 
@@ -1232,7 +1232,7 @@ def coordinator_feedback(
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_COORDINATOR_GIVEN
     row.coordinator_note = payload.note or ""
-    crud.log(db, payload.operator, "统筹人反馈意见", "confirmation", row.id, before, {"note": payload.note})
+    crud.log(db, payload.operator, "confirmation_coordinator_feedback", "confirmation", row.id, before, {"note": payload.note})
     from ..services.notify import send as _notify, project_owner_ids, person_id_for_account
     caller_id = person_id_for_account(current_user or payload.operator, db)
     for owner_id in project_owner_ids(project_id, db):
@@ -1266,7 +1266,7 @@ def escalate_ceo(
     row.confirm_status = SS.S_WAITING_CEO
     if payload.note:
         row.reject_reason = payload.note
-    crud.log(db, payload.operator, "上报企业教练决策", "confirmation", row.id, before, {"note": payload.note})
+    crud.log(db, payload.operator, "confirmation_escalate_to_coach", "confirmation", row.id, before, {"note": payload.note})
     from ..services.notify import send as _notify, project_coach_person_ids, person_name_for_account, person_id_for_account
     caller_name = person_name_for_account(current_user or payload.operator, db)
     caller_id = person_id_for_account(current_user or payload.operator, db)
@@ -1300,7 +1300,7 @@ def ceo_decide(
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_CEO_DECIDED
     row.ceo_note = payload.note or ""
-    crud.log(db, payload.operator, "企业教练批示", "confirmation", row.id, before, {"note": payload.note})
+    crud.log(db, payload.operator, "confirmation_coach_decision", "confirmation", row.id, before, {"note": payload.note})
     from ..services.notify import send as _notify, project_owner_ids, person_id_for_account
     caller_id = person_id_for_account(current_user or payload.operator, db)
     for owner_id in project_owner_ids(project_id, db):
@@ -1331,7 +1331,7 @@ def mark_unrecognized(
     before = crud.to_dict(row)
     row.confirm_status = SS.S_NEEDS_REVISION
     row.reject_reason = payload.reason
-    crud.log(db, payload.operator, "标记需人工处理", "confirmation", row.id, before, {"reason": payload.reason})
+    crud.log(db, payload.operator, "confirmation_mark_unrecognized", "confirmation", row.id, before, {"reason": payload.reason})
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
 
@@ -1358,7 +1358,7 @@ def assign(
         data["task"]["owner"] = payload.assignee
     row.human_result_json = json.dumps(data, ensure_ascii=False)
     row.confirm_status = SS.S_PENDING_OWNER
-    crud.log(db, payload.operator, f"指定责任人：{payload.assignee}", "confirmation", row.id, before, data)
+    crud.log(db, payload.operator, "confirmation_assign_owner", "confirmation", row.id, before, data)
     if payload.assignee:
         from ..services.notify import send as _notify, person_name_for_account, person_id_for_name, person_id_for_account
         caller_name = person_name_for_account(current_user or payload.operator, db)

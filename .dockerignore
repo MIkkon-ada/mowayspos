@@ -1,0 +1,13 @@
+**/node_modules
+**/.venv
+**/__pycache__
+**/.git
+**/*.pyc
+**/.env
+**/*.db
+**/dist
+_backup_before_*
+docs/
+Reference document/
+*.bat
+*.code-workspace

@@ -1,0 +1,99 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# Secrets / config
+.env
+.env.*
+!.env.example
+!.env.production.example
+passwords.json
+llm_configs.json
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.db-journal
+*.sqlite-journal
+*.backup*.db
+*.db.bak*
+
+# Logs
+*.log
+*.err
+*.txt
+server.err.log
+server.out.log
+uvicorn_err.txt
+uvicorn_run.txt
+pyver.err.log
+pyver.out.log
+import.err.log
+import.out.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Node / frontend
+node_modules/
+dist/
+build/
+
+# Test / report artifacts
+playwright-report/
+test-results/
+coverage/
+.pytest_cache/
+
+# Local screenshots / temporary images
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+
+# Temporary / backup files
+*.bak
+*.old
+*.tmp
+_tmp_*.docx
+*.corrupt.*
+*.before_*
+*.ledger_*
+*.stable.*
+*_backup*.db
+backup/
+unpacked_*/
+_backup_before_*/
+Reference document/
+project-init-preview.html
+bowei_ai_dashboard/_audit_temp/
+
+# Local archive / generated reports
+_local_archive/
+migration_project_members_report.txt
+migration_project_members_execute_report.txt
+
+# Local sandbox directories
+pw-qa/
+pw-qa2/
+pw-qa3/
+
+# Claude Code config
+.claude/
+
+.worktrees/

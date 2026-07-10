@@ -1,0 +1,52 @@
+# ===== 生产环境 Docker Compose =====
+# 在云服务器上执行: docker compose -f docker-compose.prod.yml up -d
+
+services:
+  # ========== PostgreSQL 数据库 ==========
+  postgres:
+    image: postgres:16-alpine
+    container_name: bowei-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: bowei_ai_dashboard
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}   # 生产环境请修改密码！
+    ports:
+      - "127.0.0.1:5432:5432"    # 仅本地访问，不暴露到公网
+    volumes:
+      - bowei_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bowei_ai_dashboard"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ========== 后端 FastAPI ==========
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: bowei-backend
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres}@postgres:5432/bowei_ai_dashboard
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8008:8008"    # 仅本地访问
+
+  # ========== 前端 Nginx ==========
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: bowei-frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "80:80"                   # 对外暴露 80 端口
+
+volumes:
+  bowei_postgres_data:

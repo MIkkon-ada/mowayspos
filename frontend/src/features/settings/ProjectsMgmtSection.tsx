@@ -78,6 +78,14 @@ const ACTION_REMINDERS: Record<string, string> = {
   archived: '项目已归档，可查看项目档案和历史记录。',
 }
 
+function getReminderToneClass(status: string): string {
+  if (status === 'pending_review') return 'border-amber-200 bg-amber-50 text-amber-900'
+  if (status === 'returned') return 'border-orange-200 bg-orange-50 text-orange-900'
+  if (status === 'active') return 'border-emerald-200 bg-emerald-50 text-emerald-900'
+  if (status === 'archived') return 'border-slate-200 bg-slate-50 text-slate-700'
+  return 'border-sky-200 bg-sky-50 text-sky-900'
+}
+
 const IMPORT_COL_MAP: Record<string, keyof BatchImportRow> = {
   项目: 'project_name',
   阶段: 'project_name',
@@ -691,8 +699,8 @@ export function ProjectsMgmtSection() {
   const menuProject = menuState ? projects.find((p) => p.id === menuState.pid) ?? null : null
 
   return (
-    <div className="projects-lifecycle-workbench -m-3 bg-slate-50/80 px-5 py-5">
-      <header className="projects-lifecycle-header mx-auto flex max-w-[1440px] flex-col gap-4 pb-5 md:flex-row md:items-start md:justify-between">
+    <div className="projects-lifecycle-workbench projects-lifecycle-page-shell -m-3 bg-[#F8FAFC] px-6 py-5">
+      <header className="projects-lifecycle-header mx-auto flex max-w-[1440px] flex-col gap-4 pb-4 md:flex-row md:items-start md:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">项目管理</h1>
           <p className="mt-1 text-sm text-slate-500">创建与管理所有项目，配置项目人员，推进立项流程</p>
@@ -700,27 +708,27 @@ export function ProjectsMgmtSection() {
         <div className="flex items-center gap-2">
           {isFullAdmin && (
             <button type="button" onClick={() => setImportOpen(true)}
-              className="cursor-pointer rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm hover:bg-slate-50">
+              className="cursor-pointer rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition-colors hover:bg-slate-100">
               批量导入
             </button>
           )}
           {isFullAdmin && (
             <button type="button" onClick={() => setShowNew(true)}
-              className="cursor-pointer rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-sky-700">
+              className="cursor-pointer rounded-lg bg-[#2170e4] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#1b5fc7]">
               新建项目
             </button>
           )}
         </div>
       </header>
 
-      <section className="projects-lifecycle-queue-tabs mx-auto flex max-w-[1440px] flex-col gap-3 rounded-xl border border-slate-200 bg-white p-2 shadow-sm xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex min-w-0 overflow-x-auto">
+      <section className="projects-lifecycle-queue-tabs mx-auto flex max-w-[1440px] flex-col gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm xl:flex-row xl:items-center xl:justify-between">
+          <div className="projects-lifecycle-tabs-strip flex min-w-0 overflow-x-auto">
             {STATUS_TABS.map((tab) => {
               const count = tabCounts[tab.key] ?? 0
               const isActive = activeTab === tab.key
               return (
                 <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
-                  className={`cursor-pointer flex-shrink-0 border-b-2 px-3 py-1.5 text-left text-xs font-semibold transition-colors ${
+                  className={`projects-lifecycle-tab-compact cursor-pointer flex-shrink-0 border-b-2 px-3 py-1 text-left text-xs font-semibold transition-colors ${
                     isActive ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-600 hover:text-sky-700'
                   }`}>
                   <span className="inline-flex items-center gap-1.5">
@@ -738,7 +746,7 @@ export function ProjectsMgmtSection() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="搜索项目名称..."
-            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-sky-400 focus:bg-white xl:w-72"
+            className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-sky-400 focus:bg-white xl:w-72"
           />
       </section>
 
@@ -964,19 +972,17 @@ function LifecycleCard({
   return (
     <div
       onClick={onSelect}
-      className={`projects-lifecycle-card relative cursor-pointer overflow-hidden rounded-xl border bg-white px-4 py-3 transition-all ${isSelected ? 'border-sky-500 shadow-sm' : 'border-slate-200 hover:border-slate-300 hover:shadow-sm'}`}
-      style={{ boxShadow: '0 1px 3px rgba(15,23,42,0.04)' }}
+      className={`projects-lifecycle-card projects-lifecycle-queue-card relative cursor-pointer overflow-hidden rounded-xl border bg-white px-4 py-3 transition-all ${isSelected ? 'border-2 border-[#2170e4] shadow-sm' : 'border-slate-200 hover:border-slate-300 hover:shadow-sm'}`}
+      style={{ boxShadow: '0 1px 4px rgba(15,23,42,0.05)' }}
     >
       <div className={`absolute left-0 top-0 bottom-0 w-1 ${isSelected ? 'bg-sky-600' : 'bg-transparent'}`} />
-      <div className="flex items-start justify-between gap-3">
+      <div className="projects-lifecycle-card-title-row flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-sm font-bold text-slate-800">{project.name}</h3>
             <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusBadge.className}`}>{statusBadge.label}</span>
             {projectType && <span className="flex-shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-500">{projectType}</span>}
           </div>
-          <p className="mt-1 text-[11px] font-semibold text-slate-400">当前阶段</p>
-          <p className="mt-0.5 text-xs leading-relaxed text-slate-600">{stageDesc}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
           {showReturn && (
@@ -999,19 +1005,26 @@ function LifecycleCard({
         </div>
       </div>
 
-      <div className="mt-2 grid gap-1 rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2 text-[11px] text-slate-600 sm:grid-cols-2">
+      <p className="projects-lifecycle-card-stage-row mt-2 flex items-start gap-1.5 text-xs leading-relaxed text-slate-600">
+        <span className="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#2170e4]" />
+        <span>{stageDesc}</span>
+      </p>
+
+      <div className="projects-lifecycle-card-people-line mt-2 grid gap-x-3 gap-y-1 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-[11px] text-slate-600 sm:grid-cols-2">
         <span>企业教练：{teamLine.ceoText}</span>
         <span>项目负责人：{teamLine.ownerText}</span>
         <span>统筹人：{teamLine.coordinatorText}</span>
         <span>成员：{teamLine.memberText}</span>
       </div>
 
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+      <div className="projects-lifecycle-card-footer-row mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-slate-100 pt-2 text-[11px] text-slate-500">
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
         <span>项目周期：{formatPlanTimeShort(project.start_date, project.end_date)}</span>
         <span>
           推进表雏形：
           <span className={summary.taskTotal === 0 ? 'text-orange-500' : 'text-slate-600'}>{draftText}</span>
         </span>
+        </div>
       </div>
     </div>
   )
@@ -1119,40 +1132,40 @@ function DetailPanel({
   const clientName = project.client_name?.trim() || '内部项目 / 未填写'
 
   const infoBlock = (label: string, value?: string) => (
-    <div className="rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2">
+    <div className="min-w-0">
       <div className="text-[11px] font-semibold text-slate-400">{label}</div>
-      <div className="mt-1 text-xs leading-relaxed text-slate-700">{value?.trim() || '未填写'}</div>
+      <div className="mt-1 truncate text-xs font-semibold leading-relaxed text-slate-700" title={value?.trim() || '未填写'}>{value?.trim() || '未填写'}</div>
     </div>
   )
 
   return (
-    <div className="projects-lifecycle-action-panel-card flex max-h-[calc(100vh-170px)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-200 bg-white px-5 py-4">
+    <div className="projects-lifecycle-action-panel-card flex max-h-[calc(100vh-170px)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="projects-lifecycle-panel-header border-b border-slate-200 bg-white px-5 py-4">
         <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+          <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="truncate text-lg font-bold text-slate-900">{project.name}</h2>
-            <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusBadge.className}`}>{statusBadge.label}</span>
+              <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusBadge.className}`}>{statusBadge.label}</span>
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-500">{projectType}</span>
-          </div>
+            </div>
             <p className="mt-2 text-xs leading-relaxed text-slate-500">当前阶段说明：{stageDesc}</p>
-        </div>
-        <button type="button" onClick={onClose}
-          className="flex-shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
-          <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-        </button>
+          </div>
+          <button type="button" onClick={onClose}
+            className="flex-shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+            <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
         </div>
       </div>
 
-      <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3">
-        <section className="rounded-xl border border-sky-100 bg-sky-50/70 px-4 py-3">
-          <div className="text-xs font-bold text-sky-800">操作提醒</div>
-          <p className="mt-1 text-xs leading-relaxed text-slate-700">{actionReminder}</p>
+      <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+        <section className={`projects-lifecycle-panel-reminder rounded-lg border px-4 py-3 ${getReminderToneClass(status)}`}>
+          <div className="text-xs font-bold">操作提醒</div>
+          <p className="mt-1 text-xs leading-relaxed opacity-85">{actionReminder}</p>
         </section>
 
-        <section>
+        <section className="projects-lifecycle-panel-section">
           <p className="mb-2 text-xs font-bold text-slate-500">项目核心信息</p>
-          <div className="grid grid-cols-1 gap-2">
+          <div className="grid grid-cols-2 gap-x-5 gap-y-3 rounded-lg border border-slate-100 bg-slate-50/60 px-4 py-3">
             {infoBlock('项目周期', formatPlanTimeShort(project.start_date, project.end_date))}
             {infoBlock('项目完成准则 / 验收标准', project.objectives)}
             {infoBlock('客户名称', clientName)}
@@ -1160,9 +1173,9 @@ function DetailPanel({
           </div>
         </section>
 
-        <section>
+        <section className="projects-lifecycle-panel-section">
           <p className="mb-2 text-xs font-bold text-slate-500">项目角色</p>
-          <div className="flex flex-wrap gap-2">
+          <div className="projects-lifecycle-panel-pills flex flex-wrap gap-2">
             {[
               `企业教练：${teamLine.ceoText}`,
               `项目负责人：${teamLine.ownerText}`,
@@ -1183,7 +1196,7 @@ function DetailPanel({
               { label: '重点工作数量', value: String(summary.taskCount), ready: summary.taskCount > 0 },
               { label: '关键任务数量', value: String(summary.subtaskCount), ready: summary.subtaskCount > 0 },
             ].map((item) => (
-              <div key={item.label} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2 text-xs">
+              <div key={item.label} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-xs">
                 <span className="font-medium text-slate-600">{item.label}</span>
                 <span className={item.ready ? 'font-semibold text-emerald-600' : 'font-semibold text-orange-600'}>{item.value}</span>
               </div>
@@ -1192,7 +1205,7 @@ function DetailPanel({
         </section>
       </div>
 
-      <div className="border-t border-slate-200 px-4 py-3">
+      <div className="border-t border-slate-200 px-5 py-4">
         <p className="mb-2 text-xs font-bold text-slate-500">下一步操作</p>
         <div className="space-y-2">
           {status === 'draft' && canEditDraft && (

@@ -13,6 +13,7 @@ def test_projects_management_has_lifecycle_workbench_structure():
 
     for expected in [
         "projects-lifecycle-workbench",
+        "projects-lifecycle-page-shell",
         "projects-lifecycle-header",
         "projects-lifecycle-queue-tabs",
         "projects-lifecycle-main-grid",
@@ -26,6 +27,7 @@ def test_projects_management_has_lifecycle_workbench_structure():
 
     assert "max-w-[1440px]" in source
     assert "lg:grid-cols-[minmax(0,1.5fr)_minmax(380px,1fr)]" in source
+    assert "bg-[#F8FAFC]" in source or "bg-slate-50" in source
     assert "projects-lifecycle-header rounded-2xl" not in source, \
         "页面标题区不应做成巨大白色卡片"
     assert "projects-lifecycle-header mx-auto flex" in source
@@ -52,9 +54,12 @@ def test_projects_management_status_tabs_are_lifecycle_queue_tabs():
         assert expected in source
 
     assert "projects-lifecycle-queue-tabs mx-auto flex" in source
+    assert "projects-lifecycle-tabs-strip" in source
+    assert "projects-lifecycle-tab-compact" in source
     assert "border-b-2" in source, "当前 tab 应使用原型式底部蓝色线或轻量高亮"
     assert "rounded-xl border px-3 py-2 text-left" not in source, \
         "状态 tabs 不应做成一排大统计卡片"
+    assert "py-1" in source or "py-1.5" in source, "tabs 高度应接近原型紧凑白栏"
 
 
 def test_project_cards_show_next_actions_and_key_lifecycle_info():
@@ -79,10 +84,16 @@ def test_project_cards_show_next_actions_and_key_lifecycle_info():
         assert expected in source
 
     assert "projects-lifecycle-card" in source
+    assert "projects-lifecycle-queue-card" in source
+    assert "projects-lifecycle-card-title-row" in source
+    assert "projects-lifecycle-card-stage-row" in source
+    assert "projects-lifecycle-card-footer-row" in source
+    assert "projects-lifecycle-card-people-line" in source
     assert "absolute left-0 top-0 bottom-0 w-1" in source, \
         "选中卡片应有明显左侧色条"
     assert "px-4 py-3" in source or "p-4" in source, \
         "项目队列卡片应保持紧凑"
+    assert "rounded-xl border bg-white" in source
 
 
 def test_project_action_panel_contains_processing_sections():
@@ -106,6 +117,11 @@ def test_project_action_panel_contains_processing_sections():
         assert expected in source
 
     assert "projects-lifecycle-action-panel-card sticky" in source or "lg:sticky" in source
+    assert "projects-lifecycle-panel-header" in source
+    assert "projects-lifecycle-panel-reminder" in source
+    assert "getReminderToneClass" in source
+    assert "projects-lifecycle-panel-section" in source
+    assert "projects-lifecycle-panel-pills" in source
     assert "bg-error-container" not in source, "不要照搬原型里的错误色大提醒块"
 
 

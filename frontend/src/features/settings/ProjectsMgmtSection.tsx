@@ -404,6 +404,18 @@ export function ProjectsMgmtSection() {
     return list
   }, [roleFilteredProjects, activeTab, searchQuery])
 
+  // 默认选中当前筛选结果的第一个项目；只有筛选结果为空时显示项目空状态
+  useEffect(() => {
+    if (filteredProjects.length === 0) {
+      if (selectedProjectId !== null) setSelectedProjectId(null)
+      return
+    }
+    const selectedStillVisible = filteredProjects.some((project) => project.id === selectedProjectId)
+    if (selectedProjectId === null || !selectedStillVisible) {
+      setSelectedProjectId(filteredProjects[0].id)
+    }
+  }, [filteredProjects, selectedProjectId])
+
   const selectedProject = selectedProjectId != null
     ? projects.find((p) => p.id === selectedProjectId) ?? null
     : null
@@ -679,8 +691,8 @@ export function ProjectsMgmtSection() {
   const menuProject = menuState ? projects.find((p) => p.id === menuState.pid) ?? null : null
 
   return (
-    <div className="projects-lifecycle-workbench -m-3 space-y-5 bg-slate-50/80 p-5">
-      <header className="projects-lifecycle-header flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm md:flex-row md:items-start md:justify-between">
+    <div className="projects-lifecycle-workbench -m-3 bg-slate-50/80 px-5 py-5">
+      <header className="projects-lifecycle-header mx-auto flex max-w-[1440px] flex-col gap-4 pb-5 md:flex-row md:items-start md:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">项目管理</h1>
           <p className="mt-1 text-sm text-slate-500">创建与管理所有项目，配置项目人员，推进立项流程</p>
@@ -701,20 +713,19 @@ export function ProjectsMgmtSection() {
         </div>
       </header>
 
-      <section className="projects-lifecycle-queue-tabs rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
+      <section className="projects-lifecycle-queue-tabs mx-auto flex max-w-[1440px] flex-col gap-3 rounded-xl border border-slate-200 bg-white p-2 shadow-sm xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 overflow-x-auto">
             {STATUS_TABS.map((tab) => {
               const count = tabCounts[tab.key] ?? 0
               const isActive = activeTab === tab.key
               return (
                 <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
-                  className={`cursor-pointer flex-shrink-0 rounded-xl border px-3 py-2 text-left text-xs font-semibold transition-colors ${
-                    isActive ? 'border-sky-500 bg-sky-50 text-sky-700 shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  className={`cursor-pointer flex-shrink-0 border-b-2 px-3 py-1.5 text-left text-xs font-semibold transition-colors ${
+                    isActive ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-600 hover:text-sky-700'
                   }`}>
                   <span className="inline-flex items-center gap-1.5">
                     {tab.label}
-                    <span className={`rounded-full px-1.5 text-[10px] font-bold ${isActive ? 'bg-sky-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                    <span className={`rounded-full px-1.5 text-[10px] font-bold ${isActive ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'}`}>
                       {count}
                     </span>
                   </span>
@@ -729,10 +740,9 @@ export function ProjectsMgmtSection() {
             placeholder="搜索项目名称..."
             className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-sky-400 focus:bg-white xl:w-72"
           />
-        </div>
       </section>
 
-      <div className="projects-lifecycle-main-grid grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.55fr)_minmax(360px,0.95fr)]">
+      <div className="projects-lifecycle-main-grid mx-auto mt-5 grid max-w-[1440px] grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(380px,1fr)]">
         <section className="projects-lifecycle-project-queue min-w-0 space-y-3">
           {filteredProjects.length === 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-white py-12 text-center text-sm text-slate-400 shadow-sm">暂无项目</div>
@@ -811,9 +821,14 @@ export function ProjectsMgmtSection() {
               onReturn={() => void handleReturn(selectedProject.id, selectedProject.name)}
               onWorkProgress={() => navigate(`/project/${selectedProject.id}/tasks`)}
             />
-          ) : (
+          ) : filteredProjects.length === 0 ? (
+            // 只有筛选结果为空时显示项目空状态
             <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center text-sm text-slate-400 shadow-sm">
-              选择左侧项目查看详情和下一步操作。
+              暂无符合条件的项目
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-slate-200 bg-white px-6 py-16 text-center text-sm text-slate-400 shadow-sm">
+              正在加载项目处理面板...
             </div>
           )}
         </aside>
@@ -949,9 +964,10 @@ function LifecycleCard({
   return (
     <div
       onClick={onSelect}
-      className={`projects-lifecycle-card cursor-pointer rounded-2xl border bg-white px-4 py-4 transition-all ${isSelected ? 'border-sky-400 bg-sky-50/60 shadow-sm' : 'border-slate-200 hover:border-slate-300 hover:shadow-sm'}`}
+      className={`projects-lifecycle-card relative cursor-pointer overflow-hidden rounded-xl border bg-white px-4 py-3 transition-all ${isSelected ? 'border-sky-500 shadow-sm' : 'border-slate-200 hover:border-slate-300 hover:shadow-sm'}`}
       style={{ boxShadow: '0 1px 3px rgba(15,23,42,0.04)' }}
     >
+      <div className={`absolute left-0 top-0 bottom-0 w-1 ${isSelected ? 'bg-sky-600' : 'bg-transparent'}`} />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -983,14 +999,14 @@ function LifecycleCard({
         </div>
       </div>
 
-      <div className="mt-3 grid gap-1.5 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2 text-[11px] text-slate-600 sm:grid-cols-2">
+      <div className="mt-2 grid gap-1 rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2 text-[11px] text-slate-600 sm:grid-cols-2">
         <span>企业教练：{teamLine.ceoText}</span>
         <span>项目负责人：{teamLine.ownerText}</span>
         <span>统筹人：{teamLine.coordinatorText}</span>
         <span>成员：{teamLine.memberText}</span>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
         <span>项目周期：{formatPlanTimeShort(project.start_date, project.end_date)}</span>
         <span>
           推进表雏形：

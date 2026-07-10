@@ -1364,6 +1364,44 @@ function handleFormSave(payload: TaskPayload) {
                     )}
                   </div>
 
+                  {/* 进展提交表单（progressOpen 控制） */}
+                  {progressOpen && (
+                    <div className="border-t px-4 py-3 space-y-3 flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
+                      <p className="text-xs font-bold text-slate-500">更新工作进展</p>
+                      <textarea
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:border-blue-400"
+                        rows={3}
+                        placeholder="描述本次完成了什么、下一步计划、遇到的问题..."
+                        value={progressText}
+                        onChange={(e) => setProgressText(e.target.value)}
+                        disabled={progressSubmitState !== 'idle'}
+                      />
+                      <div className="flex items-center justify-between">
+                        <button
+                          onClick={() => { setProgressOpen(false); setProgressText(''); setProgressSubmitState('idle') }}
+                          className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-500 text-xs font-semibold hover:bg-slate-50"
+                          disabled={progressSubmitState === 'submitting'}
+                        >
+                          取消
+                        </button>
+                        {progressSubmitState === 'done' ? (
+                          <p className="text-xs font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg">
+                            已提交至 AI 确认中心，负责人确认后将显示在工作推进表。
+                          </p>
+                        ) : (
+                          <button
+                            onClick={handleProgressSubmit}
+                            disabled={!progressText.trim() || progressSubmitState === 'submitting'}
+                            className="px-4 py-1.5 rounded-lg text-white text-xs font-bold disabled:opacity-50"
+                            style={{ background: 'linear-gradient(135deg,#0284C7,#0EA5E9)' }}
+                          >
+                            {progressSubmitState === 'submitting' ? '提交中…' : '提交进展'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {/* 操作栏 */}
                   <div className="border-t px-4 py-3 flex gap-2 flex-wrap flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
                     <button onClick={() => { setFormTask(selectedTask); setFormOpen(true) }} disabled={selectedTaskArchived} title={selectedTaskArchived ? '项目已归档，不可写入。' : undefined} className="px-3 py-1.5 rounded-lg text-white text-xs font-bold disabled:opacity-50" style={{ background: '#0284C7' }}>编辑</button>

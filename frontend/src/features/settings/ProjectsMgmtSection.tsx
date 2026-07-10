@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useProject } from '../../context/ProjectContext'
 import {
   getProjects,
@@ -49,23 +50,32 @@ const EMPTY_NEW_FORM: NewProjectForm = {
   end_date: '',
 }
 
-const STATUS_TABS: { key: string; label: string }[] = [
+const STATUS_TABS: { key: string; label: string; queueLabel?: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'draft', label: '草稿' },
-  { key: 'dispatched', label: '已派发' },
-  { key: 'pending_review', label: '待审核' },
-  { key: 'returned', label: '已退回' },
-  { key: 'active', label: '进行中' },
-  { key: 'archived', label: '已归档' },
+  { key: 'dispatched', label: '已派发', queueLabel: '待负责人完善' },
+  { key: 'pending_review', label: '待审核', queueLabel: '待企业教练审核' },
+  { key: 'returned', label: '已退回', queueLabel: '待负责人修改' },
+  { key: 'active', label: '进行中', queueLabel: '执行中' },
+  { key: 'archived', label: '已归档', queueLabel: '归档档案' },
 ]
 
 const STAGE_DESCRIPTIONS: Record<string, string> = {
-  draft: '项目草稿，等待配置企业教练、负责人和初始成员。',
+  draft: '项目尚未下发，可继续编辑项目基础信息和角色配置。',
   dispatched: '项目已下发，等待负责人完善立项信息和推进表草案。',
   pending_review: '负责人已提交，等待企业教练审核立项和推进表草案。',
-  returned: '企业教练已退回，等待负责人修改立项信息和推进表草案。',
-  active: '项目已确立，工作推进表初版已形成，正在执行。',
-  archived: '项目已归档，仅可查看。',
+  returned: '企业教练已退回，请负责人修改后重新提交。',
+  active: '项目已进入执行阶段，可进入工作推进表查看推进情况。',
+  archived: '项目已归档，可查看归档资料和复盘结果。',
+}
+
+const ACTION_REMINDERS: Record<string, string> = {
+  draft: '项目尚未下发，可继续编辑项目资料与角色配置。',
+  dispatched: '项目已下发，等待负责人完善立项信息和工作推进表雏形。',
+  pending_review: '负责人已提交立项信息和工作推进表雏形，请企业教练审核项目完成准则、重点工作和关键任务安排。',
+  returned: '项目已被企业教练退回，请负责人根据意见修改后重新提交。',
+  active: '项目已进入执行阶段，可进入工作推进表查看重点工作、关键任务和进展记录。',
+  archived: '项目已归档，可查看项目档案和历史记录。',
 }
 
 const IMPORT_COL_MAP: Record<string, keyof BatchImportRow> = {
@@ -213,7 +223,7 @@ function buildDraftRows(tasks: TaskItem[], subtasks: SubTaskWithParent[], projec
   return rows
 }
 
-type MainAction = { label: string; type: 'dispatch' | 'ownerSubmit' | 'approve' | 'viewDetail' }
+type MainAction = { label: string; type: 'edit' | 'dispatch' | 'ownerSubmit' | 'approve' | 'workProgress' | 'viewDetail' }
 
 function getMainAction(
   status: string,
@@ -225,22 +235,26 @@ function getMainAction(
   switch (status) {
     case 'draft':
       return (isSuperAdmin || isCompanyCeo)
-        ? { label: '下发项目', type: 'dispatch' }
-        : { label: '查看档案', type: 'viewDetail' }
+        ? { label: '编辑项目', type: 'edit' }
+        : { label: '查看详情', type: 'viewDetail' }
     case 'dispatched':
       return isRealOwner
         ? { label: '完善立项信息', type: 'ownerSubmit' }
-        : { label: '查看档案', type: 'viewDetail' }
+        : { label: '查看详情', type: 'viewDetail' }
     case 'pending_review':
       return (isRealProjectCeo || isSuperAdmin)
         ? { label: '审核立项', type: 'approve' }
-        : { label: '查看档案', type: 'viewDetail' }
+        : { label: '查看审核材料', type: 'viewDetail' }
     case 'returned':
       return isRealOwner
         ? { label: '修改立项信息', type: 'ownerSubmit' }
-        : { label: '查看档案', type: 'viewDetail' }
+        : { label: '查看详情', type: 'viewDetail' }
+    case 'active':
+      return { label: '进入工作推进表', type: 'workProgress' }
+    case 'archived':
+      return { label: '查看归档档案', type: 'viewDetail' }
     default:
-      return { label: '查看档案', type: 'viewDetail' }
+      return { label: '查看详情', type: 'viewDetail' }
   }
 }
 
@@ -248,6 +262,7 @@ function getMainAction(
 
 export function ProjectsMgmtSection() {
   const { reloadProjects, currentUser, globalUserRoles } = useProject()
+  const navigate = useNavigate()
   const [projects, setProjects] = useState<Project[]>([])
   const [people, setPeople] = useState<Person[]>([])
   const [loading, setLoading] = useState(true)
@@ -664,60 +679,63 @@ export function ProjectsMgmtSection() {
   const menuProject = menuState ? projects.find((p) => p.id === menuState.pid) ?? null : null
 
   return (
-    <div className="space-y-3">
-      {/* 标题栏 */}
-      <div className="flex items-center justify-between gap-3">
-        <SectionTitle inline>{isOwnerView ? '我负责的项目' : isProjectCeoView ? '我企业教练的项目' : '项目管理'}</SectionTitle>
+    <div className="projects-lifecycle-workbench -m-3 space-y-5 bg-slate-50/80 p-5">
+      <header className="projects-lifecycle-header flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm md:flex-row md:items-start md:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">项目管理</h1>
+          <p className="mt-1 text-sm text-slate-500">创建与管理所有项目，配置项目人员，推进立项流程</p>
+        </div>
         <div className="flex items-center gap-2">
           {isFullAdmin && (
             <button type="button" onClick={() => setImportOpen(true)}
-              className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-600 hover:bg-indigo-100">
+              className="cursor-pointer rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm hover:bg-slate-50">
               批量导入
             </button>
           )}
           {isFullAdmin && (
             <button type="button" onClick={() => setShowNew(true)}
-              className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
-              style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}>
+              className="cursor-pointer rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-sky-700">
               新建项目
             </button>
           )}
         </div>
-      </div>
+      </header>
 
-      {/* 状态 tabs */}
-      <div className="flex items-center gap-1 overflow-x-auto pb-1">
-        {STATUS_TABS.map((tab) => {
-          const count = tabCounts[tab.key] ?? 0
-          const isActive = activeTab === tab.key
-          return (
-            <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
-              className={`cursor-pointer flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                isActive ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
-              }`}>
-              {tab.label}
-              <span className={`rounded-full px-1.5 text-[10px] font-bold ${isActive ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                {count}
-              </span>
-            </button>
-          )
-        })}
-      </div>
+      <section className="projects-lifecycle-queue-tabs rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
+            {STATUS_TABS.map((tab) => {
+              const count = tabCounts[tab.key] ?? 0
+              const isActive = activeTab === tab.key
+              return (
+                <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
+                  className={`cursor-pointer flex-shrink-0 rounded-xl border px-3 py-2 text-left text-xs font-semibold transition-colors ${
+                    isActive ? 'border-sky-500 bg-sky-50 text-sky-700 shadow-sm' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  }`}>
+                  <span className="inline-flex items-center gap-1.5">
+                    {tab.label}
+                    <span className={`rounded-full px-1.5 text-[10px] font-bold ${isActive ? 'bg-sky-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                      {count}
+                    </span>
+                  </span>
+                  {tab.queueLabel && <span className="mt-0.5 block text-[10px] font-medium text-slate-400">{tab.queueLabel}</span>}
+                </button>
+              )
+            })}
+          </div>
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="搜索项目名称..."
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-sky-400 focus:bg-white xl:w-72"
+          />
+        </div>
+      </section>
 
-      {/* 搜索 */}
-      <input
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
-        placeholder="搜索项目名称…"
-        className="w-full max-w-sm rounded-lg border border-slate-200 px-3 py-1.5 text-sm outline-none focus:border-sky-400"
-      />
-
-      {/* 两栏布局：左列表 + 右详情 */}
-      <div className="flex gap-4 items-start">
-        {/* 左侧项目列表 */}
-        <div className="flex-1 min-w-0 space-y-2">
+      <div className="projects-lifecycle-main-grid grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.55fr)_minmax(360px,0.95fr)]">
+        <section className="projects-lifecycle-project-queue min-w-0 space-y-3">
           {filteredProjects.length === 0 ? (
-            <div className="rounded-xl border border-slate-100 bg-white py-10 text-center text-sm text-slate-400">暂无项目</div>
+            <div className="rounded-2xl border border-slate-200 bg-white py-12 text-center text-sm text-slate-400 shadow-sm">暂无项目</div>
           ) : (
             filteredProjects.map((project) => {
               const status = getProjectPrimaryStatus(project)
@@ -757,9 +775,11 @@ export function ProjectsMgmtSection() {
                   hasMore={moreItems.length > 0}
                   onSelect={() => setSelectedProjectId(project.id)}
                   onMainAction={() => {
-                    if (mainAction.type === 'dispatch') void handleDispatch(project.id)
+                    if (mainAction.type === 'edit') void openProjectEditor(project)
+                    else if (mainAction.type === 'dispatch') void handleDispatch(project.id)
                     else if (mainAction.type === 'ownerSubmit') setOwnerFillProject(project)
                     else if (mainAction.type === 'approve') { setSelectedProjectId(project.id); setApproveModal({ pid: project.id, name: project.name }) }
+                    else if (mainAction.type === 'workProgress') navigate(`/project/${project.id}/tasks`)
                     else setSelectedProjectId(project.id)
                   }}
                   onReturn={() => void handleReturn(project.id, project.name)}
@@ -773,10 +793,9 @@ export function ProjectsMgmtSection() {
               )
             })
           )}
-        </div>
+        </section>
 
-        {/* 右侧详情面板 */}
-        <div className="w-[440px] flex-shrink-0 sticky top-4">
+        <aside className="projects-lifecycle-action-panel min-w-0 lg:sticky lg:top-4">
           {selectedProject ? (
             <DetailPanel
               project={selectedProject}
@@ -785,17 +804,19 @@ export function ProjectsMgmtSection() {
               subtasks={projectSubtasksMap[selectedProject.id] ?? []}
               roles={getProjectRoles(selectedProject.id)}
               onClose={() => setSelectedProjectId(null)}
+              onEdit={() => void openProjectEditor(selectedProject)}
               onDispatch={() => void handleDispatch(selectedProject.id)}
               onOwnerSubmit={() => setOwnerFillProject(selectedProject)}
               onApprove={() => setApproveModal({ pid: selectedProject.id, name: selectedProject.name })}
               onReturn={() => void handleReturn(selectedProject.id, selectedProject.name)}
+              onWorkProgress={() => navigate(`/project/${selectedProject.id}/tasks`)}
             />
           ) : (
-            <div className="rounded-xl border border-slate-100 bg-white py-16 text-center text-sm text-slate-400">
-              选择左侧项目查看详情
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center text-sm text-slate-400 shadow-sm">
+              选择左侧项目查看详情和下一步操作。
             </div>
           )}
-        </div>
+        </aside>
       </div>
 
       {/* 新建项目弹窗 */}
@@ -922,23 +943,24 @@ function LifecycleCard({
   const projectType = project.project_type?.trim() || ''
   const stageDesc = STAGE_DESCRIPTIONS[status] ?? ''
   const draftText = summary.taskTotal === 0
-    ? '推进表草案未完善'
+    ? '未完善'
     : `目标 ${summary.objectives}｜重点工作 ${summary.taskCount}｜关键任务 ${summary.subtaskCount}｜已指派 ${summary.ownerConfigured}/${summary.taskTotal}｜计划 ${summary.planConfigured}/${summary.taskTotal}`
 
   return (
     <div
       onClick={onSelect}
-      className={`cursor-pointer rounded-xl border bg-white px-4 py-3 transition-colors ${isSelected ? 'border-sky-300 bg-sky-50/40' : 'border-slate-200 hover:border-slate-300'}`}
+      className={`projects-lifecycle-card cursor-pointer rounded-2xl border bg-white px-4 py-4 transition-all ${isSelected ? 'border-sky-400 bg-sky-50/60 shadow-sm' : 'border-slate-200 hover:border-slate-300 hover:shadow-sm'}`}
       style={{ boxShadow: '0 1px 3px rgba(15,23,42,0.04)' }}
     >
-      {/* 第一层：标题行 */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-sm font-bold text-slate-800">{project.name}</h3>
             <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusBadge.className}`}>{statusBadge.label}</span>
             {projectType && <span className="flex-shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-500">{projectType}</span>}
           </div>
+          <p className="mt-1 text-[11px] font-semibold text-slate-400">当前阶段</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-slate-600">{stageDesc}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
           {showReturn && (
@@ -961,25 +983,19 @@ function LifecycleCard({
         </div>
       </div>
 
-      {/* 第二层：阶段说明 */}
-      <p className="mt-1.5 text-xs text-slate-500">{stageDesc}</p>
-
-      {/* 第三层：核心人员 */}
-      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-600">
+      <div className="mt-3 grid gap-1.5 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2 text-[11px] text-slate-600 sm:grid-cols-2">
         <span>企业教练：{teamLine.ceoText}</span>
-        <span>负责人：{teamLine.ownerText}</span>
+        <span>项目负责人：{teamLine.ownerText}</span>
         <span>统筹人：{teamLine.coordinatorText}</span>
         <span>成员：{teamLine.memberText}</span>
       </div>
 
-      {/* 第四层：计划信息 */}
-      <div className="mt-1 text-[11px] text-slate-500">
-        计划时间：{formatPlanTimeShort(project.start_date, project.end_date)}
-      </div>
-
-      {/* 第五层：推进表雏形摘要 */}
-      <div className="mt-1 text-[11px] text-slate-500">
-        <span className={summary.taskTotal === 0 ? 'text-orange-500' : 'text-slate-600'}>{draftText}</span>
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+        <span>项目周期：{formatPlanTimeShort(project.start_date, project.end_date)}</span>
+        <span>
+          推进表雏形：
+          <span className={summary.taskTotal === 0 ? 'text-orange-500' : 'text-slate-600'}>{draftText}</span>
+        </span>
       </div>
     </div>
   )
@@ -1058,7 +1074,7 @@ function LifecycleMoreMenu({
 
 function DetailPanel({
   project, projectMembers, tasks, subtasks, roles, onClose,
-  onDispatch, onOwnerSubmit, onApprove, onReturn,
+  onEdit, onDispatch, onOwnerSubmit, onApprove, onReturn, onWorkProgress,
 }: {
   project: Project
   projectMembers: ProjectMember[]
@@ -1066,150 +1082,138 @@ function DetailPanel({
   subtasks: SubTaskWithParent[]
   roles: { isSuperAdmin: boolean; isCompanyCeo: boolean; isRealProjectCeo: boolean; isRealOwner: boolean }
   onClose: () => void
+  onEdit: () => void
   onDispatch: () => void
   onOwnerSubmit: () => void
   onApprove: () => void
   onReturn: () => void
+  onWorkProgress: () => void
 }) {
   const status = getProjectPrimaryStatus(project)
   const statusBadge = getProjectStatusBadge(project)
   const teamLine = summarizeProjectRoleLine(projectMembers, project)
   const summary = getDraftSummary(tasks, subtasks, project)
-  const draftRows = buildDraftRows(tasks, subtasks, project)
   const stageDesc = STAGE_DESCRIPTIONS[status] ?? ''
-  const mainAction = getMainAction(status, roles.isSuperAdmin, roles.isCompanyCeo, roles.isRealProjectCeo, roles.isRealOwner)
+  const actionReminder = ACTION_REMINDERS[status] ?? stageDesc
   const showReturn = status === 'pending_review' && (roles.isRealProjectCeo || roles.isSuperAdmin)
+  const canEditDraft = roles.isSuperAdmin || roles.isCompanyCeo
+  const coreReady = Boolean(project.name?.trim() && project.objectives?.trim())
+  const draftReady = summary.taskCount > 0 && summary.subtaskCount > 0
+  const projectType = project.project_type?.trim() || '未填写'
+  const clientName = project.client_name?.trim() || '内部项目 / 未填写'
 
-  const infoRow = (label: string, value?: string) => (
-    <div className="flex gap-2 py-1">
-      <span className="w-16 shrink-0 text-xs font-semibold text-slate-400">{label}</span>
-      <span className="flex-1 text-xs text-slate-700">{value?.trim() || '未填写'}</span>
+  const infoBlock = (label: string, value?: string) => (
+    <div className="rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2">
+      <div className="text-[11px] font-semibold text-slate-400">{label}</div>
+      <div className="mt-1 text-xs leading-relaxed text-slate-700">{value?.trim() || '未填写'}</div>
     </div>
   )
 
   return (
-    <div className="flex max-h-[calc(100vh-180px)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white" style={{ boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
-      {/* 标题栏 */}
-      <div className="flex items-start justify-between gap-2 border-b px-4 py-3" style={{ borderColor: '#E9EFF6' }}>
+    <div className="projects-lifecycle-action-panel-card flex max-h-[calc(100vh-170px)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-200 bg-white px-5 py-4">
+        <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h2 className="truncate text-sm font-bold text-slate-900">{project.name}</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="truncate text-lg font-bold text-slate-900">{project.name}</h2>
             <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusBadge.className}`}>{statusBadge.label}</span>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-500">{projectType}</span>
           </div>
-          <p className="mt-0.5 text-xs text-slate-400">{stageDesc}</p>
+            <p className="mt-2 text-xs leading-relaxed text-slate-500">当前阶段说明：{stageDesc}</p>
         </div>
         <button type="button" onClick={onClose}
           className="flex-shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
           <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
+        </div>
       </div>
 
-      {/* 滚动区 */}
       <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3">
-        {/* 1. 基本信息 */}
-        <div>
-          <p className="mb-1 text-xs font-bold text-slate-500">项目基本信息</p>
-          <div className="rounded-lg border border-slate-100 px-3 py-1">
-            {infoRow('项目名称', project.name)}
-            {infoRow('项目状态', statusBadge.label)}
-            {infoRow('项目类型', project.project_type)}
-            {infoRow('计划时间', formatPlanTimeShort(project.start_date, project.end_date))}
-            {infoRow('客户名称', project.client_name)}
+        <section className="rounded-xl border border-sky-100 bg-sky-50/70 px-4 py-3">
+          <div className="text-xs font-bold text-sky-800">操作提醒</div>
+          <p className="mt-1 text-xs leading-relaxed text-slate-700">{actionReminder}</p>
+        </section>
+
+        <section>
+          <p className="mb-2 text-xs font-bold text-slate-500">项目核心信息</p>
+          <div className="grid grid-cols-1 gap-2">
+            {infoBlock('项目周期', formatPlanTimeShort(project.start_date, project.end_date))}
+            {infoBlock('项目完成准则 / 验收标准', project.objectives)}
+            {infoBlock('客户名称', clientName)}
+            {infoBlock('项目类型', projectType)}
           </div>
-        </div>
+        </section>
 
-        {/* 2. 核心人员 */}
-        <div>
-          <p className="mb-1 text-xs font-bold text-slate-500">核心人员</p>
-          <div className="rounded-lg border border-slate-100 px-3 py-1">
-            {infoRow('企业教练', teamLine.ceoText)}
-            {infoRow('负责人', teamLine.ownerText)}
-            {infoRow('统筹人', teamLine.coordinatorText)}
-            {infoRow('成员', teamLine.memberText)}
-          </div>
-        </div>
-
-        {/* 3. 立项信息 */}
-        <div>
-          <p className="mb-1 text-xs font-bold text-slate-500">立项信息</p>
-          <div className="space-y-1.5">
-            <div className="rounded-lg border border-slate-100 px-3 py-2">
-              <div className="text-[11px] text-slate-400">项目背景</div>
-              <div className="mt-0.5 text-xs leading-relaxed text-slate-700">{project.background?.trim() || '未填写'}</div>
-            </div>
-            <div className="rounded-lg border border-slate-100 px-3 py-2">
-              <div className="text-[11px] text-slate-400">项目目标</div>
-              <div className="mt-0.5 text-xs leading-relaxed text-slate-700">{project.objectives?.trim() || '未填写'}</div>
-            </div>
-            <div className="rounded-lg border border-slate-100 px-3 py-2">
-              <div className="text-[11px] text-slate-400">预期交付物</div>
-              <div className="mt-0.5 text-xs leading-relaxed text-slate-700">{project.expected_outcomes?.trim() || '未填写'}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* 4. 当前阶段 */}
-        <div>
-          <p className="mb-1 text-xs font-bold text-slate-500">当前阶段</p>
-          <div className="rounded-lg border border-sky-100 bg-sky-50/60 px-3 py-2 text-xs text-slate-700">{stageDesc}</div>
-        </div>
-
-        {/* 5. 工作推进表雏形 */}
-        <div>
-          <p className="mb-1 text-xs font-bold text-slate-500">
-            {status === 'active' ? '工作推进表初版' : '工作推进表雏形'}
-          </p>
-
-          {/* 摘要 */}
-          <div className="mb-2 flex flex-wrap gap-1.5">
+        <section>
+          <p className="mb-2 text-xs font-bold text-slate-500">项目角色</p>
+          <div className="flex flex-wrap gap-2">
             {[
-              { label: '目标', val: summary.objectives },
-              { label: '重点工作', val: summary.taskCount },
-              { label: '关键任务', val: summary.subtaskCount },
-              { label: '已指派', val: `${summary.ownerConfigured}/${summary.taskTotal}` },
-              { label: '计划', val: `${summary.planConfigured}/${summary.taskTotal}` },
+              `企业教练：${teamLine.ceoText}`,
+              `项目负责人：${teamLine.ownerText}`,
+              `统筹人：${teamLine.coordinatorText}`,
+              `成员：${teamLine.memberText}`,
             ].map((item) => (
-              <span key={item.label} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                {item.label} <span className="text-sky-600">{item.val}</span>
-              </span>
+              <span key={item} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">{item}</span>
             ))}
           </div>
+        </section>
 
-          {/* 类 Excel 草案明细表 */}
-          {draftRows.length === 0 ? (
-            <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-4 text-center text-xs text-slate-400">
-              推进表草案未完善
-            </div>
-          ) : (
-            <DraftProgressTable rows={draftRows} />
-          )}
-        </div>
+        <section>
+          <p className="mb-2 text-xs font-bold text-slate-500">立项资料完备度</p>
+          <div className="space-y-2">
+            {[
+              { label: '项目核心信息：', value: coreReady ? '已完善' : '未完善', ready: coreReady },
+              { label: '工作推进表雏形：', value: draftReady ? '已维护' : '未完善', ready: draftReady },
+              { label: '重点工作数量', value: String(summary.taskCount), ready: summary.taskCount > 0 },
+              { label: '关键任务数量', value: String(summary.subtaskCount), ready: summary.subtaskCount > 0 },
+            ].map((item) => (
+              <div key={item.label} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2 text-xs">
+                <span className="font-medium text-slate-600">{item.label}</span>
+                <span className={item.ready ? 'font-semibold text-emerald-600' : 'font-semibold text-orange-600'}>{item.value}</span>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
 
-      {/* 操作栏 */}
-      {mainAction.type !== 'viewDetail' && (
-        <div className="flex gap-2 border-t px-4 py-2.5" style={{ borderColor: '#E9EFF6' }}>
+      <div className="border-t border-slate-200 px-4 py-3">
+        <p className="mb-2 text-xs font-bold text-slate-500">下一步操作</p>
+        <div className="space-y-2">
+          {status === 'draft' && canEditDraft && (
+            <>
+              <button type="button" onClick={onEdit} className="w-full rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">编辑项目</button>
+              <button type="button" onClick={onDispatch} className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">下发给负责人</button>
+            </>
+          )}
+          {status === 'dispatched' && roles.isRealOwner && (
+            <button type="button" onClick={onOwnerSubmit} className="w-full rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">完善立项信息</button>
+          )}
+          {status === 'pending_review' && (roles.isRealProjectCeo || roles.isSuperAdmin) && (
+            <button type="button" onClick={onApprove} className="w-full rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">审核立项</button>
+          )}
           {showReturn && (
             <button type="button" onClick={onReturn}
-              className="cursor-pointer rounded-lg border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-100">
+              className="w-full rounded-xl border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 hover:bg-orange-100">
               退回修改
             </button>
           )}
-          <button type="button"
-            onClick={() => {
-              if (mainAction.type === 'dispatch') onDispatch()
-              else if (mainAction.type === 'ownerSubmit') onOwnerSubmit()
-              else if (mainAction.type === 'approve') onApprove()
-            }}
-            className="cursor-pointer flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
-            style={{ background: 'linear-gradient(135deg,#2563EB,#0EA5E9)' }}>
-            {mainAction.label === '完善立项信息' ? '完善立项与推进表草案'
-              : mainAction.label === '审核立项' ? '审核立项与推进表草案'
-              : mainAction.label === '修改立项信息' ? '修改立项与推进表草案'
-              : mainAction.label}
-          </button>
+          {status === 'pending_review' && (
+            <button type="button" className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">查看工作推进表雏形</button>
+          )}
+          {status === 'returned' && roles.isRealOwner && (
+            <button type="button" onClick={onOwnerSubmit} className="w-full rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">修改立项信息</button>
+          )}
+          {status === 'active' && (
+            <>
+              <button type="button" onClick={onWorkProgress} className="w-full rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">进入工作推进表</button>
+              <button type="button" className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">查看项目档案</button>
+            </>
+          )}
+          {status === 'archived' && (
+            <button type="button" className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">查看归档档案</button>
+          )}
         </div>
-      )}
+      </div>
     </div>
   )
 }

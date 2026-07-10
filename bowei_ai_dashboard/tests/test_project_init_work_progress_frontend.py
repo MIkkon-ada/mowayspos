@@ -12,18 +12,21 @@ def test_owner_submit_modal_contains_work_progress_draft_controls():
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
     for expected in [
-        "工作推进表雏形",
+        "工作推进方案",
         "新增重点工作",
         "新增关键任务",
-        "重点工作说明",
+        "重点工作名称",
+        "目标成果 / 验收标准",
         "责任人",
         "协助人",
-        "计划开始",
-        "计划结束",
-        "评价标准",
+        "时间段",
+        "备注 / 标准",
         "work_progress_draft",
     ]:
         assert expected in source
+
+    for forbidden in ["计划开始", "计划结束", "评价标准"]:
+        assert forbidden not in source
 
 
 def test_owner_submit_modal_builds_work_progress_draft_submit_payload():

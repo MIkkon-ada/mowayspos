@@ -11,36 +11,57 @@ def _frontend_source(relative_path: str) -> str:
 # ── OwnerSubmitModal 视觉布局验收 ──────────────────────────────
 
 def test_owner_submit_modal_has_three_zone_layout():
-    """弹窗应有固定标题、滚动内容、固定底部操作区三层布局。"""
+    """弹窗应按最新确认原型呈现 Header / 左右 Main / Footer 工作台结构。"""
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
-    assert "flex-shrink-0" in source, "应有固定区域（标题或底部）"
-    assert "overflow-y-auto" in source, "内容应可滚动"
-    assert "flex-col" in source, "应使用纵向 flex 布局"
+    assert "owner-submit-workbench-shell" in source
+    assert "bg-[#f6f9ff]" in source, "工作台背景应接近原型浅灰蓝"
+    assert "owner-submit-workbench-header" in source
+    assert "h-[72px]" in source, "Header/Footer 高度应贴近原型 72px"
+    assert "owner-submit-workbench-main" in source
+    assert "overflow-y-auto" in source, "Main 应滚动"
+    assert "owner-submit-workbench-columns" in source, "Main 应是左右两栏工作台"
+    assert "flex gap-6 items-start" in source or "flex gap-6" in source, "Main 内容应使用左右 flex 布局"
+    assert "owner-submit-workbench-footer" in source
+    assert "shrink-0" in source, "Header/Footer 应在 flex 结构中不收缩"
+    assert "pb-8" in source or "pb-section-margin" in source, "Main 底部应给 footer 留出空间"
 
 
 def test_owner_submit_modal_width_is_optimized():
-    """弹窗宽度不应再是 820px 窄布局，应 ≥ 920px。"""
+    """弹窗内容宽度应接近最新原型 max-w-[1440px] 左右工作台容器。"""
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
-    # 宽度至少应该是 920px 或更宽
-    assert "w-[920px]" in source or "w-[960px]" in source or "w-[940px]" in source \
-        or "w-[980px]" in source or "w-[1000px]" in source or "w-[1040px]" in source, \
-        "弹窗宽度应 ≥ 920px，不再使用 820px 窄布局"
+    assert "w-[96vw]" in source, "外层仍应是宽弹窗/工作台"
+    assert "max-w-[1280px]" in source, "弹窗最大宽度保持合理上限"
+    assert "max-w-[1440px]" in source, "主体内容容器必须接近最新原型 max-w-[1440px]"
+    assert "mx-auto" in source, "主体内容应居中"
     assert "w-[820px]" not in source, "不应再使用旧 820px 宽度"
 
 
-def test_project_info_area_uses_compact_grid():
-    """项目基础信息区域应采用紧凑两列或 grid 布局。"""
+def test_project_core_info_is_left_sidebar():
+    """项目核心信息应迁移到左侧 360-400px 工作台栏。"""
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
-    # 应有 grid 布局
-    assert "grid" in source
-    assert (
-        "col-span-2" in source
-        or "grid-cols-2" in source
-        or "md:col-span-2" in source
-    ), "应有跨列长文本字段"
+    assert "owner-submit-left-pane" in source
+    assert "w-[400px]" in source or "w-[380px]" in source or "w-[360px]" in source
+    assert "shrink-0" in source
+    assert "sticky" in source
+    assert "owner-submit-right-pane" in source
+    assert "flex-1 min-w-0" in source
+
+
+def test_project_info_area_uses_compact_grid():
+    """项目核心信息区应贴近原型左侧白底卡片。"""
+    source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
+
+    assert "owner-submit-core-card" in source
+    assert "bg-white" in source
+    assert "border" in source
+    assert "rounded-xl" in source
+    assert "shadow-sm" in source
+    assert "space-y-6" in source, "左侧栏内项目字段应纵向紧凑排列"
+    assert "rows={3}" in source or "rows={2}" in source, "项目完成准则 textarea 应低高度"
+    assert "项目完成准则 / 验收标准" in source
 
 
 def test_work_progress_area_no_longer_uses_large_amber_box():
@@ -56,22 +77,29 @@ def test_work_progress_area_no_longer_uses_large_amber_box():
 
 
 def test_task_group_has_compact_style():
-    """每个重点工作组应有紧凑分组样式而非大卡片。"""
+    """重点工作组应贴近原型：白底、细边框、rounded-xl、浅灰组头。"""
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
-    # 应仍有"重点工作"的序号标识
-    assert "重点工作" in source
-    # 不应有过大的卡片 padding（bg-white p-3 等大卡片）
-    # 允许紧凑的 border/rung 样式
+    assert "owner-submit-workplan-heading" in source
+    assert "owner-submit-task-group" in source
+    assert "bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm" in source
+    assert "owner-submit-task-group-header" in source
+    assert "bg-slate-100/70" in source or "bg-[#eef4fc]" in source
+    assert "w-8 h-8" in source, "序号块应接近原型 8x8"
+    assert "md:grid-cols-2" in source, "重点工作名称和目标成果应一行两列"
 
 
 def test_subtask_uses_table_like_layout():
-    """关键任务区域应使用类表格横向排列，而非纵向堆叠卡片。"""
+    """关键任务区域必须是原型式 table，而不是普通表单行。"""
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
-    # 应存在更紧凑的 grid 列布局（至少有 5 列以上）
-    assert "grid-cols-7" in source or "grid-cols-6" in source or "grid-cols-[" in source, \
-        "关键任务行应采用多列表格布局"
+    assert "<table" in source, "关键任务应使用表格化编辑"
+    assert "owner-submit-subtask-table" in source
+    assert "border-collapse" in source
+    assert "thead" in source and "tbody" in source
+    assert "hover:bg-slate-50" in source or "hover:bg-[#f6f9ff]" in source
+    assert "border-none p-0" in source, "表格输入框应轻量，不像大表单控件"
+    assert "时间段" in source and "备注 / 标准" in source
 
 
 def test_instruction_text_remains_correct():

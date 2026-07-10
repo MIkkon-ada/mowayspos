@@ -205,7 +205,7 @@ def _sync_parent_task_status(task: models.Task, db: Session, current_user: str) 
     crud.log(
         db,
         current_user,
-        "同步关键任务状态",
+        "task_sync_status_from_subtasks",
         "task",
         task.id,
         {"status": before_status},
@@ -425,7 +425,7 @@ def create_subtask(
     row.assignee_id = _pid_for_name(row.assignee or "", db)
     db.add(row)
     db.flush()
-    crud.log(db, current_user, "create subtask", "subtask", row.id, {}, crud.to_dict(row), project_id=_get_task_project_id(task, db))
+    crud.log(db, current_user, "subtask_create", "subtask", row.id, {}, crud.to_dict(row), project_id=_get_task_project_id(task, db))
 
     if parent_was_completed:
         before_task_status = task.status
@@ -434,7 +434,7 @@ def create_subtask(
         crud.log(
             db,
             current_user,
-            "reopen task for new subtask",
+            "task_reopen_for_subtask",
             "task",
             task.id,
             {"status": before_task_status},
@@ -500,7 +500,7 @@ def update_subtask(
         if TS.normalize(row.status) == TS.S_NOT_STARTED:
             row.status = TS.S_IN_PROGRESS
 
-    crud.log(db, current_user, "update subtask", "subtask", row.id, before, payload.model_dump())
+    crud.log(db, current_user, "subtask_update", "subtask", row.id, before, payload.model_dump())
     _sync_parent_task_status(task, db, current_user)
     db.commit()
     return crud.to_dict(row)
@@ -534,7 +534,7 @@ def patch_subtask_status(
     crud.log(
         db,
         current_user,
-        "update subtask status",
+        "subtask_update_status",
         "subtask",
         row.id,
         {"status": before_status},
@@ -584,7 +584,7 @@ def delete_subtask(
     crud.log(
         db,
         current_user,
-        "delete subtask",
+        "subtask_delete",
         "subtask",
         row.id,
         before,
@@ -623,7 +623,7 @@ def restore_subtask(
     crud.log(
         db,
         current_user,
-        "restore subtask",
+        "subtask_restore",
         "subtask",
         row.id,
         before,

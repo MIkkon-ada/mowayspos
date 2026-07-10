@@ -38,11 +38,26 @@ def test_plan_table_view_hides_status_stat_cards():
         assert expected in source
 
 
+def test_plan_table_view_hides_execution_only_actions():
+    source = _frontend_source("pages/TaskManagementPage.tsx")
+
+    for expected in [
+        "viewMode === 'execution' && (",
+        "plan-execution-actions",
+        "在办",
+        "回收站",
+        "操作",
+    ]:
+        assert expected in source
+
+
 def test_plan_table_view_has_required_excel_like_columns_and_merging():
     source = _frontend_source("components/task-management/PlanTableView.tsx")
 
     for expected in [
         "目标与重点工作计划表",
+        "colSpan={TABLE_HEADERS.length}",
+        "plan-table-title-row",
         "plan-table-excel",
         "plan-table-cell",
         "目标",
@@ -57,6 +72,7 @@ def test_plan_table_view_has_required_excel_like_columns_and_merging():
         "parsePlanTimeRange",
         "border-slate-300",
         "px-2 py-1",
+        "w-[120px]",
         "暂无工作推进表数据",
         "可先在项目立项阶段填写工作推进表雏形，或在执行视图中新建重点工作。",
     ]:
@@ -93,8 +109,8 @@ def test_plan_table_view_weakens_placeholders_without_detail_page_terms():
 
     for expected in [
         "plan-table-placeholder",
-        "text-slate-300",
-        "text-[10px]",
+        "text-slate-400",
+        "text-[11px]",
         "未填写项目目标",
         "未填写评价标准",
         "暂无关键任务",

@@ -715,7 +715,7 @@ function handleFormSave(payload: TaskPayload) {
       <header className={`${viewMode === 'plan' ? 'min-h-12 px-5 py-1.5 gap-2' : 'min-h-16 px-6 py-2 gap-3'} flex items-center flex-shrink-0 bg-white border-b flex-wrap`} style={{ borderColor: '#E9EFF6' }}>
         <div className="min-w-[260px] flex-shrink-0">
           <h1 className="text-base font-bold text-slate-800">工作推进表</h1>
-          <p className="text-xs text-slate-400 mt-0.5">按项目、重点工作、关键任务追踪真实推进状态</p>
+          {viewMode === 'execution' && <p className="text-xs text-slate-400 mt-0.5">按项目、重点工作、关键任务追踪真实推进状态</p>}
         </div>
         <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
           <button
@@ -764,7 +764,8 @@ function handleFormSave(payload: TaskPayload) {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 ml-1 flex-shrink-0">
+        {viewMode === 'execution' && (
+        <div className="plan-execution-actions flex items-center gap-2 ml-1 flex-shrink-0">
           <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
             <button
               onClick={() => { setSelectedTask(null); setExpandedTasks(new Set()); setShowDeleted(false) }}
@@ -808,6 +809,7 @@ function handleFormSave(payload: TaskPayload) {
             {!showDeleted && !projectArchived && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProjectRoles }) && <option value="create">新增重点工作</option>}
           </select>
         </div>
+        )}
       </header>
 
       {/* Sub-header: stat chips + batch bar */}

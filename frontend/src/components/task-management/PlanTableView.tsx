@@ -22,14 +22,14 @@ type PlanRow = {
 const EMPTY_TEXT = '—'
 const PLACEHOLDER_TEXTS = new Set(['未填写项目目标', '未填写评价标准', '暂无关键任务', EMPTY_TEXT])
 const TABLE_HEADERS = [
-  { label: '目标', width: 'w-[200px]' },
-  { label: '重点工作', width: 'w-[220px]' },
-  { label: '评价标准', width: 'w-[260px]' },
-  { label: '序号', width: 'w-[64px]' },
-  { label: '关键任务', width: 'w-[360px]' },
-  { label: '责任人', width: 'w-[120px]' },
-  { label: '计划开始时间', width: 'w-[140px]' },
-  { label: '计划结束时间', width: 'w-[140px]' },
+  { label: '目标', width: 'w-[170px]' },
+  { label: '重点工作', width: 'w-[210px]' },
+  { label: '评价标准', width: 'w-[250px]' },
+  { label: '序号', width: 'w-[56px]' },
+  { label: '关键任务', width: 'w-[300px]' },
+  { label: '责任人', width: 'w-[110px]' },
+  { label: '计划开始时间', width: 'w-[120px]' },
+  { label: '计划结束时间', width: 'w-[120px]' },
 ]
 
 export function parsePlanTimeRange(value?: string | null): ParsedPlanTime {
@@ -53,7 +53,7 @@ function textOrFallback(value: string | undefined | null, fallback: string): str
 
 function renderPlanTableText(value: string) {
   if (PLACEHOLDER_TEXTS.has(value)) {
-    return <span className="plan-table-placeholder text-[10px] text-slate-300">{value}</span>
+    return <span className="plan-table-placeholder text-[11px] text-slate-400">{value}</span>
   }
   return value
 }
@@ -98,17 +98,16 @@ export function PlanTableView({ project, tasks, taskSubMap, loading = false }: P
 
   return (
     <div>
-      <div className="mb-2 flex items-end justify-between px-1">
-        <div className="flex-1 text-center">
-          <div className="text-base font-bold tracking-wide text-slate-900">{tableTitle}</div>
-          <div className="mt-0.5 text-[11px] text-slate-400">同一套项目 / 重点工作 / 关键任务数据的类 Excel 展开视图</div>
-        </div>
-        {loading && <span className="text-xs font-semibold text-amber-600">关键任务加载中…</span>}
-      </div>
+      {loading && <div className="mb-1 px-1 text-right text-xs font-semibold text-amber-600">关键任务加载中…</div>}
 
       <div className="overflow-x-auto border border-slate-300 bg-white">
-        <table className="plan-table-excel min-w-[1504px] w-full border-collapse text-[11px] leading-tight">
+        <table className="plan-table-excel min-w-[1336px] w-full border-collapse text-[11px] leading-tight">
           <thead className="bg-slate-100">
+            <tr className="plan-table-title-row">
+              <th colSpan={TABLE_HEADERS.length} className="border border-slate-300 bg-white px-2 py-2 text-center text-base font-bold tracking-wide text-slate-900">
+                {tableTitle}
+              </th>
+            </tr>
             <tr>
               {TABLE_HEADERS.map((header) => (
                 <th key={header.label} className={`plan-table-cell h-7 border border-slate-300 px-2 py-1 text-left font-semibold text-slate-700 ${header.width}`}>
@@ -127,33 +126,33 @@ export function PlanTableView({ project, tasks, taskSubMap, loading = false }: P
               return (
                 <tr key={`${task.id}-${subtask?.id ?? 'empty'}-${index}`} className="h-7 align-top hover:bg-slate-50/70">
                   {index === 0 && (
-                    <td rowSpan={rows.length} className="plan-table-cell w-[200px] whitespace-pre-wrap border border-slate-300 bg-slate-50 px-2 py-1 leading-snug text-slate-700">
+                    <td rowSpan={rows.length} className="plan-table-cell w-[170px] whitespace-pre-wrap border border-slate-300 bg-slate-50 px-2 py-1 leading-snug text-slate-700">
                       {renderPlanTableText(objective)}
                     </td>
                   )}
                   {row.showTaskCells && (
                     <>
-                      <td rowSpan={row.taskRowSpan} className="plan-table-cell w-[220px] whitespace-pre-wrap border border-slate-300 px-2 py-1 font-semibold leading-snug text-slate-800">
+                      <td rowSpan={row.taskRowSpan} className="plan-table-cell w-[210px] whitespace-pre-wrap border border-slate-300 px-2 py-1 font-semibold leading-snug text-slate-800">
                         {renderPlanTableText(textOrFallback(task.key_task, EMPTY_TEXT))}
                       </td>
-                      <td rowSpan={row.taskRowSpan} className="plan-table-cell w-[260px] whitespace-pre-wrap border border-slate-300 px-2 py-1 leading-snug text-slate-600">
+                      <td rowSpan={row.taskRowSpan} className="plan-table-cell w-[250px] whitespace-pre-wrap border border-slate-300 px-2 py-1 leading-snug text-slate-600">
                         {renderPlanTableText(standard)}
                       </td>
                     </>
                   )}
-                  <td className="plan-table-cell w-[64px] border border-slate-300 px-2 py-1 text-center font-semibold text-slate-500">
+                  <td className="plan-table-cell w-[56px] border border-slate-300 px-2 py-1 text-center font-semibold text-slate-500">
                     {index + 1}
                   </td>
-                  <td className="plan-table-cell w-[360px] border border-slate-300 px-2 py-1 text-left text-slate-700">
+                  <td className="plan-table-cell w-[300px] border border-slate-300 px-2 py-1 text-left text-slate-700">
                     {renderPlanTableText(subtask ? subtask.title || '暂无关键任务' : '暂无关键任务')}
                   </td>
-                  <td className="plan-table-cell w-[120px] border border-slate-300 px-2 py-1 text-slate-600">
+                  <td className="plan-table-cell w-[110px] border border-slate-300 px-2 py-1 text-slate-600">
                     {renderPlanTableText(owner)}
                   </td>
-                  <td className="plan-table-cell w-[140px] border border-slate-300 px-2 py-1 text-slate-500">
+                  <td className="plan-table-cell w-[120px] border border-slate-300 px-2 py-1 text-slate-500">
                     {renderPlanTableText(planTime.start)}
                   </td>
-                  <td className="plan-table-cell w-[140px] border border-slate-300 px-2 py-1 text-slate-500">
+                  <td className="plan-table-cell w-[120px] border border-slate-300 px-2 py-1 text-slate-500">
                     {renderPlanTableText(planTime.end)}
                   </td>
                 </tr>

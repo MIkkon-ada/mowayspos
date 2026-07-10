@@ -205,7 +205,7 @@ class ProjectCreatePayload(BaseModel):
     name: str = Field(..., max_length=100)
     code: str = Field("", max_length=50)
     description: str = ""
-    status: str = Field("active", max_length=20)
+    status: str = Field("draft", max_length=20)
     start_date: str = Field("", max_length=20)
     end_date: str = Field("", max_length=20)
     # 立项扩展字段

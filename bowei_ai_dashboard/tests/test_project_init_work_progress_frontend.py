@@ -3,11 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def test_owner_submit_modal_contains_work_progress_draft_controls():
+def _frontend_source(relative_path: str) -> str:
     root = Path(__file__).resolve().parents[2]
-    source = (root / "frontend" / "src" / "features" / "settings" / "OwnerSubmitModal.tsx").read_text(
-        encoding="utf-8"
-    )
+    return (root / "frontend" / "src" / relative_path).read_text(encoding="utf-8")
+
+
+def test_owner_submit_modal_contains_work_progress_draft_controls():
+    source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
     for expected in [
         "工作推进表雏形",
@@ -24,11 +26,51 @@ def test_owner_submit_modal_contains_work_progress_draft_controls():
         assert expected in source
 
 
+def test_owner_submit_modal_builds_work_progress_draft_submit_payload():
+    source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
+    api_source = _frontend_source("api/projects.ts")
+
+    for expected in [
+        "work_progress_draft?: ProjectWorkProgressTaskDraft[]",
+        "export type ProjectWorkProgressTaskDraft",
+        "export type ProjectWorkProgressSubTaskDraft",
+        "title: string",
+        "description?: string",
+        "owner?: string",
+        "helper?: string",
+        "plan_start?: string",
+        "plan_end?: string",
+        "subtasks?: ProjectWorkProgressSubTaskDraft[]",
+        "evaluation_standard?: string",
+        "assignee?: string",
+    ]:
+        assert expected in api_source
+
+    for expected in [
+        "function toPayloadDraft(tasks: LocalTaskDraft[]): ProjectWorkProgressTaskDraft[]",
+        "title: task.title.trim()",
+        "description: task.description.trim()",
+        "owner: task.owner.trim()",
+        "helper: task.helper.trim()",
+        "plan_start: task.plan_start",
+        "plan_end: task.plan_end",
+        "subtasks: task.subtasks",
+        "title: subtask.title.trim()",
+        "evaluation_standard: subtask.evaluation_standard.trim()",
+        "assignee: subtask.assignee.trim()",
+        "helper: subtask.helper.trim()",
+        "plan_start: subtask.plan_start",
+        "plan_end: subtask.plan_end",
+        "const workProgressDraft = toPayloadDraft(draftTasks)",
+        "const result = await ownerSubmitProfile(project.id, {",
+        "...fillForm",
+        "work_progress_draft: workProgressDraft",
+    ]:
+        assert expected in source
+
+
 def test_project_review_view_contains_work_progress_draft_summary_and_list():
-    root = Path(__file__).resolve().parents[2]
-    source = (
-        root / "frontend" / "src" / "features" / "settings" / "ProjectsMgmtSection.tsx"
-    ).read_text(encoding="utf-8")
+    source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
 
     for expected in [
         "getDraftSummary",

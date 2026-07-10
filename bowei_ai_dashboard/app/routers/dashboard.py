@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models
 from ..database import get_db
+from ..domain import issue_type as IT
 from ..domain import submission_status as SS
 from ..permissions import (
     PROJECT_ROLE_COLLABORATOR,
@@ -302,7 +303,7 @@ def _project_overview(
 
     open_issues   = [i for i in issues if (i.status or "") in ("待处理", "处理中")]
     high_pri      = [i for i in open_issues if (i.priority or "") == "高"]
-    ceo_issues    = [i for i in issues if bool(i.need_decision_by) or "决策" in (i.issue_type or "")]
+    ceo_issues    = [i for i in issues if bool(i.need_decision_by) or IT.is_decision(i.issue_type)]
 
     # ── Achievements ───────────────────────────────────────
     ach_q = db.query(models.Achievement).filter(
@@ -681,7 +682,7 @@ def _global_overview(
     issue_rows = issue_q.all()
     decisions, risks = [], []
     for row in issue_rows:
-        is_decision = bool(row.need_decision_by) or "决策" in (row.issue_type or "")
+        is_decision = bool(row.need_decision_by) or IT.is_decision(row.issue_type)
         if is_decision and can_view_issue_decisions(context):
             decisions.append(crud.to_dict(row))
         elif not is_decision and can_view_issue_risks(context):
@@ -740,7 +741,7 @@ def _global_overview(
             "total_issues":         len(issue_rows),
             "open_issues":          visible_open_issue_count,
             "high_priority_issues": sum(1 for i in issue_rows if (i.priority or "") == "高" and (i.status or "") in ("待处理", "处理中")),
-            "waiting_ceo_decision": sum(1 for i in issue_rows if bool(i.need_decision_by) or "决策" in (i.issue_type or "")) if can_view_issue_decisions(context) else 0,
+            "waiting_ceo_decision": sum(1 for i in issue_rows if bool(i.need_decision_by) or IT.is_decision(i.issue_type)) if can_view_issue_decisions(context) else 0,
         },
         "recent": {
             "submissions":   [],

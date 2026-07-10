@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .. import crud, models, schemas
 from .subtasks import _sync_parent_task_status
 from ..database import get_db
+from ..domain import issue_type as IT
 from ..domain import issue_flow as IF
 from ..domain import source_type as ST
 from ..domain import submission_result_type as RT
@@ -44,7 +45,7 @@ def _parse_subtask_issue(item: object) -> dict | None:
         if not desc:
             return None
         return {
-            "issue_type": IF.normalize_type(item.get("issue_type")),
+            "issue_type": IT.normalize(item.get("issue_type")),
             "description": desc,
             "priority": str(item.get("priority") or "中"),
         }
@@ -55,9 +56,26 @@ def _parse_subtask_issue(item: object) -> dict | None:
         for prefixes, itype in _ISSUE_PREFIX_TABLE:
             for prefix in prefixes:
                 if text.startswith(prefix):
-                    return {"issue_type": itype, "description": text[len(prefix):].strip(), "priority": "中"}
-        return {"issue_type": IF.TYPE_ISSUE, "description": text, "priority": "中"}
+                    return {"issue_type": IT.normalize(itype), "description": text[len(prefix):].strip(), "priority": "中"}
+        return {"issue_type": IT.TYPE_ISSUE, "description": text, "priority": "中"}
     return None
+
+
+_ISSUE_STORAGE_LABELS: dict[str, str] = {
+    IT.TYPE_ISSUE: IF.TYPE_ISSUE,
+    IT.TYPE_RISK: IF.TYPE_RISK,
+    IT.TYPE_COORDINATION: IF.TYPE_COORDINATE,
+    IT.TYPE_DECISION: IF.TYPE_DECISION,
+    IT.TYPE_UNKNOWN: IF.TYPE_ISSUE,
+}
+
+
+def _storage_issue_type(issue_type: str | None) -> str:
+    return _ISSUE_STORAGE_LABELS.get(IT.normalize(issue_type), IF.TYPE_ISSUE)
+
+
+def _issue_status_for(issue_type: str | None) -> str:
+    return IF.STATUS_PENDING_DECISION if IT.is_decision(issue_type) else IF.STATUS_PENDING
 
 # ── Confirmation-center tab mapping ──────────────────────────
 TAB_STATUS_MAP: dict[str, frozenset[str]] = {
@@ -347,11 +365,11 @@ def _write_single_task_report(
                 continue
             norm_type = parsed["issue_type"]
             issue = models.Issue(
-                issue_type=norm_type,
+                issue_type=_storage_issue_type(norm_type),
                 description=parsed["description"],
                 owner=row.submitter or "",
                 priority=parsed["priority"],
-                status=IF.default_status_for_type(norm_type),
+                status=_issue_status_for(norm_type),
                 special_project=project,
                 source_type=ST.normalize(row.source_type or "人工录入"),
                 confirmed_by=operator,
@@ -767,11 +785,11 @@ def confirm(
                         continue
                     norm_type = parsed["issue_type"]
                     issue = models.Issue(
-                        issue_type=norm_type,
+                        issue_type=_storage_issue_type(norm_type),
                         description=parsed["description"],
                         owner=row.submitter or "",
                         priority=parsed["priority"],
-                        status=IF.default_status_for_type(norm_type),
+                        status=_issue_status_for(norm_type),
                         special_project=project,
                         source_type=ST.normalize(row.source_type or "人工录入"),
                         confirmed_by=payload.operator,
@@ -787,14 +805,14 @@ def confirm(
             for ki in (data.get("key_task_issues") or []):
                 if not isinstance(ki, dict) or not (ki.get("description") or "").strip():
                     continue
-                norm_type = IF.normalize_type(ki.get("issue_type"))
+                norm_type = IT.normalize(ki.get("issue_type"))
                 issue = models.Issue(
-                    issue_type=norm_type,
+                    issue_type=_storage_issue_type(norm_type),
                     description=ki["description"].strip(),
                     owner=row.submitter or "",
                     helper="、".join(ki.get("need_coordination") or []),
                     priority=ki.get("priority") or "中",
-                    status=IF.default_status_for_type(norm_type),
+                    status=_issue_status_for(norm_type),
                     special_project=project,
                     source_type=ST.normalize(row.source_type or "人工录入"),
                     confirmed_by=payload.operator,
@@ -826,6 +844,7 @@ def confirm(
             write_item = str(item.pop("write_issue", "true")).lower() != "false"
             if write_item and item.get("description"):
                 issue = models.Issue(**W.filtered_fields(models.Issue, item))
+                issue.issue_type = _storage_issue_type(issue.issue_type)
                 issue.source_type = ST.normalize(row.source_type or "人工录入")
                 issue.confirmed_by = payload.operator
                 issue.source_submission_id = row.id
@@ -837,14 +856,14 @@ def confirm(
         for ki in (data.get("key_task_issues") or []):
             if not isinstance(ki, dict) or not (ki.get("description") or "").strip():
                 continue
-            norm_type = IF.normalize_type(ki.get("issue_type"))
+            norm_type = IT.normalize(ki.get("issue_type"))
             issue = models.Issue(
-                issue_type=norm_type,
+                issue_type=_storage_issue_type(norm_type),
                 description=ki["description"].strip(),
                 owner=row.submitter or "",
                 helper="、".join(ki.get("need_coordination") or []),
                 priority=ki.get("priority") or "中",
-                status=IF.default_status_for_type(norm_type),
+                status=_issue_status_for(norm_type),
                 special_project=project,
                 source_type=ST.normalize(row.source_type or "人工录入"),
                 confirmed_by=payload.operator,

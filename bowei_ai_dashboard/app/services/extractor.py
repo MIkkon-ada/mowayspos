@@ -6,6 +6,8 @@ from datetime import date
 
 logger = logging.getLogger("bowei.extractor")
 
+from ..domain import issue_type as IT
+
 USE_LLM = os.getenv("BOWEI_USE_LLM", "false").lower() == "true"
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic").lower()
 # 单次 LLM 调用最长等待秒数，可通过环境变量覆盖
@@ -457,7 +459,7 @@ def _issue_rows(text: str, project: str, submitter: str | None, ceo_name: str = 
                 "helper": ceo_name if ceo_name and _contains_any(line, ([ceo_name] if ceo_name else []) + ["海总", "协调"]) else "",
                 "priority": _issue_priority(line),
                 "status": "待处理",
-                "need_decision_by": _decision_owner(line, ceo_name) if issue_type == "决策" else "",
+                "need_decision_by": _decision_owner(line, ceo_name) if IT.is_decision(issue_type) else "",
                 "expected_resolve_time": "",
                 "resolution": "",
                 "special_project": project,

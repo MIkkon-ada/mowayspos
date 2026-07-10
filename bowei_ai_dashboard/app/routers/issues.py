@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
+from ..domain import issue_type as IT
 from ..domain import issue_flow as IF
 from ..domain import source_type as ST
 from ..permissions import (
@@ -66,11 +67,34 @@ def _row_project_name(row: models.Issue, db: Session) -> str:
     return resolved["project_name"] or row.special_project or ""
 
 
+_ISSUE_STORAGE_LABELS: dict[str, str] = {
+    IT.TYPE_ISSUE: IF.TYPE_ISSUE,
+    IT.TYPE_RISK: IF.TYPE_RISK,
+    IT.TYPE_COORDINATION: IF.TYPE_COORDINATE,
+    IT.TYPE_DECISION: IF.TYPE_DECISION,
+    IT.TYPE_UNKNOWN: IF.TYPE_ISSUE,
+}
+
+
+def _storage_issue_type(issue_type: str | None) -> str:
+    return _ISSUE_STORAGE_LABELS.get(IT.normalize(issue_type), IF.TYPE_ISSUE)
+
+
+def _issue_type_matches_filter(row: models.Issue, issue_type: str) -> bool:
+    normalized_filter_type = IT.normalize(issue_type)
+    row_type = IT.normalize(row.issue_type)
+    if normalized_filter_type == IT.TYPE_DECISION:
+        return _is_decision_issue(row)
+    if normalized_filter_type == IT.TYPE_ISSUE:
+        return row_type == IT.TYPE_ISSUE and not _is_decision_issue(row)
+    return row_type == normalized_filter_type
+
+
 # ── 业务辅助 ──────────────────────────────────────────────────
 
 def _is_decision_issue(row: models.Issue) -> bool:
     need_decision_by = (row.need_decision_by or "").strip()
-    return IF.normalize_type(row.issue_type) == IF.TYPE_DECISION or bool(need_decision_by)
+    return IT.is_decision(row.issue_type) or bool(need_decision_by)
 
 
 def _can_view_issue_row(context: dict, row: models.Issue, db: Session) -> bool:
@@ -133,14 +157,7 @@ def list_issues(
     result = []
     for row in q.limit(500).all():
         if issue_type:
-            normalized_filter_type = IF.normalize_type(issue_type)
-            if normalized_filter_type == IF.TYPE_DECISION:
-                if not _is_decision_issue(row):
-                    continue
-            elif issue_type == "problem":
-                if _is_decision_issue(row):
-                    continue
-            elif IF.normalize_type(row.issue_type) != normalized_filter_type:
+            if not _issue_type_matches_filter(row, issue_type):
                 continue
         if owner and row.owner != owner:
             continue
@@ -166,19 +183,19 @@ def create_issue(
     require_project_access(current_user, project_id, db)
     require_project_not_archived(project_id, db)
 
-    normalized_type = IF.normalize_type(payload.issue_type)
-    if normalized_type == IF.TYPE_DECISION and not can_view_issue_decisions(context):
+    normalized_type = IT.normalize(payload.issue_type)
+    if normalized_type == IT.TYPE_DECISION and not can_view_issue_decisions(context):
         raise HTTPException(403, "permission denied")
 
     data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
     row = models.Issue(**data)
-    row.issue_type = normalized_type
+    row.issue_type = _storage_issue_type(normalized_type)
     row.source_type = ST.normalize(payload.source_type or "人工录入")
     # Derive status: normalize explicit value, then apply type-specific default
     # when status is still the generic "待处理" (schema default or explicit).
     normalized_status = IF.normalize_status(payload.status)
     if normalized_status == IF.STATUS_PENDING:
-        normalized_status = IF.default_status_for_type(normalized_type)
+        normalized_status = IF.STATUS_PENDING_DECISION if IT.is_decision(normalized_type) else IF.STATUS_PENDING
     row.status = normalized_status
     row.project_id = project_id
     row.owner_id = _pid_for_name(row.owner or "", db)
@@ -279,7 +296,7 @@ def update_issue(
     before = crud.to_dict(row)
     update_data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
     if "issue_type" in update_data and update_data["issue_type"]:
-        update_data["issue_type"] = IF.normalize_type(update_data["issue_type"])
+        update_data["issue_type"] = _storage_issue_type(update_data["issue_type"])
     if "status" in update_data and update_data["status"]:
         update_data["status"] = IF.normalize_status(update_data["status"])
     if "source_type" in update_data:
@@ -488,7 +505,7 @@ def request_ceo(
         )
     require_project_not_archived(project_id, db)
     before = crud.to_dict(row)
-    row.issue_type = IF.TYPE_DECISION
+    row.issue_type = _storage_issue_type(IT.TYPE_DECISION)
     row.status = IF.STATUS_PENDING_DECISION
     row.need_decision_by = payload.need_decision_by
     if payload.note:

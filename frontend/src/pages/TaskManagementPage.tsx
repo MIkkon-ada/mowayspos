@@ -12,6 +12,7 @@ import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } fro
 import type { TaskItem, SubTaskItem, Person, Project } from '../types'
 import { getProjectById, getProjectDisplayName, getProjectIdFromRecord } from '../domain/projectDisplay'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
+import { PlanTableView } from '../components/task-management/PlanTableView'
 
 const NOT_STARTED = new Set(['未开始', 'not_started', 'notstarted'])
 const IN_PROGRESS  = new Set(['推进中', '进行中', 'in_progress'])
@@ -235,6 +236,8 @@ export function TaskManagementPage() {
   // viewProjectId：null=全部任务，非null=特定项目
   const [viewProjectId, setViewProjectId] = useState<number | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [viewMode, setViewMode] = useState<'execution' | 'plan'>('execution')
+  const [planTableLoading, setPlanTableLoading] = useState(false)
   const [progressOpen, setProgressOpen] = useState(false)
   const [progressText, setProgressText] = useState('')
   const [progressSubmitState, setProgressSubmitState] = useState<'idle' | 'submitting' | 'done'>('idle')
@@ -365,6 +368,33 @@ export function TaskManagementPage() {
       const bt = b.created_at ?? ''
       return at.localeCompare(bt)
     })
+
+  function ensurePlanTableSubTasksLoaded() {
+    if (planTableLoading) return
+    const missingTasks = filtered.filter((task) => !(task.id in taskSubMap))
+    if (missingTasks.length === 0) return
+    setPlanTableLoading(true)
+    Promise.all(
+      missingTasks.map((task) =>
+        fetchSubTasks(task.id, false)
+          .then((subs) => [task.id, subs] as const)
+          .catch(() => [task.id, [] as SubTaskItem[]] as const),
+      ),
+    )
+      .then((results) => {
+        setTaskSubMap((prev) => {
+          const next = { ...prev }
+          results.forEach(([taskId, subs]) => { next[taskId] = subs })
+          return next
+        })
+      })
+      .finally(() => setPlanTableLoading(false))
+  }
+
+  useEffect(() => {
+    if (viewMode !== 'plan') return
+    ensurePlanTableSubTasksLoaded()
+  }, [viewMode, filtered, taskSubMap])
 
   function openSubDetail(st: SubTaskItem) {
     setSelectedSubTask(null)
@@ -687,6 +717,22 @@ function handleFormSave(payload: TaskPayload) {
           <h1 className="text-base font-bold text-slate-800">工作推进表</h1>
           <p className="text-xs text-slate-400 mt-0.5">按项目、重点工作、关键任务追踪真实推进状态</p>
         </div>
+        <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+          <button
+            type="button"
+            onClick={() => setViewMode('execution')}
+            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'execution' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            执行视图
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('plan')}
+            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'plan' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            计划表视图
+          </button>
+        </div>
 
         {/* Filters */}
         <div className="flex flex-1 items-center justify-end gap-2 flex-wrap">
@@ -816,7 +862,14 @@ function handleFormSave(payload: TaskPayload) {
             paddingRight: 20,
           }}
         >
-          {loading ? (
+          {viewMode === 'plan' ? (
+            <PlanTableView
+              project={focusedProject}
+              tasks={filtered}
+              taskSubMap={taskSubMap}
+              loading={planTableLoading}
+            />
+          ) : loading ? (
             <div className="h-40 flex items-center justify-center text-slate-400 text-sm">加载中...</div>
           ) : filtered.length === 0 ? (
             <div className="h-40 flex items-center justify-center">
@@ -1007,7 +1060,7 @@ function handleFormSave(payload: TaskPayload) {
           )}
         </div>
 
-        <aside
+        {viewMode === 'execution' && <aside
           data-testid="work-progress-detail-panel"
           className="w-[380px] flex-shrink-0 border-l bg-white flex flex-col overflow-hidden"
           style={{ borderColor: '#E2E8F0' }}
@@ -1368,7 +1421,7 @@ function handleFormSave(payload: TaskPayload) {
               </div>
             )
           })()}
-        </aside>
+        </aside>}
 
       </div>
     </div>

@@ -23,10 +23,28 @@ def test_task_management_page_has_execution_and_plan_table_views():
         assert expected in source
 
 
+def test_plan_table_view_hides_status_stat_cards():
+    source = _frontend_source("pages/TaskManagementPage.tsx")
+
+    for expected in [
+        "viewMode === 'execution' &&",
+        "Status chips",
+        "未启动",
+        "进行中",
+        "已完成",
+        "延期",
+        "暂缓",
+    ]:
+        assert expected in source
+
+
 def test_plan_table_view_has_required_excel_like_columns_and_merging():
     source = _frontend_source("components/task-management/PlanTableView.tsx")
 
     for expected in [
+        "目标与重点工作计划表",
+        "plan-table-excel",
+        "plan-table-cell",
         "目标",
         "重点工作",
         "评价标准",
@@ -37,6 +55,8 @@ def test_plan_table_view_has_required_excel_like_columns_and_merging():
         "计划结束时间",
         "rowSpan",
         "parsePlanTimeRange",
+        "border-slate-300",
+        "px-2 py-1",
         "暂无工作推进表数据",
         "可先在项目立项阶段填写工作推进表雏形，或在执行视图中新建重点工作。",
     ]:
@@ -66,3 +86,19 @@ def test_plan_table_view_reuses_task_subtask_fields_without_new_hierarchy_terms(
     lowered = source.lower()
     assert "workstream" not in lowered
     assert "第四层" not in source
+
+
+def test_plan_table_view_weakens_placeholders_without_detail_page_terms():
+    source = _frontend_source("components/task-management/PlanTableView.tsx")
+
+    for expected in [
+        "plan-table-placeholder",
+        "text-slate-300",
+        "text-[10px]",
+        "未填写项目目标",
+        "未填写评价标准",
+        "暂无关键任务",
+    ]:
+        assert expected in source
+
+    assert "详情页" not in source

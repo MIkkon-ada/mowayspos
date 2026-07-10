@@ -20,6 +20,17 @@ type PlanRow = {
 }
 
 const EMPTY_TEXT = '—'
+const PLACEHOLDER_TEXTS = new Set(['未填写项目目标', '未填写评价标准', '暂无关键任务', EMPTY_TEXT])
+const TABLE_HEADERS = [
+  { label: '目标', width: 'w-[200px]' },
+  { label: '重点工作', width: 'w-[220px]' },
+  { label: '评价标准', width: 'w-[260px]' },
+  { label: '序号', width: 'w-[64px]' },
+  { label: '关键任务', width: 'w-[360px]' },
+  { label: '责任人', width: 'w-[120px]' },
+  { label: '计划开始时间', width: 'w-[140px]' },
+  { label: '计划结束时间', width: 'w-[140px]' },
+]
 
 export function parsePlanTimeRange(value?: string | null): ParsedPlanTime {
   const raw = String(value ?? '').trim()
@@ -38,6 +49,13 @@ export function parsePlanTimeRange(value?: string | null): ParsedPlanTime {
 function textOrFallback(value: string | undefined | null, fallback: string): string {
   const text = String(value ?? '').trim()
   return text || fallback
+}
+
+function renderPlanTableText(value: string) {
+  if (PLACEHOLDER_TEXTS.has(value)) {
+    return <span className="plan-table-placeholder text-[10px] text-slate-300">{value}</span>
+  }
+  return value
 }
 
 function buildPlanRows(tasks: TaskItem[], taskSubMap: Record<number, SubTaskItem[]>): PlanRow[] {
@@ -63,10 +81,13 @@ export function PlanTableView({ project, tasks, taskSubMap, loading = false }: P
   const objective = project
     ? textOrFallback(project.objectives || project.description, '未填写项目目标')
     : '未填写项目目标'
+  const tableTitle = project?.name?.trim()
+    ? `${project.name.trim()}目标与重点工作计划表`
+    : '目标与重点工作计划表'
 
   if (tasks.length === 0) {
     return (
-      <div className="flex h-64 items-center justify-center rounded-2xl border border-slate-200 bg-white">
+      <div className="flex h-56 items-center justify-center border border-slate-300 bg-white">
         <div className="text-center">
           <div className="text-sm font-semibold text-slate-500">暂无工作推进表数据</div>
           <div className="mt-1 text-xs text-slate-400">可先在项目立项阶段填写工作推进表雏形，或在执行视图中新建重点工作。</div>
@@ -76,22 +97,22 @@ export function PlanTableView({ project, tasks, taskSubMap, loading = false }: P
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-        <div>
-          <div className="text-sm font-bold text-slate-800">计划表视图</div>
-          <div className="mt-0.5 text-xs text-slate-400">同一套项目 / 重点工作 / 关键任务数据的类 Excel 展开视图</div>
+    <div>
+      <div className="mb-2 flex items-end justify-between px-1">
+        <div className="flex-1 text-center">
+          <div className="text-base font-bold tracking-wide text-slate-900">{tableTitle}</div>
+          <div className="mt-0.5 text-[11px] text-slate-400">同一套项目 / 重点工作 / 关键任务数据的类 Excel 展开视图</div>
         </div>
         {loading && <span className="text-xs font-semibold text-amber-600">关键任务加载中…</span>}
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="min-w-[980px] w-full text-xs" style={{ borderCollapse: 'collapse' }}>
-          <thead className="bg-slate-50">
+      <div className="overflow-x-auto border border-slate-300 bg-white">
+        <table className="plan-table-excel min-w-[1504px] w-full border-collapse text-[11px] leading-tight">
+          <thead className="bg-slate-100">
             <tr>
-              {['目标', '重点工作', '评价标准', '序号', '关键任务', '责任人', '计划开始时间', '计划结束时间'].map((header) => (
-                <th key={header} className="border-b border-r border-slate-200 px-3 py-2 text-left font-bold text-slate-600 last:border-r-0">
-                  {header}
+              {TABLE_HEADERS.map((header) => (
+                <th key={header.label} className={`plan-table-cell h-7 border border-slate-300 px-2 py-1 text-left font-semibold text-slate-700 ${header.width}`}>
+                  {header.label}
                 </th>
               ))}
             </tr>
@@ -104,36 +125,36 @@ export function PlanTableView({ project, tasks, taskSubMap, loading = false }: P
               const standard = textOrFallback(task.completion_standard || task.key_achievement, '未填写评价标准')
               const owner = textOrFallback(subtask ? subtask.assignee || task.owner : task.owner, EMPTY_TEXT)
               return (
-                <tr key={`${task.id}-${subtask?.id ?? 'empty'}-${index}`} className="align-top hover:bg-slate-50/70">
+                <tr key={`${task.id}-${subtask?.id ?? 'empty'}-${index}`} className="h-7 align-top hover:bg-slate-50/70">
                   {index === 0 && (
-                    <td rowSpan={rows.length} className="w-[180px] whitespace-pre-wrap border-b border-r border-slate-200 bg-sky-50/40 px-3 py-2 leading-relaxed text-slate-700">
-                      {objective}
+                    <td rowSpan={rows.length} className="plan-table-cell w-[200px] whitespace-pre-wrap border border-slate-300 bg-slate-50 px-2 py-1 leading-snug text-slate-700">
+                      {renderPlanTableText(objective)}
                     </td>
                   )}
                   {row.showTaskCells && (
                     <>
-                      <td rowSpan={row.taskRowSpan} className="w-[180px] whitespace-pre-wrap border-b border-r border-slate-200 px-3 py-2 font-semibold leading-relaxed text-slate-800">
-                        {textOrFallback(task.key_task, EMPTY_TEXT)}
+                      <td rowSpan={row.taskRowSpan} className="plan-table-cell w-[220px] whitespace-pre-wrap border border-slate-300 px-2 py-1 font-semibold leading-snug text-slate-800">
+                        {renderPlanTableText(textOrFallback(task.key_task, EMPTY_TEXT))}
                       </td>
-                      <td rowSpan={row.taskRowSpan} className="w-[180px] whitespace-pre-wrap border-b border-r border-slate-200 px-3 py-2 leading-relaxed text-slate-600">
-                        {standard}
+                      <td rowSpan={row.taskRowSpan} className="plan-table-cell w-[260px] whitespace-pre-wrap border border-slate-300 px-2 py-1 leading-snug text-slate-600">
+                        {renderPlanTableText(standard)}
                       </td>
                     </>
                   )}
-                  <td className="w-[56px] border-b border-r border-slate-200 px-3 py-2 text-center font-semibold text-slate-500">
+                  <td className="plan-table-cell w-[64px] border border-slate-300 px-2 py-1 text-center font-semibold text-slate-500">
                     {index + 1}
                   </td>
-                  <td className="min-w-[220px] border-b border-r border-slate-200 px-3 py-2 text-left text-slate-700">
-                    {subtask ? subtask.title || '暂无关键任务' : '暂无关键任务'}
+                  <td className="plan-table-cell w-[360px] border border-slate-300 px-2 py-1 text-left text-slate-700">
+                    {renderPlanTableText(subtask ? subtask.title || '暂无关键任务' : '暂无关键任务')}
                   </td>
-                  <td className="w-[120px] border-b border-r border-slate-200 px-3 py-2 text-slate-600">
-                    {owner}
+                  <td className="plan-table-cell w-[120px] border border-slate-300 px-2 py-1 text-slate-600">
+                    {renderPlanTableText(owner)}
                   </td>
-                  <td className="w-[120px] border-b border-r border-slate-200 px-3 py-2 text-slate-500">
-                    {planTime.start}
+                  <td className="plan-table-cell w-[140px] border border-slate-300 px-2 py-1 text-slate-500">
+                    {renderPlanTableText(planTime.start)}
                   </td>
-                  <td className="w-[120px] border-b border-slate-200 px-3 py-2 text-slate-500">
-                    {planTime.end}
+                  <td className="plan-table-cell w-[140px] border border-slate-300 px-2 py-1 text-slate-500">
+                    {renderPlanTableText(planTime.end)}
                   </td>
                 </tr>
               )

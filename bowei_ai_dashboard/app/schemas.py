@@ -106,7 +106,7 @@ class AchievementPayload(BaseModel):
     file_link: str = ""
     scenario: str = ""
     reuse_tag: str = Field("", max_length=80)
-    status: str = Field("计划中", max_length=20)
+    status: str = Field("草稿", max_length=20)
     source_type: str = Field("人工录入", max_length=40)
 
 

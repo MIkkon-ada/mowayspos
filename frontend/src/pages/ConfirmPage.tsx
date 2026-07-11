@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   getPending,
   confirmSubmission,
@@ -23,6 +24,8 @@ import { buildConfirmationTaskCards, normalizeReviewCardData } from '../domain/c
 import { getProjectDisplayName } from '../domain/projectDisplay'
 
 type WriteMode = 'task_new' | 'subtask_update' | 'subtask_new'
+
+const REVIEWER_PROJECT_ROLES = new Set(['owner', 'coordinator', 'project_ceo', 'super_admin'])
 
 function fmtTime(s?: string | null) { return fmtFull(s) }
 
@@ -206,7 +209,8 @@ function projectNameFromConfirmation(item: ConfirmationItem | null | undefined, 
 }
 
 export function ConfirmPage() {
-  const { currentProjectId, currentUser, projects, currentCapabilities } = useProject()
+  const { currentProjectId, currentUser, projects, globalUserRoles, currentCapabilities } = useProject()
+  const [searchParams] = useSearchParams()
   const [items, setItems] = useState<ConfirmationItem[]>([])
   const [selected, setSelected] = useState<ConfirmationItem | null>(null)
   const [loading, setLoading] = useState(false)
@@ -224,14 +228,39 @@ export function ConfirmPage() {
   const selectedProject = selected?.project_id != null ? projects.find((p) => p.id === selected.project_id) ?? null : null
   const projectArchived = isProjectArchived(selectedProject)
 
+  const urlProjectId = useMemo(() => {
+    const raw = searchParams.get('projectId')
+    if (!raw) return null
+    const id = Number(raw)
+    return Number.isFinite(id) ? id : null
+  }, [searchParams])
+
+  const pendingProjectId = urlProjectId ?? currentProjectId
+  const hasReviewerRoleInAnyProject = useMemo(() => {
+    const fromProjects = projects.some((project) =>
+      (project.user_roles ?? []).some((role) => REVIEWER_PROJECT_ROLES.has(role)),
+    )
+    const fromGlobalRoles = globalUserRoles.some((role) => REVIEWER_PROJECT_ROLES.has(role))
+    return fromProjects || fromGlobalRoles
+  }, [projects, globalUserRoles])
+
   const isReviewer = !!(
     currentCapabilities?.canConfirm ||
     currentCapabilities?.canCoordinate ||
-    currentCapabilities?.canCeoDecide
+    currentCapabilities?.canCeoDecide ||
+    currentUser?.can_confirm_all ||
+    currentUser?.can_view_all ||
+    currentUser?.is_tech_admin ||
+    currentUser?.system_role === 'super_admin' ||
+    hasReviewerRoleInAnyProject
   )
   const [viewMode, setViewMode] = useState<'mine' | 'all'>('mine')
   useEffect(() => {
-    if (isReviewer) setViewMode('all')
+    setViewMode((prev) => {
+      if (isReviewer && prev === 'mine') return 'all'
+      if (!isReviewer && prev === 'all') return 'mine'
+      return prev
+    })
   }, [isReviewer])
 
   const [filterStatus, setFilterStatus] = useState(SS.S_NEW)
@@ -281,7 +310,7 @@ export function ConfirmPage() {
         .catch(() => { if (!cancelled) setLoadError('记录加载失败，请刷新重试') })
         .finally(() => { if (!cancelled) setLoading(false) })
     } else {
-      getPending(null, 'all')
+      getPending(pendingProjectId, 'all')
         .then((d) => {
           if (!cancelled) {
             setItems(d)
@@ -293,7 +322,7 @@ export function ConfirmPage() {
         .finally(() => { if (!cancelled) setLoading(false) })
     }
     return () => { cancelled = true }
-  }, [currentProjectId, viewMode])
+  }, [currentProjectId, pendingProjectId, viewMode])
 
   function getAIResult(item: ConfirmationItem): Record<string, unknown> | null {
     try {
@@ -313,7 +342,8 @@ export function ConfirmPage() {
     setSelected(item)
     const r = getAIResult(item)
     const aiProject = getProjectDisplayName(projects, { ...(item as Record<string, unknown>), ...(r ?? {}) })
-    const fallback = projects.find((p) => p.id === currentProjectId)?.name ?? (projects[0]?.name ?? '')
+    const itemProjectId = item.project_id ?? pendingProjectId ?? currentProjectId
+    const fallback = projects.find((p) => p.id === itemProjectId)?.name ?? (projects[0]?.name ?? '')
     setEditProject(aiProject || fallback)
     setEditStatus(String(r?.status_suggestion || '进行中'))
     setPendingAction(null)
@@ -333,9 +363,8 @@ export function ConfirmPage() {
     }
 
     const submitter = item.submitter
-    const pid = currentProjectId
-    if (submitter) fetchSubtasksByAssignee(submitter, pid).then(setSubmitterSubtasks).catch(() => setSubmitterSubtasks([]))
-    if (pid) fetchTasks(pid).then(setProjectTasks).catch(() => setProjectTasks([]))
+    if (submitter) fetchSubtasksByAssignee(submitter, itemProjectId).then(setSubmitterSubtasks).catch(() => setSubmitterSubtasks([]))
+    if (itemProjectId) fetchTasks(itemProjectId).then(setProjectTasks).catch(() => setProjectTasks([]))
     setPendingItemTypes({})
     setPendingItemHelpers({})
     setPendingItemNotes({})

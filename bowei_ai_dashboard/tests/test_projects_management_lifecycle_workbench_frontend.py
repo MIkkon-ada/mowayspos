@@ -220,6 +220,14 @@ def test_approval_materials_workbench_matches_owner_submit_readonly_shape():
     source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
 
     modal_source = source[source.index("function ApprovalMaterialsWorkbenchModal"):]
+    left_source = modal_source[
+        modal_source.index("projects-approval-left-pane"):
+        modal_source.index("projects-approval-right-pane")
+    ]
+    right_source = modal_source[
+        modal_source.index("projects-approval-right-pane"):
+        modal_source.index("projects-approval-workbench-footer")
+    ]
 
     for expected in [
         "查看审核材料",
@@ -243,6 +251,23 @@ def test_approval_materials_workbench_matches_owner_submit_readonly_shape():
         "退回修改",
     ]:
         assert expected in modal_source
+
+    for expected in [
+        "项目角色",
+        "企业教练",
+        "项目负责人",
+        "统筹人",
+        "成员",
+    ]:
+        assert expected in left_source
+
+    assert "项目角色" not in right_source
+    assert "projects-approval-role-pills" in left_source
+    assert "projects-approval-supplement-summary" in left_source
+    assert "outline-none" in left_source
+    assert "focus-visible:ring-2" in left_source
+    assert "focus:outline" not in left_source
+    assert "focus:ring" not in left_source
 
     for forbidden in [
         "+ 新增重点工作",

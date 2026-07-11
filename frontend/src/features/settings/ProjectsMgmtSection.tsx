@@ -1535,8 +1535,18 @@ function ApprovalMaterialsWorkbenchModal({
                     </div>
                   </div>
 
+                  <section className="projects-approval-role-pills space-y-2">
+                    <div className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">项目角色</div>
+                    <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">企业教练：{teamLine.ceoText}</span>
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">项目负责人：{teamLine.ownerText}</span>
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">统筹人：{teamLine.coordinatorText}</span>
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">成员：{teamLine.memberText}</span>
+                    </div>
+                  </section>
+
                   <details className="group mt-4">
-                    <summary className="flex cursor-pointer select-none items-center gap-2 text-sm font-semibold text-orange-700 transition-opacity hover:opacity-80">
+                    <summary className="projects-approval-supplement-summary flex cursor-pointer select-none items-center gap-2 rounded-lg border border-orange-100 bg-orange-50/40 px-3 py-2 text-sm font-semibold text-orange-700 outline-none transition-colors hover:bg-orange-50 focus-visible:ring-2 focus-visible:ring-orange-200">
                       <span className="text-base leading-none transition-transform group-open:rotate-90">›</span>
                       补充详细信息
                     </summary>
@@ -1637,15 +1647,6 @@ function ApprovalMaterialsWorkbenchModal({
                 </div>
               )}
 
-              <section className="rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-600">
-                <div className="mb-2 font-semibold text-slate-800">项目角色</div>
-                <div className="flex flex-wrap gap-2">
-                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">企业教练：{teamLine.ceoText}</span>
-                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">项目负责人：{teamLine.ownerText}</span>
-                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">统筹人：{teamLine.coordinatorText}</span>
-                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">成员：{teamLine.memberText}</span>
-                </div>
-              </section>
             </section>
           </div>
         </main>

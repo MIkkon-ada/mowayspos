@@ -71,10 +71,7 @@ def test_project_cards_show_next_actions_and_key_lifecycle_info():
         "当前阶段",
         "企业教练：",
         "项目负责人：",
-        "统筹人：",
-        "成员：",
         "项目周期：",
-        "推进表雏形：",
         "{ label: '编辑项目'",
         "{ label: '完善立项信息'",
         "{ label: '查看审核材料'",
@@ -94,6 +91,39 @@ def test_project_cards_show_next_actions_and_key_lifecycle_info():
     assert "px-4 py-3" in source or "p-4" in source, \
         "项目队列卡片应保持紧凑"
     assert "rounded-xl border bg-white" in source
+
+
+def test_project_queue_card_is_deduplicated_from_detail_panel_fields():
+    source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
+    card_source = source[
+        source.index("function LifecycleCard"):
+        source.index("function LifecycleMoreMenu")
+    ]
+
+    for expected in [
+        "project.name",
+        "statusBadge.label",
+        "projectType",
+        "stageDesc",
+        "teamLine.ownerText",
+        "teamLine.ceoText",
+        "formatPlanTimeShort(project.start_date, project.end_date)",
+        "mainAction.label",
+    ]:
+        assert expected in card_source
+
+    for forbidden in [
+        "teamLine.coordinatorText",
+        "teamLine.memberText",
+        "推进表雏形",
+        "draftText",
+        "summary.taskCount",
+        "summary.subtaskCount",
+        "ownerConfigured",
+        "planConfigured",
+        "立项资料完备度",
+    ]:
+        assert forbidden not in card_source
 
 
 def test_project_queue_card_hierarchy_is_action_queue_not_archive_card():
@@ -128,8 +158,7 @@ def test_project_action_panel_contains_processing_sections():
     for expected in [
         "function DetailPanel",
         "projects-lifecycle-action-panel-card",
-        "当前阶段说明",
-        "操作提醒",
+        "处理提醒",
         "项目核心信息",
         "项目角色",
         "立项资料完备度",
@@ -171,6 +200,8 @@ def test_project_action_panel_is_action_first_not_archive_drawer():
 
     assert "projects-lifecycle-panel-reminder" not in source[source.index("projects-lifecycle-panel-next-actions"):core_idx], \
         "右侧面板应先呈现下一步操作，再进入信息说明"
+    assert "当前阶段说明" not in source[source.index("function DetailPanel"):source.index("projects-lifecycle-panel-next-actions")], \
+        "右侧不应同时展示当前阶段说明和操作提醒两个重复区域"
     assert "bg-slate-50/60 px-4 py-3" not in source, \
         "右侧不要堆太多灰底信息卡"
 

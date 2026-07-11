@@ -75,6 +75,7 @@ def test_project_card_shows_only_project_level_roles():
 def test_project_card_draft_summary_does_not_misrepresent_task_owner_as_project_owner():
     """卡片推进表摘要不应将重点工作 owner 混淆为项目负责人。"""
     source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
+    card_source = source[source.index("function LifecycleCard"):source.index("function LifecycleMoreMenu")]
 
     # getDraftSummary 的 ownerConfigured 应改为统计 subtask assignee 而不是 task owner
     assert "getDraftSummary" in source
@@ -82,8 +83,12 @@ def test_project_card_draft_summary_does_not_misrepresent_task_owner_as_project_
     # 新的统计口径：subtasks.filter(s => s.assignee)
     assert "subtasks.filter" in source or "subtasks" in source, \
         "推进表雏形摘要应基于 subtask assignee 而非 task owner"
-    # 草案文本中"已指派"替代了原来的"责任人"
-    assert "已指派" in source, "草案摘要应使用'已指派'（关键任务级）替代'责任人'（避免与项目负责人混淆）"
+    # H7 后左侧项目队列不再展示推进表雏形摘要，避免与右侧详情面板重复。
+    assert "推进表雏形" not in card_source
+    assert "已指派" not in card_source
+    assert "summary.taskCount" not in card_source
+    assert "summary.subtaskCount" not in card_source
+    assert "项目负责人：" in card_source
 
 
 def test_member_count_excludes_owner():

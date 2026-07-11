@@ -730,7 +730,6 @@ export function ProjectsMgmtSection() {
               const mainAction = getMainAction(status, roles.isSuperAdmin, roles.isCompanyCeo, roles.isRealProjectCeo, roles.isRealOwner)
               const tasks = projectTasksMap[project.id] ?? []
               const subtasks = projectSubtasksMap[project.id] ?? []
-              const summary = getDraftSummary(tasks, subtasks, project)
               const pm = members[project.id] ?? []
               const teamLine = summarizeProjectRoleLine(pm, project)
               const isSelected = selectedProjectId === project.id
@@ -754,7 +753,6 @@ export function ProjectsMgmtSection() {
                   project={project}
                   status={status}
                   teamLine={teamLine}
-                  summary={summary}
                   mainAction={mainAction}
                   mainBusy={dispatchingId === project.id}
                   showReturn={showReturn}
@@ -917,13 +915,12 @@ export function ProjectsMgmtSection() {
 // ── 生命周期卡片 ──────────────────────────────────────────────
 
 function LifecycleCard({
-  project, status, teamLine, summary, mainAction, mainBusy, showReturn, isSelected, hasMore,
+  project, status, teamLine, mainAction, mainBusy, showReturn, isSelected, hasMore,
   onSelect, onMainAction, onReturn, onOpenMore,
 }: {
   project: Project
   status: string
   teamLine: { ceoText: string; ownerText: string; coordinatorText: string; memberText: string }
-  summary: DraftSummary
   mainAction: MainAction
   mainBusy: boolean
   showReturn: boolean
@@ -937,9 +934,6 @@ function LifecycleCard({
   const statusBadge = getProjectStatusBadge(project)
   const projectType = project.project_type?.trim() || ''
   const stageDesc = STAGE_DESCRIPTIONS[status] ?? ''
-  const draftText = summary.taskTotal === 0
-    ? '未完善'
-    : `目标 ${summary.objectives}｜重点工作 ${summary.taskCount}｜关键任务 ${summary.subtaskCount}｜已指派 ${summary.ownerConfigured}/${summary.taskTotal}｜计划 ${summary.planConfigured}/${summary.taskTotal}`
 
   return (
     <div
@@ -966,23 +960,18 @@ function LifecycleCard({
 
       <p className="projects-lifecycle-card-stage-row mt-2 flex items-start gap-1.5 text-xs leading-relaxed text-slate-600">
         <span className="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#2170e4]" />
+        <span className="sr-only">当前阶段：</span>
         <span>{stageDesc}</span>
       </p>
 
       <div className="projects-lifecycle-card-people-line mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-600">
-        <span>企业教练：{teamLine.ceoText}</span>
         <span>项目负责人：{teamLine.ownerText}</span>
-        <span>统筹人：{teamLine.coordinatorText}</span>
-        <span>成员：{teamLine.memberText}</span>
+        <span>企业教练：{teamLine.ceoText}</span>
       </div>
 
       <div className="projects-lifecycle-card-footer-row projects-lifecycle-card-meta-row mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
         <div className="flex flex-wrap gap-x-4 gap-y-1">
-        <span>项目周期：{formatPlanTimeShort(project.start_date, project.end_date)}</span>
-        <span>
-          推进表雏形：
-          <span className={summary.taskTotal === 0 ? 'text-orange-500' : 'text-slate-600'}>{draftText}</span>
-        </span>
+          <span>项目周期：{formatPlanTimeShort(project.start_date, project.end_date)}</span>
         </div>
       </div>
 
@@ -1130,9 +1119,8 @@ function DetailPanel({
               <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusBadge.className}`}>{statusBadge.label}</span>
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-500">{projectType}</span>
             </div>
-            <p className="mt-2 text-xs leading-relaxed text-slate-500">当前阶段说明：{stageDesc}</p>
             <div className={`projects-lifecycle-panel-reminder mt-3 rounded-lg border px-3 py-2 ${getReminderToneClass(status)}`}>
-              <div className="text-xs font-bold">操作提醒</div>
+              <div className="text-xs font-bold">处理提醒</div>
               <p className="mt-1 text-xs leading-relaxed opacity-85">{actionReminder}</p>
             </div>
           </div>

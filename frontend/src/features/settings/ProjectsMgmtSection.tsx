@@ -216,7 +216,7 @@ function buildDraftRows(tasks: TaskItem[], subtasks: SubTaskWithParent[], projec
   return rows
 }
 
-type MainAction = { label: string; type: 'edit' | 'dispatch' | 'ownerSubmit' | 'approve' | 'workProgress' | 'viewDetail' }
+type MainAction = { label: string; type: 'edit' | 'dispatch' | 'ownerSubmit' | 'approvalMaterials' | 'workProgress' | 'viewDetail' }
 
 function getMainAction(
   status: string,
@@ -235,9 +235,7 @@ function getMainAction(
         ? { label: '完善立项信息', type: 'ownerSubmit' }
         : { label: '查看详情', type: 'viewDetail' }
     case 'pending_review':
-      return (isRealProjectCeo || isSuperAdmin)
-        ? { label: '审核立项', type: 'approve' }
-        : { label: '查看审核材料', type: 'viewDetail' }
+      return { label: '查看审核材料', type: 'approvalMaterials' }
     case 'returned':
       return isRealOwner
         ? { label: '修改立项信息', type: 'ownerSubmit' }
@@ -289,8 +287,7 @@ export function ProjectsMgmtSection() {
   const [dispatchingId, setDispatchingId] = useState<number | null>(null)
 
   // 审核
-  const [approveModal, setApproveModal] = useState<{ pid: number; name: string } | null>(null)
-  const [approveForm, setApproveForm] = useState<ProjectProfilePayload>({})
+  const [approvalMaterialsProject, setApprovalMaterialsProject] = useState<Project | null>(null)
   const [approveLoading, setApproveLoading] = useState(false)
 
   // 负责人完善立项
@@ -412,17 +409,6 @@ export function ProjectsMgmtSection() {
   const selectedProject = selectedProjectId != null
     ? projects.find((p) => p.id === selectedProjectId) ?? null
     : null
-  const approveProjectRow = approveModal
-    ? projects.find((p) => p.id === approveModal.pid) ?? null
-    : null
-  const approveTasks = approveModal ? projectTasksMap[approveModal.pid] ?? [] : []
-  const approveSubtasks = approveModal ? projectSubtasksMap[approveModal.pid] ?? [] : []
-  const approveDraftSummary = approveProjectRow
-    ? getDraftSummary(approveTasks, approveSubtasks, approveProjectRow)
-    : { objectives: 0, taskCount: 0, subtaskCount: 0, ownerConfigured: 0, planConfigured: 0, taskTotal: 0 }
-  const approveDraftRows = approveProjectRow
-    ? buildDraftRows(approveTasks, approveSubtasks, approveProjectRow)
-    : []
 
   // ── Handlers ──
 
@@ -571,16 +557,14 @@ export function ProjectsMgmtSection() {
     }
   }
 
-  async function handleApprove() {
-    if (!approveModal) return
+  async function handleApprove(project: Project) {
     setApproveLoading(true)
     try {
-      const updated = await approveProject(approveModal.pid, approveForm)
-      setProjects((prev) => prev.map((p) => (p.id === approveModal.pid ? { ...p, ...updated } : p)))
+      const updated = await approveProject(project.id, {})
+      setProjects((prev) => prev.map((p) => (p.id === project.id ? { ...p, ...updated } : p)))
       reloadProjects()
-      toast.success(`项目"${approveModal.name}"已审核通过并启动`)
-      setApproveModal(null)
-      setApproveForm({})
+      toast.success(`项目"${project.name}"已审核通过并启动`)
+      setApprovalMaterialsProject(null)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '审核失败')
     } finally {
@@ -781,7 +765,7 @@ export function ProjectsMgmtSection() {
                     if (mainAction.type === 'edit') void openProjectEditor(project)
                     else if (mainAction.type === 'dispatch') void handleDispatch(project.id)
                     else if (mainAction.type === 'ownerSubmit') setOwnerFillProject(project)
-                    else if (mainAction.type === 'approve') { setSelectedProjectId(project.id); setApproveModal({ pid: project.id, name: project.name }) }
+                    else if (mainAction.type === 'approvalMaterials') { setSelectedProjectId(project.id); setApprovalMaterialsProject(project) }
                     else if (mainAction.type === 'workProgress') navigate(`/work/tasks?projectId=${project.id}`)
                     else setSelectedProjectId(project.id)
                   }}
@@ -810,7 +794,7 @@ export function ProjectsMgmtSection() {
               onEdit={() => void openProjectEditor(selectedProject)}
               onDispatch={() => void handleDispatch(selectedProject.id)}
               onOwnerSubmit={() => setOwnerFillProject(selectedProject)}
-              onApprove={() => setApproveModal({ pid: selectedProject.id, name: selectedProject.name })}
+              onOpenApprovalMaterials={() => setApprovalMaterialsProject(selectedProject)}
               onReturn={() => void handleReturn(selectedProject.id, selectedProject.name)}
               onWorkProgress={() => navigate(`/work/tasks?projectId=${selectedProject.id}`)}
             />
@@ -871,18 +855,21 @@ export function ProjectsMgmtSection() {
         />
       )}
 
-      {/* 审核弹窗 */}
-      {approveModal && (
-        <ProjectApproveModal
-          open={Boolean(approveModal)}
+      {/* 审核材料弹窗 */}
+      {approvalMaterialsProject && (
+        <ApprovalMaterialsWorkbenchModal
+          project={approvalMaterialsProject}
+          projectMembers={members[approvalMaterialsProject.id] ?? []}
+          tasks={projectTasksMap[approvalMaterialsProject.id] ?? []}
+          subtasks={projectSubtasksMap[approvalMaterialsProject.id] ?? []}
+          canReview={(() => {
+            const roles = getProjectRoles(approvalMaterialsProject.id)
+            return roles.isRealProjectCeo || roles.isSuperAdmin
+          })()}
           loading={approveLoading}
-          name={approveModal.name}
-          form={approveForm}
-          draftSummary={approveDraftSummary}
-          draftRows={approveDraftRows}
-          onChangeForm={setApproveForm}
-          onClose={() => !approveLoading && setApproveModal(null)}
-          onConfirm={handleApprove}
+          onClose={() => !approveLoading && setApprovalMaterialsProject(null)}
+          onApprove={() => void handleApprove(approvalMaterialsProject)}
+          onReturn={() => void handleReturn(approvalMaterialsProject.id, approvalMaterialsProject.name)}
         />
       )}
 
@@ -1089,7 +1076,7 @@ function LifecycleMoreMenu({
 
 function DetailPanel({
   project, projectMembers, tasks, subtasks, roles, onClose,
-  onEdit, onDispatch, onOwnerSubmit, onApprove, onReturn, onWorkProgress,
+  onEdit, onDispatch, onOwnerSubmit, onOpenApprovalMaterials, onReturn, onWorkProgress,
 }: {
   project: Project
   projectMembers: ProjectMember[]
@@ -1100,7 +1087,7 @@ function DetailPanel({
   onEdit: () => void
   onDispatch: () => void
   onOwnerSubmit: () => void
-  onApprove: () => void
+  onOpenApprovalMaterials: () => void
   onReturn: () => void
   onWorkProgress: () => void
 }) {
@@ -1108,8 +1095,6 @@ function DetailPanel({
   const statusBadge = getProjectStatusBadge(project)
   const teamLine = summarizeProjectRoleLine(projectMembers, project)
   const summary = getDraftSummary(tasks, subtasks, project)
-  const draftSummary = summary
-  const draftRows = buildDraftRows(tasks, subtasks, project)
   const stageDesc = STAGE_DESCRIPTIONS[status] ?? ''
   const actionReminder = ACTION_REMINDERS[status] ?? stageDesc
   const showReturn = status === 'pending_review' && (roles.isRealProjectCeo || roles.isSuperAdmin)
@@ -1118,21 +1103,13 @@ function DetailPanel({
   const draftReady = summary.taskCount > 0 && summary.subtaskCount > 0
   const projectType = project.project_type?.trim() || '未填写'
   const clientName = project.client_name?.trim() || '内部项目 / 未填写'
-  const [showDraftPreview, setShowDraftPreview] = useState(false)
   const [showArchiveFeedback, setShowArchiveFeedback] = useState(false)
 
   useEffect(() => {
-    setShowDraftPreview(false)
     setShowArchiveFeedback(false)
   }, [project.id])
 
-  function onPreviewDraft() {
-    setShowArchiveFeedback(false)
-    setShowDraftPreview((prev) => !prev)
-  }
-
   function onShowArchiveFeedback() {
-    setShowDraftPreview(false)
     setShowArchiveFeedback(true)
   }
 
@@ -1178,18 +1155,13 @@ function DetailPanel({
           {status === 'dispatched' && roles.isRealOwner && (
             <button type="button" onClick={onOwnerSubmit} className="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">完善立项信息</button>
           )}
-          {status === 'pending_review' && (roles.isRealProjectCeo || roles.isSuperAdmin) && (
-            <button type="button" onClick={onApprove} className="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">审核立项</button>
+          {status === 'pending_review' && (
+            <button type="button" onClick={onOpenApprovalMaterials} className="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">查看审核材料</button>
           )}
           {showReturn && (
             <button type="button" onClick={onReturn}
               className="w-full rounded-lg border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 hover:bg-orange-100">
               退回修改
-            </button>
-          )}
-          {status === 'pending_review' && (
-            <button type="button" onClick={onPreviewDraft} className="w-full rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-100">
-              {showDraftPreview ? '收起工作推进表雏形' : '查看工作推进表雏形'}
             </button>
           )}
           {status === 'returned' && roles.isRealOwner && (
@@ -1208,28 +1180,6 @@ function DetailPanel({
       </section>
 
       <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
-        {showDraftPreview && (
-          <section className="projects-lifecycle-panel-section projects-lifecycle-draft-preview rounded-xl border border-sky-100 bg-sky-50/40 p-3">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="text-sm font-bold text-slate-800">工作推进表雏形</p>
-                <p className="mt-1 text-xs text-slate-500">查看负责人提交的重点工作与关键任务安排。</p>
-              </div>
-              <div className="flex gap-2 text-xs">
-                <span className="rounded-full bg-white px-2 py-1 font-semibold text-slate-600">重点工作 {draftSummary.taskCount}</span>
-                <span className="rounded-full bg-white px-2 py-1 font-semibold text-slate-600">关键任务 {draftSummary.subtaskCount}</span>
-              </div>
-            </div>
-            {draftRows.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-sky-200 bg-white px-3 py-6 text-center text-sm text-slate-400">暂无工作推进表雏形</div>
-            ) : (
-              <div className="projects-lifecycle-draft-preview-table">
-                <DraftProgressTable rows={draftRows} />
-              </div>
-            )}
-          </section>
-        )}
-
         {showArchiveFeedback && (
           <section className="projects-lifecycle-panel-section projects-lifecycle-archive-feedback rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
             当前没有单独的归档详情页。归档项目的核心信息、项目角色和立项资料完备度已在本处理面板中展示。
@@ -1486,6 +1436,249 @@ function ProjectBatchImportModal({
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function ApprovalMaterialsWorkbenchModal({
+  project,
+  projectMembers,
+  tasks,
+  subtasks,
+  canReview,
+  loading,
+  onClose,
+  onApprove,
+  onReturn,
+}: {
+  project: Project
+  projectMembers: ProjectMember[]
+  tasks: TaskItem[]
+  subtasks: SubTaskWithParent[]
+  canReview: boolean
+  loading: boolean
+  onClose: () => void
+  onApprove: () => void
+  onReturn: () => void
+}) {
+  const teamLine = summarizeProjectRoleLine(projectMembers, project)
+  const draftSummary = getDraftSummary(tasks, subtasks, project)
+  const draftRows = buildDraftRows(tasks, subtasks, project)
+  const projectType = project.project_type?.trim() || '未填写'
+  const clientName = project.client_name?.trim() || '内部项目 / 未填写'
+  const background = project.background?.trim() || '未填写'
+  const expectedOutcomes = project.expected_outcomes?.trim() || '未填写'
+  const projectPeriod = formatPlanTimeShort(project.start_date, project.end_date)
+
+  const rowsForTask = (task: TaskItem) => {
+    const taskTitle = task.key_task || '—'
+    return draftRows.filter((row) => row.keyTask === taskTitle)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4"
+      style={{ background: 'rgba(15,23,42,0.45)' }}
+      onClick={() => !loading && onClose()}
+    >
+      <div
+        className="projects-approval-workbench-shell flex h-[90vh] w-[96vw] max-w-[1280px] flex-col overflow-hidden rounded-xl bg-[#f6f9ff] text-slate-900 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="projects-approval-workbench-header flex h-[72px] shrink-0 items-center justify-between border-b border-[#e0c0b1] bg-white px-6">
+          <div className="flex min-w-0 items-center gap-4">
+            <div className="h-10 w-1.5 rounded-full bg-orange-500" aria-hidden="true" />
+            <div className="min-w-0">
+              <h2 className="truncate text-lg font-semibold tracking-[-0.01em] text-slate-900">
+                查看审核材料 — {project.name}
+              </h2>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <span className="rounded border border-orange-200 bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-orange-800">
+                  待企业教练审核
+                </span>
+                <span className="text-xs font-semibold text-slate-600">立项方案审核材料</span>
+                <span className="text-xs text-slate-500">
+                  负责人已提交立项信息和工作推进方案，请审核项目完成准则、重点工作和关键任务安排。
+                </span>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-4 rounded-full px-3 py-2 text-xl leading-none text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+            aria-label="关闭"
+          >
+            ×
+          </button>
+        </header>
+
+        <main className="projects-approval-workbench-main flex-1 overflow-y-auto bg-[#f6f9ff] pb-8">
+          <div className="projects-approval-workbench-columns mx-auto flex max-w-[1440px] items-start gap-6 px-6 py-6">
+            <aside className="projects-approval-left-pane sticky top-6 w-[400px] shrink-0 space-y-6">
+              <section className="overflow-hidden rounded-xl border border-[#e0c0b1]/70 bg-white shadow-sm">
+                <h3 className="sr-only">项目核心信息</h3>
+                <div className="space-y-6 p-6">
+                  <div className="space-y-2">
+                    <div className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">项目名称</div>
+                    <div className="text-lg font-semibold text-slate-900">{project.name}</div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">项目周期 / 时间段</div>
+                    <div className="text-base text-slate-800">{projectPeriod}</div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">项目完成准则 / 验收标准</div>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm leading-relaxed text-slate-700">
+                      {project.objectives?.trim() || '未填写'}
+                    </div>
+                  </div>
+
+                  <details className="group mt-4">
+                    <summary className="flex cursor-pointer select-none items-center gap-2 text-sm font-semibold text-orange-700 transition-opacity hover:opacity-80">
+                      <span className="text-base leading-none transition-transform group-open:rotate-90">›</span>
+                      补充详细信息
+                    </summary>
+                    <div className="mt-4 space-y-4 border-t border-slate-200/80 pt-4 text-sm text-slate-700">
+                      <div>
+                        <div className="text-[11px] font-semibold text-slate-500">客户名称</div>
+                        <div className="mt-1">{clientName}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-semibold text-slate-500">项目类型</div>
+                        <div className="mt-1">{projectType}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-semibold text-slate-500">项目背景</div>
+                        <div className="mt-1 leading-relaxed">{background}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-semibold text-slate-500">补充说明</div>
+                        <div className="mt-1 leading-relaxed">{expectedOutcomes}</div>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              </section>
+            </aside>
+
+            <section className="projects-approval-right-pane min-w-0 flex-1">
+              <div className="mb-4 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-lg font-semibold text-slate-900">工作推进方案</h3>
+                  <span className="text-sm italic text-slate-500">
+                    只读审核视图：核对重点工作方向、目标成果与关键任务执行安排。
+                  </span>
+                </div>
+                <div className="flex shrink-0 gap-2 text-xs">
+                  <span className="rounded-lg border border-orange-200 bg-white px-3 py-2 font-semibold text-orange-700">
+                    重点工作 {draftSummary.taskCount}
+                  </span>
+                  <span className="rounded-lg border border-orange-200 bg-white px-3 py-2 font-semibold text-orange-700">
+                    关键任务 {draftSummary.subtaskCount}
+                  </span>
+                </div>
+              </div>
+
+              {tasks.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-10 text-center text-sm text-slate-400">
+                  暂无工作推进表雏形
+                </div>
+              ) : (
+                <div>
+                  {tasks.map((task, taskIndex) => {
+                    const rows = rowsForTask(task)
+                    return (
+                      <div key={task.id ?? taskIndex} className="mb-6 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                        <div className="flex items-start gap-4 border-b border-slate-200 bg-slate-100/70 px-6 py-4">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-orange-50 text-lg font-semibold text-orange-700">
+                            {taskIndex + 1}
+                          </div>
+                          <div className="grid flex-1 grid-cols-1 gap-4 md:grid-cols-2">
+                            <div>
+                              <div className="block text-[10px] font-semibold uppercase text-slate-500/80">重点工作名称</div>
+                              <div className="mt-1 text-lg font-semibold text-slate-900">{task.key_task || '未填写'}</div>
+                            </div>
+                            <div>
+                              <div className="block text-[10px] font-semibold uppercase text-slate-500/80">目标成果 / 验收标准</div>
+                              <div className="mt-1 text-sm leading-relaxed text-slate-600">{task.completion_standard?.trim() || '未填写'}</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="w-full border-collapse text-left text-sm">
+                            <thead>
+                              <tr className="border-b border-slate-200/80 bg-slate-50/80 text-[11px] font-semibold text-slate-500">
+                                <th className="w-[250px] py-2 pl-6 pr-3">关键任务</th>
+                                <th className="w-[100px] px-3 py-2">责任人</th>
+                                <th className="w-[100px] px-3 py-2">协助人</th>
+                                <th className="w-[160px] px-3 py-2">时间段</th>
+                                <th className="px-3 py-2">备注 / 标准</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {rows.map((row, rowIndex) => (
+                                <tr key={`${row.keyTask}-${row.subTask}-${rowIndex}`} className="hover:bg-slate-50">
+                                  <td className="py-3 pl-6 pr-3 text-sm text-slate-800">{row.subTask}</td>
+                                  <td className="px-3 py-3 text-sm text-slate-700">{row.assignee}</td>
+                                  <td className="px-3 py-3 text-sm text-slate-600">{row.collaborator}</td>
+                                  <td className="px-3 py-3 text-sm text-slate-600">{row.planRange}</td>
+                                  <td className="px-3 py-3 text-sm text-slate-600">{row.note}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              <section className="rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-600">
+                <div className="mb-2 font-semibold text-slate-800">项目角色</div>
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">企业教练：{teamLine.ceoText}</span>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">项目负责人：{teamLine.ownerText}</span>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">统筹人：{teamLine.coordinatorText}</span>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">成员：{teamLine.memberText}</span>
+                </div>
+              </section>
+            </section>
+          </div>
+        </main>
+
+        <footer className="projects-approval-workbench-footer flex h-[72px] shrink-0 items-center justify-between border-t border-[#e0c0b1] bg-white px-6 shadow-[0_-4px_12px_-2px_rgba(0,0,0,0.05)]">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-10 rounded-lg border border-slate-300 px-6 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+          >
+            关闭
+          </button>
+          {canReview && (
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onReturn}
+                disabled={loading}
+                className="h-10 rounded-lg border border-orange-300 bg-white px-6 text-sm font-semibold text-orange-700 transition-colors hover:bg-orange-50 disabled:opacity-50"
+              >
+                退回修改
+              </button>
+              <button
+                type="button"
+                onClick={onApprove}
+                disabled={loading}
+                className="h-10 rounded-lg bg-orange-600 px-10 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-700 disabled:opacity-50"
+              >
+                {loading ? '处理中…' : '审核通过'}
+              </button>
+            </div>
+          )}
+        </footer>
       </div>
     </div>
   )

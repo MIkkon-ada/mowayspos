@@ -175,14 +175,20 @@ def test_project_action_panel_is_action_first_not_archive_drawer():
         "右侧不要堆太多灰底信息卡"
 
 
-def test_project_action_buttons_are_wired_to_visible_results():
+def test_project_action_buttons_open_approval_materials_workbench():
     source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
 
     for expected in [
-        "showDraftPreview",
-        "setShowDraftPreview",
-        "projects-lifecycle-draft-preview",
-        "projects-lifecycle-draft-preview-table",
+        "approvalMaterialsProject",
+        "setApprovalMaterialsProject",
+        "ApprovalMaterialsWorkbenchModal",
+        "projects-approval-workbench-shell",
+        "projects-approval-workbench-header",
+        "projects-approval-workbench-main",
+        "projects-approval-workbench-columns",
+        "projects-approval-left-pane",
+        "projects-approval-right-pane",
+        "projects-approval-workbench-footer",
         "projects-lifecycle-archive-feedback",
         "navigate(`/work/tasks?projectId=${project.id}`)",
         "navigate(`/work/tasks?projectId=${selectedProject.id}`)",
@@ -191,13 +197,14 @@ def test_project_action_buttons_are_wired_to_visible_results():
 
     assert "navigate(`/project/${project.id}/tasks`)" not in source
     assert "navigate(`/project/${selectedProject.id}/tasks`)" not in source
+    assert "projects-lifecycle-draft-preview" not in source
 
     actions_start = source.index("projects-lifecycle-panel-next-actions")
     actions_source = source[actions_start:]
 
     pending_section = actions_source[actions_source.index("status === 'pending_review'"):]
     pending_section = pending_section[: pending_section.index("status === 'returned'")]
-    assert "onClick={onPreviewDraft}" in pending_section
+    assert "onClick={onOpenApprovalMaterials}" in pending_section
     assert "onWorkProgress" not in pending_section
 
     active_section = actions_source[actions_source.index("status === 'active'"):]
@@ -209,34 +216,49 @@ def test_project_action_buttons_are_wired_to_visible_results():
     assert "onClick={onShowArchiveFeedback}" in archived_section
 
 
-def test_project_draft_preview_uses_workbench_fields_not_legacy_plan_fields():
+def test_approval_materials_workbench_matches_owner_submit_readonly_shape():
     source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
 
-    preview_start = source.index("projects-lifecycle-draft-preview")
-    preview_end = source.index("projects-lifecycle-panel-core-info", preview_start)
-    preview_source = source[preview_start:preview_end]
+    modal_source = source[source.index("function ApprovalMaterialsWorkbenchModal"):]
 
     for expected in [
-        "draftSummary.taskCount",
-        "draftSummary.subtaskCount",
-        "DraftProgressTable",
+        "查看审核材料",
+        "立项方案审核材料",
+        "待企业教练审核",
+        "负责人已提交立项信息和工作推进方案",
+        "项目核心信息",
+        "项目名称",
+        "项目周期 / 时间段",
+        "项目完成准则 / 验收标准",
+        "补充详细信息",
+        "工作推进方案",
+        "重点工作名称",
+        "目标成果 / 验收标准",
+        "关键任务",
+        "责任人",
+        "协助人",
+        "时间段",
+        "备注 / 标准",
+        "审核通过",
+        "退回修改",
     ]:
-        assert expected in preview_source
+        assert expected in modal_source
 
-    table_source = source[source.index("function DraftProgressTable"):]
-    for expected in [
-        "keyTask",
-        "standard",
-        "subTask",
-        "assignee",
-        "collaborator",
-        "planRange",
-        "note",
+    for forbidden in [
+        "+ 新增重点工作",
+        "+ 新增关键任务",
+        "提交立项审核",
+        "onChange=",
+        "ownerSubmitProfile",
+        "addTaskDraft",
+        "addSubTaskDraft",
+        "removeTaskDraft",
+        "removeSubTaskDraft",
     ]:
-        assert expected in table_source
+        assert forbidden not in modal_source
 
-    assert "planStart" not in table_source
-    assert "planEnd" not in table_source
+    assert "<input" not in modal_source
+    assert "<textarea" not in modal_source
 
 
 def test_projects_management_defaults_to_first_filtered_project():
@@ -263,7 +285,7 @@ def test_projects_management_keeps_existing_business_entries():
         "setImportOpen(true)",
         "void handleDispatch",
         "setOwnerFillProject",
-        "setApproveModal",
+        "setApprovalMaterialsProject",
         "void handleReturn",
         "openProjectEditor",
         "handleArchive",

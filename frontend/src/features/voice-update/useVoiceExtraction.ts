@@ -101,6 +101,11 @@ export function useVoiceExtraction({
       setError('请先输入或录制内容')
       return
     }
+    if (!selectedProjectId) {
+      submitLock.current = false
+      setError('请先选择所属项目，再进行 AI 提取。')
+      return
+    }
 
     const projectId = selectedProjectId
     setPhase('extracting')
@@ -123,7 +128,7 @@ export function useVoiceExtraction({
 
     try {
       const res = await extractOnly({
-        ...(projectId ? { project_id: projectId } : {}),
+        project_id: projectId,
         source_type: mode === 'voice' ? '语音更新' : '文字更新',
         transcript_text: content,
         submitter: currentUser?.name,

@@ -50,7 +50,12 @@ export function useVoiceSubmission({
   async function handleSubmitFinal() {
     if (submitLock.current) return
     submitLock.current = true
-    const projectId = selectedProjectId  // 可为 null，后端从 AI 结果反查
+    const projectId = selectedProjectId
+    if (!projectId) {
+      submitLock.current = false
+      setError('请先选择所属项目，再提交给负责人。')
+      return
+    }
     if (!currentUser) {
       submitLock.current = false
       setError('无法获取当前用户信息')
@@ -121,7 +126,7 @@ export function useVoiceSubmission({
         keyTaskIssues,
       })
       const { submission } = await createUpdate({
-        ...(projectId ? { project_id: projectId } : {}),
+        project_id: projectId,
         source_type: mode === 'voice' ? '语音更新' : '文字更新',
         transcript_text: content,
         submitter: submitterName,

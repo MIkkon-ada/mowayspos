@@ -14,7 +14,7 @@ import { useVoiceRecorder } from '../features/voice-update/useVoiceRecorder'
 import { useVoiceSubmission } from '../features/voice-update/useVoiceSubmission'
 import { useVoiceUpload } from '../features/voice-update/useVoiceUpload'
 import { formatTime } from '../features/voice-update/voiceUpdateHelpers'
-import { isProjectArchived } from '../domain/projectLifecycleStatus'
+import { getProjectStatusLabel, isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
 
 type AvailableProvider = { provider: string; display_name: string; model: string }
 type InputMode = 'voice' | 'upload' | 'text'
@@ -30,6 +30,9 @@ export function VoiceUpdatePage() {
   const [providers, setProviders] = useState<AvailableProvider[]>([])
   const projectSelectionInitialized = useRef(false)
   const [hasSubtasks, setHasSubtasks] = useState<boolean | null>(null)
+  const projectInactiveMessage = '项目尚未进入执行阶段，暂不能提交正式工作汇报，请完成立项审核后再提交。'
+  const missingProjectSubmitMessage = '请先选择所属项目，再提交给负责人。'
+  const missingProjectExtractMessage = '请先选择所属项目，再进行 AI 提取。'
 
   // 进入页面时检查用户是否有可汇报的关键任务
   useEffect(() => {
@@ -44,10 +47,13 @@ export function VoiceUpdatePage() {
       .catch(() => setProviders([]))
   }, [])
 
-  useEffect(() => {
-    if (projectSelectionInitialized.current) return
-    if (projects.length === 0) return
+  const activeProjects = useMemo(
+    () => projects.filter((project) => isProjectActive(project)),
+    [projects],
+  )
 
+  useEffect(() => {
+    if (projects.length === 0) return
     const rawProjectId = searchParams.get('projectId')
     const parsedProjectId = rawProjectId ? Number(rawProjectId) : null
 
@@ -57,20 +63,43 @@ export function VoiceUpdatePage() {
       return
     }
 
-    if (!rawProjectId && projects.length === 1) {
-      setSelectedProjectId(projects[0].id)
+    if (projectSelectionInitialized.current) return
+
+    const contextProject = currentProjectId != null
+      ? projects.find((project) => project.id === currentProjectId)
+      : null
+    if (!rawProjectId && contextProject) {
+      setSelectedProjectId(contextProject.id)
+      projectSelectionInitialized.current = true
+      return
+    }
+
+    if (!rawProjectId && activeProjects.length === 1) {
+      setSelectedProjectId(activeProjects[0].id)
       projectSelectionInitialized.current = true
       return
     }
 
     projectSelectionInitialized.current = true
-  }, [projects, searchParams])
+  }, [activeProjects, currentProjectId, projects, searchParams])
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
   )
   const projectArchived = isProjectArchived(selectedProject)
+  const selectedProjectIsActive = selectedProject ? isProjectActive(selectedProject) : false
+  const selectedProjectStatusLabel = selectedProject ? getProjectStatusLabel(selectedProject) : ''
+  const projectSubmitBlockedReason = !selectedProject
+    ? missingProjectSubmitMessage
+    : selectedProjectIsActive
+      ? null
+      : projectInactiveMessage
+  const projectExtractBlockedReason = !selectedProject
+    ? missingProjectExtractMessage
+    : selectedProjectIsActive
+      ? null
+      : projectInactiveMessage
 
   const {
     phase,
@@ -151,6 +180,14 @@ export function VoiceUpdatePage() {
     refreshHistory,
   })
 
+  function handleBoundProjectExtract() {
+    if (projectExtractBlockedReason) {
+      setExtractionError(projectExtractBlockedReason)
+      return
+    }
+    handleExtract()
+  }
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {hasSubtasks === false && (
@@ -180,23 +217,39 @@ export function VoiceUpdatePage() {
 
       <div className="px-6 py-3 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
         <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-semibold text-slate-500">汇报范围</span>
-            <span className="text-sm text-slate-700">
-              {selectedProject ? selectedProject.name : '全部项目'}
-            </span>
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="text-xs font-semibold text-slate-500" htmlFor="voice-update-project-select">所属项目</label>
+            <select
+              id="voice-update-project-select"
+              value={selectedProjectId ?? ''}
+              onChange={(event) => setSelectedProjectId(event.target.value ? Number(event.target.value) : null)}
+              className="h-9 min-w-[220px] rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 outline-none focus:border-sky-400"
+            >
+              <option value="">所属项目：请选择项目</option>
+              {selectedProject && !selectedProjectIsActive && (
+                <option value={selectedProject.id}>
+                  {selectedProject.name}（{selectedProjectStatusLabel || '非执行阶段'}）
+                </option>
+              )}
+              {activeProjects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
             {selectedProject && (
-              <button
-                onClick={() => setSelectedProjectId(null)}
-                className="text-xs text-slate-400 hover:text-slate-600"
-              >
-                切换为全部项目
-              </button>
+              <span className={`rounded-full px-2 py-1 text-xs font-semibold ${selectedProjectIsActive ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                {selectedProjectIsActive ? '进行中' : selectedProjectStatusLabel || '非执行阶段'}
+              </span>
             )}
           </div>
           <div className="text-xs text-slate-400">
-            AI 将自动从汇报内容中识别所属项目和关键任务
+            AI 负责提取内容，项目归属以你选择的项目为准。
+            {selectedProjectIsActive && <span className="ml-1">AI 可辅助识别关键任务，但所属项目以当前选择为准。</span>}
           </div>
+          {projectSubmitBlockedReason && (
+            <div className="basis-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+              {projectSubmitBlockedReason}
+            </div>
+          )}
         </div>
       </div>
 
@@ -248,10 +301,11 @@ export function VoiceUpdatePage() {
               submittedAt={submittedAt}
               draftSaved={draftSaved}
               onSaveDraft={saveDraft}
-              onExtract={handleExtract}
+              onExtract={handleBoundProjectExtract}
               onResetExtractionState={resetExtractionState}
               onSubmitFinal={handleSubmitFinal}
               projectArchived={projectArchived}
+              projectSubmitBlockedReason={projectSubmitBlockedReason}
             />
 
             <VoiceUpdateHistoryPanel

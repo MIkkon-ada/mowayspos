@@ -30,7 +30,6 @@ import {
   isProjectArchived,
 } from '../../domain/projectLifecycleStatus'
 import { getProjectRoleLabel } from '../../domain/roleLabels'
-import { SectionTitle } from './settingsShared'
 import { NewProjectForm, ProjectInitModal, type TeamMap } from './ProjectInitModal'
 import { OwnerSubmitModal } from './OwnerSubmitModal'
 import { getPickerPosition } from './projectPickerPosition.js'
@@ -658,8 +657,7 @@ export function ProjectsMgmtSection() {
 
   if (loading) {
     return (
-      <div className="space-y-3">
-        <SectionTitle inline>项目管理</SectionTitle>
+      <div className="projects-lifecycle-page-shell -m-3 bg-[#F8FAFC] px-6 py-5">
         <p className="py-8 text-center text-sm text-slate-400">加载中...</p>
       </div>
     )
@@ -669,27 +667,6 @@ export function ProjectsMgmtSection() {
 
   return (
     <div className="projects-lifecycle-workbench projects-lifecycle-page-shell -m-3 bg-[#F8FAFC] px-6 py-5">
-      <header className="projects-lifecycle-header mx-auto flex max-w-[1440px] flex-col gap-4 pb-4 md:flex-row md:items-start md:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">项目管理</h1>
-          <p className="mt-1 text-sm text-slate-500">创建与管理所有项目，配置项目人员，推进立项流程</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {isFullAdmin && (
-            <button type="button" onClick={() => setImportOpen(true)}
-              className="cursor-pointer rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition-colors hover:bg-slate-100">
-              批量导入
-            </button>
-          )}
-          {isFullAdmin && (
-            <button type="button" onClick={() => setShowNew(true)}
-              className="cursor-pointer rounded-lg bg-[#2170e4] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#1b5fc7]">
-              新建项目
-            </button>
-          )}
-        </div>
-      </header>
-
       <section className="projects-lifecycle-queue-tabs mx-auto flex max-w-[1440px] flex-col gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm xl:flex-row xl:items-center xl:justify-between">
           <div className="projects-lifecycle-tabs-strip flex min-w-0 overflow-x-auto">
             {STATUS_TABS.map((tab) => {
@@ -711,12 +688,26 @@ export function ProjectsMgmtSection() {
               )
             })}
           </div>
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索项目名称..."
-            className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-sky-400 focus:bg-white xl:w-72"
-          />
+          <div className="projects-lifecycle-toolbar flex w-full flex-col gap-2 sm:flex-row sm:items-center xl:w-auto">
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="搜索项目名称..."
+              className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-sky-400 focus:bg-white xl:w-72"
+            />
+            {isFullAdmin && (
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setImportOpen(true)}
+                  className="h-9 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-600 shadow-sm transition-colors hover:bg-slate-100">
+                  批量导入
+                </button>
+                <button type="button" onClick={() => setShowNew(true)}
+                  className="h-9 cursor-pointer rounded-lg bg-[#2170e4] px-3 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-[#1b5fc7]">
+                  新建项目
+                </button>
+              </div>
+            )}
+          </div>
       </section>
 
       <div className="projects-lifecycle-main-grid mx-auto mt-5 grid max-w-[1440px] grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(380px,1fr)]">

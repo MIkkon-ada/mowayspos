@@ -14,13 +14,10 @@ def test_projects_management_has_lifecycle_workbench_structure():
     for expected in [
         "projects-lifecycle-workbench",
         "projects-lifecycle-page-shell",
-        "projects-lifecycle-header",
         "projects-lifecycle-queue-tabs",
         "projects-lifecycle-main-grid",
         "projects-lifecycle-project-queue",
         "projects-lifecycle-action-panel",
-        "项目管理",
-        "创建与管理所有项目，配置项目人员，推进立项流程",
         "只有筛选结果为空时显示项目空状态",
     ]:
         assert expected in source
@@ -28,9 +25,21 @@ def test_projects_management_has_lifecycle_workbench_structure():
     assert "max-w-[1440px]" in source
     assert "lg:grid-cols-[minmax(0,1.5fr)_minmax(380px,1fr)]" in source
     assert "bg-[#F8FAFC]" in source or "bg-slate-50" in source
-    assert "projects-lifecycle-header rounded-2xl" not in source, \
-        "页面标题区不应做成巨大白色卡片"
-    assert "projects-lifecycle-header mx-auto flex" in source
+    assert "projects-lifecycle-header" not in source, \
+        "ProjectsMgmtSection 内部不应重复渲染页面级标题区"
+
+
+def test_project_management_page_owns_single_page_heading():
+    page_source = _frontend_source("pages/ProjectManagementPage.tsx")
+    section_source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
+
+    assert "<h1" in page_source
+    assert "项目管理" in page_source
+    assert "创建与管理所有项目，配置项目人员，推进立项流程" in page_source
+
+    assert "项目管理" not in section_source
+    assert "创建与管理所有项目，配置项目人员，推进立项流程" not in section_source
+    assert "<SectionTitle inline>项目管理</SectionTitle>" not in section_source
 
 
 def test_projects_management_status_tabs_are_lifecycle_queue_tabs():

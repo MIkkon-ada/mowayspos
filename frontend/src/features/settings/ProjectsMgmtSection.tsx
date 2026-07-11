@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useProject } from '../../context/ProjectContext'
 import {
   getProjects,
@@ -29,7 +30,6 @@ import {
   isProjectArchived,
 } from '../../domain/projectLifecycleStatus'
 import { getProjectRoleLabel } from '../../domain/roleLabels'
-import { SectionTitle } from './settingsShared'
 import { NewProjectForm, ProjectInitModal, type TeamMap } from './ProjectInitModal'
 import { OwnerSubmitModal } from './OwnerSubmitModal'
 import { getPickerPosition } from './projectPickerPosition.js'
@@ -49,23 +49,40 @@ const EMPTY_NEW_FORM: NewProjectForm = {
   end_date: '',
 }
 
-const STATUS_TABS: { key: string; label: string }[] = [
+const STATUS_TABS: { key: string; label: string; queueLabel?: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'draft', label: '草稿' },
-  { key: 'dispatched', label: '已派发' },
-  { key: 'pending_review', label: '待审核' },
-  { key: 'returned', label: '已退回' },
-  { key: 'active', label: '进行中' },
-  { key: 'archived', label: '已归档' },
+  { key: 'dispatched', label: '已派发', queueLabel: '待负责人完善' },
+  { key: 'pending_review', label: '待审核', queueLabel: '待企业教练审核' },
+  { key: 'returned', label: '已退回', queueLabel: '待负责人修改' },
+  { key: 'active', label: '进行中', queueLabel: '执行中' },
+  { key: 'archived', label: '已归档', queueLabel: '归档档案' },
 ]
 
 const STAGE_DESCRIPTIONS: Record<string, string> = {
-  draft: '项目草稿，等待配置企业教练、负责人和初始成员。',
+  draft: '项目尚未下发，可继续编辑项目基础信息和角色配置。',
   dispatched: '项目已下发，等待负责人完善立项信息和推进表草案。',
   pending_review: '负责人已提交，等待企业教练审核立项和推进表草案。',
-  returned: '企业教练已退回，等待负责人修改立项信息和推进表草案。',
-  active: '项目已确立，工作推进表初版已形成，正在执行。',
-  archived: '项目已归档，仅可查看。',
+  returned: '企业教练已退回，请负责人修改后重新提交。',
+  active: '项目已进入执行阶段，可进入工作推进表查看推进情况。',
+  archived: '项目已归档，可查看归档资料和复盘结果。',
+}
+
+const ACTION_REMINDERS: Record<string, string> = {
+  draft: '项目尚未下发，可继续编辑项目资料与角色配置。',
+  dispatched: '项目已下发，等待负责人完善立项信息和工作推进表雏形。',
+  pending_review: '负责人已提交立项信息和工作推进表雏形，请企业教练审核项目完成准则、重点工作和关键任务安排。',
+  returned: '项目已被企业教练退回，请负责人根据意见修改后重新提交。',
+  active: '项目已进入执行阶段，可进入工作推进表查看重点工作、关键任务和进展记录。',
+  archived: '项目已归档，可查看项目档案和历史记录。',
+}
+
+function getReminderToneClass(status: string): string {
+  if (status === 'pending_review') return 'border-amber-200 bg-amber-50 text-amber-900'
+  if (status === 'returned') return 'border-orange-200 bg-orange-50 text-orange-900'
+  if (status === 'active') return 'border-emerald-200 bg-emerald-50 text-emerald-900'
+  if (status === 'archived') return 'border-slate-200 bg-slate-50 text-slate-700'
+  return 'border-sky-200 bg-sky-50 text-sky-900'
 }
 
 const IMPORT_COL_MAP: Record<string, keyof BatchImportRow> = {
@@ -129,20 +146,6 @@ function summarizeProjectRoleLine(projectMembers: ProjectMember[], project: Proj
   }
 }
 
-function splitPlanTime(planTime?: string): { start: string; end: string } {
-  if (!planTime?.trim()) return { start: '—', end: '—' }
-  const s = planTime.trim()
-  for (const sep of ['~', '～', '至', '→', ' - ']) {
-    const idx = s.indexOf(sep)
-    if (idx > 0) {
-      const start = s.slice(0, idx).trim()
-      const end = s.slice(idx + sep.length).trim()
-      if (start && end) return { start, end }
-    }
-  }
-  return { start: s, end: '—' }
-}
-
 function formatPlanTimeShort(startDate?: string, endDate?: string): string {
   if (!startDate && !endDate) return '未填写'
   const s = startDate ? fmtPlanTime(startDate) : '?'
@@ -177,8 +180,7 @@ type DraftRow = {
   seq: string
   subTask: string
   assignee: string
-  planStart: string
-  planEnd: string
+  planRange: string
   collaborator: string
   note: string
   isTaskOnly: boolean
@@ -193,19 +195,19 @@ function buildDraftRows(tasks: TaskItem[], subtasks: SubTaskWithParent[], projec
     const standard = task.completion_standard?.trim() || '—'
     const collaborator = task.collaborators?.trim() || '—'
     if (taskSubs.length === 0) {
-      const { start, end } = splitPlanTime(task.plan_time)
+      const planRange = task.plan_time?.trim() || '—'
       rows.push({
         objective, keyTask: task.key_task || '—', standard, seq: '—',
         subTask: '关键任务待补充', assignee: task.owner?.trim() || '—',
-        planStart: start, planEnd: end, collaborator, note: '—', isTaskOnly: true,
+        planRange, collaborator, note: '—', isTaskOnly: true,
       })
     } else {
       taskSubs.forEach((sub, idx) => {
-        const { start, end } = splitPlanTime(sub.plan_time)
+        const planRange = sub.plan_time?.trim() || task.plan_time?.trim() || '—'
         rows.push({
           objective, keyTask: task.key_task || '—', standard, seq: String(idx + 1),
           subTask: sub.title || '—', assignee: sub.assignee?.trim() || '—',
-          planStart: start, planEnd: end, collaborator, note: sub.notes?.trim() || '—', isTaskOnly: false,
+          planRange, collaborator, note: sub.notes?.trim() || '—', isTaskOnly: false,
         })
       })
     }
@@ -213,7 +215,7 @@ function buildDraftRows(tasks: TaskItem[], subtasks: SubTaskWithParent[], projec
   return rows
 }
 
-type MainAction = { label: string; type: 'dispatch' | 'ownerSubmit' | 'approve' | 'viewDetail' }
+type MainAction = { label: string; type: 'edit' | 'dispatch' | 'ownerSubmit' | 'approvalMaterials' | 'workProgress' | 'viewDetail' }
 
 function getMainAction(
   status: string,
@@ -225,22 +227,24 @@ function getMainAction(
   switch (status) {
     case 'draft':
       return (isSuperAdmin || isCompanyCeo)
-        ? { label: '下发项目', type: 'dispatch' }
-        : { label: '查看档案', type: 'viewDetail' }
+        ? { label: '编辑项目', type: 'edit' }
+        : { label: '查看详情', type: 'viewDetail' }
     case 'dispatched':
       return isRealOwner
         ? { label: '完善立项信息', type: 'ownerSubmit' }
-        : { label: '查看档案', type: 'viewDetail' }
+        : { label: '查看详情', type: 'viewDetail' }
     case 'pending_review':
-      return (isRealProjectCeo || isSuperAdmin)
-        ? { label: '审核立项', type: 'approve' }
-        : { label: '查看档案', type: 'viewDetail' }
+      return { label: '查看审核材料', type: 'approvalMaterials' }
     case 'returned':
       return isRealOwner
         ? { label: '修改立项信息', type: 'ownerSubmit' }
-        : { label: '查看档案', type: 'viewDetail' }
+        : { label: '查看详情', type: 'viewDetail' }
+    case 'active':
+      return { label: '进入工作推进表', type: 'workProgress' }
+    case 'archived':
+      return { label: '查看归档档案', type: 'viewDetail' }
     default:
-      return { label: '查看档案', type: 'viewDetail' }
+      return { label: '查看详情', type: 'viewDetail' }
   }
 }
 
@@ -248,6 +252,7 @@ function getMainAction(
 
 export function ProjectsMgmtSection() {
   const { reloadProjects, currentUser, globalUserRoles } = useProject()
+  const navigate = useNavigate()
   const [projects, setProjects] = useState<Project[]>([])
   const [people, setPeople] = useState<Person[]>([])
   const [loading, setLoading] = useState(true)
@@ -281,8 +286,7 @@ export function ProjectsMgmtSection() {
   const [dispatchingId, setDispatchingId] = useState<number | null>(null)
 
   // 审核
-  const [approveModal, setApproveModal] = useState<{ pid: number; name: string } | null>(null)
-  const [approveForm, setApproveForm] = useState<ProjectProfilePayload>({})
+  const [approvalMaterialsProject, setApprovalMaterialsProject] = useState<Project | null>(null)
   const [approveLoading, setApproveLoading] = useState(false)
 
   // 负责人完善立项
@@ -389,20 +393,21 @@ export function ProjectsMgmtSection() {
     return list
   }, [roleFilteredProjects, activeTab, searchQuery])
 
+  // 默认选中当前筛选结果的第一个项目；只有筛选结果为空时显示项目空状态
+  useEffect(() => {
+    if (filteredProjects.length === 0) {
+      if (selectedProjectId !== null) setSelectedProjectId(null)
+      return
+    }
+    const selectedStillVisible = filteredProjects.some((project) => project.id === selectedProjectId)
+    if (selectedProjectId === null || !selectedStillVisible) {
+      setSelectedProjectId(filteredProjects[0].id)
+    }
+  }, [filteredProjects, selectedProjectId])
+
   const selectedProject = selectedProjectId != null
     ? projects.find((p) => p.id === selectedProjectId) ?? null
     : null
-  const approveProjectRow = approveModal
-    ? projects.find((p) => p.id === approveModal.pid) ?? null
-    : null
-  const approveTasks = approveModal ? projectTasksMap[approveModal.pid] ?? [] : []
-  const approveSubtasks = approveModal ? projectSubtasksMap[approveModal.pid] ?? [] : []
-  const approveDraftSummary = approveProjectRow
-    ? getDraftSummary(approveTasks, approveSubtasks, approveProjectRow)
-    : { objectives: 0, taskCount: 0, subtaskCount: 0, ownerConfigured: 0, planConfigured: 0, taskTotal: 0 }
-  const approveDraftRows = approveProjectRow
-    ? buildDraftRows(approveTasks, approveSubtasks, approveProjectRow)
-    : []
 
   // ── Handlers ──
 
@@ -551,16 +556,14 @@ export function ProjectsMgmtSection() {
     }
   }
 
-  async function handleApprove() {
-    if (!approveModal) return
+  async function handleApprove(project: Project) {
     setApproveLoading(true)
     try {
-      const updated = await approveProject(approveModal.pid, approveForm)
-      setProjects((prev) => prev.map((p) => (p.id === approveModal.pid ? { ...p, ...updated } : p)))
+      const updated = await approveProject(project.id, {})
+      setProjects((prev) => prev.map((p) => (p.id === project.id ? { ...p, ...updated } : p)))
       reloadProjects()
-      toast.success(`项目"${approveModal.name}"已审核通过并启动`)
-      setApproveModal(null)
-      setApproveForm({})
+      toast.success(`项目"${project.name}"已审核通过并启动`)
+      setApprovalMaterialsProject(null)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '审核失败')
     } finally {
@@ -654,8 +657,7 @@ export function ProjectsMgmtSection() {
 
   if (loading) {
     return (
-      <div className="space-y-3">
-        <SectionTitle inline>项目管理</SectionTitle>
+      <div className="projects-lifecycle-page-shell -m-3 bg-[#F8FAFC] px-6 py-5">
         <p className="py-8 text-center text-sm text-slate-400">加载中...</p>
       </div>
     )
@@ -664,60 +666,54 @@ export function ProjectsMgmtSection() {
   const menuProject = menuState ? projects.find((p) => p.id === menuState.pid) ?? null : null
 
   return (
-    <div className="space-y-3">
-      {/* 标题栏 */}
-      <div className="flex items-center justify-between gap-3">
-        <SectionTitle inline>{isOwnerView ? '我负责的项目' : isProjectCeoView ? '我企业教练的项目' : '项目管理'}</SectionTitle>
-        <div className="flex items-center gap-2">
-          {isFullAdmin && (
-            <button type="button" onClick={() => setImportOpen(true)}
-              className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-600 hover:bg-indigo-100">
-              批量导入
-            </button>
-          )}
-          {isFullAdmin && (
-            <button type="button" onClick={() => setShowNew(true)}
-              className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
-              style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}>
-              新建项目
-            </button>
-          )}
-        </div>
-      </div>
+    <div className="projects-lifecycle-workbench projects-lifecycle-page-shell -m-3 bg-[#F8FAFC] px-6 py-5">
+      <section className="projects-lifecycle-queue-tabs mx-auto flex max-w-[1440px] flex-col gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm xl:flex-row xl:items-center xl:justify-between">
+          <div className="projects-lifecycle-tabs-strip flex min-w-0 overflow-x-auto">
+            {STATUS_TABS.map((tab) => {
+              const count = tabCounts[tab.key] ?? 0
+              const isActive = activeTab === tab.key
+              return (
+                <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
+                  className={`projects-lifecycle-tab-compact cursor-pointer flex-shrink-0 border-b-2 px-3 py-1 text-left text-xs font-semibold transition-colors ${
+                    isActive ? 'border-sky-600 text-sky-700' : 'border-transparent text-slate-600 hover:text-sky-700'
+                  }`}>
+                  <span className="inline-flex items-center gap-1.5">
+                    {tab.label}
+                    <span className={`rounded-full px-1.5 text-[10px] font-bold ${isActive ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {count}
+                    </span>
+                  </span>
+                  {tab.queueLabel && <span className="mt-0.5 block text-[10px] font-medium text-slate-400">{tab.queueLabel}</span>}
+                </button>
+              )
+            })}
+          </div>
+          <div className="projects-lifecycle-toolbar flex w-full flex-col gap-2 sm:flex-row sm:items-center xl:w-auto">
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="搜索项目名称..."
+              className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-sky-400 focus:bg-white xl:w-72"
+            />
+            {isFullAdmin && (
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setImportOpen(true)}
+                  className="h-9 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-600 shadow-sm transition-colors hover:bg-slate-100">
+                  批量导入
+                </button>
+                <button type="button" onClick={() => setShowNew(true)}
+                  className="h-9 cursor-pointer rounded-lg bg-[#2170e4] px-3 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-[#1b5fc7]">
+                  新建项目
+                </button>
+              </div>
+            )}
+          </div>
+      </section>
 
-      {/* 状态 tabs */}
-      <div className="flex items-center gap-1 overflow-x-auto pb-1">
-        {STATUS_TABS.map((tab) => {
-          const count = tabCounts[tab.key] ?? 0
-          const isActive = activeTab === tab.key
-          return (
-            <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
-              className={`cursor-pointer flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                isActive ? 'bg-sky-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
-              }`}>
-              {tab.label}
-              <span className={`rounded-full px-1.5 text-[10px] font-bold ${isActive ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                {count}
-              </span>
-            </button>
-          )
-        })}
-      </div>
-
-      {/* 搜索 */}
-      <input
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
-        placeholder="搜索项目名称…"
-        className="w-full max-w-sm rounded-lg border border-slate-200 px-3 py-1.5 text-sm outline-none focus:border-sky-400"
-      />
-
-      {/* 两栏布局：左列表 + 右详情 */}
-      <div className="flex gap-4 items-start">
-        {/* 左侧项目列表 */}
-        <div className="flex-1 min-w-0 space-y-2">
+      <div className="projects-lifecycle-main-grid mx-auto mt-5 grid max-w-[1440px] grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(380px,1fr)]">
+        <section className="projects-lifecycle-project-queue min-w-0 space-y-3">
           {filteredProjects.length === 0 ? (
-            <div className="rounded-xl border border-slate-100 bg-white py-10 text-center text-sm text-slate-400">暂无项目</div>
+            <div className="rounded-2xl border border-slate-200 bg-white py-12 text-center text-sm text-slate-400 shadow-sm">暂无项目</div>
           ) : (
             filteredProjects.map((project) => {
               const status = getProjectPrimaryStatus(project)
@@ -725,7 +721,6 @@ export function ProjectsMgmtSection() {
               const mainAction = getMainAction(status, roles.isSuperAdmin, roles.isCompanyCeo, roles.isRealProjectCeo, roles.isRealOwner)
               const tasks = projectTasksMap[project.id] ?? []
               const subtasks = projectSubtasksMap[project.id] ?? []
-              const summary = getDraftSummary(tasks, subtasks, project)
               const pm = members[project.id] ?? []
               const teamLine = summarizeProjectRoleLine(pm, project)
               const isSelected = selectedProjectId === project.id
@@ -749,7 +744,6 @@ export function ProjectsMgmtSection() {
                   project={project}
                   status={status}
                   teamLine={teamLine}
-                  summary={summary}
                   mainAction={mainAction}
                   mainBusy={dispatchingId === project.id}
                   showReturn={showReturn}
@@ -757,9 +751,11 @@ export function ProjectsMgmtSection() {
                   hasMore={moreItems.length > 0}
                   onSelect={() => setSelectedProjectId(project.id)}
                   onMainAction={() => {
-                    if (mainAction.type === 'dispatch') void handleDispatch(project.id)
+                    if (mainAction.type === 'edit') void openProjectEditor(project)
+                    else if (mainAction.type === 'dispatch') void handleDispatch(project.id)
                     else if (mainAction.type === 'ownerSubmit') setOwnerFillProject(project)
-                    else if (mainAction.type === 'approve') { setSelectedProjectId(project.id); setApproveModal({ pid: project.id, name: project.name }) }
+                    else if (mainAction.type === 'approvalMaterials') { setSelectedProjectId(project.id); setApprovalMaterialsProject(project) }
+                    else if (mainAction.type === 'workProgress') navigate(`/work/tasks?projectId=${project.id}`)
                     else setSelectedProjectId(project.id)
                   }}
                   onReturn={() => void handleReturn(project.id, project.name)}
@@ -773,10 +769,9 @@ export function ProjectsMgmtSection() {
               )
             })
           )}
-        </div>
+        </section>
 
-        {/* 右侧详情面板 */}
-        <div className="w-[440px] flex-shrink-0 sticky top-4">
+        <aside className="projects-lifecycle-action-panel min-w-0 lg:sticky lg:top-4">
           {selectedProject ? (
             <DetailPanel
               project={selectedProject}
@@ -785,17 +780,24 @@ export function ProjectsMgmtSection() {
               subtasks={projectSubtasksMap[selectedProject.id] ?? []}
               roles={getProjectRoles(selectedProject.id)}
               onClose={() => setSelectedProjectId(null)}
+              onEdit={() => void openProjectEditor(selectedProject)}
               onDispatch={() => void handleDispatch(selectedProject.id)}
               onOwnerSubmit={() => setOwnerFillProject(selectedProject)}
-              onApprove={() => setApproveModal({ pid: selectedProject.id, name: selectedProject.name })}
+              onOpenApprovalMaterials={() => setApprovalMaterialsProject(selectedProject)}
               onReturn={() => void handleReturn(selectedProject.id, selectedProject.name)}
+              onWorkProgress={() => navigate(`/work/tasks?projectId=${selectedProject.id}`)}
             />
+          ) : filteredProjects.length === 0 ? (
+            // 只有筛选结果为空时显示项目空状态
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center text-sm text-slate-400 shadow-sm">
+              暂无符合条件的项目
+            </div>
           ) : (
-            <div className="rounded-xl border border-slate-100 bg-white py-16 text-center text-sm text-slate-400">
-              选择左侧项目查看详情
+            <div className="rounded-2xl border border-slate-200 bg-white px-6 py-16 text-center text-sm text-slate-400 shadow-sm">
+              正在加载项目处理面板...
             </div>
           )}
-        </div>
+        </aside>
       </div>
 
       {/* 新建项目弹窗 */}
@@ -842,18 +844,21 @@ export function ProjectsMgmtSection() {
         />
       )}
 
-      {/* 审核弹窗 */}
-      {approveModal && (
-        <ProjectApproveModal
-          open={Boolean(approveModal)}
+      {/* 审核材料弹窗 */}
+      {approvalMaterialsProject && (
+        <ApprovalMaterialsWorkbenchModal
+          project={approvalMaterialsProject}
+          projectMembers={members[approvalMaterialsProject.id] ?? []}
+          tasks={projectTasksMap[approvalMaterialsProject.id] ?? []}
+          subtasks={projectSubtasksMap[approvalMaterialsProject.id] ?? []}
+          canReview={(() => {
+            const roles = getProjectRoles(approvalMaterialsProject.id)
+            return roles.isRealProjectCeo || roles.isSuperAdmin
+          })()}
           loading={approveLoading}
-          name={approveModal.name}
-          form={approveForm}
-          draftSummary={approveDraftSummary}
-          draftRows={approveDraftRows}
-          onChangeForm={setApproveForm}
-          onClose={() => !approveLoading && setApproveModal(null)}
-          onConfirm={handleApprove}
+          onClose={() => !approveLoading && setApprovalMaterialsProject(null)}
+          onApprove={() => void handleApprove(approvalMaterialsProject)}
+          onReturn={() => void handleReturn(approvalMaterialsProject.id, approvalMaterialsProject.name)}
         />
       )}
 
@@ -901,13 +906,12 @@ export function ProjectsMgmtSection() {
 // ── 生命周期卡片 ──────────────────────────────────────────────
 
 function LifecycleCard({
-  project, status, teamLine, summary, mainAction, mainBusy, showReturn, isSelected, hasMore,
+  project, status, teamLine, mainAction, mainBusy, showReturn, isSelected, hasMore,
   onSelect, onMainAction, onReturn, onOpenMore,
 }: {
   project: Project
   status: string
   teamLine: { ceoText: string; ownerText: string; coordinatorText: string; memberText: string }
-  summary: DraftSummary
   mainAction: MainAction
   mainBusy: boolean
   showReturn: boolean
@@ -921,65 +925,59 @@ function LifecycleCard({
   const statusBadge = getProjectStatusBadge(project)
   const projectType = project.project_type?.trim() || ''
   const stageDesc = STAGE_DESCRIPTIONS[status] ?? ''
-  const draftText = summary.taskTotal === 0
-    ? '推进表草案未完善'
-    : `目标 ${summary.objectives}｜重点工作 ${summary.taskCount}｜关键任务 ${summary.subtaskCount}｜已指派 ${summary.ownerConfigured}/${summary.taskTotal}｜计划 ${summary.planConfigured}/${summary.taskTotal}`
 
   return (
     <div
       onClick={onSelect}
-      className={`cursor-pointer rounded-xl border bg-white px-4 py-3 transition-colors ${isSelected ? 'border-sky-300 bg-sky-50/40' : 'border-slate-200 hover:border-slate-300'}`}
-      style={{ boxShadow: '0 1px 3px rgba(15,23,42,0.04)' }}
+      className={`projects-lifecycle-card projects-lifecycle-queue-card relative cursor-pointer overflow-hidden rounded-xl border bg-white px-4 py-3 transition-all ${isSelected ? 'border-sky-200 bg-sky-50/30 shadow-sm' : 'border-slate-200 hover:border-slate-300 hover:shadow-sm'}`}
+      style={{ boxShadow: '0 1px 4px rgba(15,23,42,0.05)' }}
     >
-      {/* 第一层：标题行 */}
-      <div className="flex items-start justify-between gap-3">
+      <div className={`absolute left-0 top-0 bottom-0 w-1 ${isSelected ? 'bg-sky-600' : 'bg-transparent'}`} />
+      <div className="projects-lifecycle-card-title-row flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-sm font-bold text-slate-800">{project.name}</h3>
             <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusBadge.className}`}>{statusBadge.label}</span>
             {projectType && <span className="flex-shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-500">{projectType}</span>}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-          {showReturn && (
-            <button type="button" onClick={onReturn}
-              className="cursor-pointer rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-100">
-              退回修改
-            </button>
-          )}
-          <button type="button" onClick={onMainAction} disabled={mainBusy}
-            className="cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold text-white shadow-sm disabled:opacity-50"
-            style={{ background: 'linear-gradient(135deg,#2563EB,#0EA5E9)' }}>
-            {mainBusy ? '处理中…' : mainAction.label}
+        {hasMore && (
+          <button type="button" onClick={(e) => { e.stopPropagation(); onOpenMore(e.currentTarget) }}
+            className="cursor-pointer rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-400 hover:bg-slate-50">
+            ⋯
           </button>
-          {hasMore && (
-            <button type="button" onClick={(e) => onOpenMore(e.currentTarget)}
-              className="cursor-pointer rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-semibold text-slate-400 hover:bg-slate-50">
-              ⋯
-            </button>
-          )}
+        )}
+      </div>
+
+      <p className="projects-lifecycle-card-stage-row mt-2 flex items-start gap-1.5 text-xs leading-relaxed text-slate-600">
+        <span className="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#2170e4]" />
+        <span className="sr-only">当前阶段：</span>
+        <span>{stageDesc}</span>
+      </p>
+
+      <div className="projects-lifecycle-card-people-line mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-600">
+        <span>项目负责人：{teamLine.ownerText}</span>
+        <span>企业教练：{teamLine.ceoText}</span>
+      </div>
+
+      <div className="projects-lifecycle-card-footer-row projects-lifecycle-card-meta-row mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          <span>项目周期：{formatPlanTimeShort(project.start_date, project.end_date)}</span>
         </div>
       </div>
 
-      {/* 第二层：阶段说明 */}
-      <p className="mt-1.5 text-xs text-slate-500">{stageDesc}</p>
-
-      {/* 第三层：核心人员 */}
-      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-600">
-        <span>企业教练：{teamLine.ceoText}</span>
-        <span>负责人：{teamLine.ownerText}</span>
-        <span>统筹人：{teamLine.coordinatorText}</span>
-        <span>成员：{teamLine.memberText}</span>
-      </div>
-
-      {/* 第四层：计划信息 */}
-      <div className="mt-1 text-[11px] text-slate-500">
-        计划时间：{formatPlanTimeShort(project.start_date, project.end_date)}
-      </div>
-
-      {/* 第五层：推进表雏形摘要 */}
-      <div className="mt-1 text-[11px] text-slate-500">
-        <span className={summary.taskTotal === 0 ? 'text-orange-500' : 'text-slate-600'}>{draftText}</span>
+      <div className="projects-lifecycle-card-action-row mt-2 flex items-center justify-end gap-2 border-t border-slate-100 pt-2" onClick={(e) => e.stopPropagation()}>
+        {showReturn && (
+          <button type="button" onClick={onReturn}
+            className="cursor-pointer rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-100">
+            退回修改
+          </button>
+        )}
+        <button type="button" onClick={onMainAction} disabled={mainBusy}
+          className="cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold text-white shadow-sm disabled:opacity-50"
+          style={{ background: 'linear-gradient(135deg,#2563EB,#0EA5E9)' }}>
+          {mainBusy ? '处理中…' : mainAction.label}
+        </button>
       </div>
     </div>
   )
@@ -1058,7 +1056,7 @@ function LifecycleMoreMenu({
 
 function DetailPanel({
   project, projectMembers, tasks, subtasks, roles, onClose,
-  onDispatch, onOwnerSubmit, onApprove, onReturn,
+  onEdit, onDispatch, onOwnerSubmit, onOpenApprovalMaterials, onReturn, onWorkProgress,
 }: {
   project: Project
   projectMembers: ProjectMember[]
@@ -1066,150 +1064,148 @@ function DetailPanel({
   subtasks: SubTaskWithParent[]
   roles: { isSuperAdmin: boolean; isCompanyCeo: boolean; isRealProjectCeo: boolean; isRealOwner: boolean }
   onClose: () => void
+  onEdit: () => void
   onDispatch: () => void
   onOwnerSubmit: () => void
-  onApprove: () => void
+  onOpenApprovalMaterials: () => void
   onReturn: () => void
+  onWorkProgress: () => void
 }) {
   const status = getProjectPrimaryStatus(project)
   const statusBadge = getProjectStatusBadge(project)
   const teamLine = summarizeProjectRoleLine(projectMembers, project)
   const summary = getDraftSummary(tasks, subtasks, project)
-  const draftRows = buildDraftRows(tasks, subtasks, project)
   const stageDesc = STAGE_DESCRIPTIONS[status] ?? ''
-  const mainAction = getMainAction(status, roles.isSuperAdmin, roles.isCompanyCeo, roles.isRealProjectCeo, roles.isRealOwner)
+  const actionReminder = ACTION_REMINDERS[status] ?? stageDesc
   const showReturn = status === 'pending_review' && (roles.isRealProjectCeo || roles.isSuperAdmin)
+  const canEditDraft = roles.isSuperAdmin || roles.isCompanyCeo
+  const coreReady = Boolean(project.name?.trim() && project.objectives?.trim())
+  const draftReady = summary.taskCount > 0 && summary.subtaskCount > 0
+  const projectType = project.project_type?.trim() || '未填写'
+  const clientName = project.client_name?.trim() || '内部项目 / 未填写'
+  const [showArchiveFeedback, setShowArchiveFeedback] = useState(false)
 
-  const infoRow = (label: string, value?: string) => (
-    <div className="flex gap-2 py-1">
-      <span className="w-16 shrink-0 text-xs font-semibold text-slate-400">{label}</span>
-      <span className="flex-1 text-xs text-slate-700">{value?.trim() || '未填写'}</span>
+  useEffect(() => {
+    setShowArchiveFeedback(false)
+  }, [project.id])
+
+  function onShowArchiveFeedback() {
+    setShowArchiveFeedback(true)
+  }
+
+  const infoBlock = (label: string, value?: string) => (
+    <div className="min-w-0">
+      <div className="text-[11px] font-semibold text-slate-400">{label}</div>
+      <div className="mt-1 truncate text-xs font-semibold leading-relaxed text-slate-700" title={value?.trim() || '未填写'}>{value?.trim() || '未填写'}</div>
     </div>
   )
 
   return (
-    <div className="flex max-h-[calc(100vh-180px)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white" style={{ boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
-      {/* 标题栏 */}
-      <div className="flex items-start justify-between gap-2 border-b px-4 py-3" style={{ borderColor: '#E9EFF6' }}>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h2 className="truncate text-sm font-bold text-slate-900">{project.name}</h2>
-            <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusBadge.className}`}>{statusBadge.label}</span>
+    <div className="projects-lifecycle-action-panel-card flex max-h-[calc(100vh-170px)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="projects-lifecycle-panel-header border-b border-slate-200 bg-white px-5 py-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="truncate text-lg font-bold text-slate-900">{project.name}</h2>
+              <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusBadge.className}`}>{statusBadge.label}</span>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-500">{projectType}</span>
+            </div>
+            <div className={`projects-lifecycle-panel-reminder mt-3 rounded-lg border px-3 py-2 ${getReminderToneClass(status)}`}>
+              <div className="text-xs font-bold">处理提醒</div>
+              <p className="mt-1 text-xs leading-relaxed opacity-85">{actionReminder}</p>
+            </div>
           </div>
-          <p className="mt-0.5 text-xs text-slate-400">{stageDesc}</p>
+          <button type="button" onClick={onClose}
+            className="flex-shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+            <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
         </div>
-        <button type="button" onClick={onClose}
-          className="flex-shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
-          <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-        </button>
       </div>
 
-      {/* 滚动区 */}
-      <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3">
-        {/* 1. 基本信息 */}
-        <div>
-          <p className="mb-1 text-xs font-bold text-slate-500">项目基本信息</p>
-          <div className="rounded-lg border border-slate-100 px-3 py-1">
-            {infoRow('项目名称', project.name)}
-            {infoRow('项目状态', statusBadge.label)}
-            {infoRow('项目类型', project.project_type)}
-            {infoRow('计划时间', formatPlanTimeShort(project.start_date, project.end_date))}
-            {infoRow('客户名称', project.client_name)}
-          </div>
-        </div>
-
-        {/* 2. 核心人员 */}
-        <div>
-          <p className="mb-1 text-xs font-bold text-slate-500">核心人员</p>
-          <div className="rounded-lg border border-slate-100 px-3 py-1">
-            {infoRow('企业教练', teamLine.ceoText)}
-            {infoRow('负责人', teamLine.ownerText)}
-            {infoRow('统筹人', teamLine.coordinatorText)}
-            {infoRow('成员', teamLine.memberText)}
-          </div>
-        </div>
-
-        {/* 3. 立项信息 */}
-        <div>
-          <p className="mb-1 text-xs font-bold text-slate-500">立项信息</p>
-          <div className="space-y-1.5">
-            <div className="rounded-lg border border-slate-100 px-3 py-2">
-              <div className="text-[11px] text-slate-400">项目背景</div>
-              <div className="mt-0.5 text-xs leading-relaxed text-slate-700">{project.background?.trim() || '未填写'}</div>
-            </div>
-            <div className="rounded-lg border border-slate-100 px-3 py-2">
-              <div className="text-[11px] text-slate-400">项目目标</div>
-              <div className="mt-0.5 text-xs leading-relaxed text-slate-700">{project.objectives?.trim() || '未填写'}</div>
-            </div>
-            <div className="rounded-lg border border-slate-100 px-3 py-2">
-              <div className="text-[11px] text-slate-400">预期交付物</div>
-              <div className="mt-0.5 text-xs leading-relaxed text-slate-700">{project.expected_outcomes?.trim() || '未填写'}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* 4. 当前阶段 */}
-        <div>
-          <p className="mb-1 text-xs font-bold text-slate-500">当前阶段</p>
-          <div className="rounded-lg border border-sky-100 bg-sky-50/60 px-3 py-2 text-xs text-slate-700">{stageDesc}</div>
-        </div>
-
-        {/* 5. 工作推进表雏形 */}
-        <div>
-          <p className="mb-1 text-xs font-bold text-slate-500">
-            {status === 'active' ? '工作推进表初版' : '工作推进表雏形'}
-          </p>
-
-          {/* 摘要 */}
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {[
-              { label: '目标', val: summary.objectives },
-              { label: '重点工作', val: summary.taskCount },
-              { label: '关键任务', val: summary.subtaskCount },
-              { label: '已指派', val: `${summary.ownerConfigured}/${summary.taskTotal}` },
-              { label: '计划', val: `${summary.planConfigured}/${summary.taskTotal}` },
-            ].map((item) => (
-              <span key={item.label} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                {item.label} <span className="text-sky-600">{item.val}</span>
-              </span>
-            ))}
-          </div>
-
-          {/* 类 Excel 草案明细表 */}
-          {draftRows.length === 0 ? (
-            <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-4 text-center text-xs text-slate-400">
-              推进表草案未完善
-            </div>
-          ) : (
-            <DraftProgressTable rows={draftRows} />
+      <section className="projects-lifecycle-panel-next-actions border-b border-slate-200 px-5 py-4">
+        <p className="mb-2 text-xs font-bold text-slate-500">下一步操作</p>
+        <div className="space-y-2">
+          {status === 'draft' && canEditDraft && (
+            <>
+              <button type="button" onClick={onEdit} className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">编辑项目</button>
+              <button type="button" onClick={onDispatch} className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">下发给负责人</button>
+            </>
           )}
-        </div>
-      </div>
-
-      {/* 操作栏 */}
-      {mainAction.type !== 'viewDetail' && (
-        <div className="flex gap-2 border-t px-4 py-2.5" style={{ borderColor: '#E9EFF6' }}>
+          {status === 'dispatched' && roles.isRealOwner && (
+            <button type="button" onClick={onOwnerSubmit} className="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">完善立项信息</button>
+          )}
+          {status === 'pending_review' && (
+            <button type="button" onClick={onOpenApprovalMaterials} className="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">查看审核材料</button>
+          )}
           {showReturn && (
             <button type="button" onClick={onReturn}
-              className="cursor-pointer rounded-lg border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-100">
+              className="w-full rounded-lg border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 hover:bg-orange-100">
               退回修改
             </button>
           )}
-          <button type="button"
-            onClick={() => {
-              if (mainAction.type === 'dispatch') onDispatch()
-              else if (mainAction.type === 'ownerSubmit') onOwnerSubmit()
-              else if (mainAction.type === 'approve') onApprove()
-            }}
-            className="cursor-pointer flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
-            style={{ background: 'linear-gradient(135deg,#2563EB,#0EA5E9)' }}>
-            {mainAction.label === '完善立项信息' ? '完善立项与推进表草案'
-              : mainAction.label === '审核立项' ? '审核立项与推进表草案'
-              : mainAction.label === '修改立项信息' ? '修改立项与推进表草案'
-              : mainAction.label}
-          </button>
+          {status === 'returned' && roles.isRealOwner && (
+            <button type="button" onClick={onOwnerSubmit} className="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">修改立项信息</button>
+          )}
+          {status === 'active' && (
+            <>
+              <button type="button" onClick={onWorkProgress} className="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">进入工作推进表</button>
+              <button type="button" className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">查看项目档案</button>
+            </>
+          )}
+          {status === 'archived' && (
+            <button type="button" onClick={onShowArchiveFeedback} className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">查看归档档案</button>
+          )}
         </div>
-      )}
+      </section>
+
+      <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+        {showArchiveFeedback && (
+          <section className="projects-lifecycle-panel-section projects-lifecycle-archive-feedback rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            当前没有单独的归档详情页。归档项目的核心信息、项目角色和立项资料完备度已在本处理面板中展示。
+          </section>
+        )}
+
+        <section className="projects-lifecycle-panel-section projects-lifecycle-panel-core-info">
+          <p className="mb-2 text-xs font-bold text-slate-500">项目核心信息</p>
+          <div className="grid grid-cols-2 gap-x-5 gap-y-3 rounded-lg border border-slate-100 bg-white px-4 py-3">
+            {infoBlock('项目周期', formatPlanTimeShort(project.start_date, project.end_date))}
+            {infoBlock('项目完成准则 / 验收标准', project.objectives)}
+            {infoBlock('客户名称', clientName)}
+            {infoBlock('项目类型', projectType)}
+          </div>
+        </section>
+
+        <section className="projects-lifecycle-panel-section projects-lifecycle-panel-roles">
+          <p className="mb-2 text-xs font-bold text-slate-500">项目角色</p>
+          <div className="projects-lifecycle-panel-pills flex flex-wrap gap-2">
+            {[
+              `企业教练：${teamLine.ceoText}`,
+              `项目负责人：${teamLine.ownerText}`,
+              `统筹人：${teamLine.coordinatorText}`,
+              `成员：${teamLine.memberText}`,
+            ].map((item) => (
+              <span key={item} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">{item}</span>
+            ))}
+          </div>
+        </section>
+
+        <section className="projects-lifecycle-panel-section projects-lifecycle-panel-readiness">
+          <p className="mb-2 text-xs font-bold text-slate-500">立项资料完备度</p>
+          <div className="space-y-2">
+            {[
+              { label: '项目核心信息：', value: coreReady ? '已完善' : '未完善', ready: coreReady },
+              { label: '工作推进表雏形：', value: draftReady ? '已维护' : '未完善', ready: draftReady },
+              { label: '重点工作数量', value: String(summary.taskCount), ready: summary.taskCount > 0 },
+              { label: '关键任务数量', value: String(summary.subtaskCount), ready: summary.subtaskCount > 0 },
+            ].map((item) => (
+              <div key={item.label} className="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs">
+                <span className="font-medium text-slate-600">{item.label}</span>
+                <span className={item.ready ? 'font-semibold text-emerald-600' : 'font-semibold text-orange-600'}>{item.value}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
     </div>
   )
 }
@@ -1217,7 +1213,7 @@ function DetailPanel({
 // ── 类 Excel 草案明细表 ──────────────────────────────────────
 
 function DraftProgressTable({ rows }: { rows: DraftRow[] }) {
-  const cols = ['目标', '重点工作', '评价标准', '序号', '关键任务', '责任人', '计划开始', '计划结束', '协同人', '备注']
+  const cols = ['重点工作', '目标成果 / 验收标准', '关键任务', '责任人', '协助人', '时间段', '备注 / 标准']
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-200">
       <table className="w-full text-[11px]" style={{ borderCollapse: 'collapse' }}>
@@ -1233,15 +1229,12 @@ function DraftProgressTable({ rows }: { rows: DraftRow[] }) {
         <tbody>
           {rows.map((row, idx) => (
             <tr key={idx} className={row.isTaskOnly ? 'bg-orange-50/40' : idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}>
-              <td className="border-b border-r px-2 py-1.5 text-slate-600" style={{ borderColor: '#E2E8F0', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.objective}>{row.objective}</td>
-              <td className="border-b border-r px-2 py-1.5 font-semibold text-slate-700" style={{ borderColor: '#E2E8F0', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.keyTask}>{row.keyTask}</td>
-              <td className="border-b border-r px-2 py-1.5 text-slate-600" style={{ borderColor: '#E2E8F0', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.standard}>{row.standard}</td>
-              <td className="border-b border-r px-2 py-1.5 text-center text-slate-500" style={{ borderColor: '#E2E8F0' }}>{row.seq}</td>
-              <td className={`border-b border-r px-2 py-1.5 ${row.isTaskOnly ? 'text-orange-500' : 'text-slate-700'}`} style={{ borderColor: '#E2E8F0', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.subTask}>{row.subTask}</td>
+              <td className="border-b border-r px-2 py-1.5 font-semibold text-slate-700" style={{ borderColor: '#E2E8F0', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.keyTask}>{row.keyTask}</td>
+              <td className="border-b border-r px-2 py-1.5 text-slate-600" style={{ borderColor: '#E2E8F0', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.standard}>{row.standard}</td>
+              <td className={`border-b border-r px-2 py-1.5 ${row.isTaskOnly ? 'text-orange-500' : 'text-slate-700'}`} style={{ borderColor: '#E2E8F0', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.subTask}>{row.subTask}</td>
               <td className="border-b border-r px-2 py-1.5 text-slate-600" style={{ borderColor: '#E2E8F0', whiteSpace: 'nowrap' }}>{row.assignee}</td>
-              <td className="border-b border-r px-2 py-1.5 text-slate-500" style={{ borderColor: '#E2E8F0', whiteSpace: 'nowrap' }}>{row.planStart}</td>
-              <td className="border-b border-r px-2 py-1.5 text-slate-500" style={{ borderColor: '#E2E8F0', whiteSpace: 'nowrap' }}>{row.planEnd}</td>
-              <td className="border-b border-r px-2 py-1.5 text-slate-600" style={{ borderColor: '#E2E8F0', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.collaborator}>{row.collaborator}</td>
+              <td className="border-b border-r px-2 py-1.5 text-slate-600" style={{ borderColor: '#E2E8F0', maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.collaborator}>{row.collaborator}</td>
+              <td className="border-b border-r px-2 py-1.5 text-slate-500" style={{ borderColor: '#E2E8F0', whiteSpace: 'nowrap' }}>{row.planRange}</td>
               <td className="border-b px-2 py-1.5 text-slate-500" style={{ borderColor: '#E2E8F0', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.note}>{row.note}</td>
             </tr>
           ))}
@@ -1422,6 +1415,250 @@ function ProjectBatchImportModal({
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function ApprovalMaterialsWorkbenchModal({
+  project,
+  projectMembers,
+  tasks,
+  subtasks,
+  canReview,
+  loading,
+  onClose,
+  onApprove,
+  onReturn,
+}: {
+  project: Project
+  projectMembers: ProjectMember[]
+  tasks: TaskItem[]
+  subtasks: SubTaskWithParent[]
+  canReview: boolean
+  loading: boolean
+  onClose: () => void
+  onApprove: () => void
+  onReturn: () => void
+}) {
+  const teamLine = summarizeProjectRoleLine(projectMembers, project)
+  const draftSummary = getDraftSummary(tasks, subtasks, project)
+  const draftRows = buildDraftRows(tasks, subtasks, project)
+  const projectType = project.project_type?.trim() || '未填写'
+  const clientName = project.client_name?.trim() || '内部项目 / 未填写'
+  const background = project.background?.trim() || '未填写'
+  const expectedOutcomes = project.expected_outcomes?.trim() || '未填写'
+  const projectPeriod = formatPlanTimeShort(project.start_date, project.end_date)
+
+  const rowsForTask = (task: TaskItem) => {
+    const taskTitle = task.key_task || '—'
+    return draftRows.filter((row) => row.keyTask === taskTitle)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4"
+      style={{ background: 'rgba(15,23,42,0.45)' }}
+      onClick={() => !loading && onClose()}
+    >
+      <div
+        className="projects-approval-workbench-shell flex h-[90vh] w-[96vw] max-w-[1280px] flex-col overflow-hidden rounded-xl bg-[#f6f9ff] text-slate-900 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="projects-approval-workbench-header flex h-[72px] shrink-0 items-center justify-between border-b border-[#e0c0b1] bg-white px-6">
+          <div className="flex min-w-0 items-center gap-4">
+            <div className="h-10 w-1.5 rounded-full bg-orange-500" aria-hidden="true" />
+            <div className="min-w-0">
+              <h2 className="truncate text-lg font-semibold tracking-[-0.01em] text-slate-900">
+                查看审核材料 — {project.name}
+              </h2>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <span className="rounded border border-orange-200 bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-orange-800">
+                  待企业教练审核
+                </span>
+                <span className="text-xs font-semibold text-slate-600">立项方案审核材料</span>
+                <span className="text-xs text-slate-500">
+                  负责人已提交立项信息和工作推进方案，请审核项目完成准则、重点工作和关键任务安排。
+                </span>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-4 rounded-full px-3 py-2 text-xl leading-none text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+            aria-label="关闭"
+          >
+            ×
+          </button>
+        </header>
+
+        <main className="projects-approval-workbench-main flex-1 overflow-y-auto bg-[#f6f9ff] pb-8">
+          <div className="projects-approval-workbench-columns mx-auto flex max-w-[1440px] items-start gap-6 px-6 py-6">
+            <aside className="projects-approval-left-pane sticky top-6 w-[400px] shrink-0 space-y-6">
+              <section className="overflow-hidden rounded-xl border border-[#e0c0b1]/70 bg-white shadow-sm">
+                <h3 className="sr-only">项目核心信息</h3>
+                <div className="space-y-6 p-6">
+                  <div className="space-y-2">
+                    <div className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">项目名称</div>
+                    <div className="text-lg font-semibold text-slate-900">{project.name}</div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">项目周期 / 时间段</div>
+                    <div className="text-base text-slate-800">{projectPeriod}</div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">项目完成准则 / 验收标准</div>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm leading-relaxed text-slate-700">
+                      {project.objectives?.trim() || '未填写'}
+                    </div>
+                  </div>
+
+                  <section className="projects-approval-role-pills space-y-2">
+                    <div className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">项目角色</div>
+                    <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">企业教练：{teamLine.ceoText}</span>
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">项目负责人：{teamLine.ownerText}</span>
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">统筹人：{teamLine.coordinatorText}</span>
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">成员：{teamLine.memberText}</span>
+                    </div>
+                  </section>
+
+                  <details className="group mt-4">
+                    <summary className="projects-approval-supplement-summary flex cursor-pointer select-none items-center gap-2 rounded-lg border border-orange-100 bg-orange-50/40 px-3 py-2 text-sm font-semibold text-orange-700 outline-none transition-colors hover:bg-orange-50 focus-visible:ring-2 focus-visible:ring-orange-200">
+                      <span className="text-base leading-none transition-transform group-open:rotate-90">›</span>
+                      补充详细信息
+                    </summary>
+                    <div className="mt-4 space-y-4 border-t border-slate-200/80 pt-4 text-sm text-slate-700">
+                      <div>
+                        <div className="text-[11px] font-semibold text-slate-500">客户名称</div>
+                        <div className="mt-1">{clientName}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-semibold text-slate-500">项目类型</div>
+                        <div className="mt-1">{projectType}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-semibold text-slate-500">项目背景</div>
+                        <div className="mt-1 leading-relaxed">{background}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-semibold text-slate-500">补充说明</div>
+                        <div className="mt-1 leading-relaxed">{expectedOutcomes}</div>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              </section>
+            </aside>
+
+            <section className="projects-approval-right-pane min-w-0 flex-1">
+              <div className="mb-4 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-lg font-semibold text-slate-900">工作推进方案</h3>
+                  <span className="text-sm italic text-slate-500">
+                    只读审核视图：核对重点工作方向、目标成果与关键任务执行安排。
+                  </span>
+                </div>
+                <div className="flex shrink-0 gap-2 text-xs">
+                  <span className="rounded-lg border border-orange-200 bg-white px-3 py-2 font-semibold text-orange-700">
+                    重点工作 {draftSummary.taskCount}
+                  </span>
+                  <span className="rounded-lg border border-orange-200 bg-white px-3 py-2 font-semibold text-orange-700">
+                    关键任务 {draftSummary.subtaskCount}
+                  </span>
+                </div>
+              </div>
+
+              {tasks.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-10 text-center text-sm text-slate-400">
+                  暂无工作推进表雏形
+                </div>
+              ) : (
+                <div>
+                  {tasks.map((task, taskIndex) => {
+                    const rows = rowsForTask(task)
+                    return (
+                      <div key={task.id ?? taskIndex} className="mb-6 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                        <div className="flex items-start gap-4 border-b border-slate-200 bg-slate-100/70 px-6 py-4">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-orange-50 text-lg font-semibold text-orange-700">
+                            {taskIndex + 1}
+                          </div>
+                          <div className="grid flex-1 grid-cols-1 gap-4 md:grid-cols-2">
+                            <div>
+                              <div className="block text-[10px] font-semibold uppercase text-slate-500/80">重点工作名称</div>
+                              <div className="mt-1 text-lg font-semibold text-slate-900">{task.key_task || '未填写'}</div>
+                            </div>
+                            <div>
+                              <div className="block text-[10px] font-semibold uppercase text-slate-500/80">目标成果 / 验收标准</div>
+                              <div className="mt-1 text-sm leading-relaxed text-slate-600">{task.completion_standard?.trim() || '未填写'}</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="w-full border-collapse text-left text-sm">
+                            <thead>
+                              <tr className="border-b border-slate-200/80 bg-slate-50/80 text-[11px] font-semibold text-slate-500">
+                                <th className="w-[250px] py-2 pl-6 pr-3">关键任务</th>
+                                <th className="w-[100px] px-3 py-2">责任人</th>
+                                <th className="w-[100px] px-3 py-2">协助人</th>
+                                <th className="w-[160px] px-3 py-2">时间段</th>
+                                <th className="px-3 py-2">备注 / 标准</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {rows.map((row, rowIndex) => (
+                                <tr key={`${row.keyTask}-${row.subTask}-${rowIndex}`} className="hover:bg-slate-50">
+                                  <td className="py-3 pl-6 pr-3 text-sm text-slate-800">{row.subTask}</td>
+                                  <td className="px-3 py-3 text-sm text-slate-700">{row.assignee}</td>
+                                  <td className="px-3 py-3 text-sm text-slate-600">{row.collaborator}</td>
+                                  <td className="px-3 py-3 text-sm text-slate-600">{row.planRange}</td>
+                                  <td className="px-3 py-3 text-sm text-slate-600">{row.note}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+            </section>
+          </div>
+        </main>
+
+        <footer className="projects-approval-workbench-footer flex h-[72px] shrink-0 items-center justify-between border-t border-[#e0c0b1] bg-white px-6 shadow-[0_-4px_12px_-2px_rgba(0,0,0,0.05)]">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-10 rounded-lg border border-slate-300 px-6 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+          >
+            关闭
+          </button>
+          {canReview && (
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onReturn}
+                disabled={loading}
+                className="h-10 rounded-lg border border-orange-300 bg-white px-6 text-sm font-semibold text-orange-700 transition-colors hover:bg-orange-50 disabled:opacity-50"
+              >
+                退回修改
+              </button>
+              <button
+                type="button"
+                onClick={onApprove}
+                disabled={loading}
+                className="h-10 rounded-lg bg-orange-600 px-10 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-700 disabled:opacity-50"
+              >
+                {loading ? '处理中…' : '审核通过'}
+              </button>
+            </div>
+          )}
+        </footer>
       </div>
     </div>
   )

@@ -147,20 +147,6 @@ function summarizeProjectRoleLine(projectMembers: ProjectMember[], project: Proj
   }
 }
 
-function splitPlanTime(planTime?: string): { start: string; end: string } {
-  if (!planTime?.trim()) return { start: '—', end: '—' }
-  const s = planTime.trim()
-  for (const sep of ['~', '～', '至', '→', ' - ']) {
-    const idx = s.indexOf(sep)
-    if (idx > 0) {
-      const start = s.slice(0, idx).trim()
-      const end = s.slice(idx + sep.length).trim()
-      if (start && end) return { start, end }
-    }
-  }
-  return { start: s, end: '—' }
-}
-
 function formatPlanTimeShort(startDate?: string, endDate?: string): string {
   if (!startDate && !endDate) return '未填写'
   const s = startDate ? fmtPlanTime(startDate) : '?'
@@ -195,8 +181,7 @@ type DraftRow = {
   seq: string
   subTask: string
   assignee: string
-  planStart: string
-  planEnd: string
+  planRange: string
   collaborator: string
   note: string
   isTaskOnly: boolean
@@ -211,19 +196,19 @@ function buildDraftRows(tasks: TaskItem[], subtasks: SubTaskWithParent[], projec
     const standard = task.completion_standard?.trim() || '—'
     const collaborator = task.collaborators?.trim() || '—'
     if (taskSubs.length === 0) {
-      const { start, end } = splitPlanTime(task.plan_time)
+      const planRange = task.plan_time?.trim() || '—'
       rows.push({
         objective, keyTask: task.key_task || '—', standard, seq: '—',
         subTask: '关键任务待补充', assignee: task.owner?.trim() || '—',
-        planStart: start, planEnd: end, collaborator, note: '—', isTaskOnly: true,
+        planRange, collaborator, note: '—', isTaskOnly: true,
       })
     } else {
       taskSubs.forEach((sub, idx) => {
-        const { start, end } = splitPlanTime(sub.plan_time)
+        const planRange = sub.plan_time?.trim() || task.plan_time?.trim() || '—'
         rows.push({
           objective, keyTask: task.key_task || '—', standard, seq: String(idx + 1),
           subTask: sub.title || '—', assignee: sub.assignee?.trim() || '—',
-          planStart: start, planEnd: end, collaborator, note: sub.notes?.trim() || '—', isTaskOnly: false,
+          planRange, collaborator, note: sub.notes?.trim() || '—', isTaskOnly: false,
         })
       })
     }
@@ -797,7 +782,7 @@ export function ProjectsMgmtSection() {
                     else if (mainAction.type === 'dispatch') void handleDispatch(project.id)
                     else if (mainAction.type === 'ownerSubmit') setOwnerFillProject(project)
                     else if (mainAction.type === 'approve') { setSelectedProjectId(project.id); setApproveModal({ pid: project.id, name: project.name }) }
-                    else if (mainAction.type === 'workProgress') navigate(`/project/${project.id}/tasks`)
+                    else if (mainAction.type === 'workProgress') navigate(`/work/tasks?projectId=${project.id}`)
                     else setSelectedProjectId(project.id)
                   }}
                   onReturn={() => void handleReturn(project.id, project.name)}
@@ -827,7 +812,7 @@ export function ProjectsMgmtSection() {
               onOwnerSubmit={() => setOwnerFillProject(selectedProject)}
               onApprove={() => setApproveModal({ pid: selectedProject.id, name: selectedProject.name })}
               onReturn={() => void handleReturn(selectedProject.id, selectedProject.name)}
-              onWorkProgress={() => navigate(`/project/${selectedProject.id}/tasks`)}
+              onWorkProgress={() => navigate(`/work/tasks?projectId=${selectedProject.id}`)}
             />
           ) : filteredProjects.length === 0 ? (
             // 只有筛选结果为空时显示项目空状态
@@ -1123,6 +1108,8 @@ function DetailPanel({
   const statusBadge = getProjectStatusBadge(project)
   const teamLine = summarizeProjectRoleLine(projectMembers, project)
   const summary = getDraftSummary(tasks, subtasks, project)
+  const draftSummary = summary
+  const draftRows = buildDraftRows(tasks, subtasks, project)
   const stageDesc = STAGE_DESCRIPTIONS[status] ?? ''
   const actionReminder = ACTION_REMINDERS[status] ?? stageDesc
   const showReturn = status === 'pending_review' && (roles.isRealProjectCeo || roles.isSuperAdmin)
@@ -1131,6 +1118,23 @@ function DetailPanel({
   const draftReady = summary.taskCount > 0 && summary.subtaskCount > 0
   const projectType = project.project_type?.trim() || '未填写'
   const clientName = project.client_name?.trim() || '内部项目 / 未填写'
+  const [showDraftPreview, setShowDraftPreview] = useState(false)
+  const [showArchiveFeedback, setShowArchiveFeedback] = useState(false)
+
+  useEffect(() => {
+    setShowDraftPreview(false)
+    setShowArchiveFeedback(false)
+  }, [project.id])
+
+  function onPreviewDraft() {
+    setShowArchiveFeedback(false)
+    setShowDraftPreview((prev) => !prev)
+  }
+
+  function onShowArchiveFeedback() {
+    setShowDraftPreview(false)
+    setShowArchiveFeedback(true)
+  }
 
   const infoBlock = (label: string, value?: string) => (
     <div className="min-w-0">
@@ -1184,7 +1188,9 @@ function DetailPanel({
             </button>
           )}
           {status === 'pending_review' && (
-            <button type="button" className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">查看工作推进表雏形</button>
+            <button type="button" onClick={onPreviewDraft} className="w-full rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-100">
+              {showDraftPreview ? '收起工作推进表雏形' : '查看工作推进表雏形'}
+            </button>
           )}
           {status === 'returned' && roles.isRealOwner && (
             <button type="button" onClick={onOwnerSubmit} className="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">修改立项信息</button>
@@ -1196,12 +1202,40 @@ function DetailPanel({
             </>
           )}
           {status === 'archived' && (
-            <button type="button" className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">查看归档档案</button>
+            <button type="button" onClick={onShowArchiveFeedback} className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">查看归档档案</button>
           )}
         </div>
       </section>
 
       <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+        {showDraftPreview && (
+          <section className="projects-lifecycle-panel-section projects-lifecycle-draft-preview rounded-xl border border-sky-100 bg-sky-50/40 p-3">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-bold text-slate-800">工作推进表雏形</p>
+                <p className="mt-1 text-xs text-slate-500">查看负责人提交的重点工作与关键任务安排。</p>
+              </div>
+              <div className="flex gap-2 text-xs">
+                <span className="rounded-full bg-white px-2 py-1 font-semibold text-slate-600">重点工作 {draftSummary.taskCount}</span>
+                <span className="rounded-full bg-white px-2 py-1 font-semibold text-slate-600">关键任务 {draftSummary.subtaskCount}</span>
+              </div>
+            </div>
+            {draftRows.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-sky-200 bg-white px-3 py-6 text-center text-sm text-slate-400">暂无工作推进表雏形</div>
+            ) : (
+              <div className="projects-lifecycle-draft-preview-table">
+                <DraftProgressTable rows={draftRows} />
+              </div>
+            )}
+          </section>
+        )}
+
+        {showArchiveFeedback && (
+          <section className="projects-lifecycle-panel-section projects-lifecycle-archive-feedback rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            当前没有单独的归档详情页。归档项目的核心信息、项目角色和立项资料完备度已在本处理面板中展示。
+          </section>
+        )}
+
         <section className="projects-lifecycle-panel-section projects-lifecycle-panel-core-info">
           <p className="mb-2 text-xs font-bold text-slate-500">项目核心信息</p>
           <div className="grid grid-cols-2 gap-x-5 gap-y-3 rounded-lg border border-slate-100 bg-white px-4 py-3">
@@ -1250,7 +1284,7 @@ function DetailPanel({
 // ── 类 Excel 草案明细表 ──────────────────────────────────────
 
 function DraftProgressTable({ rows }: { rows: DraftRow[] }) {
-  const cols = ['目标', '重点工作', '评价标准', '序号', '关键任务', '责任人', '计划开始', '计划结束', '协同人', '备注']
+  const cols = ['重点工作', '目标成果 / 验收标准', '关键任务', '责任人', '协助人', '时间段', '备注 / 标准']
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-200">
       <table className="w-full text-[11px]" style={{ borderCollapse: 'collapse' }}>
@@ -1266,15 +1300,12 @@ function DraftProgressTable({ rows }: { rows: DraftRow[] }) {
         <tbody>
           {rows.map((row, idx) => (
             <tr key={idx} className={row.isTaskOnly ? 'bg-orange-50/40' : idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}>
-              <td className="border-b border-r px-2 py-1.5 text-slate-600" style={{ borderColor: '#E2E8F0', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.objective}>{row.objective}</td>
-              <td className="border-b border-r px-2 py-1.5 font-semibold text-slate-700" style={{ borderColor: '#E2E8F0', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.keyTask}>{row.keyTask}</td>
-              <td className="border-b border-r px-2 py-1.5 text-slate-600" style={{ borderColor: '#E2E8F0', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.standard}>{row.standard}</td>
-              <td className="border-b border-r px-2 py-1.5 text-center text-slate-500" style={{ borderColor: '#E2E8F0' }}>{row.seq}</td>
-              <td className={`border-b border-r px-2 py-1.5 ${row.isTaskOnly ? 'text-orange-500' : 'text-slate-700'}`} style={{ borderColor: '#E2E8F0', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.subTask}>{row.subTask}</td>
+              <td className="border-b border-r px-2 py-1.5 font-semibold text-slate-700" style={{ borderColor: '#E2E8F0', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.keyTask}>{row.keyTask}</td>
+              <td className="border-b border-r px-2 py-1.5 text-slate-600" style={{ borderColor: '#E2E8F0', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.standard}>{row.standard}</td>
+              <td className={`border-b border-r px-2 py-1.5 ${row.isTaskOnly ? 'text-orange-500' : 'text-slate-700'}`} style={{ borderColor: '#E2E8F0', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.subTask}>{row.subTask}</td>
               <td className="border-b border-r px-2 py-1.5 text-slate-600" style={{ borderColor: '#E2E8F0', whiteSpace: 'nowrap' }}>{row.assignee}</td>
-              <td className="border-b border-r px-2 py-1.5 text-slate-500" style={{ borderColor: '#E2E8F0', whiteSpace: 'nowrap' }}>{row.planStart}</td>
-              <td className="border-b border-r px-2 py-1.5 text-slate-500" style={{ borderColor: '#E2E8F0', whiteSpace: 'nowrap' }}>{row.planEnd}</td>
-              <td className="border-b border-r px-2 py-1.5 text-slate-600" style={{ borderColor: '#E2E8F0', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.collaborator}>{row.collaborator}</td>
+              <td className="border-b border-r px-2 py-1.5 text-slate-600" style={{ borderColor: '#E2E8F0', maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.collaborator}>{row.collaborator}</td>
+              <td className="border-b border-r px-2 py-1.5 text-slate-500" style={{ borderColor: '#E2E8F0', whiteSpace: 'nowrap' }}>{row.planRange}</td>
               <td className="border-b px-2 py-1.5 text-slate-500" style={{ borderColor: '#E2E8F0', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.note}>{row.note}</td>
             </tr>
           ))}

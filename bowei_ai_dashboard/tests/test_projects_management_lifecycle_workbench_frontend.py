@@ -175,6 +175,70 @@ def test_project_action_panel_is_action_first_not_archive_drawer():
         "右侧不要堆太多灰底信息卡"
 
 
+def test_project_action_buttons_are_wired_to_visible_results():
+    source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
+
+    for expected in [
+        "showDraftPreview",
+        "setShowDraftPreview",
+        "projects-lifecycle-draft-preview",
+        "projects-lifecycle-draft-preview-table",
+        "projects-lifecycle-archive-feedback",
+        "navigate(`/work/tasks?projectId=${project.id}`)",
+        "navigate(`/work/tasks?projectId=${selectedProject.id}`)",
+    ]:
+        assert expected in source
+
+    assert "navigate(`/project/${project.id}/tasks`)" not in source
+    assert "navigate(`/project/${selectedProject.id}/tasks`)" not in source
+
+    actions_start = source.index("projects-lifecycle-panel-next-actions")
+    actions_source = source[actions_start:]
+
+    pending_section = actions_source[actions_source.index("status === 'pending_review'"):]
+    pending_section = pending_section[: pending_section.index("status === 'returned'")]
+    assert "onClick={onPreviewDraft}" in pending_section
+    assert "onWorkProgress" not in pending_section
+
+    active_section = actions_source[actions_source.index("status === 'active'"):]
+    active_section = active_section[: active_section.index("status === 'archived'")]
+    assert "onClick={onWorkProgress}" in active_section
+
+    archived_section = actions_source[actions_source.index("status === 'archived'"):]
+    archived_section = archived_section[: archived_section.index("</section>", archived_section.index("status === 'archived'"))]
+    assert "onClick={onShowArchiveFeedback}" in archived_section
+
+
+def test_project_draft_preview_uses_workbench_fields_not_legacy_plan_fields():
+    source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
+
+    preview_start = source.index("projects-lifecycle-draft-preview")
+    preview_end = source.index("projects-lifecycle-panel-core-info", preview_start)
+    preview_source = source[preview_start:preview_end]
+
+    for expected in [
+        "draftSummary.taskCount",
+        "draftSummary.subtaskCount",
+        "DraftProgressTable",
+    ]:
+        assert expected in preview_source
+
+    table_source = source[source.index("function DraftProgressTable"):]
+    for expected in [
+        "keyTask",
+        "standard",
+        "subTask",
+        "assignee",
+        "collaborator",
+        "planRange",
+        "note",
+    ]:
+        assert expected in table_source
+
+    assert "planStart" not in table_source
+    assert "planEnd" not in table_source
+
+
 def test_projects_management_defaults_to_first_filtered_project():
     source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
 

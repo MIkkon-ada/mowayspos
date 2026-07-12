@@ -188,3 +188,75 @@ def test_no_version_not_supported(issues_source: str):
 def test_no_field_not_connected(issues_source: str):
     """不应包含 '暂未接入入库字段'"""
     assert "暂未接入入库字段" not in issues_source
+
+
+# ── "开始处理" 状态流转 ────────────────────────────────────
+
+def test_issues_page_imports_update_issue_status(issues_source: str):
+    """IssuesPage.tsx 引入了 updateIssueStatus"""
+    assert "updateIssueStatus" in issues_source
+
+
+def test_api_issues_exports_update_issue_status():
+    """api/issues.ts 存在 updateIssueStatus 导出"""
+    from pathlib import Path
+    file = Path(__file__).resolve().parent.parent.parent / "frontend" / "src" / "api" / "issues.ts"
+    if not file.exists():
+        pytest.skip("issues.ts not found")
+    content = file.read_text(encoding="utf-8")
+    assert "updateIssueStatus" in content
+
+
+def test_start_processing_not_permanently_disabled(issues_source: str):
+    """"开始处理"不再是永久 disabled"""
+    # 应该有 handleStartProcessing 函数
+    assert "handleStartProcessing" in issues_source
+    # 不应再包含旧的禁用注释
+    assert "no backend endpoint" not in issues_source
+    # 不应再包含旧的 title 提示
+    assert "开始处理接口暂未接入" not in issues_source
+
+
+def test_handle_start_processing_calls_update_issue_status(issues_source: str):
+    """handleStartProcessing 调用 updateIssueStatus(selected.id, '处理中')"""
+    assert re.search(r"updateIssueStatus\(\s*selected\.id\s*,\s*'处理中'\s*\)", issues_source), (
+        "handleStartProcessing 应调用 updateIssueStatus(selected.id, '处理中')"
+    )
+
+
+def test_start_processing_shows_success_toast(issues_source: str):
+    """成功后显示 '已开始处理' toast"""
+    assert "已开始处理" in issues_source
+
+
+def test_start_processing_respects_project_archived(issues_source: str):
+    """项目已归档时开始处理按钮 disabled"""
+    # 开始处理按钮应包含 projectArchived 判断
+    # 查找按钮 disabled 属性中引用 projectArchived
+    assert re.search(
+        r'待处理.*?<button[^>]*disabled\s*=\s*\{[^}]*projectArchived',
+        issues_source,
+        re.DOTALL,
+    ) or re.search(
+        r'disabled\s*=\s*\{[^}]*projectArchived[^}]*\}',
+        issues_source,
+    ), "开始处理按钮应在项目归档时 disabled"
+
+
+def test_start_processing_btn_has_onclick(issues_source: str):
+    """"开始处理"按钮绑定了 onClick"""
+    # 在"开始处理"按钮附近应有 onClick
+    assert re.search(
+        r'待处理.*?onClick\s*=\s*\{handleStartProcessing\}',
+        issues_source,
+        re.DOTALL,
+    ), "待处理区域的开始处理按钮应绑定 handleStartProcessing"
+
+
+def test_kanban_still_five_columns(issues_source: str):
+    """看板仍包含五列：待处理 / 处理中 / 待决策 / 已解决 / 已关闭"""
+    assert "待处理" in issues_source
+    assert "处理中" in issues_source
+    assert "待决策" in issues_source
+    assert "已解决" in issues_source
+    assert "已关闭" in issues_source

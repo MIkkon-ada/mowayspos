@@ -51,3 +51,7 @@ export function requestIssueCeo(id: number, needDecisionBy: string, note?: strin
     note: note ?? '',
   })
 }
+
+export function updateIssueStatus(issueId: number, status: string): Promise<IssueItem> {
+  return apiPatch<IssueItem>(`/api/issues/${issueId}/status`, { status })
+}

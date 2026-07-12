@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { createIssue, closeIssue, resolveIssue, assignIssueHelper, requestIssueCeo, fetchIssues } from '../api/issues'
+import { createIssue, closeIssue, resolveIssue, assignIssueHelper, requestIssueCeo, fetchIssues, updateIssueStatus } from '../api/issues'
 import { fetchTasks } from '../api/tasks'
 import { useProject } from '../context/ProjectContext'
 import { toast } from '../utils/toast'
@@ -234,6 +234,19 @@ export function IssuesPage() {
   function handleRequestCeo() {
     if (!selected || !ceoTarget.trim()) return
     doAction(() => requestIssueCeo(selected.id, ceoTarget.trim(), ceoNote.trim()))
+  }
+
+  async function handleStartProcessing() {
+    if (!selected) return
+    setActionLoading(true); setActionErr('')
+    try {
+      const updated = await updateIssueStatus(selected.id, '处理中')
+      setIssues((prev) => prev.map((i) => i.id === updated.id ? updated : i))
+      setSelected(updated)
+      toast.success('已开始处理')
+    } catch (e: unknown) {
+      setActionErr(e instanceof Error ? e.message : '操作失败')
+    } finally { setActionLoading(false) }
   }
 
   // ============ PROJECT SELECTION PAGE ============
@@ -539,9 +552,13 @@ export function IssuesPage() {
 
                 {!isTerminal && (
                   <>
-                    {/* 开始处理 - disabled (no backend endpoint) */}
+                    {/* 开始处理 */}
                     {selectedStatus === '待处理' && (
-                      <button disabled className="w-full py-2 rounded text-xs font-bold text-white disabled:opacity-50 mb-2 bg-blue-600" title="开始处理接口暂未接入">
+                      <button
+                        onClick={handleStartProcessing}
+                        disabled={actionLoading || projectArchived}
+                        className="w-full py-2 rounded text-xs font-bold text-white mb-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+                      >
                         开始处理
                       </button>
                     )}

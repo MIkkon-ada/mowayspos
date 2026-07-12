@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getOverview, exportWeeklyReport } from '../api/dashboard'
+import { ApiError } from '../api/client'
 import { OwnerSubmitModal } from '../features/settings/OwnerSubmitModal'
 import { toast } from '../utils/toast'
 import { useProject } from '../context/ProjectContext'
@@ -16,12 +17,24 @@ import { fmtMonth, fmtPlanTime } from '../utils/time'
 import { Skel, SkeletonStatCard } from '../components/Skeleton'
 
 export function DashboardPage() {
-  const { currentProjectId, projects, currentProject, currentProjectRoles } = useProject()
+  const { currentProjectId, projects, currentProject, currentProjectRoles, currentUser } = useProject()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
-  // 独立的仪表盘筛选：null = 全部专项，number = 具体某个专项
-  // 默认 null（全局视图），不依赖 URL 里的项目 ID
-  const [scopeId, setScopeId] = useState<number | null>(null)
+  const rawProjectId = searchParams.get('projectId')
+  const urlProjectId = rawProjectId && Number.isFinite(Number(rawProjectId)) ? Number(rawProjectId) : null
+  const canViewGlobalDashboard = !!(currentUser?.is_tech_admin || currentUser?.is_ceo || currentUser?.can_view_all)
+
+  function initialDashboardScopeId(): number | null {
+    if (urlProjectId !== null) return urlProjectId
+    if (currentProjectId !== null) return currentProjectId
+    if (!canViewGlobalDashboard && projects.length === 1) return projects[0].id
+    return null
+  }
+
+  // 独立的仪表盘筛选：null = 全部专项，number = 具体某个专项。
+  // 项目角色不能默认进入全局视图，必须优先绑定 URL / 当前项目 / 单项目上下文。
+  const [scopeId, setScopeId] = useState<number | null>(() => initialDashboardScopeId())
 
   // 月份筛选：生成最近 6 个月选项
   function buildMonthOptions(): string[] {
@@ -44,29 +57,51 @@ export function DashboardPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const chartRef = useRef<HTMLCanvasElement>(null)
   const chartInstance = useRef<Chart | null>(null)
+  const shouldSelectProjectBeforeLoading = !canViewGlobalDashboard && scopeId === null
 
-  // 切换筛选时，同步更新 URL（让侧边栏其他页也跟着切换专项）
+  useEffect(() => {
+    const nextScopeId = initialDashboardScopeId()
+    if (nextScopeId !== scopeId) {
+      setScopeId(nextScopeId)
+    }
+  }, [urlProjectId, currentProjectId, canViewGlobalDashboard, projects.length])
+
+  // 切换筛选时，同步更新驾驶舱 URL，保留在 /home/dashboard 自己的项目范围内。
   function handleScopeChange(val: string) {
     if (val === '') {
+      if (!canViewGlobalDashboard) return
       setScopeId(null)
-      // 全部专项时不改 URL，保持当前项目上下文
+      navigate('/home/dashboard')
     } else {
       const id = Number(val)
       setScopeId(id)
-      navigate(`/project/${id}`)
+      navigate(`/home/dashboard?projectId=${id}`)
     }
   }
 
   // 拉数据：scopeId = null 时全局，scopeId = 某个数字时单专项；月份变化时重拉
   useEffect(() => {
     let cancelled = false
+    if (shouldSelectProjectBeforeLoading) {
+      setData(null)
+      setLoading(false)
+      setLoadError(null)
+      return () => { cancelled = true }
+    }
     setLoading(true)
     getOverview(scopeId, selectedMonth)
       .then((d) => { if (!cancelled) { setData(d); setLoadError(null) } })
-      .catch(() => { if (!cancelled) setLoadError('数据加载失败，请刷新页面重试') })
+      .catch((err) => {
+        if (cancelled) return
+        if (err instanceof ApiError && err.status === 403) {
+          setLoadError(scopeId === null ? '你没有权限查看全局驾驶舱，请选择项目查看。' : '你没有权限查看该项目驾驶舱。')
+          return
+        }
+        setLoadError('数据加载失败，请稍后重试。')
+      })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [scopeId, selectedMonth])
+  }, [scopeId, selectedMonth, shouldSelectProjectBeforeLoading])
 
   async function handleExport() {
     setExportLoading(true)
@@ -161,9 +196,6 @@ export function DashboardPage() {
   }, [showNotif])
 
   // 负责人填报状态
-  const isFillableForOwner = canShowProjectSubmitAction(currentProject) && currentProjectRoles.includes('owner')
-  const isPendingReviewForOwner = canShowProjectApproveAction(currentProject) && currentProjectRoles.includes('owner')
-
   const [showFillModal, setShowFillModal] = useState(false)
   const [selectedFillProject, setSelectedFillProject] = useState<Project | null>(null)
 
@@ -177,7 +209,11 @@ export function DashboardPage() {
 
   // 当前选中的专项名
   const scopeLabel = scopeId ? (projects.find((p) => p.id === scopeId)?.name ?? '全部专项') : '全部专项'
-  const currentProjectStatusBadge = currentProject ? getProjectStatusBadge(currentProject) : null
+  const dashboardProject = scopeId ? (projects.find((p) => p.id === scopeId) ?? currentProject) : currentProject
+  const dashboardProjectRoles = dashboardProject?.user_roles ?? currentProjectRoles
+  const currentProjectStatusBadge = dashboardProject ? getProjectStatusBadge(dashboardProject) : null
+  const isFillableForOwner = canShowProjectSubmitAction(dashboardProject) && dashboardProjectRoles.includes('owner')
+  const isPendingReviewForOwner = canShowProjectApproveAction(dashboardProject) && dashboardProjectRoles.includes('owner')
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -204,7 +240,8 @@ export function DashboardPage() {
             onChange={(e) => handleScopeChange(e.target.value)}
             className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30"
           >
-            <option value="">全部专项</option>
+            {canViewGlobalDashboard && <option value={''}>全部专项</option>}
+            {!canViewGlobalDashboard && scopeId === null && <option value={''}>请选择项目</option>}
             {projects.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
@@ -345,6 +382,31 @@ export function DashboardPage() {
 
       {/* Content */}
       <main className="flex-1 overflow-y-auto p-6 space-y-5" style={{ background: '#F1F5F9' }}>
+        {shouldSelectProjectBeforeLoading && (
+          <div className="rounded-2xl border bg-white p-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+            <div>
+              <h2 className="text-sm font-bold text-slate-800">请先选择项目后查看驾驶舱</h2>
+              <p className="text-xs text-slate-500 mt-1">当前账号没有全局驾驶舱权限，请选择一个可访问项目查看项目驾驶舱。</p>
+            </div>
+            {projects.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-4">
+                {projects.map((project) => (
+                  <button
+                    key={project.id}
+                    type="button"
+                    onClick={() => handleScopeChange(String(project.id))}
+                    className="text-left rounded-xl border border-slate-200 px-4 py-3 hover:border-blue-300 hover:bg-blue-50 transition-colors"
+                  >
+                    <p className="text-sm font-semibold text-slate-800 truncate">{project.name}</p>
+                    <p className="text-xs text-slate-400 mt-1">{project.code ? `项目编号：${project.code}` : '点击进入项目驾驶舱'}</p>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400 mt-4">当前没有可查看的项目驾驶舱。</p>
+            )}
+          </div>
+        )}
 
         {/* 待完善立项项目列表（owner 全项目扫描） */}
         {(() => {
@@ -680,9 +742,9 @@ export function DashboardPage() {
       </main>
 
       {/* 负责人填报弹窗（复用 OwnerSubmitModal） */}
-      {showFillModal && (selectedFillProject ?? currentProject) && (
+      {showFillModal && (selectedFillProject ?? dashboardProject) && (
         <OwnerSubmitModal
-          project={(selectedFillProject ?? currentProject) as Project}
+          project={(selectedFillProject ?? dashboardProject) as Project}
           onClose={() => { setShowFillModal(false); setSelectedFillProject(null) }}
           onSuccess={(result) => {
             setShowFillModal(false)

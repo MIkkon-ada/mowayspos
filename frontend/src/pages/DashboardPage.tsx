@@ -92,9 +92,10 @@ export function DashboardPage() {
   const rawProjectId = searchParams.get('projectId')
   const urlProjectId = rawProjectId && Number.isFinite(Number(rawProjectId)) ? Number(rawProjectId) : null
   const canViewGlobalDashboard = !!(currentUser?.is_tech_admin || currentUser?.is_ceo || currentUser?.can_view_all)
-  const hasProjectDashboardRole = projects.some((project) =>
+  const managedDashboardProjects = projects.filter((project) =>
     project.user_roles?.some((role) => ['owner', 'coordinator', 'project_ceo'].includes(role)),
   )
+  const hasProjectDashboardRole = managedDashboardProjects.length > 0
   const canViewMyDashboard = canViewGlobalDashboard || hasProjectDashboardRole
 
   function initialDashboardScope(): DashboardScope {
@@ -141,7 +142,7 @@ export function DashboardPage() {
     if (nextScopeId !== scopeId) {
       setScopeId(nextScopeId)
     }
-  }, [urlProjectId, canViewGlobalDashboard, hasProjectDashboardRole, projects.length])
+  }, [urlProjectId, canViewGlobalDashboard, hasProjectDashboardRole, managedDashboardProjects.length])
 
   // 切换筛选时，同步更新驾驶舱 URL，保留在 /home/dashboard 自己的项目范围内。
   function handleScopeChange(val: string) {
@@ -163,18 +164,18 @@ export function DashboardPage() {
   }
 
   async function loadMyProjectDashboard(cancelledRef: { cancelled: boolean }) {
-    if (projects.length === 0) {
+    if (managedDashboardProjects.length === 0) {
       setData(null)
       setLoadError('请先选择项目后查看驾驶舱')
       return
     }
     const results = await Promise.allSettled(
-      projects.map((project) => getOverview(project.id, selectedMonth)),
+      managedDashboardProjects.map((project) => getOverview(project.id, selectedMonth)),
     )
     if (cancelledRef.cancelled) return
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
-        console.warn('项目驾驶舱数据加载失败', projects[index]?.id, result.reason)
+        console.warn('项目驾驶舱数据加载失败', managedDashboardProjects[index]?.id, result.reason)
       }
     })
     const fulfilled = results
@@ -185,7 +186,7 @@ export function DashboardPage() {
       setLoadError('暂无可查看的项目驾驶舱数据。')
       return
     }
-    setData(aggregateDashboardOverviews(projects, fulfilled))
+    setData(aggregateDashboardOverviews(managedDashboardProjects, fulfilled))
     setLoadError(null)
   }
 
@@ -521,15 +522,15 @@ export function DashboardPage() {
           <div className="rounded-2xl border bg-white p-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
             <div>
               <h2 className="text-sm font-bold text-slate-800">
-                {projects.length > 0 ? '普通成员请从我的任务查看个人工作' : '请先选择项目后查看驾驶舱'}
+                {managedDashboardProjects.length === 0 ? '普通成员请从我的任务查看个人工作' : '请先选择项目后查看驾驶舱'}
               </h2>
               <p className="text-xs text-slate-500 mt-1">
-                {projects.length > 0 ? '当前账号暂无项目管理驾驶舱权限。' : '当前账号没有可访问项目，暂无法展示项目驾驶舱。'}
+                {managedDashboardProjects.length === 0 ? '当前账号暂无项目管理驾驶舱权限。' : '当前账号没有可访问项目，暂无法展示项目驾驶舱。'}
               </p>
             </div>
-            {projects.length > 0 ? (
+            {managedDashboardProjects.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-4">
-                {projects.map((project) => (
+                {managedDashboardProjects.map((project) => (
                   <button
                     key={project.id}
                     type="button"

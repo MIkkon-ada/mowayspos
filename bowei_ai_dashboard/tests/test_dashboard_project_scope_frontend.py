@@ -16,6 +16,7 @@ def test_dashboard_supports_global_my_and_project_scopes():
     assert "type DashboardScope = 'global' | 'my' | 'project'" in source
     assert "scopeMode" in source
     assert "hasProjectDashboardRole" in source
+    assert "managedDashboardProjects" in source
 
 
 def test_dashboard_non_global_users_default_to_my_scope_not_project_selection():
@@ -41,10 +42,20 @@ def test_dashboard_my_scope_fetches_each_project_without_global_overview():
 
     assert "loadMyProjectDashboard" in source
     assert "Promise.allSettled" in source
-    assert "projects.map((project) => getOverview(project.id, selectedMonth))" in source
+    assert "managedDashboardProjects.map((project) => getOverview(project.id, selectedMonth))" in source
+    assert "aggregateDashboardOverviews(managedDashboardProjects, fulfilled)" in source
     assert "console.warn('项目驾驶舱数据加载失败'" in source
     assert "暂无可查看的项目驾驶舱数据。" in source
     assert "getOverview(null, selectedMonth)" not in source
+
+
+def test_dashboard_my_scope_only_aggregates_managed_project_roles():
+    source = _frontend_source("pages/DashboardPage.tsx")
+
+    assert "project.user_roles?.some((role) => ['owner', 'coordinator', 'project_ceo'].includes(role))" in source
+    assert "const hasProjectDashboardRole = managedDashboardProjects.length > 0" in source
+    assert "managedDashboardProjects.length === 0" in source
+    assert "普通成员请从我的任务查看个人工作" in source
 
 
 def test_dashboard_filter_keeps_dashboard_route_and_limits_global_option():

@@ -16,6 +16,74 @@ import Chart from 'chart.js/auto'
 import { fmtMonth, fmtPlanTime } from '../utils/time'
 import { Skel, SkeletonStatCard } from '../components/Skeleton'
 
+type DashboardScope = 'global' | 'my' | 'project'
+
+function asNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function mergeRecords(overviews: DashboardOverview[], path: (overview: any) => unknown): Array<Record<string, unknown>> {
+  return overviews.flatMap((overview) => {
+    const value = path(overview)
+    return Array.isArray(value) ? value as Array<Record<string, unknown>> : []
+  })
+}
+
+function aggregateDashboardOverviews(projects: Project[], overviews: DashboardOverview[]): DashboardOverview {
+  const projectCards = mergeRecords(overviews, (overview) => overview.project_cards)
+  const roleQueueItems = mergeRecords(overviews, (overview) => overview.role_queue?.items)
+  const recentTasks = mergeRecords(overviews, (overview) => overview.recent?.tasks)
+  const delayedTasks = mergeRecords(overviews, (overview) => overview.recent?.delayed_tasks)
+  const recentIssues = mergeRecords(overviews, (overview) => overview.recent?.issues)
+  const recentSubmissions = mergeRecords(overviews, (overview) => overview.recent?.submissions)
+  const latestAchievements = mergeRecords(overviews, (overview) => overview.achievement_stats?.recent_achievements)
+
+  const taskStats = {
+    total_tasks: overviews.reduce((sum, item) => sum + asNumber(item.task_stats?.total_tasks), 0),
+    not_started: overviews.reduce((sum, item) => sum + asNumber(item.task_stats?.not_started), 0),
+    in_progress: overviews.reduce((sum, item) => sum + asNumber(item.task_stats?.in_progress), 0),
+    completed: overviews.reduce((sum, item) => sum + asNumber(item.task_stats?.completed), 0),
+    delayed: overviews.reduce((sum, item) => sum + asNumber(item.task_stats?.delayed), 0),
+    paused: overviews.reduce((sum, item) => sum + asNumber(item.task_stats?.paused), 0),
+  }
+
+  return {
+    project: { id: null, name: '我的项目' },
+    access: {
+      can_view_decisions: overviews.some((item: any) => Boolean(item.access?.can_view_decisions)),
+      can_view_confirmation_center: overviews.some((item: any) => Boolean(item.access?.can_view_confirmation_center)),
+    },
+    filters: {
+      projects: projects.map((project) => project.name),
+      owners: [],
+      statuses: ['未开始', '推进中', '已完成', '延期', '暂缓'],
+    },
+    task_stats: taskStats,
+    achievement_stats: {
+      total_achievements: overviews.reduce((sum, item) => sum + asNumber(item.achievement_stats?.total_achievements), 0),
+      recent_achievements: latestAchievements.slice(0, 10),
+    },
+    issue_stats: {
+      total_issues: overviews.reduce((sum, item) => sum + asNumber(item.issue_stats?.total_issues), 0),
+      open_issues: overviews.reduce((sum, item) => sum + asNumber(item.issue_stats?.open_issues), 0),
+      high_priority_issues: overviews.reduce((sum, item) => sum + asNumber(item.issue_stats?.high_priority_issues), 0),
+      waiting_ceo_decision: overviews.reduce((sum, item) => sum + asNumber(item.issue_stats?.waiting_ceo_decision), 0),
+    },
+    recent: {
+      submissions: recentSubmissions.slice(0, 10),
+      tasks: recentTasks.slice(0, 10),
+      issues: recentIssues.slice(0, 10),
+      delayed_tasks: delayedTasks.slice(0, 10),
+    } as any,
+    project_cards: projectCards,
+    role_queue: {
+      type: 'in_progress',
+      count: roleQueueItems.length,
+      items: roleQueueItems.slice(0, 10),
+    },
+  }
+}
+
 export function DashboardPage() {
   const { currentProjectId, projects, currentProject, currentProjectRoles, currentUser } = useProject()
   const navigate = useNavigate()
@@ -24,17 +92,22 @@ export function DashboardPage() {
   const rawProjectId = searchParams.get('projectId')
   const urlProjectId = rawProjectId && Number.isFinite(Number(rawProjectId)) ? Number(rawProjectId) : null
   const canViewGlobalDashboard = !!(currentUser?.is_tech_admin || currentUser?.is_ceo || currentUser?.can_view_all)
+  const hasProjectDashboardRole = projects.some((project) =>
+    project.user_roles?.some((role) => ['owner', 'coordinator', 'project_ceo'].includes(role)),
+  )
+  const canViewMyDashboard = canViewGlobalDashboard || hasProjectDashboardRole
 
-  function initialDashboardScopeId(): number | null {
-    if (urlProjectId !== null) return urlProjectId
-    if (currentProjectId !== null) return currentProjectId
-    if (!canViewGlobalDashboard && projects.length === 1) return projects[0].id
-    return null
+  function initialDashboardScope(): DashboardScope {
+    if (urlProjectId !== null) return 'project'
+    if (canViewGlobalDashboard) return 'global'
+    if (hasProjectDashboardRole) return 'my'
+    return 'my'
   }
 
-  // 独立的仪表盘筛选：null = 全部专项，number = 具体某个专项。
-  // 项目角色不能默认进入全局视图，必须优先绑定 URL / 当前项目 / 单项目上下文。
-  const [scopeId, setScopeId] = useState<number | null>(() => initialDashboardScopeId())
+  // 独立的仪表盘筛选：global = 全部项目，my = 我的项目汇总，project = 单项目。
+  // 项目角色默认进入“我的项目”汇总，不请求真正全局 overview。
+  const [scopeMode, setScopeMode] = useState<DashboardScope>(() => initialDashboardScope())
+  const [scopeId, setScopeId] = useState<number | null>(() => urlProjectId)
 
   // 月份筛选：生成最近 6 个月选项
   function buildMonthOptions(): string[] {
@@ -57,60 +130,104 @@ export function DashboardPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const chartRef = useRef<HTMLCanvasElement>(null)
   const chartInstance = useRef<Chart | null>(null)
-  const shouldSelectProjectBeforeLoading = !canViewGlobalDashboard && scopeId === null
+  const shouldBlockDashboardLoading = !canViewMyDashboard && scopeMode === 'my'
 
   useEffect(() => {
-    const nextScopeId = initialDashboardScopeId()
+    const nextScopeMode = initialDashboardScope()
+    const nextScopeId = nextScopeMode === 'project' ? urlProjectId : null
+    if (nextScopeMode !== scopeMode) {
+      setScopeMode(nextScopeMode)
+    }
     if (nextScopeId !== scopeId) {
       setScopeId(nextScopeId)
     }
-  }, [urlProjectId, currentProjectId, canViewGlobalDashboard, projects.length])
+  }, [urlProjectId, canViewGlobalDashboard, hasProjectDashboardRole, projects.length])
 
   // 切换筛选时，同步更新驾驶舱 URL，保留在 /home/dashboard 自己的项目范围内。
   function handleScopeChange(val: string) {
-    if (val === '') {
+    if (val === 'global') {
       if (!canViewGlobalDashboard) return
+      setScopeMode('global')
+      setScopeId(null)
+      navigate('/home/dashboard')
+    } else if (val === 'my') {
+      setScopeMode('my')
       setScopeId(null)
       navigate('/home/dashboard')
     } else {
       const id = Number(val)
+      setScopeMode('project')
       setScopeId(id)
       navigate(`/home/dashboard?projectId=${id}`)
     }
   }
 
-  // 拉数据：scopeId = null 时全局，scopeId = 某个数字时单专项；月份变化时重拉
+  async function loadMyProjectDashboard(cancelledRef: { cancelled: boolean }) {
+    if (projects.length === 0) {
+      setData(null)
+      setLoadError('请先选择项目后查看驾驶舱')
+      return
+    }
+    const results = await Promise.allSettled(
+      projects.map((project) => getOverview(project.id, selectedMonth)),
+    )
+    if (cancelledRef.cancelled) return
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        console.warn('项目驾驶舱数据加载失败', projects[index]?.id, result.reason)
+      }
+    })
+    const fulfilled = results
+      .filter((result): result is PromiseFulfilledResult<DashboardOverview> => result.status === 'fulfilled')
+      .map((result) => result.value)
+    if (fulfilled.length === 0) {
+      setData(null)
+      setLoadError('暂无可查看的项目驾驶舱数据。')
+      return
+    }
+    setData(aggregateDashboardOverviews(projects, fulfilled))
+    setLoadError(null)
+  }
+
+  // 拉数据：global 查全局；my 按当前用户可访问项目逐个查并前端聚合；project 查单项目。
   useEffect(() => {
-    let cancelled = false
-    if (shouldSelectProjectBeforeLoading) {
+    const cancelledRef = { cancelled: false }
+    if (shouldBlockDashboardLoading) {
       setData(null)
       setLoading(false)
-      setLoadError(null)
-      return () => { cancelled = true }
+      setLoadError('普通成员请从我的任务查看个人工作')
+      return () => { cancelledRef.cancelled = true }
     }
     setLoading(true)
-    getOverview(scopeId, selectedMonth)
-      .then((d) => { if (!cancelled) { setData(d); setLoadError(null) } })
+    const load = scopeMode === 'my'
+      ? loadMyProjectDashboard(cancelledRef)
+      : getOverview(scopeMode === 'global' ? undefined : scopeId, selectedMonth)
+        .then((d) => { if (!cancelledRef.cancelled) { setData(d); setLoadError(null) } })
+    load
       .catch((err) => {
-        if (cancelled) return
+        if (cancelledRef.cancelled) return
         if (err instanceof ApiError && err.status === 403) {
-          setLoadError(scopeId === null ? '你没有权限查看全局驾驶舱，请选择项目查看。' : '你没有权限查看该项目驾驶舱。')
+          setLoadError(scopeMode === 'global' ? '你没有权限查看全局驾驶舱，请选择项目查看。' : '你没有权限查看该项目驾驶舱。')
           return
         }
         setLoadError('数据加载失败，请稍后重试。')
       })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [scopeId, selectedMonth, shouldSelectProjectBeforeLoading])
+      .finally(() => { if (!cancelledRef.cancelled) setLoading(false) })
+    return () => { cancelledRef.cancelled = true }
+  }, [scopeMode, scopeId, selectedMonth, shouldBlockDashboardLoading, projects])
 
   async function handleExport() {
-    if (!canViewGlobalDashboard && scopeId === null) {
-      toast.error('请先选择项目后导出周报')
+    if (scopeMode === 'my') {
+      toast.error('请选择单个项目后导出周报；多项目周报将在后续聚合导出中支持。')
+      return
+    }
+    if (scopeMode === 'global' && !canViewGlobalDashboard) {
+      toast.error('你没有权限查看全局驾驶舱，请选择项目查看。')
       return
     }
     setExportLoading(true)
     try {
-      await exportWeeklyReport(scopeId, selectedMonth)
+      await exportWeeklyReport(scopeMode === 'global' ? null : scopeId, selectedMonth)
     } catch {
       toast.error('导出失败，请稍后重试')
     } finally {
@@ -212,12 +329,25 @@ export function DashboardPage() {
   const monthStr = `${now.getFullYear()}年${now.getMonth() + 1}月`
 
   // 当前选中的专项名
-  const scopeLabel = scopeId ? (projects.find((p) => p.id === scopeId)?.name ?? '全部专项') : '全部专项'
-  const dashboardProject = scopeId ? (projects.find((p) => p.id === scopeId) ?? currentProject) : currentProject
+  const scopeLabel = scopeMode === 'global'
+    ? '全部项目'
+    : scopeMode === 'my'
+      ? '我的项目'
+      : (projects.find((p) => p.id === scopeId)?.name ?? '单个项目')
+  const dashboardProject = scopeMode === 'project' && scopeId ? (projects.find((p) => p.id === scopeId) ?? currentProject) : currentProject
   const dashboardProjectRoles = dashboardProject?.user_roles ?? currentProjectRoles
-  const currentProjectStatusBadge = dashboardProject ? getProjectStatusBadge(dashboardProject) : null
+  const currentProjectStatusBadge = scopeMode === 'project' && dashboardProject ? getProjectStatusBadge(dashboardProject) : null
   const isFillableForOwner = canShowProjectSubmitAction(dashboardProject) && dashboardProjectRoles.includes('owner')
   const isPendingReviewForOwner = canShowProjectApproveAction(dashboardProject) && dashboardProjectRoles.includes('owner')
+  const dashboardSubtitle = scopeMode === 'my'
+    ? '实时掌握我参与项目的进度、风险、成果与待决策事项'
+    : scopeMode === 'project'
+      ? `当前视图：${scopeLabel}`
+      : '实时掌握所有专项进度、风险、成果与待决策事项'
+  const exportTitle = scopeMode === 'my'
+    ? '请选择单个项目后导出周报；多项目周报将在后续聚合导出中支持。'
+    : undefined
+  const exportLabel = exportLoading ? '生成中…' : (scopeMode === 'my' ? '导出我的项目周报' : '导出周报')
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -227,7 +357,7 @@ export function DashboardPage() {
           <h1 className="text-base font-bold text-slate-800">首页驾驶舱</h1>
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             <p className="text-xs text-slate-400">
-              {scopeId ? `当前视图：${scopeLabel}` : '实时掌握所有专项进度、风险、成果与待决策事项'}
+              {dashboardSubtitle}
             </p>
             {currentProjectStatusBadge ? (
               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${currentProjectStatusBadge.className}`}>
@@ -240,12 +370,12 @@ export function DashboardPage() {
         {/* 专项筛选 —— 这里是仪表盘自己的筛选，与 URL 项目无关 */}
         <div className="flex items-center gap-2">
           <select
-            value={scopeId ?? ''}
+            value={scopeMode === 'project' ? String(scopeId ?? '') : scopeMode}
             onChange={(e) => handleScopeChange(e.target.value)}
             className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30"
           >
-            {canViewGlobalDashboard && <option value={''}>全部专项</option>}
-            {!canViewGlobalDashboard && scopeId === null && <option value={''}>请选择项目</option>}
+            {canViewGlobalDashboard && <option value="global">全部项目</option>}
+            {canViewMyDashboard && <option value="my">我的项目</option>}
             {projects.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
@@ -365,8 +495,8 @@ export function DashboardPage() {
           </div>
           <button
             onClick={handleExport}
-            disabled={exportLoading || shouldSelectProjectBeforeLoading}
-            title={shouldSelectProjectBeforeLoading ? '请先选择项目后导出周报' : undefined}
+            disabled={exportLoading || scopeMode === 'my' || shouldBlockDashboardLoading}
+            title={exportTitle}
             className="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-semibold transition-all hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed"
             style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}
           >
@@ -380,18 +510,22 @@ export function DashboardPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
             )}
-            {exportLoading ? '生成中…' : '导出周报'}
+            {exportLabel}
           </button>
         </div>
       </header>
 
       {/* Content */}
       <main className="flex-1 overflow-y-auto p-6 space-y-5" style={{ background: '#F1F5F9' }}>
-        {shouldSelectProjectBeforeLoading && (
+        {shouldBlockDashboardLoading && (
           <div className="rounded-2xl border bg-white p-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
             <div>
-              <h2 className="text-sm font-bold text-slate-800">请先选择项目后查看驾驶舱</h2>
-              <p className="text-xs text-slate-500 mt-1">当前账号没有全局驾驶舱权限，请选择一个可访问项目查看项目驾驶舱。</p>
+              <h2 className="text-sm font-bold text-slate-800">
+                {projects.length > 0 ? '普通成员请从我的任务查看个人工作' : '请先选择项目后查看驾驶舱'}
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                {projects.length > 0 ? '当前账号暂无项目管理驾驶舱权限。' : '当前账号没有可访问项目，暂无法展示项目驾驶舱。'}
+              </p>
             </div>
             {projects.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-4">
@@ -545,7 +679,7 @@ export function DashboardPage() {
                   icon={<IconBox bg="#FEF3C7" color="#D97706"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></IconBox>}
                 />
               )}
-              <StatCard label="成果数量" value={achievements} sub={scopeId ? scopeLabel : '全专项汇总'} subColor="#7C3AED" accent="#7C3AED"
+              <StatCard label="成果数量" value={achievements} sub={scopeMode === 'global' ? '全部项目汇总' : scopeLabel} subColor="#7C3AED" accent="#7C3AED"
                 onClick={toAchs}
                 icon={<IconBox bg="#EDE9FE" color="#7C3AED"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></IconBox>}
               />

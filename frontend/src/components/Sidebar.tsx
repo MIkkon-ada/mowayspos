@@ -34,7 +34,7 @@ type NavEntry = NavItem | SectionSeparator
 
 export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, onLogout, logoUrl, platformName }: SidebarProps) {
   const navigate = useNavigate()
-  const { projects, currentProjectId } = useProject()
+  const { projects } = useProject()
   const userName = currentUser?.name ?? ''
   const rolePriority = ['owner', 'coordinator', 'project_ceo', 'member']
   const highestRole = rolePriority.find((r) => globalUserRoles.includes(r))
@@ -47,7 +47,6 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
     currentUser?.is_ceo ||
     globalUserRoles.some((r) => ['owner', 'coordinator', 'project_ceo'].includes(r))
   )
-  const canViewGlobalDashboard = !!(currentUser?.is_tech_admin || currentUser?.is_ceo || currentUser?.can_view_all)
   const showParticipantModules = !(
     currentUser?.is_ceo &&
     !globalUserRoles.some((r) => ['owner', 'coordinator', 'member'].includes(r))
@@ -126,14 +125,8 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
 
   function handleNavigate(page: AppPage) {
     if (page === 'dashboard') {
-      if (canViewGlobalDashboard) {
-        navigate('/home/dashboard')
-        return
-      }
-      if (currentProjectId !== null) {
-        navigate(`/home/dashboard?projectId=${currentProjectId}`)
-        return
-      }
+      navigate('/home/dashboard')
+      return
     }
     onNavigate(page)
   }

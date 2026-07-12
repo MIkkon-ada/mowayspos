@@ -496,7 +496,7 @@ export function AchievementsPage() {
                 <option value="">重点工作</option>
                 {tasks.map((task) => <option key={task.id} value={task.id}>{task.key_task}</option>)}
               </select>
-              <select disabled className="rounded-lg border border-slate-200 bg-slate-100 px-2 py-1.5 text-xs text-slate-400" title="关键任务筛选暂未接入入库字段">
+              <select disabled className="rounded-lg border border-slate-200 bg-slate-100 px-2 py-1.5 text-xs text-slate-400" title="关键任务筛选">
                 <option>关键任务</option>
               </select>
               <select value={filterSource} onChange={(event) => setFilterSource(event.target.value as (typeof SOURCE_OPTIONS)[number])} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700">
@@ -654,7 +654,7 @@ export function AchievementsPage() {
                       {tasks.map((task) => <option key={task.id} value={task.id}>{task.key_task}</option>)}
                     </FormSelect>
                     <FormSelect label="关联关键任务" value={registerForm.related_subtask_id ?? ''} onChange={(value) => setRegisterForm((prev) => ({ ...prev, related_subtask_id: value ? Number(value) : null }))} disabled>
-                      <option value="">{subtasksLoading ? '加载中...' : subtasks.length > 0 ? '暂不落库，后续接入' : '当前版本暂不落库'}</option>
+                      <option value="">暂未关联</option>
                     </FormSelect>
                   </div>
                 </section>

@@ -113,6 +113,18 @@ function taskName(tasks: TaskItem[], taskId?: number | null): string {
   return tasks.find((task) => task.id === taskId)?.key_task || `重点工作 #${taskId}`
 }
 
+function keyTaskLabelForAchievement(item: AchievementItem): string {
+  const candidate = (
+    item.related_subtask_title
+    ?? item.related_subtask_name
+    ?? item.key_task_title
+    ?? item.matched_subtask_title
+    ?? item.matched_subtask_name
+  )
+  if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+  return '未指定关键任务'
+}
+
 function emptyForm(projectId: number | null): RegistrationForm {
   return {
     project_id: projectId,
@@ -539,7 +551,7 @@ export function AchievementsPage() {
                         <td className="px-3 py-2"><span className={`rounded-md border px-2 py-0.5 text-xs font-bold ${typeBadgeClass(item.achievement_type)}`}>{item.achievement_type || '文档'}</span></td>
                         <td className="max-w-[240px] px-3 py-2 text-slate-600">
                           <p className="truncate">{taskName(tasks, item.related_task_id)}</p>
-                          <p className="text-xs text-slate-400">关键任务：暂未关联</p>
+                          <p className="text-xs text-slate-400">关键任务：{keyTaskLabelForAchievement(item)}</p>
                         </td>
                         <td className="px-3 py-2"><span className={`rounded-full border px-2 py-0.5 text-xs font-black ${source === 'AI确认入库' ? 'border-purple-100 bg-purple-50 text-purple-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>{source}</span></td>
                         <td className="px-3 py-2 text-slate-600">{item.owner || '—'}</td>
@@ -596,7 +608,7 @@ export function AchievementsPage() {
                     <Info label="所属项目" value={currentProject?.name || selected.special_project || '—'} />
                     <Info label="来源" value={sourceLabel(selected)} />
                     <Info label="关联重点工作" value={selectedTaskName} span />
-                    <Info label="关联关键任务" value="暂未关联" span />
+                    <Info label="关联关键任务" value={keyTaskLabelForAchievement(selected)} span />
                     <Info label="提交人" value={selected.owner || '—'} />
                     <Info label="确认/入库人" value={selected.confirmed_by || selected.owner || '—'} />
                     <div className="col-span-2">
@@ -654,8 +666,9 @@ export function AchievementsPage() {
                       {tasks.map((task) => <option key={task.id} value={task.id}>{task.key_task}</option>)}
                     </FormSelect>
                     <FormSelect label="关联关键任务" value={registerForm.related_subtask_id ?? ''} onChange={(value) => setRegisterForm((prev) => ({ ...prev, related_subtask_id: value ? Number(value) : null }))} disabled>
-                      <option value="">暂未关联</option>
+                      <option value="">未指定关键任务</option>
                     </FormSelect>
+                    <p className="mt-1 text-[11px] text-slate-400">当前成果可先关联到重点工作，关键任务精确绑定将在后续版本支持。</p>
                   </div>
                 </section>
                 <section className="rounded-lg border border-slate-200 bg-white p-4">

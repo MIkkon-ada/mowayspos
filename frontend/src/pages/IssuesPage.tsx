@@ -70,6 +70,18 @@ function issueSourceLabel(item: IssueItem): string {
   return '手动新增'
 }
 
+function keyTaskLabelForIssue(item: IssueItem): string {
+  const candidate = (
+    item.related_subtask_title
+    ?? item.related_subtask_name
+    ?? item.key_task_title
+    ?? item.matched_subtask_title
+    ?? item.matched_subtask_name
+  )
+  if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+  return '未指定关键任务'
+}
+
 export function IssuesPage() {
   const { projects, currentUser } = useProject()
   const [searchParams] = useSearchParams()
@@ -479,7 +491,7 @@ export function IssuesPage() {
                                 </span>
                               </p>
                               <p>关联重点工作：{taskNameForId(tasks, item.related_task_id as number | null | undefined)}</p>
-                              <p className="text-slate-400">关键任务：暂未关联</p>
+                              <p className="text-slate-400">关键任务：{keyTaskLabelForIssue(item)}</p>
                             </div>
                           </div>
                         )
@@ -521,7 +533,7 @@ export function IssuesPage() {
                 <DetailRow label="来源" value={issueSourceLabel(selected)} />
                 <DetailRow label="问题类型" value={selectedType || '—'} />
                 <DetailRow label="关联重点工作" value={taskNameForId(tasks, selected.related_task_id as number | null | undefined)} />
-                <DetailRow label="关联关键任务" value="暂未关联" />
+                <DetailRow label="关联关键任务" value={keyTaskLabelForIssue(selected)} />
                 <DetailRow label="上报人" value={selected.reporter || '—'} />
                 <DetailRow label="负责人" value={selected.owner || '—'} />
                 <DetailRow label="协助人" value={selected.helper || '—'} />
@@ -784,8 +796,9 @@ function AddIssueModal({ projects, currentProjectId, currentUser, tasks, tasksLo
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">关联关键任务</label>
             <select disabled className={`${inputCls} bg-slate-50 text-slate-400`}>
-              <option>暂未关联</option>
+              <option>未指定关键任务</option>
             </select>
+            <p className="mt-1 text-[11px] text-slate-400">当前问题可先关联到重点工作，关键任务精确绑定将在后续版本支持。</p>
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">问题类型</label>

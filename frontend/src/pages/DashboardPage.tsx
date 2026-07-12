@@ -104,6 +104,10 @@ export function DashboardPage() {
   }, [scopeId, selectedMonth, shouldSelectProjectBeforeLoading])
 
   async function handleExport() {
+    if (!canViewGlobalDashboard && scopeId === null) {
+      toast.error('请先选择项目后导出周报')
+      return
+    }
     setExportLoading(true)
     try {
       await exportWeeklyReport(scopeId, selectedMonth)
@@ -361,7 +365,8 @@ export function DashboardPage() {
           </div>
           <button
             onClick={handleExport}
-            disabled={exportLoading}
+            disabled={exportLoading || shouldSelectProjectBeforeLoading}
+            title={shouldSelectProjectBeforeLoading ? '请先选择项目后导出周报' : undefined}
             className="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-semibold transition-all hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed"
             style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}
           >

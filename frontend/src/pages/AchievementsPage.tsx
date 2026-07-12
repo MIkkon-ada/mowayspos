@@ -530,7 +530,7 @@ export function AchievementsPage() {
                         <td className="px-3 py-3"><span className={`rounded-md border px-2 py-0.5 text-xs font-bold ${typeBadgeClass(item.achievement_type)}`}>{item.achievement_type || '文档'}</span></td>
                         <td className="max-w-[240px] px-3 py-3 text-slate-600">
                           <p className="truncate">{taskName(tasks, item.related_task_id)}</p>
-                          <p className="text-xs text-slate-400">关键任务：暂未接入入库字段</p>
+                          <p className="text-xs text-slate-400">关键任务：暂未关联</p>
                         </td>
                         <td className="px-3 py-3"><span className={`rounded-full border px-2 py-0.5 text-xs font-black ${source === 'AI确认入库' ? 'border-purple-100 bg-purple-50 text-purple-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>{source}</span></td>
                         <td className="px-3 py-3 text-slate-600">{item.owner || '—'}</td>
@@ -587,7 +587,7 @@ export function AchievementsPage() {
                     <Info label="所属项目" value={currentProject?.name || selected.special_project || '—'} />
                     <Info label="来源" value={sourceLabel(selected)} />
                     <Info label="关联重点工作" value={selectedTaskName} span />
-                    <Info label="关联关键任务" value="暂未接入入库字段" span />
+                    <Info label="关联关键任务" value="暂未关联" span />
                     <Info label="提交人" value={selected.owner || '—'} />
                     <Info label="确认/入库人" value={selected.confirmed_by || selected.owner || '—'} />
                     <div className="col-span-2">

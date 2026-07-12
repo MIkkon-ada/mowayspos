@@ -350,49 +350,49 @@ export function AchievementsPage() {
 
   if (!projectId) {
     return (
-      <div className="flex-1 overflow-hidden bg-slate-50">
-        <div className="mx-auto flex h-full max-w-7xl flex-col px-6 py-6">
-          <div className="mb-5 flex items-start justify-between gap-4">
+      <div className="flex-1 overflow-hidden bg-[#f6f8fb]">
+        <div className="mx-auto flex h-full max-w-[1440px] flex-col px-6 py-6">
+          <div className="mb-6 flex items-start justify-between gap-5">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-600">Project Achievement Library</p>
-              <h1 className="mt-1 text-2xl font-bold text-slate-900">项目成果库</h1>
-              <p className="mt-1 text-sm text-slate-500">选择项目成果库，查看已经入库的 AI确认入库 与 手动登记 成果。</p>
+              <p className="text-[11px] font-extrabold uppercase tracking-[0.24em] text-sky-600">PROJECT ACHIEVEMENT LIBRARY</p>
+              <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">项目成果库</h1>
+              <p className="mt-2 text-sm text-slate-500">选择项目成果库，查看已经入库的 AI确认入库和手动登记成果。</p>
             </div>
-            <div className="w-80 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
-              <label className="text-xs font-semibold text-slate-500">搜索项目名称</label>
+            <div className="w-80 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-[0_10px_30px_rgba(15,23,42,0.06)]">
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">搜索项目名称</label>
               <input
                 value={projectSearch}
                 onChange={(event) => setProjectSearch(event.target.value)}
                 placeholder="搜索项目名称"
-                className="mt-1 w-full border-0 p-0 text-sm text-slate-800 outline-none placeholder:text-slate-300"
+                className="mt-2 w-full border-0 p-0 text-sm font-medium text-slate-800 outline-none placeholder:text-slate-300"
               />
             </div>
           </div>
 
-          <div className="mb-5 grid grid-cols-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="achievement-stat-bar mb-6 grid grid-cols-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_14px_40px_rgba(15,23,42,0.06)]">
             {[
               ['可查看项目数', projects.length],
               ['已入库成果总数', '—'],
               ['本月新增成果', '—'],
               ['最近更新项目', '—'],
             ].map(([label, value]) => (
-              <div key={label} className="border-r border-slate-100 px-5 py-4 last:border-r-0">
-                <p className="text-xs font-semibold text-slate-500">{label}</p>
-                <p className="mt-1 text-2xl font-bold text-slate-900">{value}</p>
+              <div key={label} className="border-r border-slate-100 px-6 py-5 last:border-r-0">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
+                <p className="mt-2 text-3xl font-black tabular-nums text-slate-950">{value}</p>
               </div>
             ))}
           </div>
 
-          <div className="flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 px-5 py-4">
-              <h2 className="text-sm font-bold text-slate-800">选择项目成果库</h2>
-              <p className="mt-0.5 text-xs text-slate-500">从当前可访问项目进入对应项目成果库。</p>
+          <div className="achievement-project-picker-card flex-1 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.07)]">
+            <div className="border-b border-slate-200 bg-gradient-to-r from-white to-sky-50/60 px-6 py-5">
+              <h2 className="text-base font-black text-slate-900">选择项目成果库</h2>
+              <p className="mt-1 text-xs text-slate-500">从当前访问项目进入对应项目成果库。</p>
             </div>
             <div className="overflow-auto">
               <table className="w-full min-w-[920px] text-left text-sm">
-                <thead className="bg-slate-50 text-xs font-bold text-slate-500">
+                <thead className="bg-slate-100/80 text-xs font-black uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th className="px-5 py-3">项目名称</th>
+                    <th className="px-6 py-3.5">项目名称</th>
                     <th className="px-4 py-3">状态</th>
                     <th className="px-4 py-3">项目负责人</th>
                     <th className="px-4 py-3">Coach / 企业教练</th>
@@ -405,12 +405,12 @@ export function AchievementsPage() {
                   {visibleProjects.length === 0 ? (
                     <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-400">暂无可查看项目</td></tr>
                   ) : visibleProjects.map((project) => (
-                    <tr key={project.id} className="hover:bg-sky-50/60">
-                      <td className="px-5 py-4">
-                        <p className="font-semibold text-slate-900">{project.name}</p>
+                    <tr key={project.id} className="transition-colors hover:bg-sky-50/70">
+                      <td className="px-6 py-4">
+                        <p className="font-black text-slate-950">{project.name}</p>
                         <p className="mt-0.5 text-xs text-slate-400">项目编号：{project.code || `#${project.id}`}</p>
                       </td>
-                      <td className="px-4 py-4"><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">{projectStatusLabel(project)}</span></td>
+                      <td className="px-4 py-4"><span className="rounded-full border border-sky-100 bg-sky-50 px-2.5 py-1 text-xs font-bold text-sky-700">{projectStatusLabel(project)}</span></td>
                       <td className="px-4 py-4 text-slate-600">{ownerText(project)}</td>
                       <td className="px-4 py-4 text-slate-600">{coachText(project)}</td>
                       <td className="px-4 py-4 text-slate-400">—</td>
@@ -419,7 +419,7 @@ export function AchievementsPage() {
                         <button
                           type="button"
                           onClick={() => navigate(`/work/achievements?projectId=${project.id}`)}
-                          className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-sky-700"
+                          className="rounded-xl bg-sky-600 px-4 py-2 text-xs font-black text-white shadow-sm transition hover:bg-sky-700"
                         >
                           查看成果库
                         </button>
@@ -436,14 +436,15 @@ export function AchievementsPage() {
   }
 
   return (
-    <div className="flex-1 overflow-hidden bg-slate-50">
-      <div className="flex h-full flex-col">
-        <header className="border-b border-slate-200 bg-white px-6 py-5">
+    <div className="flex-1 overflow-hidden bg-[#f6f8fb]">
+      <div className="mx-auto flex h-full max-w-[1440px] flex-col px-5 py-5">
+        <header className="rounded-3xl border border-slate-200 bg-white px-6 py-5 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
           <div className="flex items-start justify-between gap-4">
             <div>
+              <p className="text-[11px] font-extrabold uppercase tracking-[0.24em] text-sky-600">PROJECT ACHIEVEMENT LIBRARY</p>
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-2xl font-bold text-slate-900">{currentProject?.name || '未识别项目'} 项目成果库</h1>
-                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-bold text-emerald-700">{projectStatusLabel(currentProject)}</span>
+                <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-950">{currentProject?.name || '未识别项目'} 项目成果库</h1>
+                <span className="mt-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">{projectStatusLabel(currentProject)}</span>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-500">
                 <span>项目负责人：{ownerText(currentProject)}</span>
@@ -452,14 +453,14 @@ export function AchievementsPage() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => navigate('/work/achievements')} className="rounded-lg border border-sky-200 bg-white px-3 py-2 text-xs font-bold text-sky-700 hover:bg-sky-50">切换项目</button>
-              <button type="button" onClick={reloadCurrentProject} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">刷新</button>
-              <button type="button" disabled className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-400">导出清单</button>
-              <button type="button" onClick={openRegisterModal} disabled={projectArchived} className="rounded-lg bg-sky-600 px-4 py-2 text-xs font-bold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50">登记成果</button>
+              <button type="button" onClick={() => navigate('/work/achievements')} className="rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-black text-sky-700 hover:bg-sky-50">切换项目</button>
+              <button type="button" onClick={reloadCurrentProject} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-600 hover:bg-slate-50">刷新</button>
+              <button type="button" disabled className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-400">导出清单</button>
+              <button type="button" onClick={openRegisterModal} disabled={projectArchived} className="rounded-xl bg-sky-600 px-4 py-2 text-xs font-black text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50">登记成果</button>
             </div>
           </div>
 
-          <div className="mt-5 grid grid-cols-5 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+          <div className="achievement-stat-bar mt-5 grid grid-cols-5 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
             {[
               ['成果总数', stats.total],
               ['本月新增', stats.month],
@@ -468,16 +469,16 @@ export function AchievementsPage() {
               ['关联重点工作数', stats.taskCount],
             ].map(([label, value]) => (
               <div key={label} className="border-r border-slate-200 px-4 py-3 last:border-r-0">
-                <p className="text-xs font-semibold text-slate-500">{label}</p>
-                <p className="mt-1 text-2xl font-bold text-slate-900">{value}</p>
+                <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">{label}</p>
+                <p className="mt-1 text-2xl font-black tabular-nums text-slate-950">{value}</p>
               </div>
             ))}
           </div>
         </header>
 
-        <div className="flex min-h-0 flex-1">
-          <main className="flex min-w-0 flex-1 flex-col border-r border-slate-200 bg-white">
-            <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
+        <div className="achievement-workbench-grid grid min-h-0 flex-1 gap-5 pt-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(380px,1fr)]">
+          <main className="flex min-w-0 flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+            <div className="achievement-filter-bar flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50/90 px-4 py-3">
               <select value={filterType} onChange={(event) => setFilterType(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700">
                 <option>全部</option>
                 {ACHIEVEMENT_TYPES.map((type) => <option key={type}>{type}</option>)}
@@ -502,7 +503,7 @@ export function AchievementsPage() {
 
             <div className="min-h-0 flex-1 overflow-auto">
               <table className="w-full min-w-[1120px] text-left text-sm">
-                <thead className="sticky top-0 bg-slate-50 text-xs font-bold text-slate-500">
+                <thead className="sticky top-0 bg-slate-100/90 text-xs font-black uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-4 py-3">成果名称</th>
                     <th className="px-3 py-3">成果类型</th>
@@ -524,14 +525,14 @@ export function AchievementsPage() {
                     const active = selected?.id === item.id
                     const source = sourceLabel(item)
                     return (
-                      <tr key={item.id} onClick={() => { setSelected(item); setEditMode(false) }} className={`cursor-pointer hover:bg-sky-50 ${active ? 'bg-sky-50 ring-1 ring-inset ring-sky-200' : ''}`}>
+                      <tr key={item.id} onClick={() => { setSelected(item); setEditMode(false) }} className={`cursor-pointer transition hover:bg-sky-50 ${active ? 'border-l-2 border-sky-500 bg-sky-50 ring-1 ring-inset ring-sky-200' : 'border-l-2 border-transparent'}`}>
                         <td className="px-4 py-3 font-semibold text-slate-900">{item.name || '未命名成果'}</td>
                         <td className="px-3 py-3"><span className={`rounded-md border px-2 py-0.5 text-xs font-bold ${typeBadgeClass(item.achievement_type)}`}>{item.achievement_type || '文档'}</span></td>
                         <td className="max-w-[240px] px-3 py-3 text-slate-600">
                           <p className="truncate">{taskName(tasks, item.related_task_id)}</p>
                           <p className="text-xs text-slate-400">关键任务：暂未接入入库字段</p>
                         </td>
-                        <td className="px-3 py-3"><span className={`text-xs font-bold ${source === 'AI确认入库' ? 'text-purple-700' : 'text-slate-600'}`}>{source}</span></td>
+                        <td className="px-3 py-3"><span className={`rounded-full border px-2 py-0.5 text-xs font-black ${source === 'AI确认入库' ? 'border-purple-100 bg-purple-50 text-purple-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>{source}</span></td>
                         <td className="px-3 py-3 text-slate-600">{item.owner || '—'}</td>
                         <td className="px-3 py-3 text-slate-600">{item.confirmed_by || item.owner || '—'}</td>
                         <td className="px-3 py-3 text-right font-mono text-xs text-slate-500">{formatDate(item.confirmed_at || item.updated_at || item.created_at)}</td>
@@ -547,13 +548,14 @@ export function AchievementsPage() {
             </div>
           </main>
 
-          <aside className="w-[360px] flex-shrink-0 overflow-y-auto bg-slate-50 p-5">
+          <aside className="achievement-detail-panel min-h-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
             {!selected ? (
-              <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-400">选择左侧成果查看详情</div>
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-400">选择左侧成果查看详情</div>
             ) : (
               <div className="space-y-4">
-                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400">当前选中</p>
+                <section className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                  <p className="text-xs font-black uppercase tracking-wider text-sky-600">详情查看</p>
+                  <p className="mt-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">当前选中</p>
                   {editMode ? (
                     <div className="mt-3 space-y-3">
                       {editError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{editError}</div>}
@@ -579,8 +581,8 @@ export function AchievementsPage() {
                   )}
                 </section>
 
-                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <h3 className="mb-3 border-b border-slate-100 pb-2 text-xs font-bold text-slate-500">摘要与追溯</h3>
+                <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <h3 className="mb-3 border-b border-slate-100 pb-2 text-xs font-black text-slate-600">摘要与追溯</h3>
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <Info label="所属项目" value={currentProject?.name || selected.special_project || '—'} />
                     <Info label="来源" value={sourceLabel(selected)} />
@@ -599,8 +601,8 @@ export function AchievementsPage() {
                 </section>
 
                 <DetailSection title="成果描述">{selected.scenario || '暂无成果说明'}</DetailSection>
-                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <h3 className="mb-3 border-b border-slate-100 pb-2 text-xs font-bold text-slate-500">附件与链接</h3>
+                <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <h3 className="mb-3 border-b border-slate-100 pb-2 text-xs font-black text-slate-600">附件与链接</h3>
                   {selected.file_link ? (
                     <div className="space-y-2">
                       <p className="break-all rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{selected.file_link}</p>
@@ -620,7 +622,7 @@ export function AchievementsPage() {
 
       {registerOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div className="max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-3xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">成果登记</h2>
@@ -630,31 +632,51 @@ export function AchievementsPage() {
             </div>
             <div className="max-h-[68vh] overflow-y-auto px-6 py-5">
               {registerError && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{registerError}</div>}
-              <div className="grid grid-cols-2 gap-4">
-                <FormSelect label="所属项目 *" value={registerForm.project_id ?? ''} onChange={(value) => setRegisterForm((prev) => ({ ...prev, project_id: value ? Number(value) : null, related_task_id: null, related_subtask_id: null }))}>
-                  <option value="">请选择项目</option>
-                  {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-                </FormSelect>
-                <FormSelect label="关联重点工作 *" value={registerForm.related_task_id ?? ''} onChange={(value) => setRegisterForm((prev) => ({ ...prev, related_task_id: value ? Number(value) : null, related_subtask_id: null }))} disabled={!registerForm.project_id || tasksLoading}>
-                  <option value="">{!registerForm.project_id ? '请先选择项目' : tasksLoading ? '加载中...' : '请选择重点工作'}</option>
-                  {tasks.map((task) => <option key={task.id} value={task.id}>{task.key_task}</option>)}
-                </FormSelect>
-                <FormSelect label="关联关键任务" value={registerForm.related_subtask_id ?? ''} onChange={(value) => setRegisterForm((prev) => ({ ...prev, related_subtask_id: value ? Number(value) : null }))} disabled>
-                  <option value="">{subtasksLoading ? '加载中...' : subtasks.length > 0 ? '暂不落库，后续接入' : '当前版本暂不落库'}</option>
-                </FormSelect>
-                <FormInput label="成果名称 *" value={registerForm.name} onChange={(value) => setRegisterForm((prev) => ({ ...prev, name: value }))} placeholder="例如：S1资料清单初稿" />
-                <FormSelect label="成果类型 *" value={registerForm.achievement_type} onChange={(value) => setRegisterForm((prev) => ({ ...prev, achievement_type: value }))}>
-                  {ACHIEVEMENT_TYPES.map((type) => <option key={type}>{type}</option>)}
-                </FormSelect>
-                <FormInput label="版本" value={registerForm.version} onChange={(value) => setRegisterForm((prev) => ({ ...prev, version: value }))} placeholder="V0.1" />
-                <FormInput label="标签" value={registerForm.reuse_tag} onChange={(value) => setRegisterForm((prev) => ({ ...prev, reuse_tag: value }))} placeholder="例如：内部复用、交付材料" />
-                <FormInput label="文件链接/存储地址" value={registerForm.file_link} onChange={(value) => setRegisterForm((prev) => ({ ...prev, file_link: value }))} placeholder="知识库、网盘或文档链接" />
-                <div className="col-span-2">
-                  <FormTextarea label="适用场景" value={registerForm.scenario} onChange={(value) => setRegisterForm((prev) => ({ ...prev, scenario: value }))} placeholder="说明该成果适用于哪些场景" />
-                </div>
-                <div className="col-span-2">
-                  <FormTextarea label="成果说明" value={registerForm.description} onChange={(value) => setRegisterForm((prev) => ({ ...prev, description: value }))} placeholder="补充成果内容、使用方式或注意事项" />
-                </div>
+              <div className="space-y-5">
+                <section className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                  <h3 className="text-xs font-black uppercase tracking-wide text-slate-500">上下文关联</h3>
+                  <div className="mt-3 grid grid-cols-3 gap-4">
+                    <FormSelect label="所属项目 *" value={registerForm.project_id ?? ''} onChange={(value) => setRegisterForm((prev) => ({ ...prev, project_id: value ? Number(value) : null, related_task_id: null, related_subtask_id: null }))}>
+                      <option value="">请选择项目</option>
+                      {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+                    </FormSelect>
+                    <FormSelect label="关联重点工作 *" value={registerForm.related_task_id ?? ''} onChange={(value) => setRegisterForm((prev) => ({ ...prev, related_task_id: value ? Number(value) : null, related_subtask_id: null }))} disabled={!registerForm.project_id || tasksLoading}>
+                      <option value="">{!registerForm.project_id ? '请先选择项目' : tasksLoading ? '加载中...' : '请选择重点工作'}</option>
+                      {tasks.map((task) => <option key={task.id} value={task.id}>{task.key_task}</option>)}
+                    </FormSelect>
+                    <FormSelect label="关联关键任务" value={registerForm.related_subtask_id ?? ''} onChange={(value) => setRegisterForm((prev) => ({ ...prev, related_subtask_id: value ? Number(value) : null }))} disabled>
+                      <option value="">{subtasksLoading ? '加载中...' : subtasks.length > 0 ? '暂不落库，后续接入' : '当前版本暂不落库'}</option>
+                    </FormSelect>
+                  </div>
+                </section>
+                <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <h3 className="text-xs font-black uppercase tracking-wide text-slate-500">成果定义</h3>
+                  <div className="mt-3 grid grid-cols-12 gap-4">
+                    <div className="col-span-8">
+                      <FormInput label="成果名称 *" value={registerForm.name} onChange={(value) => setRegisterForm((prev) => ({ ...prev, name: value }))} placeholder="例如：S1资料清单初稿" />
+                    </div>
+                    <div className="col-span-2">
+                      <FormSelect label="成果类型 *" value={registerForm.achievement_type} onChange={(value) => setRegisterForm((prev) => ({ ...prev, achievement_type: value }))}>
+                        {ACHIEVEMENT_TYPES.map((type) => <option key={type}>{type}</option>)}
+                      </FormSelect>
+                    </div>
+                    <div className="col-span-2">
+                      <FormInput label="版本" value={registerForm.version} onChange={(value) => setRegisterForm((prev) => ({ ...prev, version: value }))} placeholder="V0.1" />
+                    </div>
+                    <div className="col-span-6">
+                      <FormInput label="标签" value={registerForm.reuse_tag} onChange={(value) => setRegisterForm((prev) => ({ ...prev, reuse_tag: value }))} placeholder="例如：内部复用、交付材料" />
+                    </div>
+                    <div className="col-span-6">
+                      <FormInput label="文件链接/存储地址" value={registerForm.file_link} onChange={(value) => setRegisterForm((prev) => ({ ...prev, file_link: value }))} placeholder="知识库、网盘或文档链接" />
+                    </div>
+                    <div className="col-span-6">
+                      <FormTextarea label="适用场景" value={registerForm.scenario} onChange={(value) => setRegisterForm((prev) => ({ ...prev, scenario: value }))} placeholder="说明该成果适用于哪些场景" />
+                    </div>
+                    <div className="col-span-6">
+                      <FormTextarea label="成果说明" value={registerForm.description} onChange={(value) => setRegisterForm((prev) => ({ ...prev, description: value }))} placeholder="补充成果内容、使用方式或注意事项" />
+                    </div>
+                  </div>
+                </section>
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-6 py-4">

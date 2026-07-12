@@ -56,6 +56,30 @@ def test_project_achievement_library_has_required_project_and_detail_sections():
         assert text in source
 
 
+def test_project_achievement_library_uses_workbench_visual_structure():
+    source = _frontend_source("pages/AchievementsPage.tsx")
+
+    assert "PROJECT ACHIEVEMENT LIBRARY" in source
+    assert "achievement-stat-bar" in source
+    assert "achievement-project-picker-card" in source
+    assert "achievement-workbench-grid" in source
+    assert "lg:grid-cols-[minmax(0,1.5fr)_minmax(380px,1fr)]" in source
+    assert "achievement-filter-bar" in source
+    assert "achievement-detail-panel" in source
+    assert "bg-sky-50" in source
+
+
+def test_achievement_registration_modal_matches_project_library_workbench():
+    source = _frontend_source("pages/AchievementsPage.tsx")
+
+    assert "max-w-4xl" in source
+    assert "上下文关联" in source
+    assert "成果定义" in source
+    assert "grid-cols-12" in source
+    assert "col-span-8" in source
+    assert "保存入库" in source
+
+
 def test_project_achievement_registration_fields_and_fixed_types_exist():
     source = _frontend_source("pages/AchievementsPage.tsx")
 

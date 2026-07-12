@@ -304,6 +304,22 @@ def _write_single_task_report(
             _sync_parent_task_status(parent_task, db, operator)
             task_id = parent_task.id
             row.related_task_id = parent_task.id
+            if write_tr_achievements:
+                for ach_item in (report.get("achievements") or []):
+                    if isinstance(ach_item, dict) and ach_item.get("name"):
+                        ach_dict = dict(ach_item)
+                        ach_dict.setdefault("special_project", project)
+                        ach_dict.setdefault("owner", row.submitter or "")
+                        ach = W.fulfill_or_create_achievement(
+                            db, ach_dict, row.source_type, parent_task.id,
+                            ach_dict.get("special_project") or project,
+                            submission_id=row.id,
+                        )
+                        if ach:
+                            ach.confirmed_by = operator
+                            ach.confirmed_at = now
+                            if effective_project_id and not ach.project_id:
+                                ach.project_id = effective_project_id
             crud.log(
                 db, operator, "confirmation_card_create_subtask", "subtask", new_sub.id,
                 {}, {"title": new_sub.title, "task_id": parent_task.id, "from_submission": row.id},
@@ -712,6 +728,22 @@ def confirm(
                     if not task_id:
                         task_id = parent_task.id
                         row.related_task_id = parent_task.id
+                    if write_tr_achievements:
+                        for ach_item in (report.get("achievements") or []):
+                            if isinstance(ach_item, dict) and ach_item.get("name"):
+                                ach_dict = dict(ach_item)
+                                ach_dict.setdefault("special_project", project)
+                                ach_dict.setdefault("owner", row.submitter or "")
+                                ach = W.fulfill_or_create_achievement(
+                                    db, ach_dict, row.source_type, parent_task.id,
+                                    ach_dict.get("special_project") or project,
+                                    submission_id=row.id,
+                                )
+                                if ach:
+                                    ach.confirmed_by = payload.operator
+                                    ach.confirmed_at = now
+                                    if effective_project_id and not ach.project_id:
+                                        ach.project_id = effective_project_id
                     crud.log(
                         db, payload.operator, "confirmation_card_create_subtask", "subtask", new_sub.id,
                         {}, {"title": new_sub.title, "task_id": parent_task.id,

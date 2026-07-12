@@ -40,7 +40,7 @@ def test_project_achievement_library_has_required_project_and_detail_sections():
         "项目名称",
         "项目负责人",
         "Coach / 企业教练",
-        "查看成果库",
+        "进入成果库",
         "切换项目",
         "登记成果",
         "成果名称",

@@ -350,55 +350,61 @@ export function AchievementsPage() {
 
   if (!projectId) {
     return (
-      <div className="flex-1 overflow-hidden bg-[#f6f8fb]">
-        <div className="mx-auto flex h-full max-w-[1440px] flex-col px-6 py-6">
+      <div className="flex-1 overflow-y-auto bg-[#f6f8fb]">
+        <div className="mx-auto max-w-[1440px] px-6 py-6">
           <div className="mb-6 flex items-start justify-between gap-5">
             <div>
               <p className="text-[11px] font-extrabold uppercase tracking-[0.24em] text-sky-600">PROJECT ACHIEVEMENT LIBRARY</p>
               <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">项目成果库</h1>
-              <p className="mt-2 text-sm text-slate-500">选择项目成果库，查看已经入库的 AI确认入库和手动登记成果。</p>
+              <p className="mt-2 text-sm text-slate-500">请先选择一个项目，进入后查看该项目已入库成果，也可以手动登记成果。</p>
             </div>
-            <div className="w-80 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-[0_10px_30px_rgba(15,23,42,0.06)]">
+            <div className="w-80 rounded border border-slate-200 bg-white px-4 py-2.5 shadow-sm">
               <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">搜索项目名称</label>
               <input
                 value={projectSearch}
                 onChange={(event) => setProjectSearch(event.target.value)}
                 placeholder="搜索项目名称"
-                className="mt-2 w-full border-0 p-0 text-sm font-medium text-slate-800 outline-none placeholder:text-slate-300"
+                className="mt-1.5 w-full border-0 p-0 text-sm font-medium text-slate-800 outline-none placeholder:text-slate-300"
               />
             </div>
           </div>
 
-          <div className="achievement-stat-bar mb-6 grid grid-cols-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_14px_40px_rgba(15,23,42,0.06)]">
+          <div className="achievement-stat-bar mb-6 grid grid-cols-4 gap-4">
             {[
               ['可查看项目数', projects.length],
               ['已入库成果总数', '—'],
               ['本月新增成果', '—'],
               ['最近更新项目', '—'],
             ].map(([label, value]) => (
-              <div key={label} className="border-r border-slate-100 px-6 py-5 last:border-r-0">
+              <div key={label} className="rounded border border-slate-200 bg-white p-4 shadow-sm">
                 <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
-                <p className="mt-2 text-3xl font-black tabular-nums text-slate-950">{value}</p>
+                <p className="mt-2 text-2xl font-black tabular-nums text-slate-950">{value}</p>
               </div>
             ))}
           </div>
 
-          <div className="achievement-project-picker-card flex-1 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.07)]">
-            <div className="border-b border-slate-200 bg-gradient-to-r from-white to-sky-50/60 px-6 py-5">
-              <h2 className="text-base font-black text-slate-900">选择项目成果库</h2>
-              <p className="mt-1 text-xs text-slate-500">从当前访问项目进入对应项目成果库。</p>
+          <div className="achievement-project-picker-card overflow-hidden rounded border border-slate-200 bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-3">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">选择项目成果库</h2>
+                <p className="mt-0.5 text-xs text-slate-500">请先选择一个项目，进入后查看或登记该项目成果。</p>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" disabled className="rounded border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-400">筛选</button>
+                <button type="button" disabled className="rounded border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-400">排序</button>
+              </div>
             </div>
             <div className="overflow-auto">
               <table className="w-full min-w-[920px] text-left text-sm">
-                <thead className="bg-slate-100/80 text-xs font-black uppercase tracking-wide text-slate-500">
+                <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th className="px-6 py-3.5">项目名称</th>
-                    <th className="px-4 py-3">状态</th>
-                    <th className="px-4 py-3">项目负责人</th>
-                    <th className="px-4 py-3">Coach / 企业教练</th>
-                    <th className="px-4 py-3">成果数量</th>
-                    <th className="px-4 py-3">最后更新</th>
-                    <th className="px-4 py-3 text-right">操作</th>
+                    <th className="px-5 py-2.5">项目名称</th>
+                    <th className="px-4 py-2.5">状态</th>
+                    <th className="px-4 py-2.5">项目负责人</th>
+                    <th className="px-4 py-2.5">Coach / 企业教练</th>
+                    <th className="px-4 py-2.5">成果数量</th>
+                    <th className="px-4 py-2.5">最后更新</th>
+                    <th className="px-4 py-2.5 text-center">操作</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -406,28 +412,31 @@ export function AchievementsPage() {
                     <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-400">暂无可查看项目</td></tr>
                   ) : visibleProjects.map((project) => (
                     <tr key={project.id} className="transition-colors hover:bg-sky-50/70">
-                      <td className="px-6 py-4">
-                        <p className="font-black text-slate-950">{project.name}</p>
+                      <td className="px-5 py-2.5">
+                        <p className="font-bold text-slate-950">{project.name}</p>
                         <p className="mt-0.5 text-xs text-slate-400">项目编号：{project.code || `#${project.id}`}</p>
                       </td>
-                      <td className="px-4 py-4"><span className="rounded-full border border-sky-100 bg-sky-50 px-2.5 py-1 text-xs font-bold text-sky-700">{projectStatusLabel(project)}</span></td>
-                      <td className="px-4 py-4 text-slate-600">{ownerText(project)}</td>
-                      <td className="px-4 py-4 text-slate-600">{coachText(project)}</td>
-                      <td className="px-4 py-4 text-slate-400">—</td>
-                      <td className="px-4 py-4 text-slate-400">—</td>
-                      <td className="px-4 py-4 text-right">
+                      <td className="px-4 py-2.5"><span className="rounded border border-sky-100 bg-sky-50 px-2 py-0.5 text-xs font-bold text-sky-700">{projectStatusLabel(project)}</span></td>
+                      <td className="px-4 py-2.5 text-sm text-slate-600">{ownerText(project)}</td>
+                      <td className="px-4 py-2.5 text-sm text-slate-600">{coachText(project)}</td>
+                      <td className="px-4 py-2.5 text-sm text-slate-400">—</td>
+                      <td className="px-4 py-2.5 text-sm text-slate-400">—</td>
+                      <td className="px-4 py-2.5 text-center">
                         <button
                           type="button"
                           onClick={() => navigate(`/work/achievements?projectId=${project.id}`)}
-                          className="rounded-xl bg-sky-600 px-4 py-2 text-xs font-black text-white shadow-sm transition hover:bg-sky-700"
+                          className="rounded bg-sky-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-sky-700"
                         >
-                          查看成果库
+                          进入成果库
                         </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/50 px-5 py-2.5">
+              <span className="text-xs text-slate-400">共 {visibleProjects.length} 个项目</span>
             </div>
           </div>
         </div>
@@ -438,7 +447,7 @@ export function AchievementsPage() {
   return (
     <div className="flex-1 overflow-hidden bg-[#f6f8fb]">
       <div className="mx-auto flex h-full max-w-[1440px] flex-col px-5 py-5">
-        <header className="rounded-3xl border border-slate-200 bg-white px-6 py-5 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+        <header className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-[11px] font-extrabold uppercase tracking-[0.24em] text-sky-600">PROJECT ACHIEVEMENT LIBRARY</p>
@@ -460,7 +469,7 @@ export function AchievementsPage() {
             </div>
           </div>
 
-          <div className="achievement-stat-bar mt-5 grid grid-cols-5 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+          <div className="achievement-stat-bar mt-4 grid grid-cols-5 overflow-hidden rounded-lg border border-slate-200 bg-white">
             {[
               ['成果总数', stats.total],
               ['本月新增', stats.month],
@@ -476,9 +485,9 @@ export function AchievementsPage() {
           </div>
         </header>
 
-        <div className="achievement-workbench-grid grid min-h-0 flex-1 gap-5 pt-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(380px,1fr)]">
-          <main className="flex min-w-0 flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
-            <div className="achievement-filter-bar flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50/90 px-4 py-3">
+        <div className="achievement-workbench-grid grid min-h-0 flex-1 gap-4 pt-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(380px,1fr)]">
+          <main className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="achievement-filter-bar flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50/90 px-4 py-2">
               <select value={filterType} onChange={(event) => setFilterType(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700">
                 <option>全部</option>
                 {ACHIEVEMENT_TYPES.map((type) => <option key={type}>{type}</option>)}
@@ -503,17 +512,17 @@ export function AchievementsPage() {
 
             <div className="min-h-0 flex-1 overflow-auto">
               <table className="w-full min-w-[1120px] text-left text-sm">
-                <thead className="sticky top-0 bg-slate-100/90 text-xs font-black uppercase tracking-wide text-slate-500">
+                <thead className="sticky top-0 bg-slate-100/90 text-xs font-bold uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th className="px-4 py-3">成果名称</th>
-                    <th className="px-3 py-3">成果类型</th>
-                    <th className="px-3 py-3">关联重点工作 / 关键任务</th>
-                    <th className="px-3 py-3">来源</th>
-                    <th className="px-3 py-3">提交/登记人</th>
-                    <th className="px-3 py-3">确认/入库人</th>
-                    <th className="px-3 py-3 text-right">入库时间</th>
-                    <th className="px-3 py-3">版本</th>
-                    <th className="px-3 py-3 text-center">操作</th>
+                    <th className="px-4 py-2">成果名称</th>
+                    <th className="px-3 py-2">成果类型</th>
+                    <th className="px-3 py-2">关联重点工作 / 关键任务</th>
+                    <th className="px-3 py-2">来源</th>
+                    <th className="px-3 py-2">提交/登记人</th>
+                    <th className="px-3 py-2">确认/入库人</th>
+                    <th className="px-3 py-2 text-right">入库时间</th>
+                    <th className="px-3 py-2">版本</th>
+                    <th className="px-3 py-2 text-center">操作</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -526,18 +535,18 @@ export function AchievementsPage() {
                     const source = sourceLabel(item)
                     return (
                       <tr key={item.id} onClick={() => { setSelected(item); setEditMode(false) }} className={`cursor-pointer transition hover:bg-sky-50 ${active ? 'border-l-2 border-sky-500 bg-sky-50 ring-1 ring-inset ring-sky-200' : 'border-l-2 border-transparent'}`}>
-                        <td className="px-4 py-3 font-semibold text-slate-900">{item.name || '未命名成果'}</td>
-                        <td className="px-3 py-3"><span className={`rounded-md border px-2 py-0.5 text-xs font-bold ${typeBadgeClass(item.achievement_type)}`}>{item.achievement_type || '文档'}</span></td>
-                        <td className="max-w-[240px] px-3 py-3 text-slate-600">
+                        <td className="px-4 py-2 font-semibold text-slate-900">{item.name || '未命名成果'}</td>
+                        <td className="px-3 py-2"><span className={`rounded-md border px-2 py-0.5 text-xs font-bold ${typeBadgeClass(item.achievement_type)}`}>{item.achievement_type || '文档'}</span></td>
+                        <td className="max-w-[240px] px-3 py-2 text-slate-600">
                           <p className="truncate">{taskName(tasks, item.related_task_id)}</p>
                           <p className="text-xs text-slate-400">关键任务：暂未关联</p>
                         </td>
-                        <td className="px-3 py-3"><span className={`rounded-full border px-2 py-0.5 text-xs font-black ${source === 'AI确认入库' ? 'border-purple-100 bg-purple-50 text-purple-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>{source}</span></td>
-                        <td className="px-3 py-3 text-slate-600">{item.owner || '—'}</td>
-                        <td className="px-3 py-3 text-slate-600">{item.confirmed_by || item.owner || '—'}</td>
-                        <td className="px-3 py-3 text-right font-mono text-xs text-slate-500">{formatDate(item.confirmed_at || item.updated_at || item.created_at)}</td>
-                        <td className="px-3 py-3 font-mono text-xs text-slate-500">{item.version || 'V0.1'}</td>
-                        <td className="px-3 py-3 text-center">
+                        <td className="px-3 py-2"><span className={`rounded-full border px-2 py-0.5 text-xs font-black ${source === 'AI确认入库' ? 'border-purple-100 bg-purple-50 text-purple-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>{source}</span></td>
+                        <td className="px-3 py-2 text-slate-600">{item.owner || '—'}</td>
+                        <td className="px-3 py-2 text-slate-600">{item.confirmed_by || item.owner || '—'}</td>
+                        <td className="px-3 py-2 text-right font-mono text-xs text-slate-500">{formatDate(item.confirmed_at || item.updated_at || item.created_at)}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-slate-500">{item.version || 'V0.1'}</td>
+                        <td className="px-3 py-2 text-center">
                           <button type="button" onClick={(event) => { event.stopPropagation(); setSelected(item) }} className="rounded-md px-2 py-1 text-xs font-bold text-sky-700 hover:bg-sky-100">查看</button>
                         </td>
                       </tr>
@@ -548,12 +557,12 @@ export function AchievementsPage() {
             </div>
           </main>
 
-          <aside className="achievement-detail-panel min-h-0 overflow-y-auto rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+          <aside className="achievement-detail-panel min-h-0 overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             {!selected ? (
-              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-400">选择左侧成果查看详情</div>
+              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-400">选择左侧成果查看详情</div>
             ) : (
-              <div className="space-y-4">
-                <section className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+              <div className="space-y-3">
+                <section className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
                   <p className="text-xs font-black uppercase tracking-wider text-sky-600">详情查看</p>
                   <p className="mt-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">当前选中</p>
                   {editMode ? (
@@ -581,9 +590,9 @@ export function AchievementsPage() {
                   )}
                 </section>
 
-                <section className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <h3 className="mb-3 border-b border-slate-100 pb-2 text-xs font-black text-slate-600">摘要与追溯</h3>
-                  <div className="grid grid-cols-2 gap-3 text-sm">
+                <section className="rounded-lg border border-slate-200 bg-white p-3">
+                  <h3 className="mb-2 border-b border-slate-100 pb-1.5 text-xs font-black text-slate-600">摘要与追溯</h3>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
                     <Info label="所属项目" value={currentProject?.name || selected.special_project || '—'} />
                     <Info label="来源" value={sourceLabel(selected)} />
                     <Info label="关联重点工作" value={selectedTaskName} span />
@@ -601,8 +610,8 @@ export function AchievementsPage() {
                 </section>
 
                 <DetailSection title="成果描述">{selected.scenario || '暂无成果说明'}</DetailSection>
-                <section className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <h3 className="mb-3 border-b border-slate-100 pb-2 text-xs font-black text-slate-600">附件与链接</h3>
+                <section className="rounded-lg border border-slate-200 bg-white p-3">
+                  <h3 className="mb-2 border-b border-slate-100 pb-1.5 text-xs font-black text-slate-600">附件与链接</h3>
                   {selected.file_link ? (
                     <div className="space-y-2">
                       <p className="break-all rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{selected.file_link}</p>
@@ -622,7 +631,7 @@ export function AchievementsPage() {
 
       {registerOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45">
-          <div className="max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+          <div className="max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">成果登记</h2>
@@ -630,12 +639,12 @@ export function AchievementsPage() {
               </div>
               <button type="button" onClick={() => setRegisterOpen(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100">×</button>
             </div>
-            <div className="max-h-[68vh] overflow-y-auto px-6 py-5">
-              {registerError && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{registerError}</div>}
-              <div className="space-y-5">
-                <section className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+            <div className="max-h-[68vh] overflow-y-auto px-6 py-4">
+              {registerError && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{registerError}</div>}
+              <div className="space-y-4">
+                <section className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
                   <h3 className="text-xs font-black uppercase tracking-wide text-slate-500">上下文关联</h3>
-                  <div className="mt-3 grid grid-cols-3 gap-4">
+                  <div className="mt-2 grid grid-cols-3 gap-3">
                     <FormSelect label="所属项目 *" value={registerForm.project_id ?? ''} onChange={(value) => setRegisterForm((prev) => ({ ...prev, project_id: value ? Number(value) : null, related_task_id: null, related_subtask_id: null }))}>
                       <option value="">请选择项目</option>
                       {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
@@ -649,9 +658,9 @@ export function AchievementsPage() {
                     </FormSelect>
                   </div>
                 </section>
-                <section className="rounded-2xl border border-slate-200 bg-white p-4">
+                <section className="rounded-lg border border-slate-200 bg-white p-4">
                   <h3 className="text-xs font-black uppercase tracking-wide text-slate-500">成果定义</h3>
-                  <div className="mt-3 grid grid-cols-12 gap-4">
+                  <div className="mt-2 grid grid-cols-12 gap-3">
                     <div className="col-span-8">
                       <FormInput label="成果名称 *" value={registerForm.name} onChange={(value) => setRegisterForm((prev) => ({ ...prev, name: value }))} placeholder="例如：S1资料清单初稿" />
                     </div>
@@ -679,9 +688,9 @@ export function AchievementsPage() {
                 </section>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-6 py-4">
-              <button type="button" onClick={() => setRegisterOpen(false)} disabled={registerSaving} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">取消</button>
-              <button type="button" onClick={handleSaveAchievement} disabled={registerSaving || projectArchived} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-bold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50">{registerSaving ? '保存中...' : '保存入库'}</button>
+            <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-6 py-3">
+              <button type="button" onClick={() => setRegisterOpen(false)} disabled={registerSaving} className="rounded border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">取消</button>
+              <button type="button" onClick={handleSaveAchievement} disabled={registerSaving || projectArchived} className="rounded bg-sky-600 px-4 py-2 text-sm font-bold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50">{registerSaving ? '保存中...' : '保存入库'}</button>
             </div>
           </div>
         </div>
@@ -701,8 +710,8 @@ function Info({ label, value, span = false }: { label: string; value: string; sp
 
 function DetailSection({ title, children }: { title: string; children: string }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="mb-3 border-b border-slate-100 pb-2 text-xs font-bold text-slate-500">{title}</h3>
+    <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+      <h3 className="mb-2 border-b border-slate-100 pb-1.5 text-xs font-bold text-slate-500">{title}</h3>
       <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">{children}</p>
     </section>
   )

@@ -7,11 +7,12 @@ import { fetchSubTasks, createSubTask, patchSubTaskStatus, isPendingConfirmation
 import type { SubTaskDetail, SubTaskPayload } from '../api/subtasks'
 import { createUpdate } from '../api/updates'
 import { apiGet } from '../api/client'
+import { getProjectMembers } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } from '../domain/taskPermission'
-import type { TaskItem, SubTaskItem, Person, Project } from '../types'
+import type { TaskItem, SubTaskItem, Project, ProjectMember } from '../types'
 import { getProjectById, getProjectDisplayName, getProjectIdFromRecord } from '../domain/projectDisplay'
-import { isProjectArchived } from '../domain/projectLifecycleStatus'
+import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
 import { PlanTableView } from '../components/task-management/PlanTableView'
 
 const NOT_STARTED = new Set(['未开始', 'not_started', 'notstarted'])
@@ -214,7 +215,8 @@ export function TaskManagementPage() {
   const [subTasks, setSubTasks]       = useState<SubTaskItem[]>([])
   const [trashedSubTasks, setTrashedSubTasks] = useState<SubTaskItem[]>([])
   const [subTaskFormOpen, setSubTaskFormOpen] = useState(false)
-  const [peopleList, setPeopleList]   = useState<Person[]>([])
+  const [editingSubTask, setEditingSubTask] = useState<SubTaskItem | SubTaskDetail | null>(null)
+  const [projectMembersByProject, setProjectMembersByProject] = useState<Record<number, ProjectMember[]>>({})
   // inline sub-task expand in table
   const [taskSubMap, setTaskSubMap]     = useState<Record<number, SubTaskItem[]>>({})
   const [expandedTasks, setExpandedTasks] = useState<Set<number>>(new Set())
@@ -396,6 +398,43 @@ export function TaskManagementPage() {
     ensurePlanTableSubTasksLoaded()
   }, [viewMode, filtered, taskSubMap])
 
+  function assignmentMembers(projectId: number | null | undefined) {
+    if (!projectId) return []
+    return projectMembersByProject[projectId] ?? []
+  }
+
+  function ensureProjectMembersLoaded(projectId: number | null | undefined) {
+    if (!projectId || projectMembersByProject[projectId]) return
+    getProjectMembers(projectId)
+      .then((members) => setProjectMembersByProject((prev) => ({ ...prev, [projectId]: members })))
+      .catch(() => setProjectMembersByProject((prev) => ({ ...prev, [projectId]: [] })))
+  }
+
+  function canAssignSubTasks(task: TaskItem | null | undefined) {
+    const taskProject = projectForTask(projects, task)
+    return !!(
+      task &&
+      isProjectActive(taskProject) &&
+      canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: taskProject?.user_roles ?? [] })
+    )
+  }
+
+  function openSubTaskAssignment(task: TaskItem, subTask?: SubTaskItem | SubTaskDetail | null) {
+    const taskProject = projectForTask(projects, task)
+    if (!isProjectActive(taskProject)) {
+      alert('项目尚未进入执行阶段，暂不能维护执行期关键任务。')
+      return
+    }
+    if (!canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: taskProject?.user_roles ?? [] })) return
+    setSelectedTask(task)
+    setSelectedProjectKey(null)
+    setSelectedSubTask(null)
+    setSubDetailLoading(false)
+    setEditingSubTask(subTask ?? null)
+    ensureProjectMembersLoaded(task.project_id ?? currentProjectId)
+    setSubTaskFormOpen(true)
+  }
+
   function openSubDetail(st: SubTaskItem) {
     setSelectedSubTask(null)
     setSubDetailLoading(true)
@@ -405,8 +444,6 @@ export function TaskManagementPage() {
       .then((d) => setSelectedSubTask(d))
       .catch(() => setSelectedSubTask({ ...st } as SubTaskDetail))
       .finally(() => setSubDetailLoading(false))
-    if (!peopleList.length)
-      apiGet<Person[]>('/api/people').then((p) => setPeopleList(p.filter((x) => x.is_active !== false))).catch(() => {})
   }
 
   async function handleSubStatusUpdate(status: string) {
@@ -499,7 +536,7 @@ export function TaskManagementPage() {
     fetchTaskLogs(task.id).then(setTaskLogs).catch(() => {})
     fetchTaskUpdates(task.id).then(setTaskUpdates).catch(() => {})
     loadTaskSubTaskBuckets(task.id).catch(() => {})
-    apiGet<Person[]>('/api/people').then((p) => setPeopleList(p.filter((x) => x.is_active !== false))).catch(() => {})
+    ensureProjectMembersLoaded(task.project_id ?? currentProjectId)
   }
 
   async function handleProgressSubmit() {
@@ -696,18 +733,26 @@ function handleFormSave(payload: TaskPayload) {
         />
       )}
       {subTaskFormOpen && selectedTask && (
-        <SubTaskFormModal
+        <SubTaskAssignmentModal
           taskId={selectedTask.id}
           projectId={selectedTask.project_id ?? currentProjectId}
-          people={peopleList}
+          editingSubTask={editingSubTask}
+          projectMembers={assignmentMembers(selectedTask.project_id ?? currentProjectId)}
           onSave={(st) => {
-            const next = [...subTasks, st]
-            setSubTasks(next)
+            setSubTasks((prev) => {
+              const exists = prev.some((item) => item.id === st.id)
+              return exists ? prev.map((item) => item.id === st.id ? { ...item, ...st } : item) : [...prev, st]
+            })
             setSubTaskFormOpen(false)
-            setTaskSubMap((p) => ({ ...p, [st.task_id]: [...(p[st.task_id] ?? []), st] }))
+            setEditingSubTask(null)
+            setTaskSubMap((p) => {
+              const rows = p[st.task_id] ?? []
+              const exists = rows.some((item) => item.id === st.id)
+              return { ...p, [st.task_id]: exists ? rows.map((item) => item.id === st.id ? { ...item, ...st } : item) : [...rows, st] }
+            })
             refreshParentTask(st.task_id)
           }}
-          onClose={() => setSubTaskFormOpen(false)}
+          onClose={() => { setSubTaskFormOpen(false); setEditingSubTask(null) }}
         />
       )}
 
@@ -949,6 +994,7 @@ function handleFormSave(payload: TaskPayload) {
                       const taskExpanded = expandedTasks.has(task.id)
                       const inlineSubs = showDeleted ? [] : (taskSubMap[task.id] ?? null)
                       const canExpand = !showDeleted
+                      const canAssignThisTask = canAssignSubTasks(task)
                       const rowDeleted = !!task.is_deleted
                       const subProgress = subTaskProgress(inlineSubs)
                       const taskOwner = projectPeopleText(taskProject?.owners ?? task.owner)
@@ -992,7 +1038,10 @@ function handleFormSave(payload: TaskPayload) {
                                 </span>
                               )}
                             </div>
-                            <div className="flex-shrink-0 flex justify-end" style={{ width: 68 }}>
+                            <div className="flex-shrink-0 flex justify-end gap-2" style={{ width: 120 }}>
+                              {canAssignThisTask && (
+                                <button type="button" onClick={(e) => { e.stopPropagation(); openSubTaskAssignment(task) }} className="text-xs text-indigo-600 font-semibold hover:text-indigo-700">新增关键任务</button>
+                              )}
                               <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(task) }} className="text-xs text-blue-600 font-semibold hover:text-blue-700">查看</button>
                             </div>
                           </div>
@@ -1047,7 +1096,10 @@ function handleFormSave(payload: TaskPayload) {
                                     )}
                                   </div>
                                   <div style={{ width: 68 }} /><div style={{ width: 60 }} />
-                                  <div className="flex justify-end flex-shrink-0" style={{ width: 68 }}>
+                                  <div className="flex justify-end gap-2 flex-shrink-0" style={{ width: 96 }}>
+                                    {canAssignThisTask && (
+                                      <button type="button" onClick={(e) => { e.stopPropagation(); openSubTaskAssignment(task, st) }} className="text-xs text-indigo-600 hover:text-indigo-700 font-semibold">编辑</button>
+                                    )}
                                     <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedTask(null); openSubDetail(st) }} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">详情</button>
                                   </div>
                                 </div>
@@ -1243,6 +1295,8 @@ function handleFormSave(payload: TaskPayload) {
               const badge = getBadge(selectedTask.status)
               const detailProgress = subTaskProgress(subTasks)
               const canOwn = canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: selectedTaskProject?.user_roles ?? [] })
+              const canAssignSelectedTask = canAssignSubTasks(selectedTask)
+              const selectedTaskActive = isProjectActive(selectedTaskProject)
               const canTrashTask = !!(selectedTaskProject && canManageProjectTrash({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: selectedTaskProject.user_roles ?? [] }))
               return (
                 <div className="flex flex-col h-full overflow-hidden">
@@ -1356,6 +1410,14 @@ function handleFormSave(payload: TaskPayload) {
                                 >
                                   详情
                                 </button>
+                                {canAssignSelectedTask && (
+                                  <button
+                                    onClick={() => openSubTaskAssignment(selectedTask, sub)}
+                                    className="flex-shrink-0 text-xs text-slate-500 hover:text-indigo-700 font-semibold px-2 py-1 rounded-md hover:bg-indigo-50 transition-colors"
+                                  >
+                                    编辑关键任务
+                                  </button>
+                                )}
                               </div>
                             )
                           })}
@@ -1406,7 +1468,12 @@ function handleFormSave(payload: TaskPayload) {
                   <div className="border-t px-4 py-3 flex gap-2 flex-wrap flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
                     <button onClick={() => { setFormTask(selectedTask); setFormOpen(true) }} disabled={selectedTaskArchived} title={selectedTaskArchived ? '项目已归档，不可写入。' : undefined} className="px-3 py-1.5 rounded-lg text-white text-xs font-bold disabled:opacity-50" style={{ background: '#0284C7' }}>编辑</button>
                     <button onClick={() => setProgressOpen(true)} disabled={selectedTaskArchived} title={selectedTaskArchived ? '项目已归档，不可写入。' : undefined} className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 text-xs font-semibold disabled:opacity-50">更新进展</button>
-                    {canOwn && <button onClick={() => setSubTaskFormOpen(true)} disabled={selectedTaskArchived} title={selectedTaskArchived ? '项目已归档，不可写入。' : undefined} className="px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 text-xs font-semibold disabled:opacity-50">添加关键任务</button>}
+                    {canAssignSelectedTask && <button onClick={() => openSubTaskAssignment(selectedTask)} className="px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 text-xs font-semibold disabled:opacity-50">新增关键任务</button>}
+                    {canOwn && !selectedTaskActive && (
+                      <span className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-1.5">
+                        项目尚未进入执行阶段，暂不能维护执行期关键任务。
+                      </span>
+                    )}
                     {canTrashTask && <button onClick={() => handleDelete(selectedTask)} disabled={selectedTaskArchived} title={selectedTaskArchived ? '项目已归档，不可写入。' : undefined} className="px-3 py-1.5 rounded-lg border border-red-200 text-red-500 text-xs font-semibold disabled:opacity-50">删除</button>}
                   </div>
                 </div>
@@ -1698,124 +1765,154 @@ function OutlineImportModal({ defaultProjectId, projects, onCreated, onClose }: 
   )
 }
 
-// ─── 新增关键任务弹窗 ───────────────────────────────────────────────────────────
+// ─── 新增/编辑关键任务派发弹窗 ─────────────────────────────────────────────────
 
-function SubTaskFormModal({ taskId, projectId, people, onSave, onClose }: {
+const ASSISTING_PERSON_PREFIX = '协助人：'
+
+function splitAssistingPersonFromNotes(raw?: string | null) {
+  const lines = String(raw ?? '').split('\n')
+  const first = lines[0] ?? ''
+  if (!first.startsWith(ASSISTING_PERSON_PREFIX)) return { assistingPerson: '', noteText: String(raw ?? '') }
+  return {
+    assistingPerson: first.slice(ASSISTING_PERSON_PREFIX.length).trim(),
+    noteText: lines.slice(1).join('\n').trim(),
+  }
+}
+
+function buildNotesWithAssistingPerson(assistingPerson: string, noteText: string) {
+  const lines = []
+  if (assistingPerson.trim()) lines.push(`${ASSISTING_PERSON_PREFIX}${assistingPerson.trim()}`)
+  if (noteText.trim()) lines.push(noteText.trim())
+  return lines.join('\n')
+}
+
+function uniqueProjectMemberNames(projectMembers: ProjectMember[], currentName?: string | null) {
+  const names = projectMembers.map((member) => member.person_name_snapshot).filter(Boolean)
+  if (currentName?.trim()) names.push(currentName.trim())
+  return [...new Set(names)]
+}
+
+function SubTaskAssignmentModal({ taskId, projectId, editingSubTask, projectMembers, onSave, onClose }: {
   taskId: number
   projectId: number | null
-  people: Person[]
+  editingSubTask: SubTaskItem | SubTaskDetail | null
+  projectMembers: ProjectMember[]
   onSave: (st: SubTaskItem) => void
   onClose: () => void
 }) {
-  const [title, setTitle]             = useState('')
-  const [assignee, setAssignee]       = useState(people[0]?.name ?? '')
-  const [planTime, setPlanTime]       = useState('')
-  const [status, setStatus]           = useState('未开始')
-  const [criteria, setCriteria]       = useState('')
-  const [notes, setNotes]             = useState('')
-  const [saving, setSaving]           = useState(false)
-  const [sy, setSy] = useState(new Date().getFullYear())
-  const [sm, setSm] = useState(new Date().getMonth() + 1)
-  const [ey, setEy] = useState(new Date().getFullYear())
-  const [em, setEm] = useState(new Date().getMonth() + 1)
-  const [useRange, setUseRange] = useState(false)
+  const parsedNotes = splitAssistingPersonFromNotes(editingSubTask?.notes)
+  const memberNames = uniqueProjectMemberNames(projectMembers, editingSubTask?.assignee)
+  const [title, setTitle] = useState(editingSubTask?.title ?? '')
+  const [assignee, setAssignee] = useState(editingSubTask?.assignee ?? memberNames[0] ?? '')
+  const [assistingPerson, setAssistingPerson] = useState(parsedNotes.assistingPerson)
+  const [planTime, setPlanTime] = useState(editingSubTask?.plan_time ?? '')
+  const [status, setStatus] = useState(editingSubTask?.status ?? '未开始')
+  const [criteria, setCriteria] = useState(editingSubTask?.completion_criteria ?? '')
+  const [notes, setNotes] = useState(parsedNotes.noteText)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!assignee && memberNames.length > 0) setAssignee(memberNames[0])
+  }, [assignee, memberNames])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!title.trim() || !assignee) return
+    if (!title.trim() || !assignee.trim()) return
     if (!projectId) return
-    const pt = useRange ? formatPlanTime(sy, sm, ey, em) : planTime
+    const payload: SubTaskPayload = {
+      project_id: projectId,
+      title: title.trim(),
+      assignee: assignee.trim(),
+      plan_time: planTime.trim(),
+      status,
+      completion_criteria: criteria.trim(),
+      notes: buildNotesWithAssistingPerson(assistingPerson, notes),
+    }
     setSaving(true)
     try {
-      const created = await createSubTask(taskId, { project_id: projectId, title, assignee, plan_time: pt, status, completion_criteria: criteria, notes })
-      onSave(created)
+      const saved = editingSubTask
+        ? await updateSubTask(editingSubTask.id, payload)
+        : await createSubTask(taskId, payload)
+      onSave(saved)
     } catch {
-      alert('创建失败，请重试')
+      alert(editingSubTask ? '更新失败，请重试' : '创建失败，请重试')
     } finally {
       setSaving(false)
     }
   }
 
   const inputCls = "w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400"
-  const selectCls = "border border-slate-200 rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:border-indigo-400 cursor-pointer"
   const labelCls = "block text-xs font-semibold text-slate-500 mb-1"
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: 'rgba(15,23,42,0.4)' }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full overflow-hidden" style={{ maxWidth: 480, maxHeight: '90vh' }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full overflow-hidden" style={{ maxWidth: 560, maxHeight: '90vh' }}>
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: '#E9EFF6' }}>
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#6366F1,#818CF8)' }}>
-              <svg style={{ width: 13, height: 13, color: 'white' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-            </div>
-            <h2 className="text-sm font-bold text-slate-800">添加关键任务</h2>
+          <div>
+            <h2 className="text-sm font-bold text-slate-800">{editingSubTask ? '编辑关键任务' : '新增关键任务'}</h2>
+            <p className="text-xs text-slate-400 mt-0.5">执行期关键任务派发：责任人与协助人仅来自当前项目成员。</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
             <svg style={{ width: 15, height: 15 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="overflow-y-auto px-5 py-4 space-y-4" style={{ maxHeight: 'calc(90vh - 120px)' }}>
+        <form onSubmit={handleSubmit} className="overflow-y-auto px-5 py-4 space-y-4" style={{ maxHeight: 'calc(90vh - 132px)' }}>
           <div>
-            <label className={labelCls}>任务说明 *</label>
+            <label className={labelCls}>关键任务名称 *</label>
             <input required className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="描述具体要做什么" />
           </div>
 
-          <div>
-            <label className={labelCls}>指定提交人 *</label>
-            <select required className={inputCls} value={assignee} onChange={(e) => setAssignee(e.target.value)}>
-              <option value="">请选择提交人</option>
-              {people.map((p) => <option key={p.id} value={p.name}>{p.name}{p.department ? ` · ${p.department}` : ''}</option>)}
-            </select>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>责任人 *</label>
+              <select required className={inputCls} value={assignee} onChange={(e) => setAssignee(e.target.value)}>
+                <option value="">请选择责任人</option>
+                {memberNames.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>协助人</label>
+              <select className={inputCls} value={assistingPerson} onChange={(e) => setAssistingPerson(e.target.value)}>
+                <option value="">可不指定</option>
+                {memberNames.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </div>
           </div>
 
+          {memberNames.length === 0 && (
+            <p className="rounded-lg bg-amber-50 border border-amber-100 text-amber-700 text-xs px-3 py-2">
+              暂未加载到项目成员，请确认当前项目已配置成员后再派发关键任务。
+            </p>
+          )}
+
           <div>
-            <label className={labelCls}>计划时间</label>
-            <div className="flex items-center gap-2 mb-1.5">
-              <label className="flex items-center gap-1.5 cursor-pointer text-xs text-slate-500">
-                <input type="checkbox" checked={useRange} onChange={(e) => setUseRange(e.target.checked)} className="w-3.5 h-3.5 accent-indigo-500" />
-                时间段模式
-              </label>
-            </div>
-            {useRange ? (
-              <div className="flex items-center gap-1.5 flex-wrap text-xs text-slate-500">
-                <span>从</span>
-                <select className={selectCls} value={sy} onChange={(e) => setSy(+e.target.value)}>{YEARS.map((y) => <option key={y}>{y}</option>)}</select>
-                <span>年</span>
-                <select className={selectCls} value={sm} onChange={(e) => setSm(+e.target.value)}>{MONTHS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
-                <span>月 至</span>
-                <select className={selectCls} value={ey} onChange={(e) => setEy(+e.target.value)}>{YEARS.map((y) => <option key={y}>{y}</option>)}</select>
-                <span>年</span>
-                <select className={selectCls} value={em} onChange={(e) => setEm(+e.target.value)}>{MONTHS.map((m) => <option key={m} value={m}>{m}</option>)}</select>
-                <span>月</span>
-              </div>
-            ) : (
-              <input className={inputCls} value={planTime} onChange={(e) => setPlanTime(e.target.value)} placeholder="如：2026年6月" />
-            )}
+            <label className={labelCls}>时间段</label>
+            <input className={inputCls} value={planTime} onChange={(e) => setPlanTime(e.target.value)} placeholder="如：2026年6月 或 2026年6月~2026年8月" />
           </div>
 
           <div>
             <label className={labelCls}>当前状态</label>
             <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
-              {['未开始','进行中','已完成','延期','暂缓'].map((s) => <option key={s}>{s}</option>)}
+              {STATUS_OPTIONS.map((s) => <option key={s}>{s}</option>)}
             </select>
           </div>
 
           <div>
-            <label className={labelCls}>完成标准（可选）</label>
-            <textarea className={inputCls} rows={2} value={criteria} onChange={(e) => setCriteria(e.target.value)} placeholder="如何判断该关键任务完成" />
+            <label className={labelCls}>备注 / 标准</label>
+            <textarea className={inputCls} rows={2} value={criteria} onChange={(e) => setCriteria(e.target.value)} placeholder="可填写完成标准、验收口径或交付说明" />
           </div>
 
           <div>
-            <label className={labelCls}>备注（可选）</label>
-            <textarea className={inputCls} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="其他说明" />
+            <label className={labelCls}>补充说明</label>
+            <textarea className={inputCls} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="可选；保存到现有备注字段" />
           </div>
         </form>
 
         <div className="px-5 py-4 border-t flex justify-end gap-3 flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
           <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50">取消</button>
-          <button onClick={handleSubmit as any} disabled={saving} className="px-5 py-2 rounded-xl text-white text-sm font-bold hover:opacity-90 disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#6366F1,#818CF8)' }}>
-            {saving ? '创建中…' : '创建关键任务'}
+          <button onClick={handleSubmit as any} disabled={saving || memberNames.length === 0} className="px-5 py-2 rounded-xl text-white text-sm font-bold hover:opacity-90 disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#6366F1,#818CF8)' }}>
+            {saving ? '保存中…' : editingSubTask ? '保存关键任务' : '创建关键任务'}
           </button>
         </div>
       </div>

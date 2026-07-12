@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   getPending,
@@ -254,13 +254,15 @@ export function ConfirmPage() {
     currentUser?.system_role === 'super_admin' ||
     hasReviewerRoleInAnyProject
   )
-  const [viewMode, setViewMode] = useState<'mine' | 'all'>('mine')
+  const initialRedirectDone = useRef(false)
+  const defaultViewMode: 'mine' | 'all' = isReviewer ? 'all' : 'mine'
+  const [viewMode, setViewMode] = useState<'mine' | 'all'>(defaultViewMode)
   useEffect(() => {
-    setViewMode((prev) => {
-      if (isReviewer && prev === 'mine') return 'all'
-      if (!isReviewer && prev === 'all') return 'mine'
-      return prev
-    })
+    if (!initialRedirectDone.current) {
+      initialRedirectDone.current = true
+      setViewMode(defaultViewMode)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isReviewer])
 
   const [filterStatus, setFilterStatus] = useState(SS.S_NEW)
@@ -593,7 +595,7 @@ export function ConfirmPage() {
     if (hasWriteAch) confirmedWrites.push('成果库')
     const hasWriteIss = selectedResult.write_task_reports_issues === true ||
       (Array.isArray(selectedResult.issues) && (selectedResult.issues as Record<string, unknown>[]).some(i => (i as Record<string, unknown>).write_issue === true))
-    if (hasWriteIss) confirmedWrites.push('问题库')
+    if (hasWriteIss) confirmedWrites.push('问题中心')
   }
 
   const taskReports = hasTaskReports ? (selectedResult!.task_reports as Record<string, unknown>[]) : []
@@ -627,13 +629,23 @@ export function ConfirmPage() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="h-14 flex items-center px-5 gap-2.5 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
-        <div className="flex-1">
-          <h1 className="text-sm font-bold text-slate-800">AI 审核中心</h1>
-        </div>
+      <header className="flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
+        <div className="flex items-center px-5 gap-2.5 h-14">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-sm font-bold text-slate-800">AI 确认中心</h1>
+            {isReviewer ? (
+              <p className="text-[11px] text-slate-400 mt-0.5 truncate">
+                {viewMode === 'all'
+                  ? '负责人确认 AI 提取结果后，正式写入工作推进表、成果库和问题中心。'
+                  : '查看我提交的工作汇报、AI 提取结果和确认状态。'}
+              </p>
+            ) : (
+              <p className="text-[11px] text-slate-400 mt-0.5 truncate">查看我提交的工作汇报、AI 提取结果和确认状态。</p>
+            )}
+          </div>
         <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: '#E9EFF6' }}>
           <button onClick={() => setViewMode('mine')} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${viewMode === 'mine' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
-            我的提交
+            我的提交记录
           </button>
           {isReviewer && (
             <button onClick={() => setViewMode('all')} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 ${viewMode === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
@@ -649,16 +661,19 @@ export function ConfirmPage() {
           <option value={SS.S_RETURNED}>已退回</option>
         </select>
         <select value={filterProject} onChange={(e) => setFilterProject(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none">
-          <option value="">全部专项</option>
+          <option value="">全部项目</option>
           {allProjects.map((p) => <option key={p}>{p}</option>)}
         </select>
+        {viewMode === 'all' && (
         <select value={filterSubmitter} onChange={(e) => setFilterSubmitter(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none">
           <option value="">全部提交人</option>
           {allSubmitters.map((s) => <option key={s}>{s}</option>)}
         </select>
+        )}
         <div className="relative">
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
           <input value={search} onChange={(e) => setSearch(e.target.value)} type="text" placeholder="搜索记录/任务…" className="pl-7 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none w-36" />
+        </div>
         </div>
       </header>
 
@@ -669,7 +684,9 @@ export function ConfirmPage() {
           <div className="w-[400px] xl:w-[420px] flex-shrink-0 flex flex-col bg-white rounded-2xl border overflow-hidden" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
             <div className="px-4 py-3 border-b flex-shrink-0 flex items-center justify-between" style={{ borderColor: '#E9EFF6' }}>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-slate-800">全部记录</span>
+                <span className="text-sm font-bold text-slate-800">
+                  {viewMode === 'all' ? '待确认事项' : '我的提交记录'}
+                </span>
                 <span className="text-xs text-slate-400">({visibleItems.length})</span>
               </div>
               <div className="flex items-center gap-1 text-slate-400">
@@ -686,7 +703,15 @@ export function ConfirmPage() {
                 <div className="py-10 text-center text-xs text-slate-400">加载中…</div>
               ) : visibleItems.length === 0 ? (
                 <div className="py-10 text-center text-xs">
-                  {loadError ? <span className="text-red-400">{loadError}</span> : <span className="text-slate-400">暂无记录</span>}
+                  {loadError ? (
+                    <span className="text-red-400">{loadError}</span>
+                  ) : (
+                    <span className="text-slate-400">
+                      {viewMode === 'all'
+                        ? '暂无待确认事项。\n可切换到"我的提交记录"查看自己提交的内容。'
+                        : '暂无提交记录，可前往工作汇报提交进展。'}
+                    </span>
+                  )}
                 </div>
               ) : visibleItems.map((item) => {
                 const isSelected = selected?.id === item.id
@@ -848,6 +873,8 @@ export function ConfirmPage() {
               </div>
 
               <div className="px-5 py-4 border-t bg-slate-50" style={{ borderColor: '#E9EFF6' }}>
+                {viewMode === 'all' ? (
+                <>
                 {actionError && (
                   <div className="mb-3 flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
                     <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -875,6 +902,12 @@ export function ConfirmPage() {
                   <button type="button" onClick={() => handleTaskCardDecision('transfer')} disabled={acting || projectArchived} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl border border-violet-300 text-violet-600 font-semibold bg-white disabled:opacity-50">转交统筹人</button>
                   <button type="button" onClick={() => handleTaskCardDecision('ceo')} disabled={acting || projectArchived} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl border border-slate-200 text-slate-600 font-semibold bg-white disabled:opacity-50">转交企业教练</button>
                 </div>
+                </>
+                ) : (
+                <div className="py-3 text-center text-xs text-slate-400">
+                  该视图下仅查看记录，如需处理请切换到「待确认」。
+                </div>
+                )}
               </div>
             </div>
           </div>

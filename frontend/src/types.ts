@@ -211,6 +211,7 @@ export type AchievementItem = {
   achievement_type?: string
   special_project?: string
   related_task_id?: number | null
+  related_subtask_id?: number | null
   owner?: string
   version?: string
   file_link?: string
@@ -265,6 +266,8 @@ export type IssueItem = {
   resolution?: string
   handler_reply?: string
   reporter?: string
+  related_task_id?: number | null
+  related_subtask_id?: number | null
   special_project?: string
   created_at?: string
   updated_at?: string

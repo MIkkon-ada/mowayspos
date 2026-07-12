@@ -127,6 +127,7 @@ export type UpdateDetail = UpdateHistoryItem & {
   coordinator_note?: string
   ceo_note?: string
   related_task_id?: number | null
+  related_subtask_id?: number | null
   ai_result?: Record<string, unknown>
   human_result?: Record<string, unknown>
 }

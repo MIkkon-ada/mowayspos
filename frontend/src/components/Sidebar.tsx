@@ -34,7 +34,7 @@ type NavEntry = NavItem | SectionSeparator
 
 export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, onLogout, logoUrl, platformName }: SidebarProps) {
   const navigate = useNavigate()
-  const { projects } = useProject()
+  const { projects, currentProjectId } = useProject()
   const userName = currentUser?.name ?? ''
   const rolePriority = ['owner', 'coordinator', 'project_ceo', 'member']
   const highestRole = rolePriority.find((r) => globalUserRoles.includes(r))
@@ -47,6 +47,7 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
     currentUser?.is_ceo ||
     globalUserRoles.some((r) => ['owner', 'coordinator', 'project_ceo'].includes(r))
   )
+  const canViewGlobalDashboard = !!(currentUser?.is_tech_admin || currentUser?.is_ceo || currentUser?.can_view_all)
   const showParticipantModules = !(
     currentUser?.is_ceo &&
     !globalUserRoles.some((r) => ['owner', 'coordinator', 'member'].includes(r))
@@ -123,6 +124,20 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
     ...section(systemItems),
   ]
 
+  function handleNavigate(page: AppPage) {
+    if (page === 'dashboard') {
+      if (canViewGlobalDashboard) {
+        navigate('/home/dashboard')
+        return
+      }
+      if (currentProjectId !== null) {
+        navigate(`/home/dashboard?projectId=${currentProjectId}`)
+        return
+      }
+    }
+    onNavigate(page)
+  }
+
   return (
     <aside className="w-56 flex-shrink-0 flex flex-col overflow-hidden" style={{ background: '#0F172A' }}>
       <div
@@ -158,7 +173,7 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
             <button
               key={entry.page}
               type="button"
-              onClick={() => onNavigate(entry.page)}
+              onClick={() => handleNavigate(entry.page)}
               style={{
                 display: 'flex',
                 alignItems: 'center',

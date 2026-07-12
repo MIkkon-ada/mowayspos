@@ -8,22 +8,24 @@ def _frontend_source(relative_path: str) -> str:
     return (root / "frontend" / "src" / relative_path).read_text(encoding="utf-8")
 
 
-def test_dashboard_initial_scope_uses_url_or_project_context_not_plain_null_default():
+def test_dashboard_supports_global_my_and_project_scopes():
     source = _frontend_source("pages/DashboardPage.tsx")
 
     assert "useSearchParams" in source
     assert "urlProjectId" in source
-    assert "initialDashboardScopeId" in source
-    assert "const [scopeId, setScopeId] = useState<number | null>(null)" not in source
+    assert "type DashboardScope = 'global' | 'my' | 'project'" in source
+    assert "scopeMode" in source
+    assert "hasProjectDashboardRole" in source
+    assert "managedDashboardProjects" in source
 
 
-def test_dashboard_blocks_global_overview_for_project_roles_without_context():
+def test_dashboard_non_global_users_default_to_my_scope_not_project_selection():
     source = _frontend_source("pages/DashboardPage.tsx")
 
     assert "canViewGlobalDashboard" in source
-    assert "shouldSelectProjectBeforeLoading" in source
-    assert "请先选择项目后查看驾驶舱" in source
-    assert "getOverview(null, selectedMonth)" not in source
+    assert "return 'my'" in source
+    assert "实时掌握我参与项目的进度、风险、成果与待决策事项" in source
+    assert "shouldSelectProjectBeforeLoading" not in source
 
 
 def test_dashboard_error_messages_distinguish_global_and_project_permission():
@@ -35,6 +37,27 @@ def test_dashboard_error_messages_distinguish_global_and_project_permission():
     assert "数据加载失败，请刷新页面重试" not in source
 
 
+def test_dashboard_my_scope_fetches_each_project_without_global_overview():
+    source = _frontend_source("pages/DashboardPage.tsx")
+
+    assert "loadMyProjectDashboard" in source
+    assert "Promise.allSettled" in source
+    assert "managedDashboardProjects.map((project) => getOverview(project.id, selectedMonth))" in source
+    assert "aggregateDashboardOverviews(managedDashboardProjects, fulfilled)" in source
+    assert "console.warn('项目驾驶舱数据加载失败'" in source
+    assert "暂无可查看的项目驾驶舱数据。" in source
+    assert "getOverview(null, selectedMonth)" not in source
+
+
+def test_dashboard_my_scope_only_aggregates_managed_project_roles():
+    source = _frontend_source("pages/DashboardPage.tsx")
+
+    assert "project.user_roles?.some((role) => ['owner', 'coordinator', 'project_ceo'].includes(role))" in source
+    assert "const hasProjectDashboardRole = managedDashboardProjects.length > 0" in source
+    assert "managedDashboardProjects.length === 0" in source
+    assert "普通成员请从我的任务查看个人工作" in source
+
+
 def test_dashboard_filter_keeps_dashboard_route_and_limits_global_option():
     source = _frontend_source("pages/DashboardPage.tsx")
 
@@ -42,26 +65,27 @@ def test_dashboard_filter_keeps_dashboard_route_and_limits_global_option():
     assert "/home/dashboard?projectId=" in source
     assert "navigate('/home/dashboard')" in source
     assert "navigate(`/project/${id}`)" not in source
-    assert "<option value=\"\">全部专项</option>" not in source
+    assert "全部项目" in source
+    assert "我的项目" in source
+    assert '{canViewGlobalDashboard && <option value="global">全部项目</option>}' in source
 
 
-def test_dashboard_export_is_guarded_by_project_scope_for_project_roles():
+def test_dashboard_export_is_guarded_by_my_scope_for_project_roles():
     source = _frontend_source("pages/DashboardPage.tsx")
 
-    assert "请先选择项目后导出周报" in source
-    assert "if (!canViewGlobalDashboard && scopeId === null)" in source
-    guard_index = source.index("if (!canViewGlobalDashboard && scopeId === null)")
-    export_index = source.index("await exportWeeklyReport(scopeId, selectedMonth)")
-    assert guard_index < export_index
+    assert "请选择单个项目后导出周报；多项目周报将在后续聚合导出中支持。" in source
+    assert "scopeMode === 'my'" in source
+    export_index = source.index("await exportWeeklyReport(scopeMode === 'global' ? null : scopeId, selectedMonth)")
+    my_guard_index = source.index("scopeMode === 'my'")
+    assert my_guard_index < export_index
 
 
-def test_sidebar_dashboard_entry_carries_project_context_for_project_roles():
+def test_sidebar_dashboard_entry_uses_dashboard_default_scope_for_project_roles():
     source = _frontend_source("components/Sidebar.tsx")
 
-    assert "currentProjectId" in source
-    assert "canViewGlobalDashboard" in source
     assert "handleNavigate" in source
-    assert "`/home/dashboard?projectId=${currentProjectId}`" in source
+    assert "navigate('/home/dashboard')" in source
+    assert "`/home/dashboard?projectId=${currentProjectId}`" not in source
 
 
 def test_dashboard_scope_fix_does_not_expand_backend_or_forbidden_concepts():

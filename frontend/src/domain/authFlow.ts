@@ -119,6 +119,12 @@ export function getProjectScopedNavigationDestination(
   if (page === 'table' && currentProjectId !== null) {
     return `/work/tasks?projectId=${currentProjectId}`
   }
+  if (page === 'achievements' && currentProjectId !== null) {
+    return `/work/achievements?projectId=${currentProjectId}`
+  }
+  if (page === 'issues' && currentProjectId !== null) {
+    return `/work/issues?projectId=${currentProjectId}`
+  }
   if (page === 'voice') {
     return '/work/submit'
   }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createAchievement, fetchAchievements, updateAchievement } from '../api/achievements'
 import { fetchTasks } from '../api/tasks'
-import { fetchSubTasks } from '../api/subtasks'
+import { fetchSubTasks, fetchSubtasksByProject } from '../api/subtasks'
 import { useProject } from '../context/ProjectContext'
 import { getAchievementAddressAction } from '../domain/achievementFlow'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
@@ -113,7 +113,12 @@ function taskName(tasks: TaskItem[], taskId?: number | null): string {
   return tasks.find((task) => task.id === taskId)?.key_task || `重点工作 #${taskId}`
 }
 
-function keyTaskLabelForAchievement(item: AchievementItem): string {
+function keyTaskLabelForAchievement(item: AchievementItem, subtaskById: Record<number, SubTaskItem>): string {
+  // 优先通过 related_subtask_id 在本地 map 中查找名称
+  if (item.related_subtask_id && subtaskById[item.related_subtask_id]) {
+    return subtaskById[item.related_subtask_id].title
+  }
+  // 兼容旧字段（后端可能返回的字符串字段）
   const candidate = (
     item.related_subtask_title
     ?? item.related_subtask_name
@@ -162,6 +167,7 @@ export function AchievementsPage() {
   const [tasksLoading, setTasksLoading] = useState(false)
   const [subtasks, setSubtasks] = useState<SubTaskItem[]>([])
   const [subtasksLoading, setSubtasksLoading] = useState(false)
+  const [allSubtasks, setAllSubtasks] = useState<SubTaskItem[]>([])
   const [registerOpen, setRegisterOpen] = useState(false)
   const [registerForm, setRegisterForm] = useState<RegistrationForm>(() => emptyForm(projectId))
   const [registerError, setRegisterError] = useState('')
@@ -257,6 +263,21 @@ export function AchievementsPage() {
     return () => { cancelled = true }
   }, [registerForm.related_task_id])
 
+  useEffect(() => {
+    if (!projectId) { setAllSubtasks([]); return }
+    let cancelled = false
+    fetchSubtasksByProject(projectId)
+      .then((rows) => { if (!cancelled) setAllSubtasks(rows.filter((row) => !row.is_deleted)) })
+      .catch(() => { if (!cancelled) setAllSubtasks([]) })
+    return () => { cancelled = true }
+  }, [projectId])
+
+  const subtaskById = useMemo(() => {
+    const map: Record<number, SubTaskItem> = {}
+    for (const st of allSubtasks) map[st.id] = st
+    return map
+  }, [allSubtasks])
+
   function reloadCurrentProject() {
     if (!projectId) return
     setLoading(true)
@@ -287,6 +308,7 @@ export function AchievementsPage() {
       const created = await createAchievement({
         project_id: registerForm.project_id,
         related_task_id: registerForm.related_task_id,
+        related_subtask_id: registerForm.related_subtask_id,
         name: registerForm.name.trim(),
         achievement_type: registerForm.achievement_type || '方案',
         owner: currentUser?.name || '',
@@ -334,6 +356,7 @@ export function AchievementsPage() {
       const updated = await updateAchievement(selected.id, {
         project_id: resolvedProjectId,
         related_task_id: selected.related_task_id ?? null,
+        related_subtask_id: selected.related_subtask_id ?? null,
         name: editDraft.name.trim(),
         achievement_type: selected.achievement_type || '方案',
         owner: selected.owner || '',
@@ -551,7 +574,7 @@ export function AchievementsPage() {
                         <td className="px-3 py-2"><span className={`rounded-md border px-2 py-0.5 text-xs font-bold ${typeBadgeClass(item.achievement_type)}`}>{item.achievement_type || '文档'}</span></td>
                         <td className="max-w-[240px] px-3 py-2 text-slate-600">
                           <p className="truncate">{taskName(tasks, item.related_task_id)}</p>
-                          <p className="text-xs text-slate-400">关键任务：{keyTaskLabelForAchievement(item)}</p>
+                          <p className="text-xs text-slate-400">关键任务：{keyTaskLabelForAchievement(item, subtaskById)}</p>
                         </td>
                         <td className="px-3 py-2"><span className={`rounded-full border px-2 py-0.5 text-xs font-black ${source === 'AI确认入库' ? 'border-purple-100 bg-purple-50 text-purple-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>{source}</span></td>
                         <td className="px-3 py-2 text-slate-600">{item.owner || '—'}</td>
@@ -608,7 +631,7 @@ export function AchievementsPage() {
                     <Info label="所属项目" value={currentProject?.name || selected.special_project || '—'} />
                     <Info label="来源" value={sourceLabel(selected)} />
                     <Info label="关联重点工作" value={selectedTaskName} span />
-                    <Info label="关联关键任务" value={keyTaskLabelForAchievement(selected)} span />
+                    <Info label="关联关键任务" value={keyTaskLabelForAchievement(selected, subtaskById)} span />
                     <Info label="提交人" value={selected.owner || '—'} />
                     <Info label="确认/入库人" value={selected.confirmed_by || selected.owner || '—'} />
                     <div className="col-span-2">
@@ -665,10 +688,10 @@ export function AchievementsPage() {
                       <option value="">{!registerForm.project_id ? '请先选择项目' : tasksLoading ? '加载中...' : '请选择重点工作'}</option>
                       {tasks.map((task) => <option key={task.id} value={task.id}>{task.key_task}</option>)}
                     </FormSelect>
-                    <FormSelect label="关联关键任务" value={registerForm.related_subtask_id ?? ''} onChange={(value) => setRegisterForm((prev) => ({ ...prev, related_subtask_id: value ? Number(value) : null }))} disabled>
-                      <option value="">未指定关键任务</option>
+                    <FormSelect label="关联关键任务" value={registerForm.related_subtask_id ?? ''} onChange={(value) => setRegisterForm((prev) => ({ ...prev, related_subtask_id: value ? Number(value) : null }))} disabled={!registerForm.related_task_id || subtasksLoading}>
+                      <option value="">{!registerForm.related_task_id ? '请先选择重点工作' : subtasksLoading ? '加载中...' : subtasks.length === 0 ? '暂无关键任务' : '未指定关键任务'}</option>
+                      {subtasks.map((st) => <option key={st.id} value={st.id}>{st.title}</option>)}
                     </FormSelect>
-                    <p className="mt-1 text-[11px] text-slate-400">当前成果可先关联到重点工作，关键任务精确绑定将在后续版本支持。</p>
                   </div>
                 </section>
                 <section className="rounded-lg border border-slate-200 bg-white p-4">

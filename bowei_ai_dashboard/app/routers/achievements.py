@@ -99,6 +99,8 @@ def create_achievement(
     require_project_owner_or_admin(current_user, project_id, db)
     require_project_not_archived(project_id, db)
 
+    crud.validate_subtask_link(db, project_id, payload.related_task_id, payload.related_subtask_id)
+
     data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
     row = models.Achievement(**data)
     row.source_type = ST.normalize(payload.source_type or "人工录入")
@@ -158,6 +160,9 @@ def update_achievement(
         require_project_owner_or_admin(current_user, project_id, db)
 
     require_project_not_archived(project_id, db)
+
+    crud.validate_subtask_link(db, project_id, payload.related_task_id if payload.related_task_id is not None else row.related_task_id, payload.related_subtask_id)
+
     before = crud.to_dict(row)
     update_data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
     if "source_type" in update_data:

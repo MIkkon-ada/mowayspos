@@ -15,6 +15,7 @@ export type AchievementPayload = {
   name: string
   achievement_type?: string
   related_task_id?: number | null
+  related_subtask_id?: number | null
   owner?: string
   version?: string
   file_link?: string

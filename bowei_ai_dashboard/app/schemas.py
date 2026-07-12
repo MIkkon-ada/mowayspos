@@ -101,6 +101,7 @@ class AchievementPayload(BaseModel):
     achievement_type: str = Field("方案", max_length=40)
     special_project: str = Field("", max_length=80)
     related_task_id: int | None = None
+    related_subtask_id: int | None = None
     owner: str = Field("", max_length=50)
     version: str = Field("V0.1", max_length=30)
     file_link: str = ""
@@ -122,6 +123,7 @@ class IssuePayload(BaseModel):
     expected_resolve_time: str = Field("", max_length=20)
     resolution: str = ""
     related_task_id: int | None = None
+    related_subtask_id: int | None = None
     special_project: str = Field("", max_length=80)
     source_type: str = Field("人工录入", max_length=40)
 

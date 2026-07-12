@@ -2,10 +2,48 @@ import json
 from datetime import datetime
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from . import models
 from .services.project_resolution import resolve_project_context
+
+
+def validate_subtask_link(
+    db: Session,
+    project_id: int | None,
+    related_task_id: int | None,
+    related_subtask_id: int | None,
+) -> None:
+    """校验 project_id / related_task_id / related_subtask_id 一致性，防止跨项目错配。
+
+    规则：
+    1. related_subtask_id 为空 → 直接通过。
+    2. related_subtask_id 不为空但 related_task_id 为空 → 422。
+    3. SubTask 必须存在且未被删除。
+    4. SubTask.task_id 必须等于 related_task_id。
+    5. Task 必须存在且未被删除。
+    6. Task.project_id 必须等于 project_id（project_id 为 None 时跳过）。
+    """
+    if related_subtask_id is None:
+        return
+
+    if related_task_id is None:
+        raise HTTPException(422, "关联关键任务时必须同时关联重点工作。")
+
+    subtask = db.get(models.SubTask, related_subtask_id)
+    if not subtask or bool(getattr(subtask, "is_deleted", False)):
+        raise HTTPException(422, "关键任务不存在或已删除。")
+
+    if subtask.task_id != related_task_id:
+        raise HTTPException(422, "关键任务不属于所选重点工作。")
+
+    task = db.get(models.Task, related_task_id)
+    if not task or bool(getattr(task, "is_deleted", False)):
+        raise HTTPException(422, "重点工作不存在或已删除。")
+
+    if project_id is not None and task.project_id != project_id:
+        raise HTTPException(422, "重点工作不属于当前项目。")
 
 
 def to_dict(obj):

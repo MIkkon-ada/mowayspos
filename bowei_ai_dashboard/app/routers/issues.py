@@ -187,6 +187,8 @@ def create_issue(
     if normalized_type == IT.TYPE_DECISION and not can_view_issue_decisions(context):
         raise HTTPException(403, "permission denied")
 
+    crud.validate_subtask_link(db, project_id, payload.related_task_id, payload.related_subtask_id)
+
     data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
     row = models.Issue(**data)
     row.issue_type = _storage_issue_type(normalized_type)
@@ -293,6 +295,9 @@ def update_issue(
         raise HTTPException(403, "permission denied")
 
     require_project_not_archived(project_id, db)
+
+    crud.validate_subtask_link(db, project_id, payload.related_task_id if payload.related_task_id is not None else row.related_task_id, payload.related_subtask_id)
+
     before = crud.to_dict(row)
     update_data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
     if "issue_type" in update_data and update_data["issue_type"]:

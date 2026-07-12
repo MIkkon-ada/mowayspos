@@ -51,15 +51,15 @@ def test_achievement_page_no_technical_disclaimers_in_ui():
         assert forbidden not in source, f"不应出现技术文案: {forbidden}"
 
 
-def test_achievement_page_does_not_submit_related_subtask_id():
+def test_achievement_page_submits_related_subtask_id():
     source = _frontend_source("pages/AchievementsPage.tsx")
 
-    # createAchievement 调用不应该传 related_subtask_id
+    # createAchievement 调用应传 related_subtask_id（PR2 启用写入）
     import re
     call = re.search(r"createAchievement\(\{[^}]+\}\)", source, re.DOTALL)
     assert call is not None, "应能找到 createAchievement 调用"
-    assert "related_subtask_id" not in call.group(), (
-        "createAchievement payload 不应包含 related_subtask_id"
+    assert "related_subtask_id" in call.group(), (
+        "createAchievement payload 应包含 related_subtask_id（PR2 启用写入）"
     )
 
 
@@ -134,14 +134,14 @@ def test_issue_page_no_technical_disclaimers_in_ui():
         assert forbidden not in source, f"不应出现技术文案: {forbidden}"
 
 
-def test_issue_page_does_not_submit_related_subtask_id():
+def test_issue_page_submits_related_subtask_id():
     source = _frontend_source("pages/IssuesPage.tsx")
 
     import re
     call = re.search(r"createIssue\(\{[^}]+\}\)", source, re.DOTALL)
     assert call is not None, "应能找到 createIssue 调用"
-    assert "related_subtask_id" not in call.group(), (
-        "createIssue payload 不应包含 related_subtask_id"
+    assert "related_subtask_id" in call.group(), (
+        "createIssue payload 应包含 related_subtask_id（PR2 启用写入）"
     )
 
 

@@ -112,18 +112,18 @@ class TestIssueModel:
 
 
 class TestSchemasDoNotExposeRelatedSubtaskIdInPayload:
-    """本轮不启用 related_subtask_id 写入 — Payload 不含该字段。"""
+    """PR2 启用 Payload 写入 — Payload 应包含 related_subtask_id（可选）。"""
 
-    def test_achievement_payload_lacks_related_subtask_id(self):
+    def test_achievement_payload_has_related_subtask_id(self):
         fields = schemas.AchievementPayload.model_fields
-        assert "related_subtask_id" not in fields, (
-            "AchievementPayload 不应包含 related_subtask_id（本轮只读返回）"
+        assert "related_subtask_id" in fields, (
+            "AchievementPayload 应包含 related_subtask_id（PR2 启用写入）"
         )
 
-    def test_issue_payload_lacks_related_subtask_id(self):
+    def test_issue_payload_has_related_subtask_id(self):
         fields = schemas.IssuePayload.model_fields
-        assert "related_subtask_id" not in fields, (
-            "IssuePayload 不应包含 related_subtask_id（本轮只读返回）"
+        assert "related_subtask_id" in fields, (
+            "IssuePayload 应包含 related_subtask_id（PR2 启用写入）"
         )
 
 
@@ -217,23 +217,21 @@ class TestFrontendTypes:
             "frontend/src/api/updates.ts UpdateDetail 缺少 related_subtask_id"
         )
 
-    def test_create_achievement_payload_no_related_subtask_id(self):
+    def test_create_achievement_payload_has_related_subtask_id(self):
         path = FRONTEND_ROOT / "api" / "achievements.ts"
         content = path.read_text(encoding="utf-8")
-        # AchievementPayload 类型定义中不应包含 related_subtask_id
+        # AchievementPayload 类型定义中应包含 related_subtask_id（PR2 启用写入）
         payload_section = content.split("export type AchievementPayload")[1].split("export")[0]
-        assert "related_subtask_id" not in payload_section, (
-            "AchievementPayload 不应提交 related_subtask_id"
+        assert "related_subtask_id" in payload_section, (
+            "AchievementPayload 应包含 related_subtask_id（PR2 启用写入）"
         )
 
-    def test_create_issue_payload_no_related_subtask_id(self):
+    def test_create_issue_payload_has_related_subtask_id(self):
         path = FRONTEND_ROOT / "api" / "issues.ts"
         content = path.read_text(encoding="utf-8")
-        # createIssue payload 定义中不应包含 related_subtask_id
-        payload_section = content.split("export function createIssue")[0]
-        # 往上找 payload 类型，这是匿名 inline 类型
-        assert "related_subtask_id" not in payload_section, (
-            "createIssue payload 不应提交 related_subtask_id"
+        # createIssue payload 定义中应包含 related_subtask_id（PR2 启用写入）
+        assert "related_subtask_id" in content, (
+            "createIssue payload 应包含 related_subtask_id（PR2 启用写入）"
         )
 
 

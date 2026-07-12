@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createIssue, closeIssue, resolveIssue, assignIssueHelper, requestIssueCeo, fetchIssues, updateIssueStatus } from '../api/issues'
 import { fetchTasks } from '../api/tasks'
+import { fetchSubTasks, fetchSubtasksByProject } from '../api/subtasks'
 import { useProject } from '../context/ProjectContext'
 import { toast } from '../utils/toast'
 import { fmtDate } from '../utils/time'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
 import { getProjectDisplayName } from '../domain/projectDisplay'
-import type { IssueItem, Project, TaskItem } from '../types'
+import type { IssueItem, Project, SubTaskItem, TaskItem } from '../types'
 
 const PRIORITY_STYLE: Record<string, string> = {
   '高': 'bg-red-100 text-red-700 border-red-200',
@@ -70,7 +71,11 @@ function issueSourceLabel(item: IssueItem): string {
   return '手动新增'
 }
 
-function keyTaskLabelForIssue(item: IssueItem): string {
+function keyTaskLabelForIssue(item: IssueItem, subtaskById: Record<number, SubTaskItem>): string {
+  // 优先通过 related_subtask_id 在本地 map 中查找名称
+  if (item.related_subtask_id && subtaskById[item.related_subtask_id]) {
+    return subtaskById[item.related_subtask_id].title
+  }
   const candidate = (
     item.related_subtask_title
     ?? item.related_subtask_name
@@ -99,6 +104,9 @@ export function IssuesPage() {
   // tasks
   const [tasks, setTasks] = useState<TaskItem[]>([])
   const [tasksLoading, setTasksLoading] = useState(false)
+
+  // subtasks
+  const [allSubtasks, setAllSubtasks] = useState<SubTaskItem[]>([])
 
   // filters
   const [filterType, setFilterType] = useState('全部')
@@ -161,6 +169,22 @@ export function IssuesPage() {
       .finally(() => { if (!cancelled) setTasksLoading(false) })
     return () => { cancelled = true }
   }, [projectId])
+
+  // --- Load all subtasks for the project ---
+  useEffect(() => {
+    if (!projectId) { setAllSubtasks([]); return }
+    let cancelled = false
+    fetchSubtasksByProject(projectId)
+      .then((rows) => { if (!cancelled) setAllSubtasks(rows.filter((row) => !row.is_deleted)) })
+      .catch(() => { if (!cancelled) setAllSubtasks([]) })
+    return () => { cancelled = true }
+  }, [projectId])
+
+  const subtaskById = useMemo(() => {
+    const map: Record<number, SubTaskItem> = {}
+    for (const st of allSubtasks) map[st.id] = st
+    return map
+  }, [allSubtasks])
 
   // --- Derived data ---
   const filteredIssues = useMemo(() => {
@@ -491,7 +515,7 @@ export function IssuesPage() {
                                 </span>
                               </p>
                               <p>关联重点工作：{taskNameForId(tasks, item.related_task_id as number | null | undefined)}</p>
-                              <p className="text-slate-400">关键任务：{keyTaskLabelForIssue(item)}</p>
+                              <p className="text-slate-400">关键任务：{keyTaskLabelForIssue(item, subtaskById)}</p>
                             </div>
                           </div>
                         )
@@ -533,7 +557,7 @@ export function IssuesPage() {
                 <DetailRow label="来源" value={issueSourceLabel(selected)} />
                 <DetailRow label="问题类型" value={selectedType || '—'} />
                 <DetailRow label="关联重点工作" value={taskNameForId(tasks, selected.related_task_id as number | null | undefined)} />
-                <DetailRow label="关联关键任务" value={keyTaskLabelForIssue(selected)} />
+                <DetailRow label="关联关键任务" value={keyTaskLabelForIssue(selected, subtaskById)} />
                 <DetailRow label="上报人" value={selected.reporter || '—'} />
                 <DetailRow label="负责人" value={selected.owner || '—'} />
                 <DetailRow label="协助人" value={selected.helper || '—'} />
@@ -744,11 +768,25 @@ function AddIssueModal({ projects, currentProjectId, currentUser, tasks, tasksLo
     priority: '中',
     expected_resolve_time: '',
     related_task_id: null as number | null,
+    related_subtask_id: null as number | null,
   })
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+  const [subtasks, setSubtasks] = useState<SubTaskItem[]>([])
+  const [subtasksLoading, setSubtasksLoading] = useState(false)
 
   function setField(k: string, v: unknown) { setForm((prev) => ({ ...prev, [k]: v })) }
+
+  useEffect(() => {
+    if (!form.related_task_id) { setSubtasks([]); return }
+    let cancelled = false
+    setSubtasksLoading(true)
+    fetchSubTasks(form.related_task_id)
+      .then((rows) => { if (!cancelled) setSubtasks(rows.filter((row) => !row.is_deleted)) })
+      .catch(() => { if (!cancelled) setSubtasks([]) })
+      .finally(() => { if (!cancelled) setSubtasksLoading(false) })
+    return () => { cancelled = true }
+  }, [form.related_task_id])
 
   async function handleSubmit() {
     if (!form.description.trim()) { setErr('请填写问题描述'); return }
@@ -756,7 +794,7 @@ function AddIssueModal({ projects, currentProjectId, currentUser, tasks, tasksLo
     if (projectArchived) { setErr('项目已归档，不可新增问题'); return }
     setSaving(true); setErr('')
     try {
-      const item = await createIssue({ project_id: form.project_id, issue_type: form.issue_type, description: form.description.trim(), owner: form.owner, helper: form.helper, priority: form.priority, expected_resolve_time: form.expected_resolve_time, related_task_id: form.related_task_id })
+      const item = await createIssue({ project_id: form.project_id, issue_type: form.issue_type, description: form.description.trim(), owner: form.owner, helper: form.helper, priority: form.priority, expected_resolve_time: form.expected_resolve_time, related_task_id: form.related_task_id, related_subtask_id: form.related_subtask_id })
       onCreated(item)
     } catch (e) {
       setErr(e instanceof Error ? e.message : '创建失败，请重试')
@@ -787,7 +825,7 @@ function AddIssueModal({ projects, currentProjectId, currentUser, tasks, tasksLo
             {tasks.length === 0 ? (
               <p className="text-xs text-slate-400 mt-1">暂无重点工作</p>
             ) : (
-              <select value={form.related_task_id ?? ''} onChange={(e) => setField('related_task_id', e.target.value ? Number(e.target.value) : null)} className={inputCls}>
+              <select value={form.related_task_id ?? ''} onChange={(e) => { setField('related_task_id', e.target.value ? Number(e.target.value) : null); setField('related_subtask_id', null) }} className={inputCls}>
                 <option value="">暂未关联</option>
                 {tasks.map((t) => <option key={t.id} value={t.id}>{t.key_task}</option>)}
               </select>
@@ -795,10 +833,10 @@ function AddIssueModal({ projects, currentProjectId, currentUser, tasks, tasksLo
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">关联关键任务</label>
-            <select disabled className={`${inputCls} bg-slate-50 text-slate-400`}>
-              <option>未指定关键任务</option>
+            <select value={form.related_subtask_id ?? ''} onChange={(e) => setField('related_subtask_id', e.target.value ? Number(e.target.value) : null)} disabled={!form.related_task_id || subtasksLoading} className={`${inputCls}${!form.related_task_id ? ' bg-slate-50 text-slate-400' : ''}`}>
+              <option value="">{!form.related_task_id ? '请先选择重点工作' : subtasksLoading ? '加载中...' : subtasks.length === 0 ? '暂无关键任务' : '未指定关键任务'}</option>
+              {subtasks.map((st) => <option key={st.id} value={st.id}>{st.title}</option>)}
             </select>
-            <p className="mt-1 text-[11px] text-slate-400">当前问题可先关联到重点工作，关键任务精确绑定将在后续版本支持。</p>
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">问题类型</label>

@@ -113,9 +113,15 @@ export function getProjectScopedNavigationDestination(
   currentProjectId: number | null,
   projects: ProjectRef[],
 ): string {
+  if (page === 'voice' && currentProjectId !== null) {
+    return `/work/submit?projectId=${currentProjectId}`
+  }
+  if (page === 'voice') {
+    return '/work/submit'
+  }
+
   const workspacePages: Record<string, string> = {
     dashboard: '/home/dashboard',
-    voice: '/work/submit',
     confirm: '/work/confirmations',
     confirmations: '/work/confirmations',
     table: '/work/tasks',

@@ -15,6 +15,7 @@ export function VoiceUpdateSubmitPanel({
   onResetExtractionState,
   onSubmitFinal,
   projectArchived = false,
+  projectSubmitBlockedReason = null,
 }: VoiceUpdateSubmitPanelProps) {
   return (
     <div className="bg-white rounded-2xl border p-5 flex-shrink-0" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
@@ -34,9 +35,14 @@ export function VoiceUpdateSubmitPanel({
       <div className="mb-4 rounded-xl border px-3 py-2 text-xs flex items-center justify-between gap-3" style={{ borderColor: '#E2E8F0', background: '#F8FAFC' }}>
         <span className="text-slate-500 font-semibold">所属项目</span>
         <span className="font-semibold text-slate-700">
-          {isProjectSelected ? (selectedProjectName || '已选择') : 'AI 自动识别'}
+          {isProjectSelected ? (selectedProjectName || '已选择') : '请选择项目'}
         </span>
       </div>
+      {projectSubmitBlockedReason && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+          {projectSubmitBlockedReason}
+        </div>
+      )}
 
       {phase === 'submitted' ? (
         <div className="space-y-3">
@@ -77,7 +83,8 @@ export function VoiceUpdateSubmitPanel({
               </button>
               <button
                 onClick={onExtract}
-                disabled={phase === 'extracting' || !text.trim()}
+                disabled={phase === 'extracting' || !text.trim() || Boolean(projectSubmitBlockedReason)}
+                title={projectSubmitBlockedReason ?? undefined}
                 className="cursor-pointer flex-1 py-2.5 rounded-xl text-white text-sm font-bold transition-all hover:opacity-90 disabled:opacity-50"
                 style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)', boxShadow: '0 2px 8px rgba(3,105,161,0.3)' }}
               >
@@ -108,9 +115,11 @@ export function VoiceUpdateSubmitPanel({
                   return (
                     <button
                       onClick={onSubmitFinal}
-                      disabled={phase === 'submitting' || hasMissingSuggest || blockedByArchived}
+                      disabled={phase === 'submitting' || hasMissingSuggest || Boolean(projectSubmitBlockedReason)}
                       title={
-                        blockedByArchived
+                        projectSubmitBlockedReason
+                          ? projectSubmitBlockedReason
+                          : blockedByArchived
                           ? '项目已归档，不可提交汇报。'
                           : hasMissingSuggest
                             ? '请先为所有建议新关键任务选择归属重点工作'
@@ -124,6 +133,8 @@ export function VoiceUpdateSubmitPanel({
                     >
                       {phase === 'submitting'
                         ? '提交中...'
+                        : projectSubmitBlockedReason
+                            ? projectSubmitBlockedReason.includes('选择') ? '请先选择所属项目' : '项目未进入执行阶段'
                         : hasMissingSuggest
                             ? '请先选择归属重点工作'
                             : '提交给负责人'}

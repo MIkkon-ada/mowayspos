@@ -714,6 +714,7 @@ function AddIssueModal({ projects, currentProjectId, currentUser, tasks, tasksLo
     helper: '',
     priority: '中',
     expected_resolve_time: '',
+    related_task_id: null as number | null,
   })
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -726,7 +727,7 @@ function AddIssueModal({ projects, currentProjectId, currentUser, tasks, tasksLo
     if (projectArchived) { setErr('项目已归档，不可新增问题'); return }
     setSaving(true); setErr('')
     try {
-      const item = await createIssue({ project_id: form.project_id, issue_type: form.issue_type, description: form.description.trim(), owner: form.owner, priority: form.priority, expected_resolve_time: form.expected_resolve_time })
+      const item = await createIssue({ project_id: form.project_id, issue_type: form.issue_type, description: form.description.trim(), owner: form.owner, helper: form.helper, priority: form.priority, expected_resolve_time: form.expected_resolve_time, related_task_id: form.related_task_id })
       onCreated(item)
     } catch (e) {
       setErr(e instanceof Error ? e.message : '创建失败，请重试')
@@ -753,15 +754,20 @@ function AddIssueModal({ projects, currentProjectId, currentUser, tasks, tasksLo
             </select>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5">关联重点工作 <span className="text-red-400">*</span></label>
-            <select disabled className={`${inputCls} bg-slate-50 text-slate-400`}>
-              <option>暂未关联（当前版本暂不落库）</option>
-            </select>
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5">关联重点工作</label>
+            {tasks.length === 0 ? (
+              <p className="text-xs text-slate-400 mt-1">暂无重点工作</p>
+            ) : (
+              <select value={form.related_task_id ?? ''} onChange={(e) => setField('related_task_id', e.target.value ? Number(e.target.value) : null)} className={inputCls}>
+                <option value="">暂未关联</option>
+                {tasks.map((t) => <option key={t.id} value={t.id}>{t.key_task}</option>)}
+              </select>
+            )}
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">关联关键任务</label>
             <select disabled className={`${inputCls} bg-slate-50 text-slate-400`}>
-              <option>暂未关联（暂未接入入库字段）</option>
+              <option>暂未关联</option>
             </select>
           </div>
           <div>

@@ -155,3 +155,36 @@ def test_no_global_issues_on_kanban(issues_source: str):
         "不应在项目看板中使用 fetchIssues() 无参调用，"
         "必须传入 projectId 获取项目级问题"
     )
+
+
+# ── 修复验证：helper 和 related_task_id 已提交 ──────────────────
+
+def test_create_issue_submits_helper(issues_source: str):
+    """createIssue 提交应包含 helper"""
+    # createIssue 调用中应出现 helper:
+    assert re.search(r"createIssue\(\s*\{[^}]*helper:", issues_source), (
+        "createIssue 调用必须传入 helper 字段"
+    )
+
+
+def test_create_issue_submits_related_task_id(issues_source: str):
+    """createIssue 提交应包含 related_task_id"""
+    assert re.search(r"createIssue\(\s*\{[^}]*related_task_id:", issues_source), (
+        "createIssue 调用必须传入 related_task_id 字段"
+    )
+
+
+def test_add_modal_contains_related_key_task(issues_source: str):
+    """新增问题弹窗包含 '关联重点工作'"""
+    # AddIssueModal 区域应包含关联重点工作标签
+    assert "关联重点工作" in issues_source
+
+
+def test_no_version_not_supported(issues_source: str):
+    """不应包含 '当前版本暂不落库'"""
+    assert "当前版本暂不落库" not in issues_source
+
+
+def test_no_field_not_connected(issues_source: str):
+    """不应包含 '暂未接入入库字段'"""
+    assert "暂未接入入库字段" not in issues_source

@@ -15,8 +15,10 @@ export function createIssue(payload: {
   issue_type?: string
   description: string
   owner?: string
+  helper?: string
   priority?: string
   expected_resolve_time?: string
+  related_task_id?: number | null
 }): Promise<IssueItem> {
   return apiPost<IssueItem>('/api/issues', payload)
 }

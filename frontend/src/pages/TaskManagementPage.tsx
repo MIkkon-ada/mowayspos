@@ -6,7 +6,7 @@ import type { TaskLog, TaskPayload, TaskUpdate, TaskDraft } from '../api/tasks'
 import { fetchSubTasks, createSubTask, patchSubTaskStatus, isPendingConfirmation, updateSubTask, deleteSubTask, restoreSubTask, fetchSubtaskDetail } from '../api/subtasks'
 import type { SubTaskDetail, SubTaskPayload } from '../api/subtasks'
 import { createUpdate } from '../api/updates'
-import { apiGet } from '../api/client'
+import { ApiError, apiGet } from '../api/client'
 import { getProjectMembers } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } from '../domain/taskPermission'
@@ -118,6 +118,11 @@ function parseProgressTimeline(notes?: string | null): { date: string; text: str
 }
 
 const AVATAR_COLORS = ['#2563EB', '#059669', '#8B5CF6', '#0891B2', '#D97706', '#F59E0B', '#EC4899', '#6366F1']
+
+const TASK_PROJECT_CONTEXT_REQUIRED_MESSAGE = '请先选择项目后查看工作推进表'
+const TASK_PROJECT_CONTEXT_EMPTY_MESSAGE = '当前没有可查看的项目工作推进表'
+const TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE = '当前入口缺少项目上下文，请从项目进入工作推进表，或先选择项目。'
+const TASK_PROJECT_PERMISSION_DENIED_MESSAGE = '你没有权限查看该项目工作推进表。'
 function avatarColor(name: string) {
   let h = 0
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff
@@ -237,6 +242,7 @@ export function TaskManagementPage() {
   const [showDeleted, setShowDeleted] = useState(false)
   // viewProjectId：null=全部任务，非null=特定项目
   const [viewProjectId, setViewProjectId] = useState<number | null>(null)
+  const [autoSelectedTaskProjectId, setAutoSelectedTaskProjectId] = useState<number | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [viewMode, setViewMode] = useState<'execution' | 'plan'>('execution')
   const [planTableLoading, setPlanTableLoading] = useState(false)
@@ -245,11 +251,18 @@ export function TaskManagementPage() {
   const [progressSubmitState, setProgressSubmitState] = useState<'idle' | 'submitting' | 'done'>('idle')
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null)
   // 专项下拉选项来自全部可见项目，而非已加载任务
+  const availableTaskProjects = useMemo(
+    () => projects.filter((project) => isProjectActive(project)),
+    [projects],
+  )
+  const effectiveTaskProjectId = viewProjectId ?? currentProjectId ?? autoSelectedTaskProjectId
+  const requiresProjectSelection = effectiveTaskProjectId == null && availableTaskProjects.length > 1
+  const hasNoTaskProjects = effectiveTaskProjectId == null && availableTaskProjects.length === 0
   const projectOptions = projects.map((p) => p.name)
   const ownerNames = [...new Set(projects.flatMap((p) => p.owners ?? []))]
-  const focusedProject = projects.find((p) => p.id === (viewProjectId ?? currentProjectId)) ?? projects[0] ?? null
+  const focusedProject = projects.find((p) => p.id === effectiveTaskProjectId) ?? projects[0] ?? null
   const projectArchived = isProjectArchived(focusedProject)
-  const trashProject = projects.find((p) => p.id === (viewProjectId ?? currentProjectId)) ?? null
+  const trashProject = projects.find((p) => p.id === effectiveTaskProjectId) ?? null
   const canManageTrash = currentUser?.is_tech_admin || projects.some((p) =>
     canManageProjectTrash({ isTechAdmin: false, projectRoles: p.user_roles ?? [] }),
   )
@@ -271,13 +284,25 @@ export function TaskManagementPage() {
   }, [searchParams])
 
   useEffect(() => {
+    if (viewProjectId != null || currentProjectId != null) {
+      setAutoSelectedTaskProjectId(null)
+      return
+    }
+    if (availableTaskProjects.length === 1) {
+      setAutoSelectedTaskProjectId(availableTaskProjects[0].id)
+      return
+    }
+    setAutoSelectedTaskProjectId(null)
+  }, [viewProjectId, currentProjectId, availableTaskProjects])
+
+  useEffect(() => {
     setSelectedTask(null)
     setExpandedTasks(new Set())
     setTaskLogs([])
     setTaskUpdates([])
     setSubTasks([])
     setTrashedSubTasks([])
-  }, [viewProjectId])
+  }, [effectiveTaskProjectId])
 
   useEffect(() => {
     if (showDeleted && !canManageTrash) {
@@ -293,12 +318,16 @@ export function TaskManagementPage() {
       setShowDeleted(false)
       return () => { cancelled = true }
     }
+    if (effectiveTaskProjectId == null) {
+      setTasks([])
+      setLoading(false)
+      return () => { cancelled = true }
+    }
     setLoading(true)
-    // 非全局权限用户（owner/project_ceo 等）无法走「全部」视图（后端 _require_global_read_scope 会 403），
-    // 默认回退到当前选中项目，避免页面加载失败。
-    const pid = showDeleted ? (viewProjectId ?? (currentUser?.is_tech_admin ? null : currentProjectId)) : (viewProjectId ?? ((currentUser?.is_tech_admin || currentUser?.is_ceo) ? null : currentProjectId))
+    // 工作推进表是项目级页面：没有明确项目上下文时不请求全局任务列表，避免普通项目角色触发后端全局读权限 403。
+    const taskProjectId = effectiveTaskProjectId
     const openTaskId = searchParams.get('open_task')
-    fetchTasks(pid, showDeleted)
+    fetchTasks(taskProjectId, showDeleted)
       .then((d) => {
         if (cancelled) return
         const loaded = Array.isArray(d) ? d : []
@@ -312,19 +341,37 @@ export function TaskManagementPage() {
           }
         }
       })
-      .catch(() => { if (!cancelled) alert('任务列表加载失败，请刷新重试') })
+      .catch((err) => {
+        if (cancelled) return
+        if (err instanceof ApiError && err.status === 403) {
+          alert(TASK_PROJECT_PERMISSION_DENIED_MESSAGE)
+          return
+        }
+        alert(TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE)
+      })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [viewProjectId, currentProjectId, showDeleted, canManageTrash, searchParams])
+  }, [effectiveTaskProjectId, showDeleted, canManageTrash, searchParams])
 
   // 专项下拉选项来自全部可见项目，而非已加载任务
 
   function loadTasks(nextDeleted = showDeleted) {
     const effectiveDeleted = nextDeleted && canManageTrash
-    const pid = effectiveDeleted ? (viewProjectId ?? (currentUser?.is_tech_admin ? null : currentProjectId)) : (viewProjectId ?? ((currentUser?.is_tech_admin || currentUser?.is_ceo) ? null : currentProjectId))
-    return fetchTasks(pid, effectiveDeleted)
+    const taskProjectId = effectiveTaskProjectId
+    if (taskProjectId == null) {
+      setTasks([])
+      alert(TASK_PROJECT_CONTEXT_REQUIRED_MESSAGE)
+      return Promise.resolve()
+    }
+    return fetchTasks(taskProjectId, effectiveDeleted)
       .then((d) => setTasks(Array.isArray(d) ? d : []))
-      .catch(() => alert('任务列表刷新失败，请重试'))
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 403) {
+          alert(TASK_PROJECT_PERMISSION_DENIED_MESSAGE)
+          return
+        }
+        alert(TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE)
+      })
   }
 
   function loadTaskSubTaskBuckets(taskId: number) {
@@ -593,8 +640,9 @@ export function TaskManagementPage() {
   // 关键任务变更后由后端汇总重点工作状态，前端只刷新最新事实。
   function refreshParentTask(taskId: number) {
     const effectiveDeleted = showDeleted && canManageTrash
-    const pid = effectiveDeleted ? (viewProjectId ?? currentProjectId) : viewProjectId
-    fetchTasks(pid, effectiveDeleted).then((rows) => {
+    const taskProjectId = effectiveTaskProjectId
+    if (taskProjectId == null) return
+    fetchTasks(taskProjectId, effectiveDeleted).then((rows) => {
       const safeRows = Array.isArray(rows) ? rows : []
       setTasks(safeRows)
       const fresh = safeRows.find((t) => t.id === taskId)
@@ -784,12 +832,15 @@ function handleFormSave(payload: TaskPayload) {
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-slate-500 font-medium">专项</span>
             <select
-              value={viewProjectId ?? ''}
-              onChange={(e) => handleProjectFilter(e.target.value)}
+              value={String(effectiveTaskProjectId ?? '')}
+              onChange={(event) => {
+                handleProjectFilter(event.target.value)
+                setAutoSelectedTaskProjectId(null)
+              }}
               className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none"
             >
-              <option value="">全部专项</option>
-              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              <option value="">请选择项目</option>
+              {availableTaskProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
           <div className="flex items-center gap-1.5">
@@ -911,7 +962,21 @@ function handleFormSave(payload: TaskPayload) {
             paddingRight: 20,
           }}
         >
-          {viewMode === 'plan' ? (
+          {hasNoTaskProjects ? (
+            <div className="h-40 flex items-center justify-center">
+              <div className="text-center text-slate-400">
+                <div className="text-sm font-semibold">{TASK_PROJECT_CONTEXT_EMPTY_MESSAGE}</div>
+                <div className="text-xs mt-1">可在项目进入执行阶段后查看工作推进表。</div>
+              </div>
+            </div>
+          ) : requiresProjectSelection ? (
+            <div className="h-40 flex items-center justify-center">
+              <div className="text-center text-slate-500">
+                <div className="text-sm font-semibold">{TASK_PROJECT_CONTEXT_REQUIRED_MESSAGE}</div>
+                <div className="text-xs mt-1">请在顶部项目下拉框中选择一个项目。</div>
+              </div>
+            </div>
+          ) : viewMode === 'plan' ? (
             <PlanTableView
               project={focusedProject}
               tasks={filtered}

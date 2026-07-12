@@ -45,6 +45,16 @@ def test_dashboard_filter_keeps_dashboard_route_and_limits_global_option():
     assert "<option value=\"\">全部专项</option>" not in source
 
 
+def test_dashboard_export_is_guarded_by_project_scope_for_project_roles():
+    source = _frontend_source("pages/DashboardPage.tsx")
+
+    assert "请先选择项目后导出周报" in source
+    assert "if (!canViewGlobalDashboard && scopeId === null)" in source
+    guard_index = source.index("if (!canViewGlobalDashboard && scopeId === null)")
+    export_index = source.index("await exportWeeklyReport(scopeId, selectedMonth)")
+    assert guard_index < export_index
+
+
 def test_sidebar_dashboard_entry_carries_project_context_for_project_roles():
     source = _frontend_source("components/Sidebar.tsx")
 

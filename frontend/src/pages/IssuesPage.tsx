@@ -19,6 +19,7 @@ const PRIORITY_STYLE: Record<string, string> = {
 const STATUS_STYLE: Record<string, { badge: string; dot: string }> = {
   '待处理': { badge: 'bg-amber-100 text-amber-700 border-amber-200', dot: '#F59E0B' },
   '处理中': { badge: 'bg-blue-100 text-blue-700 border-blue-200', dot: '#3B82F6' },
+  '待协调': { badge: 'bg-orange-100 text-orange-700 border-orange-200', dot: '#F97316' },
   '待决策': { badge: 'bg-purple-100 text-purple-700 border-purple-200', dot: '#7C3AED' },
   '已解决': { badge: 'bg-emerald-100 text-emerald-700 border-emerald-200', dot: '#10B981' },
   '已关闭': { badge: 'bg-slate-200 text-slate-500 border-slate-200', dot: '#94A3B8' },
@@ -31,7 +32,7 @@ const TYPE_STYLE: Record<string, string> = {
   '需决策': 'bg-purple-50 text-purple-700 border-purple-200',
 }
 
-const KANBAN_COLUMNS = ['待处理', '处理中', '待决策', '已解决', '已关闭'] as const
+const KANBAN_COLUMNS = ['待处理', '处理中', '待协调', '待决策', '已解决', '已关闭'] as const
 
 function parseProjectId(searchParams: URLSearchParams): number | null {
   const raw = searchParams.get('projectId')
@@ -212,9 +213,10 @@ export function IssuesPage() {
   const stats = useMemo(() => {
     const pending = issues.filter((i) => i.status === '待处理').length
     const processing = issues.filter((i) => i.status === '处理中').length
+    const coordinating = issues.filter((i) => i.status === '待协调').length
     const decision = issues.filter((i) => i.status === '待决策').length
     const closed = issues.filter((i) => i.status === '已关闭').length
-    return { total: issues.length, pending, processing, decision, closed }
+    return { total: issues.length, pending, processing, coordinating, decision, closed }
   }, [issues])
 
   // --- Reset action state when selection changes ---
@@ -418,11 +420,12 @@ export function IssuesPage() {
         </div>
 
         {/* Stats bar */}
-        <div className="mt-4 grid grid-cols-5 overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="mt-4 grid grid-cols-6 overflow-hidden rounded-lg border border-slate-200 bg-white">
           {[
             ['问题总数', stats.total],
             ['待处理', stats.pending],
             ['处理中', stats.processing],
+            ['待协调', stats.coordinating],
             ['待决策', stats.decision],
             ['已关闭', stats.closed],
           ].map(([label, value]) => (
@@ -471,6 +474,7 @@ export function IssuesPage() {
                 let colBorderClass = 'border-slate-200'
                 if (isColPending) colBorderClass = 'border-amber-200'
                 else if (col === '处理中') colBorderClass = 'border-blue-200'
+                else if (col === '待协调') colBorderClass = 'border-orange-200'
                 else if (col === '待决策') colBorderClass = 'border-purple-200'
                 else if (col === '已解决') colBorderClass = 'border-emerald-200'
 

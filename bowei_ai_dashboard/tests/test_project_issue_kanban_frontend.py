@@ -140,8 +140,9 @@ def test_project_kanban_uses_project_id(issues_source: str):
 def test_kanban_uses_kanban_columns_const(issues_source: str):
     """看板列应通过 KANBAN_COLUMNS 常量驱动"""
     assert "KANBAN_COLUMNS" in issues_source
-    # 验证常量包含了所有 5 列
+    # 验证常量包含了所有 6 列
     assert "'待处理'" in issues_source
+    assert "'待协调'" in issues_source
     assert "'待决策'" in issues_source
     assert "'已关闭'" in issues_source
 
@@ -253,10 +254,11 @@ def test_start_processing_btn_has_onclick(issues_source: str):
     ), "待处理区域的开始处理按钮应绑定 handleStartProcessing"
 
 
-def test_kanban_still_five_columns(issues_source: str):
-    """看板仍包含五列：待处理 / 处理中 / 待决策 / 已解决 / 已关闭"""
+def test_kanban_has_six_columns(issues_source: str):
+    """看板包含六列：待处理 / 处理中 / 待协调 / 待决策 / 已解决 / 已关闭"""
     assert "待处理" in issues_source
     assert "处理中" in issues_source
+    assert "待协调" in issues_source
     assert "待决策" in issues_source
     assert "已解决" in issues_source
     assert "已关闭" in issues_source

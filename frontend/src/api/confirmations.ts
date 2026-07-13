@@ -1,12 +1,17 @@
 import { apiGet, apiPost } from './client'
 import type { ConfirmationItem } from '../types'
 
-// AI 确认中心待办：GET /api/confirmations/pending?project_id=X[&tab=...]
+// AI 确认中心待办：GET /api/confirmations/pending?project_id=X[&tab=...][&include_card_level=true]
 // projectId 可选：企业教练决策中心传 null 表示查全部项目
-export function getPending(projectId: number | null, tab?: string): Promise<ConfirmationItem[]> {
+export function getPending(
+  projectId: number | null,
+  tab?: string,
+  options?: { includeCardLevel?: boolean },
+): Promise<ConfirmationItem[]> {
   const params = new URLSearchParams()
   if (projectId !== null && projectId !== undefined) params.set('project_id', String(projectId))
   if (tab) params.set('tab', tab)
+  if (options?.includeCardLevel) params.set('include_card_level', 'true')
   const query = params.toString() ? `?${params.toString()}` : ''
   return apiGet<ConfirmationItem[]>(`/api/confirmations/pending${query}`)
 }
@@ -60,6 +65,10 @@ export function transferTaskCardCoordinator(id: number, cardIndex: number, note:
 
 export function escalateTaskCardCeo(id: number, cardIndex: number, note: string, operator: string) {
   return apiPost(`/api/confirmations/${id}/cards/${cardIndex}/escalate-ceo`, { note, operator })
+}
+
+export function ceoDecideTaskCard(id: number, cardIndex: number, note: string, operator: string) {
+  return apiPost(`/api/confirmations/${id}/cards/${cardIndex}/ceo-decide`, { note, operator })
 }
 
 export function getConfirmationCounts(): Promise<Record<string, number>> {

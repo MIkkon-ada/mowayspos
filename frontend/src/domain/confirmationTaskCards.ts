@@ -7,6 +7,9 @@ export type ConfirmationTaskCard = {
   status: string
   confirmationStatus: string
   confirmationNote: string
+  ceoNote: string
+  ceoOperator: string
+  ceoDecidedAt: string
   structure: {
     projectName: string
     keyTaskName: string
@@ -268,6 +271,9 @@ export function buildConfirmationTaskCards(
         title: subtaskName !== '-' ? subtaskName : keyTaskName,
         confirmationStatus: text(report.confirmation_status) || 'pending',
         confirmationNote: text(report.confirmation_note),
+        ceoNote: text(report.ceo_note),
+        ceoOperator: text(report.ceo_operator),
+        ceoDecidedAt: text(report.ceo_decided_at),
         status: text(report.status_update) || '进行中',
         structure: {
           projectName,
@@ -287,6 +293,9 @@ export function buildConfirmationTaskCards(
     title: fallbackSubtaskName !== '-' ? fallbackSubtaskName : fallbackKeyTaskName,
     confirmationStatus: text(data.confirmation_status) || 'pending',
     confirmationNote: text(data.confirmation_note),
+    ceoNote: text(data.ceo_note),
+    ceoOperator: text(data.ceo_operator),
+    ceoDecidedAt: text(data.ceo_decided_at),
     status: text(data.status_suggestion) || text(task.status) || '进行中',
     structure: {
       projectName,

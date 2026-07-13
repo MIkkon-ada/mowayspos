@@ -342,5 +342,7 @@ export type ConfirmationItem = {
   reject_reason?: string
   coordinator_note?: string
   ceo_note?: string
+  ceo_decision_scope?: 'submission' | 'card'
+  pending_ceo_card_indices?: number[]
   [key: string]: unknown
 }

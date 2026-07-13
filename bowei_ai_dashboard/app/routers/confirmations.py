@@ -515,6 +515,57 @@ def my_rejected(
     return result
 
 
+def _count_visible_ceo_pending_submissions(
+    context: dict,
+    db: Session,
+) -> int:
+    """统计当前用户可见的企业教练待办 submission 数量。
+
+    查询候选状态：WAITING_CEO_DECISION | PENDING_OWNER_REVIEW。
+    只有当前用户有权看到的才计入，同一 submission 去重。
+
+    权限规则：
+    - tech_admin：可见全部项目
+    - 非 tech_admin：仅可见自己担任 project_ceo 的项目
+    - 纯 company_ceo（can_view_all 但无项目角色）：不可见
+    """
+    is_tech_admin = bool(context.get("is_tech_admin"))
+    cache: dict[int | None, set[str]] | None = None
+    if not is_tech_admin:
+        cache = P.preload_user_project_roles(context, db)
+
+    query_statuses = list(set(SS.WAITING_CEO_DECISION | SS.PENDING_OWNER_REVIEW))
+    rows = (
+        db.query(models.UpdateSubmission)
+        .filter(models.UpdateSubmission.confirm_status.in_(query_statuses))
+        .all()
+    )
+
+    visible_submission_ids: set[int] = set()
+    for row in rows:
+        norm_status = W.submission_status(row)
+        row_project_id = _submission_project_id(db, row)
+
+        # 权限检查
+        if not is_tech_admin:
+            roles = cache.get(row_project_id, set()) if cache else set()
+            if "project_ceo" not in roles:
+                continue
+
+        # 提交级待决策
+        if norm_status in SS.WAITING_CEO_DECISION:
+            visible_submission_ids.add(row.id)
+            continue
+
+        # 卡片级待决策（主状态 PENDING_OWNER_REVIEW 但含 pending_ceo_decision 卡）
+        if norm_status in SS.PENDING_OWNER_REVIEW:
+            data = W.submission_result(row)
+            if _has_pending_ceo_task_cards(data):
+                visible_submission_ids.add(row.id)
+
+    return len(visible_submission_ids)
+
+
 @router.get("/counts")
 def counts(
     current_user: str = Depends(get_current_user_name),
@@ -534,28 +585,32 @@ def counts(
             .all()
         )
         status_counts: dict[str, int] = {(s or ""): c for s, c in raw}
-        return {
+        result = {
             tab: sum(status_counts.get(s, 0) for s in statuses)
             for tab, statuses in TAB_STATUS_MAP.items()
         }
+    else:
+        # ── 普通用户：预加载角色，只拉三列，无额外 SQL ──────────────
+        cache = P.preload_user_project_roles(context, db)
+        sub_rows = db.query(
+            models.UpdateSubmission.project_id,
+            models.UpdateSubmission.submitter,
+            models.UpdateSubmission.confirm_status,
+        ).all()
+        visible_statuses = [
+            r.confirm_status or ""
+            for r in sub_rows
+            if P.can_view_batch(context, r.submitter, r.project_id, cache)
+            and P.role_allows_batch(context, r.submitter, r.project_id, r.confirm_status, cache)
+        ]
+        result = {
+            tab: sum(1 for s in visible_statuses if s in statuses)
+            for tab, statuses in TAB_STATUS_MAP.items()
+        }
 
-    # ── 普通用户：预加载角色，只拉三列，无额外 SQL ──────────────
-    cache = P.preload_user_project_roles(context, db)
-    sub_rows = db.query(
-        models.UpdateSubmission.project_id,
-        models.UpdateSubmission.submitter,
-        models.UpdateSubmission.confirm_status,
-    ).all()
-    visible_statuses = [
-        r.confirm_status or ""
-        for r in sub_rows
-        if P.can_view_batch(context, r.submitter, r.project_id, cache)
-        and P.role_allows_batch(context, r.submitter, r.project_id, r.confirm_status, cache)
-    ]
-    return {
-        tab: sum(1 for s in visible_statuses if s in statuses)
-        for tab, statuses in TAB_STATUS_MAP.items()
-    }
+    # ── ceo_total：使用统一 helper，不依赖 can_view_all 或 result.ceo ──
+    result["ceo_total"] = _count_visible_ceo_pending_submissions(context, db)
+    return result
 
 
 @router.get("/pending")
@@ -574,6 +629,9 @@ def pending(
     # 卡片级扩展：tab=ceo + include_card_level=true 时，也查询主状态为 PENDING_OWNER_REVIEW
     # 但包含 pending_ceo_decision 卡片的记录
     expand_card_level = (tab == "ceo" and include_card_level)
+
+    # 统一 CEO tab 标记：提交级、卡片级、新旧查询均使用一致的 project_ceo 权限
+    is_ceo_tab = tab == "ceo"
 
     effective_project_id = _resolve_pending_project_id(db, project_id, special_project)
     if project_id is None and special_project and effective_project_id is None:
@@ -605,6 +663,14 @@ def pending(
         if effective_project_id is not None and row_project_id != effective_project_id:
             continue
 
+        # ── 统一 CEO tab 项目企业教练权限 ──
+        # tab=ceo 时，提交级 S_WAITING_CEO 和卡片级 pending_ceo_decision 均须
+        # 由该项目 project_ceo 或 tech_admin 可见，不得由 can_view_all 放行
+        if is_ceo_tab and not context.get("is_tech_admin"):
+            roles = cache.get(row_project_id, set())
+            if "project_ceo" not in roles:
+                continue
+
         human = W.submission_result(row)
 
         # 卡片级：仅 tab=ceo 时区分提交级 vs 卡片级
@@ -616,18 +682,10 @@ def pending(
         if not passed_role:
             # 卡片级例外：project_ceo 对主状态非 WAITING_CEO_DECISION 但含待决策卡片的记录也应可见
             if has_card_ceo and not is_submission_ceo:
-                roles = cache.get(row_project_id, set())
-                passed_role = ("project_ceo" in roles) or context.get("is_tech_admin", False)
+                roles2 = cache.get(row_project_id, set())
+                passed_role = ("project_ceo" in roles2) or context.get("is_tech_admin", False)
         if not passed_role:
             continue
-
-        # 卡片级额外权限限制：只有 project_ceo 或 tech_admin 可见
-        # 防止 company_ceo（is_ceo/can_view_all）或 owner 等角色绕过
-        if expand_card_level and has_card_ceo and not is_submission_ceo:
-            if not context.get("is_tech_admin"):
-                roles = cache.get(row_project_id, set())
-                if "project_ceo" not in roles:
-                    continue
 
         # 卡片级模式下只保留提交级或卡片级 CEO 事项
         if expand_card_level:

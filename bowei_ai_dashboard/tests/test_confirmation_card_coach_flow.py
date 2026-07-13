@@ -33,6 +33,7 @@ from app.routers.confirmations import (
     withdraw,
     mark_unrecognized,
     assign,
+    counts,
 )
 from tests.test_execution_submission_to_work_progress_flow import _make_session
 
@@ -86,7 +87,7 @@ def _seed_card_coach_team(db):
     }
 
 
-def _submit(db, team, submitter="member", title="进展更新") -> int:
+def _submit(db, team, submitter="member", title="进展更新", transcript_text=None) -> int:
     """提交一条进展（单卡），返回 submission_id。"""
     import asyncio
     from app.routers.updates import create_update
@@ -109,7 +110,7 @@ def _submit(db, team, submitter="member", title="进展更新") -> int:
         project_id=team["project"].id,
         source_type="任务进展",
         title=title,
-        transcript_text="测试进展",
+        transcript_text=transcript_text or "测试进展",
         submitter=team[submitter].name if submitter in team else submitter,
         human_result=human_result,
     )
@@ -1278,3 +1279,569 @@ class TestNotificationAndLogDB:
         assert after_data.get("card_index") == 0
         assert after_data.get("card_title") == "测试任务卡标题"
         assert after_data.get("note") == "同意该方案"
+
+
+# ════════════════════════════════════════════════════════════════════
+# 二十、counts 端点 ceo_total 测试（精确断言）
+# ════════════════════════════════════════════════════════════════════
+
+def _seed_two_projects_coach_team(db):
+    """创建项目A和项目B，用户 coach 在A是project_ceo，在B不是。"""
+    # Persons
+    owner_p = models.Person(id=101, name="项目负责人", system_role="normal_member", is_active=True)
+    coach_p = models.Person(id=102, name="企业教练", system_role="normal_member", is_active=True)
+    member_p = models.Person(id=103, name="普通成员", system_role="normal_member", is_active=True)
+    coord_p = models.Person(id=104, name="统筹人", system_role="normal_member", is_active=True)
+    tech_p = models.Person(id=105, name="技术管理员", system_role="super_admin", is_active=True)
+    ceo_p = models.Person(id=106, name="公司CEO", system_role="company_ceo", is_active=True)
+    # owner_b 项目B的负责人
+    owner_b_p = models.Person(id=107, name="项目B负责人", system_role="normal_member", is_active=True)
+
+    db.add_all([owner_p, coach_p, member_p, coord_p, tech_p, ceo_p, owner_b_p])
+    db.add_all([
+        models.Account(username="owner", password_hash="x", person_id=owner_p.id, status="active"),
+        models.Account(username="coach", password_hash="x", person_id=coach_p.id, status="active"),
+        models.Account(username="member", password_hash="x", person_id=member_p.id, status="active"),
+        models.Account(username="coordinator", password_hash="x", person_id=coord_p.id, status="active"),
+        models.Account(username="tech_admin", password_hash="x", person_id=tech_p.id, status="active", is_tech_admin=True),
+        models.Account(username="公司CEO", password_hash="x", person_id=ceo_p.id, status="active"),
+        models.Account(username="owner_b", password_hash="x", person_id=owner_b_p.id, status="active"),
+    ])
+    db.flush()
+
+    # 项目A：coach 是 project_ceo
+    project_a = models.Project(id=101, name="项目A", status="active", is_active=True)
+    # 项目B：coach 不是 project_ceo
+    project_b = models.Project(id=102, name="项目B", status="active", is_active=True)
+    db.add_all([project_a, project_b])
+    db.flush()
+
+    db.add_all([
+        models.ProjectMember(project_id=project_a.id, person_id=owner_p.id, person_name_snapshot=owner_p.name, role="owner"),
+        models.ProjectMember(project_id=project_a.id, person_id=coach_p.id, person_name_snapshot=coach_p.name, role="project_ceo"),
+        models.ProjectMember(project_id=project_a.id, person_id=member_p.id, person_name_snapshot=member_p.name, role="member"),
+        models.ProjectMember(project_id=project_a.id, person_id=coord_p.id, person_name_snapshot=coord_p.name, role="coordinator"),
+        # 项目B 只有 owner，coach 不在其中
+        models.ProjectMember(project_id=project_b.id, person_id=owner_b_p.id, person_name_snapshot=owner_b_p.name, role="owner"),
+        models.ProjectMember(project_id=project_b.id, person_id=member_p.id, person_name_snapshot=member_p.name, role="member"),
+    ])
+    db.flush()
+
+    task_a = models.Task(id=101, project_id=project_a.id, key_task="项目A重点工作", special_project="项目A", owner="项目负责人", status="进行中")
+    task_b = models.Task(id=102, project_id=project_b.id, key_task="项目B重点工作", special_project="项目B", owner="项目B负责人", status="进行中")
+    db.add_all([task_a, task_b])
+    db.flush()
+
+    subtask_a = models.SubTask(id=101, task_id=task_a.id, title="项目A关键任务", assignee="普通成员", status="进行中", plan_time="2026-07-01")
+    subtask_b = models.SubTask(id=102, task_id=task_b.id, title="项目B关键任务", assignee="普通成员", status="进行中", plan_time="2026-07-01")
+    db.add_all([subtask_a, subtask_b])
+    db.commit()
+
+    return {
+        "owner": owner_p, "coach": coach_p, "member": member_p,
+        "coordinator": coord_p, "tech_admin": tech_p, "ceo": ceo_p,
+        "owner_b": owner_b_p,
+        "project_a": project_a, "project_b": project_b,
+        "task_a": task_a, "task_b": task_b,
+        "subtask_a": subtask_a, "subtask_b": subtask_b,
+    }
+
+
+def _submit_to_project(db, team, project_key, submitter="member", title="进展更新", transcript_text=None) -> int:
+    """提交到指定项目。"""
+    import asyncio
+    from app.routers.updates import create_update
+
+    proj = team[f"project_{project_key}"]
+    subtask = team[f"subtask_{project_key}"]
+    human_result = {
+        "task_reports": [{
+            "result_type": "subtask_progress",
+            "type": "progress",
+            "matched_subtask_id": subtask.id,
+            "completed": "测试进展",
+            "title": f"{title}",
+            "achievements": [],
+            "subtask_issues": [],
+        }],
+        "special_project": proj.name,
+    }
+    payload = schemas.ExtractRequest(
+        project_id=proj.id,
+        source_type="任务进展",
+        title=title,
+        transcript_text=transcript_text or "测试进展",
+        submitter=team[submitter].name if submitter in team else submitter,
+        human_result=human_result,
+    )
+    result = asyncio.run(create_update(payload, current_user=submitter, db=db))
+    return result["submission"]["id"]
+
+
+class TestCeoTotalCounts:
+    """ceo_total：精确断言版本。"""
+
+    def test_submission_level_ceo_counted_as_1(self):
+        """提交级 S_WAITING_CEO 计入 ceo_total。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_ceo(
+            sid, schemas.WorkflowNoteRequest(note="上报CEO", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="coach", db=db)
+        assert result["ceo_total"] == 1
+
+    def test_card_level_ceo_counted_as_1(self):
+        """卡片级 pending_ceo_decision 计入 ceo_total = 1。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报卡", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="coach", db=db)
+        assert result["ceo_total"] == 1
+
+    def test_two_cards_same_submission_count_as_one(self):
+        """同一 submission 两张待决策卡只计 1。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+
+        row = db.get(models.UpdateSubmission, sid)
+        data = json.loads(row.human_result_json)
+        reports = data["task_reports"]
+        # 两张卡都设为 pending_ceo_decision
+        reports.append({
+            "result_type": "subtask_progress",
+            "type": "progress",
+            "title": "第二张卡",
+            "matched_subtask_id": team["subtask"].id,
+            "completed": "测试2",
+            "confirmation_status": "pending_ceo_decision",
+        })
+        reports[0]["confirmation_status"] = "pending_ceo_decision"
+        row.human_result_json = json.dumps(data, ensure_ascii=False)
+        db.commit()
+
+        result = counts(current_user="coach", db=db)
+        assert result["ceo_total"] == 1
+
+    def test_submission_and_card_level_total_2(self):
+        """一条提交级 + 一条卡片级 = 2。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        # 提交级待办
+        sid1 = _submit(db, team, title="提交级", transcript_text="提交级进展内容")
+        escalate_ceo(
+            sid1, schemas.WorkflowNoteRequest(note="上报CEO", operator="owner"),
+            current_user="owner", db=db,
+        )
+        # 卡片级待办
+        sid2 = _submit(db, team, title="卡片级", transcript_text="卡片级进展内容")
+        escalate_task_card_to_ceo(
+            sid2, 0, schemas.WorkflowNoteRequest(note="上报卡", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="coach", db=db)
+        assert result["ceo_total"] == 2
+
+    # ── 项目边界测试 ──
+
+    def test_coach_only_counts_project_a_not_b(self):
+        """project_ceo 在项目A，不在项目B，两边都有待办 → ceo_total == 1。"""
+        db = _make_session()
+        team = _seed_two_projects_coach_team(db)
+
+        # 项目A发送卡片级待办
+        sid_a = _submit_to_project(db, team, "a", submitter="member", title="项目A卡", transcript_text="项目A卡进展")
+        escalate_task_card_to_ceo(
+            sid_a, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        # 项目B也发送卡片级待办
+        sid_b = _submit_to_project(db, team, "b", submitter="member", title="项目B卡", transcript_text="项目B卡进展")
+        escalate_task_card_to_ceo(
+            sid_b, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+
+        result = counts(current_user="coach", db=db)
+        # coach 只在项目A是 project_ceo，只能看到项目A的 1 条
+        assert result["ceo_total"] == 1
+
+    def test_tech_admin_sees_both_projects(self):
+        """tech_admin 两个项目各一条 → ceo_total == 2。"""
+        db = _make_session()
+        team = _seed_two_projects_coach_team(db)
+
+        sid_a = _submit_to_project(db, team, "a", submitter="member", title="项目A卡", transcript_text="项目A卡进展")
+        escalate_task_card_to_ceo(
+            sid_a, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        sid_b = _submit_to_project(db, team, "b", submitter="member", title="项目B卡", transcript_text="项目B卡进展")
+        escalate_task_card_to_ceo(
+            sid_b, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+
+        result = counts(current_user="tech_admin", db=db)
+        assert result["ceo_total"] == 2
+
+    # ── 无权限角色 ──
+
+    def test_company_ceo_without_project_ceo_zero(self):
+        """纯 company_ceo ceo_total = 0。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="公司CEO", db=db)
+        assert result["ceo_total"] == 0
+
+    def test_owner_ceo_total_zero(self):
+        """owner 的 ceo_total = 0。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="owner", db=db)
+        assert result["ceo_total"] == 0
+
+    def test_coordinator_ceo_total_zero(self):
+        """coordinator 的 ceo_total = 0。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="coordinator", db=db)
+        assert result["ceo_total"] == 0
+
+    # ── 原始 counts.ceo 不变 ──
+
+    def test_original_ceo_unchanged(self):
+        """原 counts.ceo 行为不变。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_ceo(
+            sid, schemas.WorkflowNoteRequest(note="上报CEO", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="coach", db=db)
+        assert result["ceo"] >= 1
+        assert result["ceo_total"] >= result["ceo"]
+
+
+# ════════════════════════════════════════════════════════════════════
+# 二十一、pending CEO tab 项目权限精确测试
+# ════════════════════════════════════════════════════════════════════
+
+class TestPendingCeoTabProjectPermission:
+    """tab=ceo 时 pending 列表使用严格的项目企业教练权限，不得被 can_view_all 放行。"""
+
+    # ── 5.1 project_ceo 仅A：提交级 ──
+
+    def test_project_ceo_submission_level_only_a(self):
+        """project_ceo 仅在项目A，只应返回项目A的提交级待办。"""
+        db = _make_session()
+        team = _seed_two_projects_coach_team(db)
+
+        sid_a = _submit_to_project(db, team, "a", submitter="member", title="项目A提交级", transcript_text="项目A提交级内容")
+        escalate_ceo(
+            sid_a, schemas.WorkflowNoteRequest(note="上报CEO", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        sid_b = _submit_to_project(db, team, "b", submitter="member", title="项目B提交级", transcript_text="项目B提交级内容")
+        escalate_ceo(
+            sid_b, schemas.WorkflowNoteRequest(note="上报CEO", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+
+        assert sid_a != sid_b, "两条提交必须不同（避免去重假通过）"
+
+        result = pending(tab="ceo", include_card_level=False, current_user="coach", db=db)
+        returned_ids = {item["id"] for item in result}
+        assert returned_ids == {sid_a}, f"coach 仅 project_ceo 于项目A，应只看到 {sid_a}，实际 {returned_ids}"
+
+    # ── 5.2 project_ceo 仅A：提交级 + 卡片级 ──
+
+    def test_project_ceo_both_levels_only_a(self):
+        """project_ceo 仅在项目A，提交级+卡片级都应只返回项目A的待办且 scope 正确。"""
+        db = _make_session()
+        team = _seed_two_projects_coach_team(db)
+
+        # 项目A：一条提交级
+        sid_a1 = _submit_to_project(db, team, "a", submitter="member", title="项目A提交级", transcript_text="项目A提交级v1")
+        escalate_ceo(
+            sid_a1, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        # 项目A：一条卡片级
+        sid_a2 = _submit_to_project(db, team, "a", submitter="member", title="项目A卡片级", transcript_text="项目A卡片级v1")
+        escalate_task_card_to_ceo(
+            sid_a2, 0, schemas.WorkflowNoteRequest(note="上报卡", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        # 项目B：一条提交级
+        sid_b1 = _submit_to_project(db, team, "b", submitter="member", title="项目B提交级", transcript_text="项目B提交级v1")
+        escalate_ceo(
+            sid_b1, schemas.WorkflowNoteRequest(note="上报", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+        # 项目B：一条卡片级
+        sid_b2 = _submit_to_project(db, team, "b", submitter="member", title="项目B卡片级", transcript_text="项目B卡片级v1")
+        escalate_task_card_to_ceo(
+            sid_b2, 0, schemas.WorkflowNoteRequest(note="上报卡", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+
+        assert len({sid_a1, sid_a2, sid_b1, sid_b2}) == 4, "四个提交必须不同"
+
+        result = pending(tab="ceo", include_card_level=True, current_user="coach", db=db)
+        returned_ids = {item["id"] for item in result}
+        assert returned_ids == {sid_a1, sid_a2}, (
+            f"coach 仅 project_ceo 于项目A，应看到 {sid_a1}, {sid_a2}，实际 {returned_ids}"
+        )
+
+        # 验证 scope
+        for item in result:
+            if item["id"] == sid_a1:
+                assert item["ceo_decision_scope"] == "submission"
+            elif item["id"] == sid_a2:
+                assert item["ceo_decision_scope"] == "card"
+                assert item["pending_ceo_card_indices"] == [0]
+
+    # ── 5.3 company_ceo + project_ceo 复合角色 ──
+
+    def test_company_ceo_plus_project_ceo_only_sees_a(self):
+        """公司CEO + 项目A project_ceo，提交级和卡片级都应只返回项目A。"""
+        db = _make_session()
+        team = _seed_two_projects_coach_team(db)
+
+        # 把「公司CEO」也加为项目A的 project_ceo（复合角色）
+        db.add(models.ProjectMember(
+            project_id=team["project_a"].id,
+            person_id=team["ceo"].id,
+            person_name_snapshot=team["ceo"].name,
+            role="project_ceo",
+        ))
+        db.commit()
+
+        # 项目A 提交级 + 卡片级
+        sid_a1 = _submit_to_project(db, team, "a", submitter="member", title="A提交级", transcript_text="A提交级ceo")
+        escalate_ceo(
+            sid_a1, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        sid_a2 = _submit_to_project(db, team, "a", submitter="member", title="A卡片级", transcript_text="A卡片级ceo")
+        escalate_task_card_to_ceo(
+            sid_a2, 0, schemas.WorkflowNoteRequest(note="上报卡", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        # 项目B 提交级 + 卡片级
+        sid_b1 = _submit_to_project(db, team, "b", submitter="member", title="B提交级", transcript_text="B提交级ceo")
+        escalate_ceo(
+            sid_b1, schemas.WorkflowNoteRequest(note="上报", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+        sid_b2 = _submit_to_project(db, team, "b", submitter="member", title="B卡片级", transcript_text="B卡片级ceo")
+        escalate_task_card_to_ceo(
+            sid_b2, 0, schemas.WorkflowNoteRequest(note="上报卡", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+
+        assert len({sid_a1, sid_a2, sid_b1, sid_b2}) == 4
+
+        # 提交级 only
+        result_sub = pending(tab="ceo", include_card_level=False, current_user="公司CEO", db=db)
+        assert {item["id"] for item in result_sub} == {sid_a1}
+
+        # 提交级 + 卡片级
+        result_all = pending(tab="ceo", include_card_level=True, current_user="公司CEO", db=db)
+        assert {item["id"] for item in result_all} == {sid_a1, sid_a2}
+
+    # ── 5.4 纯 company_ceo ──
+
+    def test_pure_company_ceo_sees_nothing(self):
+        """纯 company_ceo（无任何 project_ceo 项目角色）tab=ceo 返回空。"""
+        db = _make_session()
+        team = _seed_two_projects_coach_team(db)
+
+        sid_a = _submit_to_project(db, team, "a", submitter="member", title="pure_ceo_test", transcript_text="pure_ceo_a")
+        escalate_ceo(
+            sid_a, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        sid_b = _submit_to_project(db, team, "b", submitter="member", title="pure_ceo_test_b", transcript_text="pure_ceo_b")
+        escalate_task_card_to_ceo(
+            sid_b, 0, schemas.WorkflowNoteRequest(note="上报卡", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+
+        assert pending(tab="ceo", include_card_level=False, current_user="公司CEO", db=db) == []
+        assert pending(tab="ceo", include_card_level=True, current_user="公司CEO", db=db) == []
+
+    # ── 5.5 tech_admin ──
+
+    def test_tech_admin_sees_both_projects_all_levels(self):
+        """tech_admin 两个项目各两条待办（提交级+卡片级）→ 可见全部4条。"""
+        db = _make_session()
+        team = _seed_two_projects_coach_team(db)
+
+        sid_a1 = _submit_to_project(db, team, "a", submitter="member", title="A提交级", transcript_text="A提交级tech")
+        escalate_ceo(
+            sid_a1, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        sid_a2 = _submit_to_project(db, team, "a", submitter="member", title="A卡片级", transcript_text="A卡片级tech")
+        escalate_task_card_to_ceo(
+            sid_a2, 0, schemas.WorkflowNoteRequest(note="上报卡", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        sid_b1 = _submit_to_project(db, team, "b", submitter="member", title="B提交级", transcript_text="B提交级tech")
+        escalate_ceo(
+            sid_b1, schemas.WorkflowNoteRequest(note="上报", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+        sid_b2 = _submit_to_project(db, team, "b", submitter="member", title="B卡片级", transcript_text="B卡片级tech")
+        escalate_task_card_to_ceo(
+            sid_b2, 0, schemas.WorkflowNoteRequest(note="上报卡", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+
+        assert len({sid_a1, sid_a2, sid_b1, sid_b2}) == 4
+
+        result_sub = pending(tab="ceo", include_card_level=False, current_user="tech_admin", db=db)
+        assert {item["id"] for item in result_sub} == {sid_a1, sid_b1}
+
+        result_all = pending(tab="ceo", include_card_level=True, current_user="tech_admin", db=db)
+        assert {item["id"] for item in result_all} == {sid_a1, sid_a2, sid_b1, sid_b2}
+
+    # ── 5.6 owner ──
+
+    def test_owner_sees_nothing_in_ceo_tab(self):
+        """owner tab=ceo 时看不到企业教练待办。"""
+        db = _make_session()
+        team = _seed_two_projects_coach_team(db)
+
+        sid_a = _submit_to_project(db, team, "a", submitter="member", title="owner_test", transcript_text="owner_test_a")
+        escalate_task_card_to_ceo(
+            sid_a, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        assert pending(tab="ceo", include_card_level=False, current_user="owner", db=db) == []
+        assert pending(tab="ceo", include_card_level=True, current_user="owner", db=db) == []
+
+
+# ════════════════════════════════════════════════════════════════════
+# 二十二、ceo_total 与 pending 列表一致性测试
+# ════════════════════════════════════════════════════════════════════
+
+class TestCeoTotalConsistency:
+    """ceo_total 数量必须与 pending(tab=ceo, include_card_level=True) 返回列表唯一 submission 数一致。"""
+
+    def _assert_consistency(self, current_user: str, db):
+        count_result = counts(current_user=current_user, db=db)
+        list_result = pending(tab="ceo", include_card_level=True, current_user=current_user, db=db)
+        unique_ids = {item["id"] for item in list_result}
+        assert count_result["ceo_total"] == len(unique_ids), (
+            f"{current_user}: ceo_total={count_result['ceo_total']} ≠ "
+            f"pending 唯一数={len(unique_ids)} (ids={unique_ids})"
+        )
+
+    def test_project_ceo_consistency(self):
+        """project_ceo 仅在项目A 时的数量一致性。"""
+        db = _make_session()
+        team = _seed_two_projects_coach_team(db)
+
+        sid_a = _submit_to_project(db, team, "a", submitter="member", title="一致性A", transcript_text="一致性A_1")
+        escalate_ceo(
+            sid_a, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        sid_b = _submit_to_project(db, team, "b", submitter="member", title="一致性B", transcript_text="一致性B_1")
+        escalate_task_card_to_ceo(
+            sid_b, 0, schemas.WorkflowNoteRequest(note="上报卡", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+
+        self._assert_consistency("coach", db)
+
+    def test_company_ceo_plus_project_ceo_consistency(self):
+        """公司CEO + 项目A project_ceo 的数量一致性。"""
+        db = _make_session()
+        team = _seed_two_projects_coach_team(db)
+
+        db.add(models.ProjectMember(
+            project_id=team["project_a"].id,
+            person_id=team["ceo"].id,
+            person_name_snapshot=team["ceo"].name,
+            role="project_ceo",
+        ))
+        db.commit()
+
+        sid_a = _submit_to_project(db, team, "a", submitter="member", title="复合A", transcript_text="复合A_1")
+        escalate_ceo(
+            sid_a, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        sid_b = _submit_to_project(db, team, "b", submitter="member", title="复合B", transcript_text="复合B_1")
+        escalate_ceo(
+            sid_b, schemas.WorkflowNoteRequest(note="上报", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+
+        self._assert_consistency("公司CEO", db)
+
+    def test_pure_company_ceo_consistency(self):
+        """纯 company_ceo 数量和列表均为 0。"""
+        db = _make_session()
+        team = _seed_two_projects_coach_team(db)
+
+        sid = _submit_to_project(db, team, "a", submitter="member", title="纯CEO", transcript_text="纯CEO_1")
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报卡", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        self._assert_consistency("公司CEO", db)
+
+    def test_tech_admin_consistency(self):
+        """tech_admin 数量和列表一致。"""
+        db = _make_session()
+        team = _seed_two_projects_coach_team(db)
+
+        sid_a = _submit_to_project(db, team, "a", submitter="member", title="Ta", transcript_text="Ta_1")
+        escalate_ceo(
+            sid_a, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        sid_b = _submit_to_project(db, team, "b", submitter="member", title="Tb", transcript_text="Tb_1")
+        escalate_task_card_to_ceo(
+            sid_b, 0, schemas.WorkflowNoteRequest(note="上报卡", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+
+        self._assert_consistency("tech_admin", db)

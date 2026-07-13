@@ -408,7 +408,10 @@ export function ConfirmPage() {
           if (!cancelled) {
             setItems(d)
             const firstPending = d.find(i => SS.normalize(i.confirm_status) === SS.S_NEW || SS.normalize(i.confirm_status) === SS.S_PENDING_OWNER) || d[0]
-            if (firstPending) pickItem(firstPending)
+            const target = urlSubmissionId != null
+              ? d.find(i => i.id === urlSubmissionId) ?? (firstPending ?? null)
+              : firstPending ?? null
+            if (target) pickItem(target)
           }
         })
         .catch(() => { if (!cancelled) setLoadError('记录加载失败，请刷新重试') })
@@ -977,28 +980,21 @@ export function ConfirmPage() {
 
                 {/* Scrollable body */}
                 <div className="flex-1 overflow-y-auto min-h-0 px-4 py-3 space-y-4">
-                  {/* 企业教练决策区 */}
-                  {isCoachView && selected && (
+                  {/* 企业教练决策区 — 仅提交级 */}
+                  {isCoachView && selected && selected.ceo_decision_scope === 'submission' && (
                     <section className="rounded-[22px] border p-4" style={{ borderColor: '#C4B5FD', background: 'linear-gradient(135deg,#F5F3FF,#EEF2FF)' }}>
                       <div className="flex items-center gap-2 mb-3">
                         <svg style={{ width: 18, height: 18, color: '#7C3AED' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
                         </svg>
                         <span className="text-sm font-bold text-violet-800">企业教练批示</span>
-                        {selected.ceo_decision_scope === 'submission' && (
-                          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-violet-100 text-violet-700">整条提交</span>
-                        )}
-                        {selected.ceo_decision_scope === 'card' && (
-                          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-sky-100 text-sky-700">任务卡级</span>
-                        )}
+                        <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-violet-100 text-violet-700">整条提交</span>
                       </div>
                       {/* 提交级：显示上报说明 */}
-                      {selected.ceo_decision_scope === 'submission' && (
-                        <div className="mb-3 p-3 rounded-xl bg-white/70 text-sm text-slate-600">
-                          <span className="font-semibold text-slate-800">负责人上报说明：</span>
-                          {selected.reject_reason || selected.ceo_note || '（无）'}
-                        </div>
-                      )}
+                      <div className="mb-3 p-3 rounded-xl bg-white/70 text-sm text-slate-600">
+                        <span className="font-semibold text-slate-800">负责人上报说明：</span>
+                        {selected.reject_reason || selected.ceo_note || '（无）'}
+                      </div>
                       {actionError && (
                         <div className="mb-3 flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
                           <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -1019,13 +1015,7 @@ export function ConfirmPage() {
                         style={{ minHeight: 80, background: 'white' }}
                       />
                       <button
-                        onClick={() => {
-                          if (selected.ceo_decision_scope === 'card') {
-                            handleCoachCardDecide()
-                          } else {
-                            handleCoachSubmissionDecide()
-                          }
-                        }}
+                        onClick={handleCoachSubmissionDecide}
                         disabled={coachActing || !coachNote.trim()}
                         className="w-full py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90 disabled:opacity-50"
                         style={{ background: 'linear-gradient(135deg,#7C3AED,#A78BFA)' }}

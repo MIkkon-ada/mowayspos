@@ -515,40 +515,55 @@ def my_rejected(
     return result
 
 
-def _count_submissions_with_pending_ceo_cards(
-    context: dict, db: Session, cache: dict | None = None,
+def _count_visible_ceo_pending_submissions(
+    context: dict,
+    db: Session,
 ) -> int:
-    """统计至少包含一张 pending_ceo_decision 任务卡
-    且主状态非 WAITING_CEO_DECISION 的 submission 数量。
-    同一 submission 即使有多张待决策卡也只计 1。"""
-    # 查询所有可能包含卡片级待办的 submission
+    """统计当前用户可见的企业教练待办 submission 数量。
+
+    查询候选状态：WAITING_CEO_DECISION | PENDING_OWNER_REVIEW。
+    只有当前用户有权看到的才计入，同一 submission 去重。
+
+    权限规则：
+    - tech_admin：可见全部项目
+    - 非 tech_admin：仅可见自己担任 project_ceo 的项目
+    - 纯 company_ceo（can_view_all 但无项目角色）：不可见
+    """
+    is_tech_admin = bool(context.get("is_tech_admin"))
+    cache: dict[int | None, set[str]] | None = None
+    if not is_tech_admin:
+        cache = P.preload_user_project_roles(context, db)
+
+    query_statuses = list(set(SS.WAITING_CEO_DECISION | SS.PENDING_OWNER_REVIEW))
     rows = (
         db.query(models.UpdateSubmission)
-        .filter(models.UpdateSubmission.confirm_status.in_(list(SS.PENDING_OWNER_REVIEW)))
+        .filter(models.UpdateSubmission.confirm_status.in_(query_statuses))
         .all()
     )
-    count = 0
-    seen_project_ids = set()
+
+    visible_submission_ids: set[int] = set()
     for row in rows:
         norm_status = W.submission_status(row)
-        # 已是整条提交级待决策的不要重复计
-        if norm_status in SS.WAITING_CEO_DECISION:
-            continue
         row_project_id = _submission_project_id(db, row)
+
         # 权限检查
-        if context.get("can_view_all") or context.get("is_tech_admin"):
-            pass  # 管理员可见全部
-        elif cache is not None:
-            roles = cache.get(row_project_id, set())
+        if not is_tech_admin:
+            roles = cache.get(row_project_id, set()) if cache else set()
             if "project_ceo" not in roles:
                 continue
-        else:
+
+        # 提交级待决策
+        if norm_status in SS.WAITING_CEO_DECISION:
+            visible_submission_ids.add(row.id)
             continue
-        data = W.submission_result(row)
-        if _has_pending_ceo_task_cards(data):
-            count += 1
-            seen_project_ids.add(row_project_id)
-    return count
+
+        # 卡片级待决策（主状态 PENDING_OWNER_REVIEW 但含 pending_ceo_decision 卡）
+        if norm_status in SS.PENDING_OWNER_REVIEW:
+            data = W.submission_result(row)
+            if _has_pending_ceo_task_cards(data):
+                visible_submission_ids.add(row.id)
+
+    return len(visible_submission_ids)
 
 
 @router.get("/counts")
@@ -593,20 +608,8 @@ def counts(
             for tab, statuses in TAB_STATUS_MAP.items()
         }
 
-    # ── ceo_total：提交级 + 卡片级企业教练待办 ─────────────────
-    # 只有 project_ceo 或 tech_admin 应看到企业教练待办数量
-    # company_ceo（can_view_all 但无 project_ceo）→ 0
-    has_coach_role = context.get("is_tech_admin", False)
-    if not has_coach_role:
-        non_cao_cache = P.preload_user_project_roles(context, db)
-        has_coach_role = any("project_ceo" in roles for roles in non_cao_cache.values())
-    if has_coach_role:
-        submission_ceo = result.get("ceo", 0)
-        card_cache = None if context.get("can_view_all") else P.preload_user_project_roles(context, db)
-        card_ceo = _count_submissions_with_pending_ceo_cards(context, db, cache=card_cache)
-        result["ceo_total"] = submission_ceo + card_ceo
-    else:
-        result["ceo_total"] = 0
+    # ── ceo_total：使用统一 helper，不依赖 can_view_all 或 result.ceo ──
+    result["ceo_total"] = _count_visible_ceo_pending_submissions(context, db)
     return result
 
 

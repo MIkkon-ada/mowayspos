@@ -53,7 +53,7 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
   )
   const showParticipantModules = !(
     currentUser?.is_ceo &&
-    !globalUserRoles.some((r) => ['owner', 'coordinator', 'member'].includes(r))
+    !globalUserRoles.some((r) => ['owner', 'coordinator', 'project_ceo', 'member'].includes(r))
   )
   const hasActiveProject = projects.some(isProjectActive)
 

@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "src"
@@ -15,56 +14,54 @@ def _read_tsx(filename: str) -> str:
     return (FRONTEND_DIR / filename).read_text(encoding="utf-8")
 
 
-def _extract_function_body(source: str, func_name: str) -> str | None:
-    """提取指定函数体的源码文本。"""
+def _extract_lines_between(source: str, start_marker: str, end_marker: str) -> str:
+    """提取两个标记之间的源码块。"""
     lines = source.split("\n")
-    in_func = False
-    brace_count = 0
-    body_lines = []
+    result = []
+    in_block = False
     for line in lines:
-        if not in_func:
-            if func_name in line and ("function " + func_name in line or
-                                       "const " + func_name in line or
-                                       func_name + " = " in line or
-                                       func_name + "=" in line):
-                in_func = True
-                if "{" in line:
-                    brace_count += line.count("{") - line.count("}")
-                    if "=>" in line and brace_count == 0:
-                        # 箭头函数单行 body
-                        body_lines.append(line)
-                        continue
-        if in_func:
-            body_lines.append(line)
-            brace_count += line.count("{") - line.count("}")
-            if brace_count <= 0 and in_func and "{" in body_lines[0] if body_lines else True:
+        if not in_block and start_marker in line:
+            in_block = True
+            result.append(line)
+            continue
+        if in_block:
+            result.append(line)
+            if end_marker in line:
                 break
-    return "\n".join(body_lines) if body_lines else None
+    return "\n".join(result)
 
 
-def _extract_jsx_component(source: str, component_name: str) -> str | None:
-    """提取 JSX 组件的源码文本。"""
-    # 先尝试 function 声明
-    patterns = [
-        f"function {component_name}(",
-        f"export function {component_name}(",
-    ]
+def _find_branch(source: str, condition: str, context_lines: int = 25) -> str | None:
+    """搜索包含某条件的代码块（前后各 context_lines 行）。"""
+    idx = source.find(condition)
+    if idx < 0:
+        return None
     lines = source.split("\n")
-    for pattern in patterns:
-        for i, line in enumerate(lines):
-            if pattern in line:
-                # 找到函数起始行
-                start = i
-                brace_count = 0
-                started = False
-                for j in range(i, len(lines)):
-                    brace_count += lines[j].count("{") - lines[j].count("}")
-                    if "{" in lines[j]:
-                        started = True
-                    if started and brace_count <= 0:
-                        return "\n".join(lines[start:j + 1])
-    return None
+    total = 0
+    target_line = 0
+    for i, line in enumerate(lines):
+        total += len(line) + 1
+        if total > idx:
+            target_line = i
+            break
+    start = max(0, target_line - context_lines)
+    end = min(len(lines), target_line + context_lines)
+    return "\n".join(lines[start:end])
 
+
+def _find_nth(source: str, condition: str, n: int = 1) -> str | None:
+    """找到第 n 次出现条件后的字符串（从 0 计数）。"""
+    idx = -1
+    for _ in range(n + 1):
+        idx = source.find(condition, idx + 1)
+        if idx < 0:
+            return None
+    return source[idx:]
+
+
+# ════════════════════════════════════════════════════════════════════
+# 权限判断
+# ════════════════════════════════════════════════════════════════════
 
 class TestPermissions:
     """权限判断：canUseCoachDecisionView。"""
@@ -74,46 +71,40 @@ class TestPermissions:
         cls.source = _read_tsx("pages/ConfirmPage.tsx")
 
     def test_can_use_coach_decision_view_exists(self):
-        """canUseCoachDecisionView 变量存在于 ConfirmPage.tsx。"""
-        assert "canUseCoachDecisionView" in self.source, (
-            "canUseCoachDecisionView must be defined in ConfirmPage.tsx"
-        )
+        """canUseCoachDecisionView 变量定义存在。"""
+        assert "canUseCoachDecisionView" in self.source
 
-    def test_can_use_coach_decision_view_includes_project_ceo(self):
-        """canUseCoachDecisionView 包含 project_ceo。"""
-        assert 'project_ceo' in self.source, (
-            "project_ceo must be referenced in ConfirmPage.tsx"
-        )
+    def test_can_use_coach_decision_view_contains_project_ceo(self):
+        """canUseCoachDecisionView 定义中包含 project_ceo。"""
+        definition = _find_branch(self.source, "canUseCoachDecisionView", 30)
+        assert definition is not None
+        assert "project_ceo" in definition
 
-    def test_can_use_coach_decision_view_includes_is_tech_admin(self):
-        """canUseCoachDecisionView 包含 is_tech_admin。"""
-        assert 'is_tech_admin' in self.source, (
-            "is_tech_admin must be referenced in ConfirmPage.tsx"
-        )
+    def test_can_use_coach_decision_view_contains_is_tech_admin(self):
+        """canUseCoachDecisionView 定义中包含 is_tech_admin。"""
+        definition = _find_branch(self.source, "canUseCoachDecisionView", 30)
+        assert definition is not None
+        assert "is_tech_admin" in definition
 
-    def test_can_use_coach_decision_view_not_depend_on_is_ceo(self):
-        """canUseCoachDecisionView 不依赖 currentUser.is_ceo（仅限该判断变量）。"""
-        # 搜索 canUseCoachDecisionView 附近的 is_ceo
-        idx = self.source.find("canUseCoachDecisionView")
-        if idx > 0:
-            nearby = self.source[max(0, idx - 50):idx + 400]
-            # is_ceo 可能在别处引用，但不应出现在 canUseCoachDecisionView 的定义中
-            lines_after = self.source[idx:idx + 400].split("\n")
-            definition_lines = []
-            for line in lines_after:
-                definition_lines.append(line)
-                if ";" in line and ("project_ceo" in line or "is_tech_admin" in line):
-                    break
-                if len(definition_lines) > 8:
-                    break
-            definition = "\n".join(definition_lines)
-            assert "is_ceo" not in definition or "currentUser?.is_ceo" not in definition, (
-                "canUseCoachDecisionView should not depend on is_ceo"
-            )
+    def test_can_use_coach_decision_view_not_contain_is_ceo(self):
+        """canUseCoachDecisionView 定义中不包含 currentUser?.is_ceo。"""
+        definition = _find_branch(self.source, "canUseCoachDecisionView", 30)
+        assert definition is not None
+        assert "currentUser?.is_ceo" not in definition
 
+    def test_company_ceo_not_show_coach_view(self):
+        """纯 company_ceo 不显示待我决策（view=ceo 需权限检查）。"""
+        # resolveInitialView 中 view=ceo 需 canUseCoachDecisionView
+        assert "canUseCoachDecisionView" in self.source
+        assert "view === 'ceo'" in self.source or "'ceo'" in self.source
+
+
+# ════════════════════════════════════════════════════════════════════
+# 数据加载
+# ════════════════════════════════════════════════════════════════════
 
 class TestDataLoading:
-    """数据加载路径。"""
+    """数据加载路径和深链。"""
 
     @classmethod
     def setup_class(cls):
@@ -121,22 +112,48 @@ class TestDataLoading:
 
     def test_ceo_view_calls_get_pending_with_ceo_tab(self):
         """ceo 视图调用 getPending(..., 'ceo', { includeCardLevel: true })。"""
-        assert "getPending" in self.source
-        assert "includeCardLevel" in self.source
-        assert "viewMode === 'ceo'" in self.source
+        # 第二个 viewMode === 'ceo' 出现在数据加载 useEffect 中
+        second_ceo = _find_nth(self.source, "viewMode === 'ceo'", 1)
+        assert second_ceo is not None
+        snippet = second_ceo[:300]
+        assert "getPending" in snippet
+        assert "'ceo'" in snippet
+        assert "includeCardLevel" in snippet
 
     def test_all_view_calls_tab_all(self):
         """all 视图调用 getPending(..., 'all')。"""
-        assert "'all'" in self.source
+        all_branch = _find_branch(self.source, "getPending(pendingProjectId, 'all')", 20)
+        assert all_branch is not None
+        assert "'all'" in all_branch
 
     def test_mine_view_calls_fetch_my_updates(self):
         """mine 视图调用 fetchMyUpdates。"""
         assert "fetchMyUpdates" in self.source
 
     def test_ceo_default_cross_project(self):
-        """ceo 默认跨项目查询（传 null）。"""
-        assert "null" in self.source  # projectId=null for ceo
+        """ceo 默认跨项目查询（传 null projectId）。"""
+        ceo_branch = _find_branch(self.source, "viewMode === 'ceo'", 60)
+        assert ceo_branch is not None
+        assert "null" in ceo_branch
 
+    def test_all_view_uses_url_submission_id_fallback(self):
+        """all 视图深链：urlSubmissionId 匹配优先，找不到回退 firstPending。"""
+        all_branch = _find_branch(self.source, "getPending(pendingProjectId, 'all')", 35)
+        assert all_branch is not None
+        assert "urlSubmissionId" in all_branch
+        assert "firstPending" in all_branch
+        assert "pickItem(target)" in all_branch or "pickItem(target" in all_branch
+
+    def test_ceo_view_uses_url_submission_id(self):
+        """ceo 视图中 urlSubmissionId 用于定位。"""
+        ceo_branch = _find_branch(self.source, "viewMode === 'ceo'", 70)
+        assert ceo_branch is not None
+        assert "urlSubmissionId" in ceo_branch
+
+
+# ════════════════════════════════════════════════════════════════════
+# 动作分发
+# ════════════════════════════════════════════════════════════════════
 
 class TestActions:
     """动作分发：提交级和卡片级批示。"""
@@ -147,20 +164,26 @@ class TestActions:
 
     def test_submission_scope_calls_ceo_decide(self):
         """提交级 scope 调用 ceoDecide。"""
+        assert "handleCoachSubmissionDecide" in self.source
         assert "ceoDecide" in self.source
 
     def test_card_scope_calls_ceo_decide_task_card(self):
         """卡片级 scope 调用 ceoDecideTaskCard。"""
+        assert "handleCoachCardDecide" in self.source
         assert "ceoDecideTaskCard" in self.source
 
     def test_empty_coach_note_blocked(self):
-        """空白批示不可提交（coachNote.trim() 检查）。"""
-        assert "coachNote.trim()" in self.source or "!coachNote.trim()" in self.source
+        """空白批示不可提交（!coachNote.trim() 检查）。"""
+        assert "!coachNote.trim()" in self.source
 
     def test_success_reloads_list(self):
-        """成功后重新加载列表。"""
-        assert "reloadCoachItems" in self.source or "getPending" in self.source
+        """成功后重新加载列表（reloadCoachItems）。"""
+        assert "reloadCoachItems" in self.source
 
+
+# ════════════════════════════════════════════════════════════════════
+# 深链解析
+# ════════════════════════════════════════════════════════════════════
 
 class TestDeepLinks:
     """深链解析。"""
@@ -171,28 +194,95 @@ class TestDeepLinks:
 
     def test_parses_view_param(self):
         """解析 view 参数。"""
-        assert "searchParams.get('view')" in self.source or "view" in self.source
+        assert "searchParams.get('view')" in self.source or "get('view')" in self.source
 
     def test_parses_project_id(self):
         """解析 projectId。"""
-        assert "projectId" in self.source
+        assert "searchParams.get('projectId')" in self.source or "get('projectId')" in self.source
 
     def test_parses_submission_id(self):
         """解析 submissionId。"""
-        assert "submissionId" in self.source
+        assert "searchParams.get('submissionId')" in self.source or "get('submissionId')" in self.source
 
     def test_parses_card_index(self):
         """解析 cardIndex。"""
-        assert "cardIndex" in self.source
+        assert "searchParams.get('cardIndex')" in self.source or "get('cardIndex')" in self.source
 
     def test_no_permission_view_ceo_no_elevation(self):
-        """无权限时 view=ceo 不提升权限。"""
-        assert "canUseCoachDecisionView" in self.source
+        """无权限时 view=ceo 不提升 — resolveInitialView 检查 canUseCoachDecisionView。"""
+        block = _find_branch(self.source, "resolveInitialView", 12)
+        assert block is not None
+        assert "canUseCoachDecisionView" in block
 
     def test_submission_id_not_found_safe_fallback(self):
-        """submissionId 找不到时有安全回退（d[0] fallback）。"""
-        assert "d[0]" in self.source
+        """submissionId 找不到时有安全回退。"""
+        # both all and ceo branches have fallback
+        all_branch = _find_branch(self.source, "getPending(pendingProjectId, 'all')", 35)
+        ceo_branch = _find_branch(self.source, "viewMode === 'ceo'", 70)
+        combined = (all_branch or "") + (ceo_branch or "")
+        assert "??" in combined  # nullish coalescing fallback pattern
+        assert "pickItem" in combined
 
+
+# ════════════════════════════════════════════════════════════════════
+# 卡片级批示隔离
+# ════════════════════════════════════════════════════════════════════
+
+class TestCardCoachIsolation:
+    """卡片级批示入口隔离。"""
+
+    @classmethod
+    def setup_class(cls):
+        cls.source = _read_tsx("pages/ConfirmPage.tsx")
+
+    def test_top_coach_section_only_submission_scope(self):
+        """主详情顶部企业教练区仅由 submission scope 控制。"""
+        # 搜索顶部企业教练批示区的条件
+        block = _find_branch(self.source, "企业教练决策区", 3)
+        assert block is not None
+        # 必须包含 submission scope 检查
+        assert "ceo_decision_scope === 'submission'" in block
+
+    def test_top_coach_section_calls_submission_decide(self):
+        """顶部批示按钮调用 handleCoachSubmissionDecide。"""
+        block = _find_branch(self.source, "handleCoachSubmissionDecide", 3)
+        assert block is not None
+
+    def test_card_popup_pending_ceo_shows_decide_button(self):
+        """任务卡弹窗 pending_ceo_decision → 显示 handleCoachCardDecide。"""
+        # 跳过前 3 个 occurrence: label/tone/card-list, 第 4 个在弹窗中
+        snippet = _find_nth(self.source, "pending_ceo_decision", 3)
+        assert snippet is not None
+        # 弹窗块较长（含表单和按钮），取前 2500 字符
+        nearby = snippet[:2500]
+        assert "handleCoachCardDecide" in nearby
+
+    def test_card_popup_ceo_decided_shows_readonly(self):
+        """任务卡弹窗 ceo_decided → 只读展示批示内容。"""
+        # 跳过前 2 个 occurrence: label/tone 函数, 第 3 个在弹窗中
+        snippet = _find_nth(self.source, "ceo_decided", 2)
+        assert snippet is not None
+        nearby = snippet[:1000]
+        assert "ceoNote" in nearby or "ceoDecidedAt" in nearby or "批示内容" in nearby
+
+    def test_card_popup_other_status_no_decide_button(self):
+        """任务卡弹窗非 pending/ceo_decided → 不需要企业教练决策。"""
+        assert "不需要企业教练决策" in self.source
+
+    def test_no_duplicate_card_coach_input(self):
+        """不存在两个同时可操作的单卡批示输入框。"""
+        # 顶部只对 submission scope 显示，卡片弹窗只对 pending_ceo_decision 显示
+        # 两者永不重叠
+        top_block = _find_branch(self.source, "企业教练决策区", 3)
+        assert top_block is not None
+        assert "ceo_decision_scope === 'submission'" in top_block
+        # 卡片弹窗中的 ceo 决策区在 isCoachView 分支的 pending_ceo_decision 下
+        assert "pending_ceo_decision" in self.source
+
+
+# ════════════════════════════════════════════════════════════════════
+# 页面隔离
+# ════════════════════════════════════════════════════════════════════
 
 class TestPageIsolation:
     """页面隔离：ceo 视图不渲染 owner 操作。"""
@@ -201,20 +291,19 @@ class TestPageIsolation:
     def setup_class(cls):
         cls.source = _read_tsx("pages/ConfirmPage.tsx")
 
-    def test_ceo_view_hides_owner_confirm_actions(self):
-        """ceo 视图不渲染确认入库等 owner 动作。"""
-        assert "isCoachView" in self.source or "viewMode === 'ceo'" in self.source
-
     def test_ceo_view_retains_task_card_detail(self):
         """ceo 视图保留任务卡详情查看。"""
         assert "taskCards" in self.source
         assert "activeCard" in self.source
 
-    def test_ceo_view_does_not_render_owner_edits(self):
-        """ceo 视图不渲染任务写入编辑操作。"""
-        # 确认有 ceo 视图的条件渲染逻辑
+    def test_is_coach_view_variable_exists(self):
+        """isCoachView 变量存在。"""
         assert "isCoachView" in self.source
 
+
+# ════════════════════════════════════════════════════════════════════
+# 兼容边界
+# ════════════════════════════════════════════════════════════════════
 
 class TestCompatibility:
     """兼容边界。"""
@@ -236,22 +325,50 @@ class TestCompatibility:
         """旧页面不调用 ceoDecideTaskCard。"""
         assert "ceoDecideTaskCard" not in self.decision_source
 
-    def test_sidebar_project_ceo_shows_compat_entry(self):
-        """Sidebar 在 project_ceo 时显示旧兼容入口。"""
-        assert "project_ceo" in self.sidebar_source
+    def test_decision_page_permission_not_using_is_ceo(self):
+        """旧 DecisionPage 权限不使用 is_ceo（改用 is_tech_admin + project_ceo）。"""
+        decision_block = _find_branch(self.decision_source, "isCEO", 6)
+        assert decision_block is not None
+        assert "currentUser?.is_ceo" not in decision_block
 
-    def test_sidebar_tech_admin_shows_compat_entry(self):
-        """Sidebar 在 tech_admin 时显示旧兼容入口。"""
-        assert "is_tech_admin" in self.sidebar_source
-
-    def test_sidebar_company_ceo_hides_compat_entry(self):
-        """Sidebar 中 company_ceo 不显示旧兼容入口。"""
+    def test_sidebar_is_coach_decision_actor_exists(self):
+        """Sidebar 中 isCoachDecisionActor 变量存在。"""
         assert "isCoachDecisionActor" in self.sidebar_source
+
+    def test_sidebar_is_coach_decision_actor_contains_project_ceo(self):
+        """isCoachDecisionActor 包含 project_ceo。"""
+        definition = _find_branch(self.sidebar_source, "isCoachDecisionActor", 8)
+        assert definition is not None
+        assert "project_ceo" in definition
+
+    def test_sidebar_is_coach_decision_actor_contains_is_tech_admin(self):
+        """isCoachDecisionActor 包含 is_tech_admin。"""
+        definition = _find_branch(self.sidebar_source, "isCoachDecisionActor", 8)
+        assert definition is not None
+        assert "is_tech_admin" in definition
+
+    def test_sidebar_is_coach_decision_actor_not_contain_is_ceo(self):
+        """isCoachDecisionActor 不包含 currentUser?.is_ceo。"""
+        idx = self.sidebar_source.find("isCoachDecisionActor")
+        assert idx > 0
+        # 只看变量起始位置后的代码，避免相邻的 isCEO 变量干扰
+        nearby = self.sidebar_source[idx:idx + 120]
+        assert "currentUser?.is_ceo" not in nearby
+
+    def test_sidebar_show_participant_includes_project_ceo(self):
+        """showParticipantModules 角色列表中包含 project_ceo。"""
+        definition = _find_branch(self.sidebar_source, "showParticipantModules", 8)
+        assert definition is not None
+        assert "project_ceo" in definition
 
     def test_sidebar_badge_uses_ceo_total(self):
         """Sidebar badge 使用 ceo_total fallback。"""
         assert "ceo_total" in self.sidebar_source
 
+
+# ════════════════════════════════════════════════════════════════════
+# 任务卡状态展示
+# ════════════════════════════════════════════════════════════════════
 
 class TestTaskCardDecisionStatus:
     """任务卡决策状态展示。"""
@@ -267,11 +384,14 @@ class TestTaskCardDecisionStatus:
 
     def test_ceo_decided_tone_exists(self):
         """taskCardDecisionTone 包含 ceo_decided 样式。"""
-        idx = self.source.find("taskCardDecisionTone")
-        if idx > 0:
-            nearby = self.source[idx:idx + 500]
-            assert "ceo_decided" in nearby
+        tone_block = _find_branch(self.source, "taskCardDecisionTone", 15)
+        assert tone_block is not None
+        assert "ceo_decided" in tone_block
 
+
+# ════════════════════════════════════════════════════════════════════
+# 任务卡展示模型
+# ════════════════════════════════════════════════════════════════════
 
 class TestConfirmationTaskCards:
     """任务卡展示模型。"""

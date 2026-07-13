@@ -87,7 +87,7 @@ def _seed_card_coach_team(db):
     }
 
 
-def _submit(db, team, submitter="member", title="进展更新") -> int:
+def _submit(db, team, submitter="member", title="进展更新", transcript_text=None) -> int:
     """提交一条进展（单卡），返回 submission_id。"""
     import asyncio
     from app.routers.updates import create_update
@@ -110,7 +110,7 @@ def _submit(db, team, submitter="member", title="进展更新") -> int:
         project_id=team["project"].id,
         source_type="任务进展",
         title=title,
-        transcript_text="测试进展",
+        transcript_text=transcript_text or "测试进展",
         submitter=team[submitter].name if submitter in team else submitter,
         human_result=human_result,
     )
@@ -1282,13 +1282,106 @@ class TestNotificationAndLogDB:
 
 
 # ════════════════════════════════════════════════════════════════════
-# 二十、counts 端点 ceo_total 测试
+# 二十、counts 端点 ceo_total 测试（精确断言）
 # ════════════════════════════════════════════════════════════════════
 
-class TestCeoTotalCounts:
-    """ceo_total 字段：提交级 + 卡片级企业教练待办。"""
+def _seed_two_projects_coach_team(db):
+    """创建项目A和项目B，用户 coach 在A是project_ceo，在B不是。"""
+    # Persons
+    owner_p = models.Person(id=101, name="项目负责人", system_role="normal_member", is_active=True)
+    coach_p = models.Person(id=102, name="企业教练", system_role="normal_member", is_active=True)
+    member_p = models.Person(id=103, name="普通成员", system_role="normal_member", is_active=True)
+    coord_p = models.Person(id=104, name="统筹人", system_role="normal_member", is_active=True)
+    tech_p = models.Person(id=105, name="技术管理员", system_role="super_admin", is_active=True)
+    ceo_p = models.Person(id=106, name="公司CEO", system_role="company_ceo", is_active=True)
+    # owner_b 项目B的负责人
+    owner_b_p = models.Person(id=107, name="项目B负责人", system_role="normal_member", is_active=True)
 
-    def test_submission_level_ceo_counted(self):
+    db.add_all([owner_p, coach_p, member_p, coord_p, tech_p, ceo_p, owner_b_p])
+    db.add_all([
+        models.Account(username="owner", password_hash="x", person_id=owner_p.id, status="active"),
+        models.Account(username="coach", password_hash="x", person_id=coach_p.id, status="active"),
+        models.Account(username="member", password_hash="x", person_id=member_p.id, status="active"),
+        models.Account(username="coordinator", password_hash="x", person_id=coord_p.id, status="active"),
+        models.Account(username="tech_admin", password_hash="x", person_id=tech_p.id, status="active", is_tech_admin=True),
+        models.Account(username="公司CEO", password_hash="x", person_id=ceo_p.id, status="active"),
+        models.Account(username="owner_b", password_hash="x", person_id=owner_b_p.id, status="active"),
+    ])
+    db.flush()
+
+    # 项目A：coach 是 project_ceo
+    project_a = models.Project(id=101, name="项目A", status="active", is_active=True)
+    # 项目B：coach 不是 project_ceo
+    project_b = models.Project(id=102, name="项目B", status="active", is_active=True)
+    db.add_all([project_a, project_b])
+    db.flush()
+
+    db.add_all([
+        models.ProjectMember(project_id=project_a.id, person_id=owner_p.id, person_name_snapshot=owner_p.name, role="owner"),
+        models.ProjectMember(project_id=project_a.id, person_id=coach_p.id, person_name_snapshot=coach_p.name, role="project_ceo"),
+        models.ProjectMember(project_id=project_a.id, person_id=member_p.id, person_name_snapshot=member_p.name, role="member"),
+        models.ProjectMember(project_id=project_a.id, person_id=coord_p.id, person_name_snapshot=coord_p.name, role="coordinator"),
+        # 项目B 只有 owner，coach 不在其中
+        models.ProjectMember(project_id=project_b.id, person_id=owner_b_p.id, person_name_snapshot=owner_b_p.name, role="owner"),
+        models.ProjectMember(project_id=project_b.id, person_id=member_p.id, person_name_snapshot=member_p.name, role="member"),
+    ])
+    db.flush()
+
+    task_a = models.Task(id=101, project_id=project_a.id, key_task="项目A重点工作", special_project="项目A", owner="项目负责人", status="进行中")
+    task_b = models.Task(id=102, project_id=project_b.id, key_task="项目B重点工作", special_project="项目B", owner="项目B负责人", status="进行中")
+    db.add_all([task_a, task_b])
+    db.flush()
+
+    subtask_a = models.SubTask(id=101, task_id=task_a.id, title="项目A关键任务", assignee="普通成员", status="进行中", plan_time="2026-07-01")
+    subtask_b = models.SubTask(id=102, task_id=task_b.id, title="项目B关键任务", assignee="普通成员", status="进行中", plan_time="2026-07-01")
+    db.add_all([subtask_a, subtask_b])
+    db.commit()
+
+    return {
+        "owner": owner_p, "coach": coach_p, "member": member_p,
+        "coordinator": coord_p, "tech_admin": tech_p, "ceo": ceo_p,
+        "owner_b": owner_b_p,
+        "project_a": project_a, "project_b": project_b,
+        "task_a": task_a, "task_b": task_b,
+        "subtask_a": subtask_a, "subtask_b": subtask_b,
+    }
+
+
+def _submit_to_project(db, team, project_key, submitter="member", title="进展更新", transcript_text=None) -> int:
+    """提交到指定项目。"""
+    import asyncio
+    from app.routers.updates import create_update
+
+    proj = team[f"project_{project_key}"]
+    subtask = team[f"subtask_{project_key}"]
+    human_result = {
+        "task_reports": [{
+            "result_type": "subtask_progress",
+            "type": "progress",
+            "matched_subtask_id": subtask.id,
+            "completed": "测试进展",
+            "title": f"{title}",
+            "achievements": [],
+            "subtask_issues": [],
+        }],
+        "special_project": proj.name,
+    }
+    payload = schemas.ExtractRequest(
+        project_id=proj.id,
+        source_type="任务进展",
+        title=title,
+        transcript_text=transcript_text or "测试进展",
+        submitter=team[submitter].name if submitter in team else submitter,
+        human_result=human_result,
+    )
+    result = asyncio.run(create_update(payload, current_user=submitter, db=db))
+    return result["submission"]["id"]
+
+
+class TestCeoTotalCounts:
+    """ceo_total：精确断言版本。"""
+
+    def test_submission_level_ceo_counted_as_1(self):
         """提交级 S_WAITING_CEO 计入 ceo_total。"""
         db = _make_session()
         team = _seed_card_coach_team(db)
@@ -1298,10 +1391,10 @@ class TestCeoTotalCounts:
             current_user="owner", db=db,
         )
         result = counts(current_user="coach", db=db)
-        assert result.get("ceo_total", 0) >= 1
+        assert result["ceo_total"] == 1
 
-    def test_card_level_ceo_counted(self):
-        """卡片级 pending_ceo_decision 计入 ceo_total。"""
+    def test_card_level_ceo_counted_as_1(self):
+        """卡片级 pending_ceo_decision 计入 ceo_total = 1。"""
         db = _make_session()
         team = _seed_card_coach_team(db)
         sid = _submit(db, team)
@@ -1310,7 +1403,7 @@ class TestCeoTotalCounts:
             current_user="owner", db=db,
         )
         result = counts(current_user="coach", db=db)
-        assert result.get("ceo_total", 0) >= 1
+        assert result["ceo_total"] == 1
 
     def test_two_cards_same_submission_count_as_one(self):
         """同一 submission 两张待决策卡只计 1。"""
@@ -1318,61 +1411,93 @@ class TestCeoTotalCounts:
         team = _seed_card_coach_team(db)
         sid = _submit(db, team)
 
-        # 先通过直接写 human_result_json 设置两张卡为 pending_ceo_decision
         row = db.get(models.UpdateSubmission, sid)
         data = json.loads(row.human_result_json)
         reports = data["task_reports"]
-        # 需要两张卡
-        if len(reports) < 2:
-            reports.append({
-                "result_type": "subtask_progress",
-                "type": "progress",
-                "title": "第二张卡",
-                "matched_subtask_id": team["subtask"].id,
-                "completed": "测试2",
-                "confirmation_status": "pending_ceo_decision",
-                "confirmation_note": "也需要决策",
-            })
+        # 两张卡都设为 pending_ceo_decision
+        reports.append({
+            "result_type": "subtask_progress",
+            "type": "progress",
+            "title": "第二张卡",
+            "matched_subtask_id": team["subtask"].id,
+            "completed": "测试2",
+            "confirmation_status": "pending_ceo_decision",
+        })
         reports[0]["confirmation_status"] = "pending_ceo_decision"
-        reports[0]["confirmation_note"] = "需要决策"
-        if len(reports) > 1:
-            reports[1]["confirmation_status"] = "pending_ceo_decision"
-            reports[1]["confirmation_note"] = "也需要决策"
         row.human_result_json = json.dumps(data, ensure_ascii=False)
         db.commit()
 
         result = counts(current_user="coach", db=db)
-        # 应只有1条 submission，不计为2
-        assert result.get("ceo_total", 0) >= 1
+        assert result["ceo_total"] == 1
 
-    def test_both_levels_dedup(self):
-        """同时存在提交级和卡片级时正确去重。"""
+    def test_submission_and_card_level_total_2(self):
+        """一条提交级 + 一条卡片级 = 2。"""
         db = _make_session()
         team = _seed_card_coach_team(db)
-        sid = _submit(db, team)
-        # 先上报提交级
+        # 提交级待办
+        sid1 = _submit(db, team, title="提交级", transcript_text="提交级进展内容")
         escalate_ceo(
-            sid, schemas.WorkflowNoteRequest(note="上报CEO", operator="owner"),
+            sid1, schemas.WorkflowNoteRequest(note="上报CEO", operator="owner"),
             current_user="owner", db=db,
         )
-        result = counts(current_user="coach", db=db)
-        ceo_total = result.get("ceo_total", 0)
-        assert ceo_total >= 1
-
-    def test_project_ceo_only_counts_own_project(self):
-        """project_ceo 只统计所属项目的待办。"""
-        db = _make_session()
-        team = _seed_card_coach_team(db)
-        sid = _submit(db, team)
+        # 卡片级待办
+        sid2 = _submit(db, team, title="卡片级", transcript_text="卡片级进展内容")
         escalate_task_card_to_ceo(
-            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            sid2, 0, schemas.WorkflowNoteRequest(note="上报卡", operator="owner"),
             current_user="owner", db=db,
         )
         result = counts(current_user="coach", db=db)
-        assert result.get("ceo_total", 0) >= 1
+        assert result["ceo_total"] == 2
+
+    # ── 项目边界测试 ──
+
+    def test_coach_only_counts_project_a_not_b(self):
+        """project_ceo 在项目A，不在项目B，两边都有待办 → ceo_total == 1。"""
+        db = _make_session()
+        team = _seed_two_projects_coach_team(db)
+
+        # 项目A发送卡片级待办
+        sid_a = _submit_to_project(db, team, "a", submitter="member", title="项目A卡", transcript_text="项目A卡进展")
+        escalate_task_card_to_ceo(
+            sid_a, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        # 项目B也发送卡片级待办
+        sid_b = _submit_to_project(db, team, "b", submitter="member", title="项目B卡", transcript_text="项目B卡进展")
+        escalate_task_card_to_ceo(
+            sid_b, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+
+        result = counts(current_user="coach", db=db)
+        # coach 只在项目A是 project_ceo，只能看到项目A的 1 条
+        assert result["ceo_total"] == 1
+
+    def test_tech_admin_sees_both_projects(self):
+        """tech_admin 两个项目各一条 → ceo_total == 2。"""
+        db = _make_session()
+        team = _seed_two_projects_coach_team(db)
+
+        sid_a = _submit_to_project(db, team, "a", submitter="member", title="项目A卡", transcript_text="项目A卡进展")
+        escalate_task_card_to_ceo(
+            sid_a, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        sid_b = _submit_to_project(db, team, "b", submitter="member", title="项目B卡", transcript_text="项目B卡进展")
+        escalate_task_card_to_ceo(
+            sid_b, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner_b"),
+            current_user="owner_b", db=db,
+        )
+
+        result = counts(current_user="tech_admin", db=db)
+        assert result["ceo_total"] == 2
+
+    # ── 无权限角色 ──
 
     def test_company_ceo_without_project_ceo_zero(self):
-        """纯 company_ceo（无 project_ceo 角色）ceo_total = 0。"""
+        """纯 company_ceo ceo_total = 0。"""
         db = _make_session()
         team = _seed_card_coach_team(db)
         sid = _submit(db, team)
@@ -1381,7 +1506,7 @@ class TestCeoTotalCounts:
             current_user="owner", db=db,
         )
         result = counts(current_user="公司CEO", db=db)
-        assert result.get("ceo_total", 0) == 0
+        assert result["ceo_total"] == 0
 
     def test_owner_ceo_total_zero(self):
         """owner 的 ceo_total = 0。"""
@@ -1393,7 +1518,7 @@ class TestCeoTotalCounts:
             current_user="owner", db=db,
         )
         result = counts(current_user="owner", db=db)
-        assert result.get("ceo_total", 0) == 0
+        assert result["ceo_total"] == 0
 
     def test_coordinator_ceo_total_zero(self):
         """coordinator 的 ceo_total = 0。"""
@@ -1405,19 +1530,9 @@ class TestCeoTotalCounts:
             current_user="owner", db=db,
         )
         result = counts(current_user="coordinator", db=db)
-        assert result.get("ceo_total", 0) == 0
+        assert result["ceo_total"] == 0
 
-    def test_tech_admin_can_count_all(self):
-        """tech_admin 可以统计全部。"""
-        db = _make_session()
-        team = _seed_card_coach_team(db)
-        sid = _submit(db, team)
-        escalate_task_card_to_ceo(
-            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
-            current_user="owner", db=db,
-        )
-        result = counts(current_user="tech_admin", db=db)
-        assert result.get("ceo_total", 0) >= 1
+    # ── 原始 counts.ceo 不变 ──
 
     def test_original_ceo_unchanged(self):
         """原 counts.ceo 行为不变。"""
@@ -1429,5 +1544,5 @@ class TestCeoTotalCounts:
             current_user="owner", db=db,
         )
         result = counts(current_user="coach", db=db)
-        assert result.get("ceo", 0) >= 1
-        assert result.get("ceo_total", 0) >= result.get("ceo", 0)
+        assert result["ceo"] >= 1
+        assert result["ceo_total"] >= result["ceo"]

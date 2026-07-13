@@ -630,6 +630,9 @@ def pending(
     # 但包含 pending_ceo_decision 卡片的记录
     expand_card_level = (tab == "ceo" and include_card_level)
 
+    # 统一 CEO tab 标记：提交级、卡片级、新旧查询均使用一致的 project_ceo 权限
+    is_ceo_tab = tab == "ceo"
+
     effective_project_id = _resolve_pending_project_id(db, project_id, special_project)
     if project_id is None and special_project and effective_project_id is None:
         return []
@@ -660,6 +663,14 @@ def pending(
         if effective_project_id is not None and row_project_id != effective_project_id:
             continue
 
+        # ── 统一 CEO tab 项目企业教练权限 ──
+        # tab=ceo 时，提交级 S_WAITING_CEO 和卡片级 pending_ceo_decision 均须
+        # 由该项目 project_ceo 或 tech_admin 可见，不得由 can_view_all 放行
+        if is_ceo_tab and not context.get("is_tech_admin"):
+            roles = cache.get(row_project_id, set())
+            if "project_ceo" not in roles:
+                continue
+
         human = W.submission_result(row)
 
         # 卡片级：仅 tab=ceo 时区分提交级 vs 卡片级
@@ -671,18 +682,10 @@ def pending(
         if not passed_role:
             # 卡片级例外：project_ceo 对主状态非 WAITING_CEO_DECISION 但含待决策卡片的记录也应可见
             if has_card_ceo and not is_submission_ceo:
-                roles = cache.get(row_project_id, set())
-                passed_role = ("project_ceo" in roles) or context.get("is_tech_admin", False)
+                roles2 = cache.get(row_project_id, set())
+                passed_role = ("project_ceo" in roles2) or context.get("is_tech_admin", False)
         if not passed_role:
             continue
-
-        # 卡片级额外权限限制：只有 project_ceo 或 tech_admin 可见
-        # 防止 company_ceo（is_ceo/can_view_all）或 owner 等角色绕过
-        if expand_card_level and has_card_ceo and not is_submission_ceo:
-            if not context.get("is_tech_admin"):
-                roles = cache.get(row_project_id, set())
-                if "project_ceo" not in roles:
-                    continue
 
         # 卡片级模式下只保留提交级或卡片级 CEO 事项
         if expand_card_level:

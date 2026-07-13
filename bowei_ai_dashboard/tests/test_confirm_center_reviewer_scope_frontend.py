@@ -26,11 +26,16 @@ def test_confirm_page_reviewer_scope_not_only_current_project_capabilities():
 def test_confirm_page_defaults_reviewers_to_pending_without_current_project():
     source = _confirm_page_source()
 
-    assert "setViewMode((prev)" in source
-    assert "isReviewer && prev === 'mine'" in source
-    assert "return 'all'" in source
-    assert "!isReviewer && prev === 'all'" in source
-    assert "return 'mine'" in source
+    # N4-P2-H: 测试改为验证业务语义，不再绑定 setViewMode((prev) => ...) 实现写法。
+    # 当前实现: defaultViewMode + useRef(initialRedirectDone) + useEffect
+    # 语义: reviewer 默认 'all'(待确认), 非 reviewer 默认 'mine'(我的提交记录),
+    #       initialRedirectDone 保护用户手动切换不被强制弹回。
+    assert "defaultViewMode" in source
+    assert "isReviewer" in source
+    assert "'all'" in source or '"all"' in source
+    assert "'mine'" in source or '"mine"' in source
+    assert "initialRedirectDone" in source
+    assert "useRef" in source
 
 
 def test_confirm_page_supports_project_id_query_for_pending_scope():

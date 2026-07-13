@@ -158,13 +158,19 @@ def test_no_global_issues_on_kanban(issues_source: str):
     )
 
 
-# ── 修复验证：helper 和 related_task_id 已提交 ──────────────────
+# ── 修复验证：related_task_id 已提交 ──────────────────
 
-def test_create_issue_submits_helper(issues_source: str):
-    """createIssue 提交应包含 helper"""
-    # createIssue 调用中应出现 helper:
-    assert re.search(r"createIssue\(\s*\{[^}]*helper:", issues_source), (
-        "createIssue 调用必须传入 helper 字段"
+def test_create_issue_no_longer_submits_helper(issues_source: str):
+    """N4-P2-K: 新增问题表单不再提交 helper（默认空，负责人后续分派）"""
+    add_modal_start = issues_source.find("function AddIssueModal")
+    assert add_modal_start > 0
+    # 定位 createIssue 调用在 AddIssueModal 内
+    call_start = issues_source.find("createIssue", add_modal_start)
+    assert call_start > 0
+    call_block = issues_source[call_start:call_start + 600]
+    # 本次收口后不应提交 helper
+    assert 'helper:' not in call_block, (
+        "新增问题不应提交 helper，负责人后续在详情面板分派"
     )
 
 

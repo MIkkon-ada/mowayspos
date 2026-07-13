@@ -17,6 +17,8 @@ export function createIssue(payload: {
   owner?: string
   helper?: string
   priority?: string
+  status?: string
+  source_type?: string
   expected_resolve_time?: string
   related_task_id?: number | null
   related_subtask_id?: number | null

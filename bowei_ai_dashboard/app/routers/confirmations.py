@@ -74,6 +74,37 @@ def _storage_issue_type(issue_type: str | None) -> str:
     return _ISSUE_STORAGE_LABELS.get(IT.normalize(issue_type), IF.TYPE_ISSUE)
 
 
+def _extract_report_subtask_id(report: dict) -> int | None:
+    """从 report 中读取 matched_subtask_id 或 related_subtask_id，没有则返回 None"""
+    sid = report.get("matched_subtask_id") or report.get("related_subtask_id")
+    if sid is not None:
+        try:
+            return int(sid)
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def _resolve_report_related_subtask_id(
+    db: Session,
+    project_id: int | None,
+    related_task_id: int | None,
+    report: dict,
+) -> int | None:
+    """读取并校验 report 中的 related_subtask_id，合法返回 int，不合法抛 422，没有返回 None"""
+    subtask_id = _extract_report_subtask_id(report)
+    if subtask_id is None:
+        return None
+    crud.validate_subtask_link(db, project_id, related_task_id, subtask_id)
+    return subtask_id
+
+
+def _apply_related_subtask(obj, related_subtask_id: int | None) -> None:
+    """设置对象的 related_subtask_id"""
+    if related_subtask_id is not None:
+        obj.related_subtask_id = related_subtask_id
+
+
 def _issue_status_for(issue_type: str | None) -> str:
     return IF.STATUS_PENDING_DECISION if IT.is_decision(issue_type) else IF.STATUS_PENDING
 
@@ -211,9 +242,12 @@ def _require_confirmation_center(context: dict) -> None:
         raise HTTPException(403, "permission denied")
 
 
-def _require_owner_style_actor(context: dict) -> None:
-    if context.get("is_ceo") and not context.get("is_tech_admin"):
-        raise HTTPException(403, "permission denied")
+def _require_owner_style_actor(context: dict, row: models.UpdateSubmission, db: Session, *, allow_assign: bool = False) -> None:
+    if context.get("is_tech_admin"):
+        return
+    if _can_owner_style_action(context, row, db, allow_assign=allow_assign):
+        return
+    raise HTTPException(403, "permission denied")
 
 
 def _can_owner_style_action(context: dict, row: models.UpdateSubmission, db: Session, *, allow_assign: bool = False) -> bool:
@@ -318,6 +352,7 @@ def _write_single_task_report(
                         if ach:
                             ach.confirmed_by = operator
                             ach.confirmed_at = now
+                            ach.related_subtask_id = new_sub.id
                             if effective_project_id and not ach.project_id:
                                 ach.project_id = effective_project_id
             crud.log(
@@ -338,7 +373,10 @@ def _write_single_task_report(
         return task_id
     subtask = db.get(models.SubTask, int(matched_id))
     if not subtask or subtask.is_deleted:
-        return task_id
+        raise HTTPException(422, "关键任务不存在或已删除。")
+
+    # 校验 matched_subtask_id 与 重点工作/项目 一致性
+    crud.validate_subtask_link(db, effective_project_id, subtask.task_id, int(matched_id))
 
     completed = (report.get("completed") or "").strip()
     if completed:
@@ -371,6 +409,7 @@ def _write_single_task_report(
                 if ach:
                     ach.confirmed_by = operator
                     ach.confirmed_at = now
+                    ach.related_subtask_id = int(matched_id)
                     if effective_project_id and not ach.project_id:
                         ach.project_id = effective_project_id
 
@@ -392,6 +431,7 @@ def _write_single_task_report(
                 source_submission_id=row.id,
                 related_task_id=subtask.task_id,
             )
+            issue.related_subtask_id = int(matched_id)
             if effective_project_id:
                 issue.project_id = effective_project_id
             db.add(issue)
@@ -540,10 +580,7 @@ def save(
     context = get_user_context_from_db(current_user, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    if context.get("is_ceo") and not context.get("is_tech_admin"):
-        raise HTTPException(403, "permission denied")
-    if not _can_owner_style_action(context, row, db, allow_assign=True):
-        raise HTTPException(403, "permission denied")
+    _require_owner_style_actor(context, row, db, allow_assign=True)
     before = crud.to_dict(row)
     row.human_result_json = json.dumps(payload.human_result, ensure_ascii=False)
     row.confirm_status = SS.S_NEEDS_REVISION
@@ -563,9 +600,7 @@ def confirm(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db):
-        raise HTTPException(403, "permission denied — 仅项目负责人（owner）或管理员可确认入库")
+    _require_owner_style_actor(context, row, db)
     W.require_submission_status(row, SS.OWNER_ACTIONABLE)
     before = crud.to_dict(row)
 
@@ -742,6 +777,7 @@ def confirm(
                                 if ach:
                                     ach.confirmed_by = payload.operator
                                     ach.confirmed_at = now
+                                    ach.related_subtask_id = new_sub.id
                                     if effective_project_id and not ach.project_id:
                                         ach.project_id = effective_project_id
                     crud.log(
@@ -765,7 +801,10 @@ def confirm(
                 continue
             subtask = db.get(models.SubTask, int(matched_id))
             if not subtask or subtask.is_deleted:
-                continue
+                raise HTTPException(422, "关键任务不存在或已删除。")
+
+            # 校验 matched_subtask_id 与 重点工作/项目 一致性，防止跨项目错配
+            crud.validate_subtask_link(db, effective_project_id, subtask.task_id, int(matched_id))
 
             # Append progress note
             completed = (report.get("completed") or "").strip()
@@ -806,6 +845,7 @@ def confirm(
                         if ach:
                             ach.confirmed_by = payload.operator
                             ach.confirmed_at = now
+                            ach.related_subtask_id = int(matched_id)
                             if effective_project_id and not ach.project_id:
                                 ach.project_id = effective_project_id
 
@@ -828,6 +868,7 @@ def confirm(
                         source_submission_id=row.id,
                         related_task_id=subtask.task_id if subtask else None,
                     )
+                    issue.related_subtask_id = int(matched_id)
                     if effective_project_id:
                         issue.project_id = effective_project_id
                     db.add(issue)
@@ -951,9 +992,7 @@ def confirm_task_card(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db):
-        raise HTTPException(403, "permission denied")
+    _require_owner_style_actor(context, row, db)
     W.require_submission_status(row, SS.OWNER_ACTIONABLE)
 
     before = crud.to_dict(row)
@@ -1004,9 +1043,7 @@ def reject_task_card(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db):
-        raise HTTPException(403, "permission denied")
+    _require_owner_style_actor(context, row, db)
     W.require_submission_status(row, SS.OWNER_ACTIONABLE)
 
     before = crud.to_dict(row)
@@ -1036,9 +1073,7 @@ def transfer_task_card_to_coordinator(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db):
-        raise HTTPException(403, "permission denied")
+    _require_owner_style_actor(context, row, db)
     W.require_submission_status(row, SS.OWNER_ACTIONABLE)
 
     before = crud.to_dict(row)
@@ -1102,9 +1137,7 @@ def reject(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db):
-        raise HTTPException(403, "permission denied — 仅项目负责人（owner）可打回")
+    _require_owner_style_actor(context, row, db)
     W.require_submission_status(row, SS.OWNER_ACTIONABLE)
     before = crud.to_dict(row)
     project_id = _submission_project_id(db, row)
@@ -1199,9 +1232,7 @@ def reject_final(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db):
-        raise HTTPException(403, "permission denied — 仅项目负责人（owner）可永久拒绝")
+    _require_owner_style_actor(context, row, db)
     before = crud.to_dict(row)
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_PERMANENTLY_REJECTED
@@ -1231,9 +1262,7 @@ def transfer_coordinator(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db):
-        raise HTTPException(403, "permission denied — 仅项目负责人（owner）可转交统筹人")
+    _require_owner_style_actor(context, row, db)
     W.require_submission_status(row, SS.TRANSFERABLE_TO_COORDINATOR)
     before = crud.to_dict(row)
     project_id = _submission_project_id(db, row)
@@ -1379,9 +1408,7 @@ def assign(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db, allow_assign=True):
-        raise HTTPException(403, "permission denied")
+    _require_owner_style_actor(context, row, db, allow_assign=True)
     before = crud.to_dict(row)
     project_id = _submission_project_id(db, row)
     data = W.submission_result(row)

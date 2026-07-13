@@ -187,6 +187,14 @@ export function IssuesPage() {
     return map
   }, [allSubtasks])
 
+  // N4-P2-M: 判断当前用户是否为项目负责人/管理员（决定是否显示处理动作）
+  const canManageIssues = useMemo(() => {
+    if (currentUser?.is_tech_admin) return true
+    if (!currentProject) return false
+    const roles: string[] = currentProject.user_roles ?? []
+    return roles.includes('owner')
+  }, [currentUser, currentProject])
+
   // --- Derived data ---
   const filteredIssues = useMemo(() => {
     const term = keyword.trim().toLowerCase()
@@ -392,7 +400,6 @@ export function IssuesPage() {
   const isTerminal = selectedStatus === '已解决' || selectedStatus === '已关闭'
   const isClosed = selectedStatus === '已关闭'
   const isDecision = selectedType === '需决策'
-  const canOwnerWrite = !projectArchived
 
   return (
     <>
@@ -588,22 +595,26 @@ export function IssuesPage() {
             {/* Action area */}
             {!isClosed && (
               <div className="flex-shrink-0 px-4 py-3 border-t border-slate-200">
+                {!canManageIssues ? (
+                  <p className="text-xs text-slate-400 text-center py-4">仅项目负责人可执行处理动作</p>
+                ) : (
+                  <>
                 {actionErr && <p className="text-xs text-red-500 mb-2">{actionErr}</p>}
 
                 {!isTerminal && (
                   <>
-                    {/* 开始处理 */}
+                    {/* 待处理: 处理问题 */}
                     {selectedStatus === '待处理' && (
                       <button
                         onClick={handleStartProcessing}
                         disabled={actionLoading || projectArchived}
                         className="w-full py-2 rounded text-xs font-bold text-white mb-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
                       >
-                        开始处理
+                        处理问题
                       </button>
                     )}
 
-                    {/* 处理中/待决策: resolution input */}
+                    {/* 处理中/待协调/待决策: 处理结论输入 */}
                     {selectedStatus !== '待处理' && (
                       <div className="mb-2">
                         <p className="text-xs font-semibold text-slate-500 mb-1">{isDecision ? '决策结论' : '处理结论'}</p>
@@ -631,69 +642,75 @@ export function IssuesPage() {
                       </div>
                     )}
 
-                    {/* 指定协助人 */}
-                    <div className="mb-2">
-                      <p className="text-xs font-semibold text-slate-500 mb-1">协助人</p>
-                      <div className="flex gap-1.5">
-                        <input
-                          value={helperInput}
-                          onChange={(e) => setHelperInput(e.target.value)}
-                          placeholder="输入协助人姓名"
-                          className="flex-1 text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:border-purple-400"
-                        />
-                        <button
-                          onClick={handleAssignHelper}
-                          disabled={actionLoading || !helperInput.trim() || projectArchived}
-                          className="text-xs text-white font-semibold px-2.5 py-1.5 rounded disabled:opacity-50 bg-purple-600"
-                        >指定</button>
-                      </div>
-                    </div>
-
-                    {/* 标记已解决 */}
-                    <button
-                      onClick={handleResolve}
-                      disabled={actionLoading || projectArchived}
-                      className="w-full py-2 rounded text-white text-xs font-bold hover:opacity-90 disabled:opacity-50 mb-2"
-                      style={{ background: isDecision ? 'linear-gradient(135deg,#7C3AED,#A78BFA)' : 'linear-gradient(135deg,#059669,#34D399)' }}
-                    >
-                      {isDecision ? '确认决策' : '标记已解决'}
-                    </button>
-
-                    {/* 上报Coach */}
-                    <div>
-                      <button
-                        onClick={() => setShowCeoForm(!showCeoForm)}
-                        className="text-xs font-medium cursor-pointer text-purple-600"
-                      >
-                        {showCeoForm ? '▲ 收起' : '▼ 上报Coach'}
-                      </button>
-                      {showCeoForm && (
-                        <div className="mt-2 space-y-1.5">
+                    {/* 指定协助人: 仅待处理 / 处理中 */}
+                    {(selectedStatus === '待处理' || selectedStatus === '处理中') && (
+                      <div className="mb-2">
+                        <p className="text-xs font-semibold text-slate-500 mb-1">协助人</p>
+                        <div className="flex gap-1.5">
                           <input
-                            value={ceoTarget}
-                            onChange={(e) => setCeoTarget(e.target.value)}
-                            placeholder="企业教练"
-                            className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:border-purple-400"
-                          />
-                          <textarea
-                            value={ceoNote}
-                            onChange={(e) => setCeoNote(e.target.value)}
-                            rows={2}
-                            placeholder="上报说明（可选）"
-                            className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:border-purple-400 resize-none"
+                            value={helperInput}
+                            onChange={(e) => setHelperInput(e.target.value)}
+                            placeholder="输入协助人姓名"
+                            className="flex-1 text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:border-purple-400"
                           />
                           <button
-                            onClick={handleRequestCeo}
-                            disabled={actionLoading || !ceoTarget.trim() || projectArchived}
-                            className="w-full py-1.5 rounded text-white text-xs font-bold hover:opacity-90 disabled:opacity-50 bg-purple-600"
-                          >确认上报</button>
+                            onClick={handleAssignHelper}
+                            disabled={actionLoading || !helperInput.trim() || projectArchived}
+                            className="text-xs text-white font-semibold px-2.5 py-1.5 rounded disabled:opacity-50 bg-purple-600"
+                          >指定协助人</button>
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
+
+                    {/* 提交解决结果: 非待处理 */}
+                    {selectedStatus !== '待处理' && (
+                      <button
+                        onClick={handleResolve}
+                        disabled={actionLoading || projectArchived}
+                        className="w-full py-2 rounded text-white text-xs font-bold hover:opacity-90 disabled:opacity-50 mb-2"
+                        style={{ background: isDecision ? 'linear-gradient(135deg,#7C3AED,#A78BFA)' : 'linear-gradient(135deg,#059669,#34D399)' }}
+                      >
+                        {isDecision ? '确认决策' : '提交解决结果'}
+                      </button>
+                    )}
+
+                    {/* 上报Coach: 非待决策 */}
+                    {selectedStatus !== '待决策' && (
+                      <div>
+                        <button
+                          onClick={() => setShowCeoForm(!showCeoForm)}
+                          className="text-xs font-medium cursor-pointer text-purple-600"
+                        >
+                          {showCeoForm ? '▲ 收起' : '▼ 上报Coach'}
+                        </button>
+                        {showCeoForm && (
+                          <div className="mt-2 space-y-1.5">
+                            <input
+                              value={ceoTarget}
+                              onChange={(e) => setCeoTarget(e.target.value)}
+                              placeholder="企业教练"
+                              className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:border-purple-400"
+                            />
+                            <textarea
+                              value={ceoNote}
+                              onChange={(e) => setCeoNote(e.target.value)}
+                              rows={2}
+                              placeholder="上报说明（可选）"
+                              className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:border-purple-400 resize-none"
+                            />
+                            <button
+                              onClick={handleRequestCeo}
+                              disabled={actionLoading || !ceoTarget.trim() || projectArchived}
+                              className="w-full py-1.5 rounded text-white text-xs font-bold hover:opacity-90 disabled:opacity-50 bg-purple-600"
+                            >确认上报</button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
 
-                {/* 已解决: close section */}
+                {/* 已解决: 确认关闭 */}
                 {selectedStatus === '已解决' && (
                   <>
                     <p className="text-xs font-semibold text-slate-500 mb-1">关闭说明（可选）</p>
@@ -708,7 +725,9 @@ export function IssuesPage() {
                       onClick={handleClose}
                       disabled={actionLoading}
                       className="w-full py-2 rounded border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50"
-                    >关闭事项</button>
+                    >确认关闭</button>
+                  </>
+                )}
                   </>
                 )}
               </div>

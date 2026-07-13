@@ -545,10 +545,13 @@ def assign_helper(
     require_project_not_archived(project_id, db)
     before = crud.to_dict(row)
     row.helper = payload.helper
+    # N4-P2-M: 指定协助人后自动进入“待协调”
+    if (payload.helper or "").strip():
+        row.status = IF.STATUS_COORDINATING
     row.edit_count = (row.edit_count or 0) + 1
     project_id = row.project_id
     crud.log(db, current_user, "issue_assign_helper", "issue", row.id, before,
-             {"helper": payload.helper}, project_id=project_id)
+             {"helper": payload.helper, "status": row.status}, project_id=project_id)
     db.commit()
     return crud.to_dict(row)
 

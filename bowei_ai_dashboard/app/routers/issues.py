@@ -22,6 +22,7 @@ from ..permissions import (
     require_project_access,
     require_project_owner_or_admin,
     require_project_role,
+    is_project_member,
 )
 from ..time_utils import utc_now
 
@@ -90,6 +91,53 @@ def _issue_type_matches_filter(row: models.Issue, issue_type: str) -> bool:
     return row_type == normalized_filter_type
 
 
+# ── 角色可见范围辅助 ──────────────────────────────────────────
+
+def _can_view_project_all_issues(context: dict, project_id: int, db: Session) -> bool:
+    """检查当前用户是否有项目全部问题的可见权限。"""
+    if context.get("is_tech_admin") or context.get("is_ceo"):
+        return True
+    person_id = context.get("person_id")
+    if person_id is None:
+        return False
+    roles = get_all_project_roles(int(person_id), int(project_id), db)
+    if roles:
+        return any(r in ("owner", "coordinator", "project_ceo") for r in roles)
+    # Fallback: 如果 project_members 无数据，从旧 context 推导
+    proj_name = _get_project_name(project_id, db)
+    if proj_name:
+        if proj_name in context.get("owned_projects", []):
+            return True
+        if proj_name in context.get("coordinated_projects", []):
+            return True
+        if proj_name in context.get("ceo_projects", []):
+            return True
+    return False
+
+
+def _get_project_name(project_id: int, db: Session) -> str | None:
+    """从 projects 表按 id 查名称。"""
+    try:
+        row = db.execute(
+            text("SELECT name FROM projects WHERE id = :id"),
+            {"id": project_id},
+        ).fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
+def _is_issue_related_to_user(row: models.Issue, username: str, person_name: str) -> bool:
+    """普通成员是否与该问题相关（reporter / owner / helper）。"""
+    return (
+        (row.reporter or "") == username
+        or (row.owner or "") == username
+        or (row.helper or "") == username
+        or bool(person_name) and (row.owner or "") == person_name
+        or bool(person_name) and (row.helper or "") == person_name
+    )
+
+
 # ── 业务辅助 ──────────────────────────────────────────────────
 
 def _is_decision_issue(row: models.Issue) -> bool:
@@ -153,6 +201,18 @@ def list_issues(
     q = db.query(models.Issue).order_by(models.Issue.updated_at.desc())
     if effective_project_id is not None:
         q = q.filter(models.Issue.project_id == effective_project_id)
+        # 普通成员只看自己相关的问题
+        if not _can_view_project_all_issues(context, effective_project_id, db):
+            current_person_name = context.get("name") or ""
+            q = q.filter(
+                or_(
+                    models.Issue.reporter == current_user,
+                    models.Issue.owner == current_user,
+                    models.Issue.helper == current_user,
+                    models.Issue.owner == current_person_name,
+                    models.Issue.helper == current_person_name,
+                )
+            )
 
     result = []
     for row in q.limit(500).all():
@@ -264,6 +324,11 @@ def get_issue(
     project_id = _row_project_id(row, db)
     if project_id is not None:
         require_project_access(current_user, project_id, db)
+        # N4-P2-L: 普通成员只能看与自己相关的问题
+        if not _can_view_project_all_issues(context, project_id, db):
+            current_person_name = context.get("name") or ""
+            if not _is_issue_related_to_user(row, current_user, current_person_name):
+                raise HTTPException(403, "permission denied")
     elif not (context.get("is_tech_admin") or context.get("is_ceo")):
         raise HTTPException(403, "permission denied")
     return crud.to_dict(row)

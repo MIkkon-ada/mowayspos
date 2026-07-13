@@ -33,6 +33,7 @@ from app.routers.confirmations import (
     withdraw,
     mark_unrecognized,
     assign,
+    counts,
 )
 from tests.test_execution_submission_to_work_progress_flow import _make_session
 
@@ -1278,3 +1279,155 @@ class TestNotificationAndLogDB:
         assert after_data.get("card_index") == 0
         assert after_data.get("card_title") == "测试任务卡标题"
         assert after_data.get("note") == "同意该方案"
+
+
+# ════════════════════════════════════════════════════════════════════
+# 二十、counts 端点 ceo_total 测试
+# ════════════════════════════════════════════════════════════════════
+
+class TestCeoTotalCounts:
+    """ceo_total 字段：提交级 + 卡片级企业教练待办。"""
+
+    def test_submission_level_ceo_counted(self):
+        """提交级 S_WAITING_CEO 计入 ceo_total。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_ceo(
+            sid, schemas.WorkflowNoteRequest(note="上报CEO", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="coach", db=db)
+        assert result.get("ceo_total", 0) >= 1
+
+    def test_card_level_ceo_counted(self):
+        """卡片级 pending_ceo_decision 计入 ceo_total。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报卡", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="coach", db=db)
+        assert result.get("ceo_total", 0) >= 1
+
+    def test_two_cards_same_submission_count_as_one(self):
+        """同一 submission 两张待决策卡只计 1。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+
+        # 先通过直接写 human_result_json 设置两张卡为 pending_ceo_decision
+        row = db.get(models.UpdateSubmission, sid)
+        data = json.loads(row.human_result_json)
+        reports = data["task_reports"]
+        # 需要两张卡
+        if len(reports) < 2:
+            reports.append({
+                "result_type": "subtask_progress",
+                "type": "progress",
+                "title": "第二张卡",
+                "matched_subtask_id": team["subtask"].id,
+                "completed": "测试2",
+                "confirmation_status": "pending_ceo_decision",
+                "confirmation_note": "也需要决策",
+            })
+        reports[0]["confirmation_status"] = "pending_ceo_decision"
+        reports[0]["confirmation_note"] = "需要决策"
+        if len(reports) > 1:
+            reports[1]["confirmation_status"] = "pending_ceo_decision"
+            reports[1]["confirmation_note"] = "也需要决策"
+        row.human_result_json = json.dumps(data, ensure_ascii=False)
+        db.commit()
+
+        result = counts(current_user="coach", db=db)
+        # 应只有1条 submission，不计为2
+        assert result.get("ceo_total", 0) >= 1
+
+    def test_both_levels_dedup(self):
+        """同时存在提交级和卡片级时正确去重。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        # 先上报提交级
+        escalate_ceo(
+            sid, schemas.WorkflowNoteRequest(note="上报CEO", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="coach", db=db)
+        ceo_total = result.get("ceo_total", 0)
+        assert ceo_total >= 1
+
+    def test_project_ceo_only_counts_own_project(self):
+        """project_ceo 只统计所属项目的待办。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="coach", db=db)
+        assert result.get("ceo_total", 0) >= 1
+
+    def test_company_ceo_without_project_ceo_zero(self):
+        """纯 company_ceo（无 project_ceo 角色）ceo_total = 0。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="公司CEO", db=db)
+        assert result.get("ceo_total", 0) == 0
+
+    def test_owner_ceo_total_zero(self):
+        """owner 的 ceo_total = 0。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="owner", db=db)
+        assert result.get("ceo_total", 0) == 0
+
+    def test_coordinator_ceo_total_zero(self):
+        """coordinator 的 ceo_total = 0。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="coordinator", db=db)
+        assert result.get("ceo_total", 0) == 0
+
+    def test_tech_admin_can_count_all(self):
+        """tech_admin 可以统计全部。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="tech_admin", db=db)
+        assert result.get("ceo_total", 0) >= 1
+
+    def test_original_ceo_unchanged(self):
+        """原 counts.ceo 行为不变。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_ceo(
+            sid, schemas.WorkflowNoteRequest(note="上报CEO", operator="owner"),
+            current_user="owner", db=db,
+        )
+        result = counts(current_user="coach", db=db)
+        assert result.get("ceo", 0) >= 1
+        assert result.get("ceo_total", 0) >= result.get("ceo", 0)

@@ -42,6 +42,10 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
   const avatarChar = userName.slice(0, 1) || '我'
 
   const isCEO = !!(currentUser?.is_ceo || globalUserRoles.includes('project_ceo'))
+  const isCoachDecisionActor = Boolean(
+    currentUser?.is_tech_admin ||
+    globalUserRoles.includes('project_ceo')
+  )
   const isPrivileged = !!(
     currentUser?.is_tech_admin ||
     currentUser?.is_ceo ||
@@ -59,7 +63,7 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
     if (!isPrivileged) return
     function poll() {
       getConfirmationCounts()
-        .then((counts) => setConfirmBadge((counts['待审核'] ?? 0) + (counts.ceo ?? 0)))
+        .then((counts) => setConfirmBadge((counts['待审核'] ?? 0) + (counts.ceo_total ?? counts.ceo ?? 0)))
         .catch(() => {})
     }
     poll()
@@ -95,7 +99,7 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
   const assetItems: NavItem[] = [
     { page: 'achievements' as const, label: '成果库', icon: <IconArchive /> },
     { page: 'issues' as const, label: '问题中心', icon: <IconAlert /> },
-    ...(isCEO ? [{ page: 'decisions' as const, label: '企业教练决策中心', icon: <IconGavel /> }] : []),
+    ...(isCoachDecisionActor ? [{ page: 'decisions' as const, label: '企业教练决策中心', icon: <IconGavel /> }] : []),
   ]
 
   const collaborationManagementItems: NavItem[] = [

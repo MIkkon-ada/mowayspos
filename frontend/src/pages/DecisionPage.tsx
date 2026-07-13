@@ -12,7 +12,7 @@ export function DecisionPage() {
   const [note, setNote] = useState('')
   const [acting, setActing] = useState(false)
 
-  const isCEO = !!(currentUser?.is_ceo || globalUserRoles.includes('project_ceo'))
+  const isCEO = Boolean(currentUser?.is_tech_admin || globalUserRoles.includes('project_ceo'))
 
   useEffect(() => {
     let cancelled = false

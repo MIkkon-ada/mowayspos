@@ -195,6 +195,33 @@ export function IssuesPage() {
     return roles.includes('owner')
   }, [currentUser, currentProject])
 
+  // N4-P2-N: 判断用户在任何项目中是否有管理角色（用于项目选择页视图区分）
+  const hasAnyManagementRole = useMemo(() => {
+    if (currentUser?.is_tech_admin || currentUser?.is_ceo) return true
+    return projects.some((p) => {
+      const roles: string[] = p.user_roles ?? []
+      return roles.some((role) =>
+        ['owner', 'coordinator', 'project_ceo'].includes(role)
+      )
+    })
+  }, [currentUser, projects])
+
+  // N4-P2-N: 判断当前用户能否查看当前项目的全部问题
+  const canViewAllProjectIssues = useMemo(() => {
+    if (currentUser?.is_tech_admin || currentUser?.is_ceo) return true
+    if (!currentProject) return false
+    const roles: string[] = currentProject.user_roles ?? []
+    return roles.some((role) =>
+      ['owner', 'coordinator', 'project_ceo'].includes(role)
+    )
+  }, [currentUser, currentProject])
+
+  // N4-P2-N: 普通成员问题视图标记
+  const isMemberIssueView = Boolean(currentProject) && !canViewAllProjectIssues
+
+  // N4-P2-N: 普通成员状态筛选
+  const [memberStatusFilter, setMemberStatusFilter] = useState('全部')
+
   // --- Derived data ---
   const filteredIssues = useMemo(() => {
     const term = keyword.trim().toLowerCase()
@@ -217,6 +244,28 @@ export function IssuesPage() {
     })
     return map
   }, [filteredIssues])
+
+  // N4-P2-N: 普通成员问题过滤（仅状态和关键词）
+  const memberFilteredIssues = useMemo(() => {
+    const term = keyword.trim().toLowerCase()
+    return issues.filter((item) => {
+      if (memberStatusFilter !== '全部' && item.status !== memberStatusFilter) return false
+      if (term && !(item.description || '').toLowerCase().includes(term)) return false
+      return true
+    })
+  }, [issues, memberStatusFilter, keyword])
+
+  // N4-P2-N: 判断当前用户与问题的关系
+  function getMyRelationship(item: IssueItem): string {
+    if (!currentUser) return '—'
+    const uname = currentUser.username || ''
+    const pname = currentUser.name || ''
+    const parts: string[] = []
+    if ((item.reporter || '') === uname) parts.push('我上报的')
+    if ((item.owner || '') === uname || (pname && (item.owner || '') === pname)) parts.push('我负责的')
+    if ((item.helper || '') === uname || (pname && (item.helper || '') === pname)) parts.push('我协助的')
+    return parts.length > 0 ? parts.join('、') : '—'
+  }
 
   const stats = useMemo(() => {
     const pending = issues.filter((i) => i.status === '待处理').length
@@ -295,8 +344,95 @@ export function IssuesPage() {
     } finally { setActionLoading(false) }
   }
 
+  // N4-P2-N: 角色标签映射
+  function roleLabel(role: string): string {
+    const map: Record<string, string> = {
+      owner: '负责人', coordinator: '统筹人', project_ceo: '企业教练', member: '成员',
+    }
+    return map[role] || role
+  }
+
   // ============ PROJECT SELECTION PAGE ============
   if (!projectId) {
+    // N4-P2-N: 普通成员无任何管理角色时，显示简化项目选择页
+    if (!hasAnyManagementRole) {
+      return (
+        <div className="flex-1 overflow-y-auto bg-[#f6f8fb]">
+          <div className="mx-auto max-w-[1440px] px-6 py-6">
+            <div className="mb-6">
+              <p className="text-[11px] font-extrabold uppercase tracking-[0.24em] text-purple-600">ISSUE CENTER</p>
+              <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">与我相关的问题</h1>
+              <p className="mt-2 text-sm text-slate-500">选择项目，查看你上报、负责或协助处理的问题。</p>
+            </div>
+
+            <div className="mb-6 max-w-xs">
+              <div className="rounded border border-slate-200 bg-white px-4 py-2.5 shadow-sm">
+                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">搜索项目名称</label>
+                <input
+                  value={projectSearch}
+                  onChange={(e) => setProjectSearch(e.target.value)}
+                  placeholder="搜索项目名称"
+                  className="mt-1.5 w-full border-0 p-0 text-sm font-medium text-slate-800 outline-none placeholder:text-slate-300"
+                />
+              </div>
+            </div>
+
+            <div className="overflow-hidden rounded border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
+                <h2 className="text-base font-bold text-slate-900">可查看项目</h2>
+                <p className="mt-0.5 text-xs text-slate-500">选择项目，查看与你相关的问题。</p>
+              </div>
+              <div className="overflow-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-5 py-2.5">项目名称</th>
+                      <th className="px-4 py-2.5">状态</th>
+                      <th className="px-4 py-2.5">我的角色</th>
+                      <th className="px-4 py-2.5 text-center">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {visibleProjects.length === 0 ? (
+                      <tr><td colSpan={4} className="px-5 py-12 text-center text-sm text-slate-400">暂无可查看项目</td></tr>
+                    ) : visibleProjects.map((project) => {
+                      const myRoles: string[] = project.user_roles ?? []
+                      const roleText = myRoles.length > 0
+                        ? myRoles.map((r) => roleLabel(r)).join('、')
+                        : '成员'
+                      return (
+                        <tr key={project.id} className="transition-colors hover:bg-purple-50/50">
+                          <td className="px-5 py-2.5">
+                            <p className="font-bold text-slate-950">{project.name}</p>
+                            <p className="mt-0.5 text-xs text-slate-400">项目编号：{project.code || `#${project.id}`}</p>
+                          </td>
+                          <td className="px-4 py-2.5"><span className="rounded border border-sky-100 bg-sky-50 px-2 py-0.5 text-xs font-bold text-sky-700">{projectStatusLabel(project)}</span></td>
+                          <td className="px-4 py-2.5 text-sm text-slate-600">{roleText}</td>
+                          <td className="px-4 py-2.5 text-center">
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/work/issues?projectId=${project.id}`)}
+                              className="rounded bg-purple-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-purple-700"
+                            >
+                              查看问题
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/50 px-5 py-2.5">
+                <span className="text-xs text-slate-400">共 {visibleProjects.length} 个项目可查看</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    // 管理角色：原项目选择页
     return (
       <div className="flex-1 overflow-y-auto bg-[#f6f8fb]">
         <div className="mx-auto max-w-[1440px] px-6 py-6">
@@ -400,6 +536,197 @@ export function IssuesPage() {
   const isTerminal = selectedStatus === '已解决' || selectedStatus === '已关闭'
   const isClosed = selectedStatus === '已关闭'
   const isDecision = selectedType === '需决策'
+
+  // N4-P2-N: 普通成员项目详情视图
+  if (isMemberIssueView) {
+    return (
+      <>
+      <div className="flex-1 overflow-hidden bg-[#f6f8fb] flex flex-col">
+        {/* Header */}
+        <header className="flex-shrink-0 rounded-xl border border-slate-200 bg-white mx-5 mt-5 px-4 py-4 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[11px] font-extrabold uppercase tracking-[0.24em] text-purple-600">ISSUE CENTER</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-950">与我相关的问题</h1>
+                <span className="mt-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">{projectStatusLabel(currentProject)}</span>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">查看你在 {currentProject?.name || '当前项目'} 中上报、负责或协助处理的问题。</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => navigate('/work/issues')} className="rounded border border-purple-200 bg-white px-3 py-2 text-xs font-bold text-purple-700 hover:bg-purple-50">切换项目</button>
+              <button type="button" onClick={reload} className="rounded border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">刷新</button>
+              <button type="button" onClick={() => setAddOpen(true)} disabled={projectArchived} className="rounded bg-purple-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50">新增问题</button>
+            </div>
+          </div>
+
+          {/* Filter bar */}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <select value={memberStatusFilter} onChange={(e) => setMemberStatusFilter(e.target.value)} className="rounded border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700">
+              <option value="全部">全部状态</option>
+              <option value="待处理">待处理</option>
+              <option value="处理中">处理中</option>
+              <option value="待协调">待协调</option>
+              <option value="待决策">待决策</option>
+              <option value="已解决">已解决</option>
+              <option value="已关闭">已关闭</option>
+            </select>
+            <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索问题摘要" className="min-w-[200px] flex-1 rounded border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-purple-400" />
+          </div>
+        </header>
+
+        {/* Table + Detail Panel */}
+        <div className="min-h-0 flex-1 flex gap-4 px-5 py-4 overflow-hidden">
+          {/* Table area */}
+          <div className="flex-1 overflow-auto">
+            {loading ? (
+              <div className="flex items-center justify-center h-full text-sm text-slate-400">加载中...</div>
+            ) : loadError ? (
+              <div className="flex items-center justify-center h-full text-sm text-red-500">{loadError}</div>
+            ) : memberFilteredIssues.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-center">
+                <p className="text-sm font-semibold text-slate-500">当前项目暂无与你相关的问题</p>
+                <p className="mt-1 text-xs text-slate-400">你上报的问题，或被指定负责、协助的问题，会显示在这里。</p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-4 py-2.5">问题摘要</th>
+                      <th className="px-3 py-2.5">关联重点工作 / 关键任务</th>
+                      <th className="px-3 py-2.5">当前状态</th>
+                      <th className="px-3 py-2.5">我的关系</th>
+                      <th className="px-3 py-2.5">负责人 / 协助人</th>
+                      <th className="px-3 py-2.5">更新时间</th>
+                      <th className="px-3 py-2.5 text-center">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {memberFilteredIssues.map((item) => {
+                      const active = selected?.id === item.id
+                      const st = STATUS_STYLE[item.status || ''] || STATUS_STYLE['待处理']
+                      return (
+                        <tr
+                          key={item.id}
+                          onClick={() => setSelected(item)}
+                          className={`cursor-pointer transition-colors hover:bg-purple-50/30 ${active ? 'bg-purple-50 ring-1 ring-purple-200' : ''}`}
+                        >
+                          <td className="px-4 py-2.5 max-w-[200px]">
+                            <p className="font-bold text-slate-800 text-xs leading-snug line-clamp-2">{item.description || '未命名问题'}</p>
+                          </td>
+                          <td className="px-3 py-2.5 text-xs text-slate-600">
+                            <p>{taskNameForId(tasks, item.related_task_id as number | null | undefined)}</p>
+                            <p className="text-slate-400">{keyTaskLabelForIssue(item, subtaskById)}</p>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${st.badge}`}>
+                              <span className="w-1.5 h-1.5 rounded-full" style={{ background: st.dot }}></span>
+                              {item.status || '待处理'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-xs text-slate-600">{getMyRelationship(item)}</td>
+                          <td className="px-3 py-2.5 text-xs text-slate-600">
+                            <p>{item.owner || '—'}</p>
+                            <p className="text-slate-400">{item.helper || '—'}</p>
+                          </td>
+                          <td className="px-3 py-2.5 text-xs text-slate-400">{fmtDate(item.updated_at) || '—'}</td>
+                          <td className="px-3 py-2.5 text-center">
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setSelected(item) }}
+                              className="rounded border border-purple-200 bg-white px-2.5 py-1 text-[11px] font-bold text-purple-600 hover:bg-purple-50"
+                            >
+                              查看详情
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Right detail panel (read-only for members) */}
+          {selected && (
+            <div className="w-[320px] flex-shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm flex flex-col">
+              {/* Fixed header */}
+              <div className="flex-shrink-0 px-4 pt-4 pb-3 border-b border-slate-200">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-bold text-slate-800">问题详情</h2>
+                  <button onClick={() => setSelected(null)} className="p-1 rounded hover:bg-slate-100 text-slate-400">
+                    <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+                <p className="text-sm font-bold text-slate-800 leading-snug">{selected.description || '—'}</p>
+                <div className="flex items-center gap-2 mt-2">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${PRIORITY_STYLE[selected.priority || ''] || PRIORITY_STYLE['中']}`}>{selected.priority || '—'}</span>
+                  <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border ${STATUS_STYLE[selectedStatus]?.badge || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: STATUS_STYLE[selectedStatus]?.dot || '#94A3B8' }}></span>
+                    {selectedStatus || '—'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Scrollable body */}
+              <div className="flex-1 overflow-y-auto px-4 py-3" style={{ minHeight: 0 }}>
+                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">问题信息</h3>
+                <div className="space-y-2 text-xs">
+                  <DetailRow label="所属项目" value={currentProject?.name || selected.special_project || '—'} />
+                  <DetailRow label="来源" value={issueSourceLabel(selected)} />
+                  <DetailRow label="问题类型" value={selectedType || '—'} />
+                  <DetailRow label="关联重点工作" value={taskNameForId(tasks, selected.related_task_id as number | null | undefined)} />
+                  <DetailRow label="关联关键任务" value={keyTaskLabelForIssue(selected, subtaskById)} />
+                  <DetailRow label="上报人" value={selected.reporter || '—'} />
+                  <DetailRow label="负责人" value={selected.owner || '—'} />
+                  <DetailRow label="协助人" value={selected.helper || '—'} />
+                  <DetailRow label="需决策人" value={selected.need_decision_by || '—'} />
+                  <DetailRow label="预计解决时间" value={selected.expected_resolve_time || '—'} />
+                  <DetailRow label="创建时间" value={fmtDate(selected.created_at) || '—'} />
+                  <DetailRow label="更新时间" value={fmtDate(selected.updated_at) || '—'} />
+                </div>
+
+                {isTerminal && selected.resolution && (
+                  <div className="mt-4">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">{isDecision ? '决策结论' : '处理结论'}</p>
+                    <p className="text-xs text-slate-600 leading-relaxed p-3 rounded-lg" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>{selected.resolution}</p>
+                  </div>
+                )}
+                {isTerminal && selected.handler_reply && (
+                  <div className="mt-3">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">回复给上报人</p>
+                    <p className="text-xs text-amber-800 leading-relaxed p-3 rounded-lg" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>{selected.handler_reply}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Add Issue Modal */}
+      {addOpen && (
+        <AddIssueModal
+          projects={projects}
+          currentProjectId={projectId}
+          currentUser={currentUser}
+          tasks={tasks}
+          tasksLoading={tasksLoading}
+          projectArchived={projectArchived}
+          onClose={() => setAddOpen(false)}
+          onCreated={(item) => {
+            setIssues((prev) => [item, ...prev])
+            setSelected(item)
+            setAddOpen(false)
+            toast.success('问题已创建')
+          }}
+        />
+      )}
+      </>
+    )
+  }
 
   return (
     <>

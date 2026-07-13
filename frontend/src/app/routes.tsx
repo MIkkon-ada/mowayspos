@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { Routes, Route, Navigate, useParams } from 'react-router-dom'
+import { Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom'
 import { useProject } from '../context/ProjectContext'
 import { RequireAuth } from './guards/RequireAuth'
 import { RequireProject } from './guards/RequireProject'
@@ -21,7 +21,6 @@ const VoiceUpdatePage = lazy(() => import('../pages/VoiceUpdatePage').then((m) =
 const AchievementsPage = lazy(() => import('../pages/AchievementsPage').then((m) => ({ default: m.AchievementsPage })))
 const IssuesPage = lazy(() => import('../pages/IssuesPage').then((m) => ({ default: m.IssuesPage })))
 const CoordinatePage = lazy(() => import('../pages/CoordinatePage').then((m) => ({ default: m.CoordinatePage })))
-const DecisionPage = lazy(() => import('../pages/DecisionPage').then((m) => ({ default: m.DecisionPage })))
 const NotificationCenterPage = lazy(() => import('../pages/NotificationCenterPage').then((m) => ({ default: m.NotificationCenterPage })))
 const SettingsPage = lazy(() => import('../pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const ProjectAdminPage = lazy(() => import('../pages/ProjectAdminPage').then((m) => ({ default: m.ProjectAdminPage })))
@@ -54,6 +53,25 @@ function LegacyProjectRedirect({ to, includeProjectId = false }: { to: string; i
 function LegacyMemberProjectRedirect() {
   const { projectId } = useParams()
   return <Navigate to={projectId ? `/member/projects/${projectId}` : '/member/projects'} replace />
+}
+
+function LegacyCoachDecisionRedirect() {
+  const { projectId } = useParams()
+  const location = useLocation()
+
+  const params = new URLSearchParams(location.search)
+  params.set('view', 'ceo')
+
+  if (projectId) {
+    params.set('projectId', projectId)
+  }
+
+  return (
+    <Navigate
+      to={`/work/confirmations?${params.toString()}`}
+      replace
+    />
+  )
 }
 
 type SetupState = 'loading' | 'needed' | 'done'
@@ -148,7 +166,7 @@ export function AppRoutes() {
           <Route path="achievements" element={<AchievementsPage />} />
           <Route path="issues" element={<IssuesPage />} />
           <Route path="org" element={<CoordinatePage />} />
-          <Route path="decisions" element={<DecisionPage />} />
+          <Route path="decisions" element={<LegacyCoachDecisionRedirect />} />
           <Route path="meetings" element={<MeetingPage />} />
           <Route path="notifications" element={<NotificationCenterPage />} />
         </Route>
@@ -191,7 +209,7 @@ export function AppRoutes() {
           <Route path="confirm" element={<LegacyProjectRedirect to="/work/confirmations" />} />
           <Route path="coordinate" element={<LegacyProjectRedirect to="/work/org" includeProjectId />} />
           <Route path="org" element={<LegacyProjectRedirect to="/work/org" includeProjectId />} />
-          <Route path="decisions" element={<LegacyProjectRedirect to="/work/decisions" />} />
+          <Route path="decisions" element={<LegacyCoachDecisionRedirect />} />
           <Route path="notifications" element={<LegacyProjectRedirect to="/home/notifications" />} />
           <Route path="submit" element={<LegacyProjectRedirect to="/work/submit" includeProjectId />} />
           <Route path="meeting" element={<MeetingPage />} />

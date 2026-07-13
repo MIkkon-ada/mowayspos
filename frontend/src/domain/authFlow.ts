@@ -131,7 +131,6 @@ export function getProjectScopedNavigationDestination(
     achievements: '/work/achievements',
     issues: '/work/issues',
     coordinate: '/work/org',
-    decisions: '/work/decisions',
     meetings: '/work/meetings',
     meeting: '/work/meetings',
     notifications: '/home/notifications',

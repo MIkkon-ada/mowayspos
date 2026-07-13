@@ -302,68 +302,227 @@ class TestPageIsolation:
 
 
 # ════════════════════════════════════════════════════════════════════
-# 兼容边界
+# 删除独立页面
 # ════════════════════════════════════════════════════════════════════
 
-class TestCompatibility:
-    """兼容边界。"""
+class TestDecisionPageRemoved:
+    """DecisionPage.tsx 已删除。"""
+
+    def test_decision_page_does_not_exist(self):
+        """DecisionPage.tsx 文件不存在。"""
+        assert not (FRONTEND_DIR / "pages/DecisionPage.tsx").exists()
+
+
+# ════════════════════════════════════════════════════════════════════
+# 路由兼容重定向
+# ════════════════════════════════════════════════════════════════════
+
+class TestLegacyRouteRedirect:
+    """旧路由已改为兼容重定向。"""
 
     @classmethod
     def setup_class(cls):
-        cls.decision_source = _read_tsx("pages/DecisionPage.tsx")
-        cls.sidebar_source = _read_tsx("components/Sidebar.tsx")
+        cls.source = _read_tsx("app/routes.tsx")
 
-    def test_decision_page_exists(self):
-        """DecisionPage.tsx 仍存在。"""
-        assert len(self.decision_source) > 100
+    def test_no_decision_page_import(self):
+        """不存在 DecisionPage import。"""
+        assert "import('../pages/DecisionPage')" not in self.source
 
-    def test_decision_page_uses_ceo_decide(self):
-        """旧 DecisionPage 仍调用 ceoDecide。"""
-        assert "ceoDecide" in self.decision_source
+    def test_no_decision_page_element(self):
+        """不存在 element={<DecisionPage />}。"""
+        assert "element={<DecisionPage" not in self.source
 
-    def test_decision_page_not_calling_ceo_decide_task_card(self):
-        """旧页面不调用 ceoDecideTaskCard。"""
-        assert "ceoDecideTaskCard" not in self.decision_source
+    def test_legacy_coach_decision_redirect_exists(self):
+        """LegacyCoachDecisionRedirect 组件存在。"""
+        assert "LegacyCoachDecisionRedirect" in self.source
 
-    def test_decision_page_permission_not_using_is_ceo(self):
-        """旧 DecisionPage 权限不使用 is_ceo（改用 is_tech_admin + project_ceo）。"""
-        decision_block = _find_branch(self.decision_source, "isCEO", 6)
-        assert decision_block is not None
-        assert "currentUser?.is_ceo" not in decision_block
+    def test_work_decisions_uses_redirect(self):
+        """work 区 decisions 路由使用 LegacyCoachDecisionRedirect。"""
+        block = _find_branch(self.source, 'path="decisions"', 2)
+        assert block is not None
+        assert "LegacyCoachDecisionRedirect" in block
 
-    def test_sidebar_is_coach_decision_actor_exists(self):
-        """Sidebar 中 isCoachDecisionActor 变量存在。"""
-        assert "isCoachDecisionActor" in self.sidebar_source
+    def test_project_decisions_uses_redirect(self):
+        """project 区 decisions 路由使用 LegacyCoachDecisionRedirect。"""
+        second = _find_nth(self.source, 'path="decisions"', 1)
+        assert second is not None
+        assert "LegacyCoachDecisionRedirect" in second[:300]
 
-    def test_sidebar_is_coach_decision_actor_contains_project_ceo(self):
-        """isCoachDecisionActor 包含 project_ceo。"""
-        definition = _find_branch(self.sidebar_source, "isCoachDecisionActor", 8)
-        assert definition is not None
-        assert "project_ceo" in definition
+    def test_redirect_target_contains_confirmations(self):
+        """重定向目标包含 /work/confirmations。"""
+        block = _find_branch(self.source, "LegacyCoachDecisionRedirect", 20)
+        assert block is not None
+        assert "/work/confirmations" in block
 
-    def test_sidebar_is_coach_decision_actor_contains_is_tech_admin(self):
-        """isCoachDecisionActor 包含 is_tech_admin。"""
-        definition = _find_branch(self.sidebar_source, "isCoachDecisionActor", 8)
-        assert definition is not None
-        assert "is_tech_admin" in definition
+    def test_redirect_sets_view_ceo(self):
+        """重定向强制设置 view=ceo。"""
+        block = _find_branch(self.source, "LegacyCoachDecisionRedirect", 20)
+        assert block is not None
+        assert "view" in block
+        assert "'ceo'" in block
 
-    def test_sidebar_is_coach_decision_actor_not_contain_is_ceo(self):
-        """isCoachDecisionActor 不包含 currentUser?.is_ceo。"""
-        idx = self.sidebar_source.find("isCoachDecisionActor")
-        assert idx > 0
-        # 只看变量起始位置后的代码，避免相邻的 isCEO 变量干扰
-        nearby = self.sidebar_source[idx:idx + 120]
-        assert "currentUser?.is_ceo" not in nearby
+    def test_redirect_reads_location_search(self):
+        """重定向读取 location.search。"""
+        block = _find_branch(self.source, "LegacyCoachDecisionRedirect", 20)
+        assert block is not None
+        assert "location.search" in block
 
-    def test_sidebar_show_participant_includes_project_ceo(self):
+    def test_redirect_uses_url_search_params(self):
+        """重定向使用 URLSearchParams。"""
+        block = _find_branch(self.source, "LegacyCoachDecisionRedirect", 20)
+        assert block is not None
+        assert "URLSearchParams" in block
+
+    def test_redirect_sets_project_id(self):
+        """项目路由重定向设置 projectId。"""
+        block = _find_branch(self.source, "LegacyCoachDecisionRedirect", 20)
+        assert block is not None
+        assert "params.set('projectId'" in block or 'params.set("projectId"' in block
+
+    def test_redirect_uses_replace(self):
+        """重定向使用 replace。"""
+        block = _find_branch(self.source, "LegacyCoachDecisionRedirect", 20)
+        assert block is not None
+        assert "replace" in block
+
+
+# ════════════════════════════════════════════════════════════════════
+# Sidebar 清理
+# ════════════════════════════════════════════════════════════════════
+
+class TestSidebarCleanup:
+    """Sidebar 已移除独立企业教练入口。"""
+
+    @classmethod
+    def setup_class(cls):
+        cls.source = _read_tsx("components/Sidebar.tsx")
+
+    def test_no_enterprise_coach_label(self):
+        """不存在"企业教练决策中心"。"""
+        assert "企业教练决策中心" not in self.source
+
+    def test_no_page_decisions(self):
+        """不存在 page: 'decisions'。"""
+        assert "page: 'decisions'" not in self.source
+
+    def test_no_is_coach_decision_actor(self):
+        """不存在 isCoachDecisionActor。"""
+        assert "isCoachDecisionActor" not in self.source
+
+    def test_no_icon_gavel(self):
+        """不存在 IconGavel。"""
+        assert "IconGavel" not in self.source
+
+
+class TestSidebarRetained:
+    """Sidebar 保留 AI 确认中心及 badge。"""
+
+    @classmethod
+    def setup_class(cls):
+        cls.source = _read_tsx("components/Sidebar.tsx")
+
+    def test_ai_confirm_center_label_exists(self):
+        """仍存在 AI_CONFIRM_CENTER_LABEL。"""
+        assert "AI_CONFIRM_CENTER_LABEL" in self.source
+
+    def test_ceo_total_exists(self):
+        """仍使用 ceo_total。"""
+        assert "ceo_total" in self.source
+
+    def test_show_participant_includes_project_ceo(self):
         """showParticipantModules 角色列表中包含 project_ceo。"""
-        definition = _find_branch(self.sidebar_source, "showParticipantModules", 8)
+        definition = _find_branch(self.source, "showParticipantModules", 8)
         assert definition is not None
         assert "project_ceo" in definition
 
-    def test_sidebar_badge_uses_ceo_total(self):
-        """Sidebar badge 使用 ceo_total fallback。"""
-        assert "ceo_total" in self.sidebar_source
+    def test_badge_uses_ceo_total(self):
+        """Sidebar badge 使用 ceo_total。"""
+        badge_block = _find_branch(self.source, "confirmBadge", 8)
+        assert badge_block is not None
+        assert "ceo_total" in badge_block
+
+
+# ════════════════════════════════════════════════════════════════════
+# 类型与导航清理
+# ════════════════════════════════════════════════════════════════════
+
+class TestTypesCleanup:
+    """AppPage / ProjectLayout 类型清理。"""
+
+    def test_app_page_no_decisions(self):
+        """AppPage 不含 decisions。"""
+        source = _read_tsx("types.ts")
+        app_page_lines = [l for l in source.split("\n") if "export type AppPage" in l]
+        assert len(app_page_lines) == 1
+        assert "'decisions'" not in app_page_lines[0]
+
+    def test_page_segment_no_decisions(self):
+        """ProjectLayout PageSegment 不含 decisions。"""
+        source = _read_tsx("layouts/ProjectLayout.tsx")
+        segment_start = source.find("type PageSegment")
+        segment_end = source.find("const PATH_TO_PAGE", segment_start)
+        segment_block = source[segment_start:segment_end]
+        assert "'decisions'" not in segment_block
+
+    def test_path_to_page_no_decisions(self):
+        """ProjectLayout PATH_TO_PAGE 不含 decisions。"""
+        source = _read_tsx("layouts/ProjectLayout.tsx")
+        assert "decisions:" not in source
+
+
+class TestNavigationCleanup:
+    """authFlow / routeConfig 清理。"""
+
+    def test_workspace_pages_no_decisions(self):
+        """authFlow workspacePages 不含 decisions。"""
+        source = _read_tsx("domain/authFlow.ts")
+        assert "decisions:" not in source
+
+    def test_sidebar_items_no_decisions(self):
+        """routeConfig SIDEBAR_ITEMS 不含 decisions。"""
+        source = _read_tsx("domain/routeConfig.ts")
+        items_block = _extract_lines_between(source, "SIDEBAR_ITEMS", "];")
+        assert "'decisions'" not in items_block
+
+    def test_route_config_no_can_view_ceo_decision_import(self):
+        """routeConfig 不再导入 canViewCeoDecision。"""
+        source = _read_tsx("domain/routeConfig.ts")
+        assert "canViewCeoDecision" not in source
+
+
+# ════════════════════════════════════════════════════════════════════
+# 统一能力保留
+# ════════════════════════════════════════════════════════════════════
+
+class TestUnifiedAbilityRetained:
+    """ConfirmPage 和 permissions 仍保留企业教练能力。"""
+
+    def test_confirm_page_has_view_mode_ceo(self):
+        """ConfirmPage 仍存在 viewMode === 'ceo'。"""
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        assert "viewMode === 'ceo'" in source
+
+    def test_confirm_page_calls_ceo_decide(self):
+        """ConfirmPage 仍调用 ceoDecide。"""
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        assert "ceoDecide" in source
+
+    def test_confirm_page_calls_ceo_decide_task_card(self):
+        """ConfirmPage 仍调用 ceoDecideTaskCard。"""
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        assert "ceoDecideTaskCard" in source
+
+    def test_permissions_still_defines_can_view_ceo_decision(self):
+        """permissions.ts 仍定义 canViewCeoDecision。"""
+        source = _read_tsx("domain/permissions.ts")
+        assert "canViewCeoDecision" in source
+
+    def test_can_view_confirm_center_references_can_view_ceo_decision(self):
+        """canViewConfirmCenter 仍引用 canViewCeoDecision。"""
+        source = _read_tsx("domain/permissions.ts")
+        block = _find_branch(source, "canViewConfirmCenter", 8)
+        assert block is not None
+        assert "canViewCeoDecision" in block
 
 
 # ════════════════════════════════════════════════════════════════════

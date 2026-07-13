@@ -52,7 +52,7 @@ export type TaskStatItem = {
   tone: 'total' | 'notstart' | 'progress' | 'done' | 'delayed' | 'paused'
 }
 
-export type AppPage = 'dashboard' | 'voice' | 'meeting' | 'confirm' | 'table' | 'achievements' | 'issues' | 'coordinate' | 'decisions' | 'settings' | 'mytasks' | 'notifications' | 'projects-mgmt'
+export type AppPage = 'dashboard' | 'voice' | 'meeting' | 'confirm' | 'table' | 'achievements' | 'issues' | 'coordinate' | 'settings' | 'mytasks' | 'notifications' | 'projects-mgmt'
 
 // ── 项目化地基类型（P0-1）──────────────────────────────────
 

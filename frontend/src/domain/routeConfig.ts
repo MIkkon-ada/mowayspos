@@ -3,7 +3,6 @@ import {
   canManageProjects,
   canSubmitUpdate,
   canViewAchievements,
-  canViewCeoDecision,
   canViewCoordinatorReview,
   canViewIssues,
   canViewMeetings,
@@ -42,7 +41,6 @@ export const SIDEBAR_ITEMS: SidebarItem[] = [
   { key: 'achievements', label: '成果库', icon: 'archive', kind: 'route', page: 'achievements', visible: canViewAchievements },
   { key: 'issues', label: '问题与决策', icon: 'alert', kind: 'route', page: 'issues', visible: canViewIssues },
   { key: 'coordinate', label: '统筹建议', icon: 'confirm', kind: 'route', page: 'coordinate', visible: canViewCoordinatorReview },
-  { key: 'decisions', label: '决策事项', icon: 'confirm', kind: 'route', page: 'decisions', visible: canViewCeoDecision },
   { key: 'admin-projects', label: '项目管理', icon: 'settings', kind: 'link', to: '/admin/projects', visible: canManageProjects },
 ]
 

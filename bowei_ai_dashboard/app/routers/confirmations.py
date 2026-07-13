@@ -242,9 +242,12 @@ def _require_confirmation_center(context: dict) -> None:
         raise HTTPException(403, "permission denied")
 
 
-def _require_owner_style_actor(context: dict) -> None:
-    if context.get("is_ceo") and not context.get("is_tech_admin"):
-        raise HTTPException(403, "permission denied")
+def _require_owner_style_actor(context: dict, row: models.UpdateSubmission, db: Session, *, allow_assign: bool = False) -> None:
+    if context.get("is_tech_admin"):
+        return
+    if _can_owner_style_action(context, row, db, allow_assign=allow_assign):
+        return
+    raise HTTPException(403, "permission denied")
 
 
 def _can_owner_style_action(context: dict, row: models.UpdateSubmission, db: Session, *, allow_assign: bool = False) -> bool:
@@ -577,10 +580,7 @@ def save(
     context = get_user_context_from_db(current_user, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    if context.get("is_ceo") and not context.get("is_tech_admin"):
-        raise HTTPException(403, "permission denied")
-    if not _can_owner_style_action(context, row, db, allow_assign=True):
-        raise HTTPException(403, "permission denied")
+    _require_owner_style_actor(context, row, db, allow_assign=True)
     before = crud.to_dict(row)
     row.human_result_json = json.dumps(payload.human_result, ensure_ascii=False)
     row.confirm_status = SS.S_NEEDS_REVISION
@@ -600,9 +600,7 @@ def confirm(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db):
-        raise HTTPException(403, "permission denied — 仅项目负责人（owner）或管理员可确认入库")
+    _require_owner_style_actor(context, row, db)
     W.require_submission_status(row, SS.OWNER_ACTIONABLE)
     before = crud.to_dict(row)
 
@@ -994,9 +992,7 @@ def confirm_task_card(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db):
-        raise HTTPException(403, "permission denied")
+    _require_owner_style_actor(context, row, db)
     W.require_submission_status(row, SS.OWNER_ACTIONABLE)
 
     before = crud.to_dict(row)
@@ -1047,9 +1043,7 @@ def reject_task_card(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db):
-        raise HTTPException(403, "permission denied")
+    _require_owner_style_actor(context, row, db)
     W.require_submission_status(row, SS.OWNER_ACTIONABLE)
 
     before = crud.to_dict(row)
@@ -1079,9 +1073,7 @@ def transfer_task_card_to_coordinator(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db):
-        raise HTTPException(403, "permission denied")
+    _require_owner_style_actor(context, row, db)
     W.require_submission_status(row, SS.OWNER_ACTIONABLE)
 
     before = crud.to_dict(row)
@@ -1145,9 +1137,7 @@ def reject(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db):
-        raise HTTPException(403, "permission denied — 仅项目负责人（owner）可打回")
+    _require_owner_style_actor(context, row, db)
     W.require_submission_status(row, SS.OWNER_ACTIONABLE)
     before = crud.to_dict(row)
     project_id = _submission_project_id(db, row)
@@ -1242,9 +1232,7 @@ def reject_final(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db):
-        raise HTTPException(403, "permission denied — 仅项目负责人（owner）可永久拒绝")
+    _require_owner_style_actor(context, row, db)
     before = crud.to_dict(row)
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_PERMANENTLY_REJECTED
@@ -1274,9 +1262,7 @@ def transfer_coordinator(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db):
-        raise HTTPException(403, "permission denied — 仅项目负责人（owner）可转交统筹人")
+    _require_owner_style_actor(context, row, db)
     W.require_submission_status(row, SS.TRANSFERABLE_TO_COORDINATOR)
     before = crud.to_dict(row)
     project_id = _submission_project_id(db, row)
@@ -1422,9 +1408,7 @@ def assign(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    _require_owner_style_actor(context)
-    if not _can_owner_style_action(context, row, db, allow_assign=True):
-        raise HTTPException(403, "permission denied")
+    _require_owner_style_actor(context, row, db, allow_assign=True)
     before = crud.to_dict(row)
     project_id = _submission_project_id(db, row)
     data = W.submission_result(row)

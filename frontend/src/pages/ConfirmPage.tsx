@@ -12,6 +12,7 @@ import {
   escalateTaskCardCeo,
   ceoDecide,
   ceoDecideTaskCard,
+  coordinatorFeedback,
 } from '../api/confirmations'
 import { fetchMyUpdates } from '../api/updates'
 import { fetchSubtasksByAssignee, type SubTaskWithParent } from '../api/subtasks'
@@ -26,7 +27,7 @@ import { buildConfirmationTaskCards, normalizeReviewCardData } from '../domain/c
 import { getProjectDisplayName } from '../domain/projectDisplay'
 
 type WriteMode = 'task_new' | 'subtask_update' | 'subtask_new'
-type ConfirmViewMode = 'mine' | 'all' | 'ceo'
+type ConfirmViewMode = 'mine' | 'all' | 'coordinator' | 'ceo'
 
 const REVIEWER_PROJECT_ROLES = new Set(['owner', 'coordinator', 'project_ceo', 'super_admin'])
 
@@ -268,6 +269,14 @@ export function ConfirmPage() {
     )
   )
 
+  const canUseCoordinatorView = Boolean(
+    currentUser?.is_tech_admin ||
+    globalUserRoles.includes('coordinator') ||
+    projects.some((project) =>
+      (project.user_roles ?? []).includes('coordinator'),
+    )
+  )
+
   const initialRedirectDone = useRef(false)
   const initialViewResolved = useRef(false)
   const defaultViewMode: ConfirmViewMode = isReviewer ? 'all' : 'mine'
@@ -276,6 +285,7 @@ export function ConfirmPage() {
   const resolveInitialView = (): ConfirmViewMode => {
     const urlView = searchParams.get('view')
     if (urlView === 'ceo' && canUseCoachDecisionView) return 'ceo'
+    if (urlView === 'coordinator' && canUseCoordinatorView) return 'coordinator'
     if (urlView === 'all' && isReviewer) return 'all'
     if (urlView === 'mine') return 'mine'
     return defaultViewMode
@@ -299,8 +309,9 @@ export function ConfirmPage() {
   const [filterSubmitter, setFilterSubmitter] = useState('')
   const [search, setSearch] = useState('')
 
-  // ceo 视图下清除状态筛选
+  // ceo / coordinator 视图下清除状态筛选
   const isCoachView = viewMode === 'ceo'
+  const isCoordinatorView = viewMode === 'coordinator'
 
   function switchView(nextView: ConfirmViewMode) {
     setViewMode(nextView)
@@ -310,7 +321,8 @@ export function ConfirmPage() {
     setActionSuccess(null)
     setCoachNote('')
     setCoachActing(false)
-    if (nextView === 'ceo') {
+    setCoordinatorNote('')
+    if (nextView === 'ceo' || nextView === 'coordinator') {
       setFilterStatus('')
     } else {
       setFilterStatus(SS.S_NEW)
@@ -340,6 +352,9 @@ export function ConfirmPage() {
 
   const [coachNote, setCoachNote] = useState('')
   const [coachActing, setCoachActing] = useState(false)
+
+  const [coordinatorNote, setCoordinatorNote] = useState('')
+  const [coordinatorActing, setCoordinatorActing] = useState(false)
 
   const [cardEditMode, setCardEditMode] = useState<Record<number, boolean>>({})
   const [cardProjOverride, setCardProjOverride] = useState<Record<number, string>>({})
@@ -391,6 +406,23 @@ export function ConfirmPage() {
           if (!cancelled) {
             setItems(d)
             // 优先选择 URL 指定的 submissionId
+            if (urlSubmissionId != null) {
+              const target = d.find(i => i.id === urlSubmissionId) || d[0]
+              if (target) pickItem(target)
+            } else {
+              const first = d[0]
+              if (first) pickItem(first)
+            }
+          }
+        })
+        .catch(() => { if (!cancelled) setLoadError('记录加载失败，请刷新重试') })
+        .finally(() => { if (!cancelled) setLoading(false) })
+    } else if (viewMode === 'coordinator') {
+      const coordProjectId = urlProjectId ?? null
+      getPending(coordProjectId, 'coordinator')
+        .then((d) => {
+          if (!cancelled) {
+            setItems(d)
             if (urlSubmissionId != null) {
               const target = d.find(i => i.id === urlSubmissionId) || d[0]
               if (target) pickItem(target)
@@ -689,6 +721,45 @@ export function ConfirmPage() {
     }
   }
 
+  // 协调人反馈
+  async function handleCoordinatorFeedback() {
+    if (!selected || !currentUser || !coordinatorNote.trim()) return
+    setActionError(null)
+    setActionSuccess(null)
+    setCoordinatorActing(true)
+    try {
+      await coordinatorFeedback(selected.id, coordinatorNote, currentUser.name)
+      setActionSuccess('统筹意见已提交，事项已返回项目负责人。')
+      setCoordinatorNote('')
+      // 重新加载 coordinator 待办
+      reloadCoordinatorItems()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setActionError(`操作失败：${msg}`)
+    } finally {
+      setCoordinatorActing(false)
+    }
+  }
+
+  function reloadCoordinatorItems() {
+    const coordProjectId = urlProjectId ?? null
+    getPending(coordProjectId, 'coordinator')
+      .then((d) => {
+        setItems(d)
+        if (selected && d.length > 0) {
+          const same = d.find(i => i.id === selected.id)
+          if (same) {
+            setSelected(same)
+          } else {
+            setSelected(d[0] || null)
+          }
+        } else {
+          setSelected(null)
+        }
+      })
+      .catch(() => {})
+  }
+
   function reloadCoachItems() {
     const ceoProjectId = urlProjectId ?? null
     getPending(ceoProjectId, 'ceo', { includeCardLevel: true })
@@ -818,9 +889,11 @@ export function ConfirmPage() {
             <p className="text-[11px] text-slate-400 mt-0.5 truncate">
               {viewMode === 'ceo'
                 ? '处理负责人上报的提交级或任务卡级决策事项。'
-                : viewMode === 'all'
-                  ? '负责人确认 AI 提取结果后，正式写入工作推进表、成果库和问题中心。'
-                  : '查看我提交的工作汇报、AI 提取结果和确认状态。'}
+                : viewMode === 'coordinator'
+                  ? '处理项目负责人转交的统筹意见事项。'
+                  : viewMode === 'all'
+                    ? '负责人确认 AI 提取结果后，正式写入工作推进表、成果库和问题中心。'
+                    : '查看我提交的工作汇报、AI 提取结果和确认状态。'}
             </p>
           </div>
         <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: '#E9EFF6' }}>
@@ -833,13 +906,18 @@ export function ConfirmPage() {
               {pendingCount > 0 && <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${viewMode === 'all' ? 'bg-white/20 text-white' : 'bg-orange-100 text-orange-600'}`}>{pendingCount}</span>}
             </button>
           )}
+          {canUseCoordinatorView && (
+            <button onClick={() => switchView('coordinator')} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${viewMode === 'coordinator' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+              待我统筹
+            </button>
+          )}
           {canUseCoachDecisionView && (
             <button onClick={() => switchView('ceo')} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${viewMode === 'ceo' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
               待我决策
             </button>
           )}
         </div>
-        {!isCoachView && (
+        {!isCoachView && !isCoordinatorView && (
         <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none">
           <option value="">全部状态</option>
           <option value={SS.S_NEW}>待确认</option>
@@ -847,7 +925,7 @@ export function ConfirmPage() {
           <option value={SS.S_RETURNED}>已退回</option>
         </select>
         )}
-        {!isCoachView && (
+        {!isCoachView && !isCoordinatorView && (
         <select value={filterProject} onChange={(e) => setFilterProject(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none">
           <option value="">全部项目</option>
           {allProjects.map((p) => <option key={p}>{p}</option>)}
@@ -859,7 +937,7 @@ export function ConfirmPage() {
           {allSubmitters.map((s) => <option key={s}>{s}</option>)}
         </select>
         )}
-        {!isCoachView && (
+        {!isCoachView && !isCoordinatorView && (
         <div className="relative">
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
           <input value={search} onChange={(e) => setSearch(e.target.value)} type="text" placeholder="搜索记录/任务…" className="pl-7 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none w-36" />
@@ -876,7 +954,7 @@ export function ConfirmPage() {
             <div className="px-4 py-3 border-b flex-shrink-0 flex items-center justify-between" style={{ borderColor: '#E9EFF6' }}>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-bold text-slate-800">
-                  {viewMode === 'ceo' ? '待我决策事项' : viewMode === 'all' ? '待确认事项' : '我的提交记录'}
+                  {viewMode === 'ceo' ? '待我决策事项' : viewMode === 'coordinator' ? '待我统筹' : viewMode === 'all' ? '待确认事项' : '我的提交记录'}
                 </span>
                 <span className="text-xs text-slate-400">({visibleItems.length})</span>
               </div>
@@ -900,9 +978,11 @@ export function ConfirmPage() {
                     <span className="text-slate-400">
                       {viewMode === 'ceo'
                         ? '暂无待你决策的事项。'
-                        : viewMode === 'all'
-                          ? '暂无待确认事项。\n可切换到"我的提交记录"查看自己提交的内容。'
-                          : '暂无提交记录，可前往工作汇报提交进展。'}
+                        : viewMode === 'coordinator'
+                          ? '暂无待你反馈的统筹事项。'
+                          : viewMode === 'all'
+                            ? '暂无待确认事项。\n可切换到"我的提交记录"查看自己提交的内容。'
+                            : '暂无提交记录，可前往工作汇报提交进展。'}
                     </span>
                   )}
                 </div>
@@ -1021,6 +1101,57 @@ export function ConfirmPage() {
                         style={{ background: 'linear-gradient(135deg,#7C3AED,#A78BFA)' }}
                       >
                         {coachActing ? '提交中…' : '提交企业教练批示'}
+                      </button>
+                    </section>
+                  )}
+
+                  {/* 统筹反馈区 */}
+                  {isCoordinatorView && selected && (
+                    <section className="rounded-[22px] border p-4" style={{ borderColor: '#A5B4FC', background: 'linear-gradient(135deg,#EEF2FF,#E0E7FF)' }}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <svg style={{ width: 18, height: 18, color: '#4F46E5' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                        </svg>
+                        <span className="text-sm font-bold text-indigo-800">提供统筹意见</span>
+                        <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-700">整条提交</span>
+                      </div>
+                      {/* 负责人转交说明 */}
+                      <div className="mb-3 p-3 rounded-xl bg-white/70 text-sm text-slate-600">
+                        <span className="font-semibold text-slate-800">负责人转交说明：</span>
+                        {selected.reject_reason || '（无）'}
+                      </div>
+                      {/* 提交人信息 */}
+                      <div className="mb-3 p-3 rounded-xl bg-white/70 text-sm text-slate-600 space-y-1">
+                        <div><span className="font-semibold text-slate-800">提交人：</span>{selected.submitter || '—'}</div>
+                        <div><span className="font-semibold text-slate-800">提交时间：</span>{fmtTime(selected.created_at)}</div>
+                        <div><span className="font-semibold text-slate-800">提交标题：</span>{String(confirmationContext.keyTaskName || selected?.related_task || '—')}</div>
+                      </div>
+                      {actionError && (
+                        <div className="mb-3 flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+                          <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                          {actionError}
+                        </div>
+                      )}
+                      {actionSuccess && (
+                        <div className="mb-3 flex items-center gap-2 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-700">
+                          <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+                          {actionSuccess}
+                        </div>
+                      )}
+                      <textarea
+                        value={coordinatorNote}
+                        onChange={(e) => setCoordinatorNote(e.target.value)}
+                        placeholder="请输入统筹反馈意见（必填）…"
+                        className="w-full border border-indigo-200 rounded-xl p-3 text-sm focus:outline-none resize-none mb-3"
+                        style={{ minHeight: 80, background: 'white' }}
+                      />
+                      <button
+                        onClick={handleCoordinatorFeedback}
+                        disabled={coordinatorActing || !coordinatorNote.trim()}
+                        className="w-full py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90 disabled:opacity-50"
+                        style={{ background: 'linear-gradient(135deg,#4F46E5,#818CF8)' }}
+                      >
+                        {coordinatorActing ? '提交中…' : '提交反馈'}
                       </button>
                     </section>
                   )}
@@ -1189,6 +1320,10 @@ export function ConfirmPage() {
                       该任务卡不需要企业教练决策。
                     </div>
                   )
+                ) : viewMode === 'coordinator' ? (
+                <div className="py-3 text-center text-xs text-slate-400">
+                  请在上方填写统筹反馈意见后提交。
+                </div>
                 ) : viewMode === 'all' ? (
                 <>
                 {actionError && (

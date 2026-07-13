@@ -165,6 +165,7 @@ TAB_STATUS_MAP: dict[str, frozenset[str]] = {
     "流转中": SS.TAB_IN_FLIGHT,
     "已完成": SS.TAB_COMPLETED,
     "ceo":    SS.TAB_CEO_PENDING,
+    "coordinator": SS.WAITING_COORDINATOR_FEEDBACK,
     "all":    SS.TAB_PENDING_REVIEW | SS.TAB_IN_FLIGHT | SS.TAB_COMPLETED,
 }
 
@@ -566,6 +567,46 @@ def _count_visible_ceo_pending_submissions(
     return len(visible_submission_ids)
 
 
+def _count_visible_coordinator_pending_submissions(
+    context: dict,
+    db: Session,
+) -> int:
+    """统计当前用户可见的统筹待办 submission 数量。
+
+    查询候选状态：WAITING_COORDINATOR_FEEDBACK。
+    权限规则：
+    - tech_admin：可见全部项目
+    - 非 tech_admin：仅可见自己担任 coordinator 的项目
+    - owner / project_ceo / company_ceo / member：不可见（0）
+    """
+    is_tech_admin = bool(context.get("is_tech_admin"))
+    cache: dict[int | None, set[str]] | None = None
+    if not is_tech_admin:
+        cache = P.preload_user_project_roles(context, db)
+
+    query_statuses = list(SS.WAITING_COORDINATOR_FEEDBACK)
+    rows = (
+        db.query(models.UpdateSubmission)
+        .filter(models.UpdateSubmission.confirm_status.in_(query_statuses))
+        .all()
+    )
+
+    visible_submission_ids: set[int] = set()
+    for row in rows:
+        norm_status = W.submission_status(row)
+        row_project_id = _submission_project_id(db, row)
+
+        if not is_tech_admin:
+            roles = cache.get(row_project_id, set()) if cache else set()
+            if "coordinator" not in roles:
+                continue
+
+        if norm_status in SS.WAITING_COORDINATOR_FEEDBACK:
+            visible_submission_ids.add(row.id)
+
+    return len(visible_submission_ids)
+
+
 @router.get("/counts")
 def counts(
     current_user: str = Depends(get_current_user_name),
@@ -610,6 +651,8 @@ def counts(
 
     # ── ceo_total：使用统一 helper，不依赖 can_view_all 或 result.ceo ──
     result["ceo_total"] = _count_visible_ceo_pending_submissions(context, db)
+    # ── coordinator_total：当前用户可处理的、处于 WAITING_COORDINATOR_FEEDBACK 的唯一 submission 数 ──
+    result["coordinator_total"] = _count_visible_coordinator_pending_submissions(context, db)
     return result
 
 
@@ -632,6 +675,8 @@ def pending(
 
     # 统一 CEO tab 标记：提交级、卡片级、新旧查询均使用一致的 project_ceo 权限
     is_ceo_tab = tab == "ceo"
+    # 统一 coordinator tab 标记
+    is_coordinator_tab = tab == "coordinator"
 
     effective_project_id = _resolve_pending_project_id(db, project_id, special_project)
     if project_id is None and special_project and effective_project_id is None:
@@ -669,6 +714,14 @@ def pending(
         if is_ceo_tab and not context.get("is_tech_admin"):
             roles = cache.get(row_project_id, set())
             if "project_ceo" not in roles:
+                continue
+
+        # ── 统一 coordinator tab 权限 ──
+        # tab=coordinator 时，须由该项目 coordinator 或 tech_admin 可见
+        # company_ceo/owner/project_ceo 不得通过 can_view_all 绕过
+        if is_coordinator_tab and not context.get("is_tech_admin"):
+            roles = cache.get(row_project_id, set())
+            if "coordinator" not in roles:
                 continue
 
         human = W.submission_result(row)
@@ -1531,6 +1584,17 @@ def transfer_coordinator(
     if payload.note:
         row.reject_reason = payload.note
     crud.log(db, payload.operator, "confirmation_forward_to_coordinator", "confirmation", row.id, before, {"note": payload.note})
+    # 通知项目 coordinator
+    from ..services.notify import send as _notify, project_coordinator_ids, person_name_for_account, person_id_for_account
+    caller_name = person_name_for_account(current_user or payload.operator, db)
+    caller_id = person_id_for_account(current_user or payload.operator, db)
+    for coord_id in project_coordinator_ids(project_id, db):
+        if coord_id != caller_id:
+            _notify(db, recipient_id=coord_id, ntype="submission_transferred_to_coordinator",
+                    title=f"有提交需要你提供统筹意见：{row.title or '（无标题）'}",
+                    body=f"提交标题：{row.title or '（无标题）'}\n转交人：{caller_name}\n转交说明：{payload.note or '无'}",
+                    link=f"/work/confirmations?view=coordinator&projectId={project_id}&submissionId={row.id}",
+                    project_id=project_id)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
 
@@ -1562,7 +1626,7 @@ def coordinator_feedback(
             _notify(db, recipient_id=owner_id, ntype="coordinator_feedback",
                     title=f"统筹人已反馈意见：{row.title or '（无标题）'}",
                     body=f"意见：{payload.note or '无'}，请前往 AI 确认中心处理",
-                    link=f"/project/{project_id}/confirm",
+                    link=f"/work/confirmations?view=all&projectId={project_id}&submissionId={row.id}",
                     project_id=project_id)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}

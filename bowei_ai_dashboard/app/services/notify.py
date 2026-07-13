@@ -142,6 +142,25 @@ def project_coach_person_ids(project_id: int, db: Session) -> list[int]:
     return ids
 
 
+def project_coordinator_ids(project_id: int, db: Session) -> list[int]:
+    """返回项目所有 coordinator 的 person_id 列表（去重）。"""
+    ids: list[int] = []
+    seen: set[int] = set()
+    members = (
+        db.query(models.ProjectMember)
+        .filter(
+            models.ProjectMember.project_id == project_id,
+            models.ProjectMember.role == "coordinator",
+        )
+        .all()
+    )
+    for member in members:
+        if member.person_id and member.person_id not in seen:
+            seen.add(member.person_id)
+            ids.append(member.person_id)
+    return ids
+
+
 def ceo_person_ids(db: Session) -> list[int]:
     """兼容旧调用方的 company_ceo 收件人查询别名。"""
     return company_ceo_person_ids(db)

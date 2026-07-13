@@ -765,11 +765,7 @@ type AddModalProps = {
 function AddIssueModal({ projects, currentProjectId, currentUser, tasks, tasksLoading, projectArchived, onClose, onCreated }: AddModalProps) {
   const [form, setForm] = useState({
     project_id: currentProjectId ?? (projects[0]?.id ?? null) as number | null,
-    issue_type: '问题',
     description: '',
-    owner: currentUser?.name || '',
-    helper: '',
-    priority: '中',
     expected_resolve_time: '',
     related_task_id: null as number | null,
     related_subtask_id: null as number | null,
@@ -798,7 +794,7 @@ function AddIssueModal({ projects, currentProjectId, currentUser, tasks, tasksLo
     if (projectArchived) { setErr('项目已归档，不可新增问题'); return }
     setSaving(true); setErr('')
     try {
-      const item = await createIssue({ project_id: form.project_id, issue_type: form.issue_type, description: form.description.trim(), owner: form.owner, helper: form.helper, priority: form.priority, expected_resolve_time: form.expected_resolve_time, related_task_id: form.related_task_id, related_subtask_id: form.related_subtask_id })
+      const item = await createIssue({ project_id: form.project_id, description: form.description.trim(), expected_resolve_time: form.expected_resolve_time, related_task_id: form.related_task_id, related_subtask_id: form.related_subtask_id, issue_type: '问题', priority: '中', status: '待处理', source_type: '人工录入' })
       onCreated(item)
     } catch (e) {
       setErr(e instanceof Error ? e.message : '创建失败，请重试')
@@ -817,6 +813,9 @@ function AddIssueModal({ projects, currentProjectId, currentUser, tasks, tasksLo
           </button>
         </div>
         <div className="p-5 space-y-4">
+          <p className="text-xs text-slate-500 leading-relaxed p-3 rounded-lg bg-purple-50 border border-purple-100">
+            请描述你在项目推进中遇到的问题。问题等级、处理路径和协助人由项目负责人后续判断和分派。
+          </p>
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">所属项目 <span className="text-red-400">*</span></label>
             <select value={form.project_id ?? ''} onChange={(e) => setField('project_id', Number(e.target.value) || null)} className={inputCls}>
@@ -843,38 +842,14 @@ function AddIssueModal({ projects, currentProjectId, currentUser, tasks, tasksLo
             </select>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5">问题类型</label>
-            <select value={form.issue_type} onChange={(e) => setField('issue_type', e.target.value)} className={inputCls}>
-              <option>问题</option><option>风险</option><option>待协调</option><option>需决策</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5">问题摘要 / 描述 <span className="text-red-400">*</span></label>
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5">问题描述 <span className="text-red-400">*</span></label>
             <textarea value={form.description} onChange={(e) => setField('description', e.target.value)} rows={3}
-              placeholder="描述问题、影响范围和期望结果"
+              placeholder="请说明遇到的问题、影响范围、当前卡点。"
               className="w-full text-sm border border-slate-200 rounded px-3 py-2 focus:outline-none focus:border-purple-400 resize-none" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5">负责人</label>
-              <input value={form.owner} onChange={(e) => setField('owner', e.target.value)} placeholder="姓名" className={inputCls} />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5">协助人</label>
-              <input value={form.helper} onChange={(e) => setField('helper', e.target.value)} placeholder="姓名" className={inputCls} />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5">优先级</label>
-              <select value={form.priority} onChange={(e) => setField('priority', e.target.value)} className={inputCls}>
-                <option>高</option><option>中</option><option>低</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5">预计解决时间</label>
-              <input type="date" value={form.expected_resolve_time} onChange={(e) => setField('expected_resolve_time', e.target.value)} className={inputCls} />
-            </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5">期望解决时间</label>
+            <input type="date" value={form.expected_resolve_time} onChange={(e) => setField('expected_resolve_time', e.target.value)} className={inputCls} />
           </div>
           {err && <p className="text-xs text-red-500">{err}</p>}
           {projectArchived && <p className="text-xs text-amber-600">项目已归档，不可新增问题</p>}

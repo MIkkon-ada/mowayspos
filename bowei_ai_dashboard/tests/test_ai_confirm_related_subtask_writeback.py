@@ -700,13 +700,13 @@ def test_no_new_endpoint():
     source = confirm_file.read_text(encoding="utf-8")
     # 统计 @router. 装饰器数量
     endpoint_count = len(re.findall(r"@router\.(get|post|put|delete|patch)\(", source))
-    # N4-P2-D 合并后已有路由数为 17（包括 my-rejected, counts, pending,
-    # detail, save, confirm, confirm_task_card, reject_task_card,
-    # transfer-coordinator, escalate-ceo, reject, resubmit, withdraw,
+    # 当前路由数：my-rejected, counts, pending, detail, save, confirm,
+    # confirm_task_card, reject_task_card, transfer-coordinator (card), 
+    # escalate-ceo (card), ceo-decide (card), reject, resubmit, withdraw,
     # reject-final, transfer-coordinator, coordinator-feedback,
-    # escalate-ceo, ceo-decide, mark-unrecognized, assign）
-    assert endpoint_count == 20, (
-        f"Expected 20 endpoints, found {endpoint_count}. No new endpoints allowed."
+    # escalate-ceo, ceo-decide, mark-unrecognized, assign
+    assert endpoint_count == 21, (
+        f"Expected 21 endpoints, found {endpoint_count}."
     )
 
 

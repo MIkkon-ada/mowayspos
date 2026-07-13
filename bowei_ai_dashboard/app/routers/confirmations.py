@@ -108,6 +108,57 @@ def _apply_related_subtask(obj, related_subtask_id: int | None) -> None:
 def _issue_status_for(issue_type: str | None) -> str:
     return IF.STATUS_PENDING_DECISION if IT.is_decision(issue_type) else IF.STATUS_PENDING
 
+
+# ── Card-level coach decision helpers ──────────────────────────
+def _card_confirmation_status(report: dict) -> str:
+    """读取单张任务卡的 confirmation_status，不存在返回空字符串。"""
+    return (report.get("confirmation_status") or "").strip()
+
+
+def _has_pending_ceo_task_cards(data: dict) -> bool:
+    """是否存在等待企业教练决策的任务卡。"""
+    reports = data.get("task_reports") or []
+    if not isinstance(reports, list):
+        return False
+    return any(
+        isinstance(r, dict) and _card_confirmation_status(r) == "pending_ceo_decision"
+        for r in reports
+    )
+
+
+def _pending_ceo_card_indices(data: dict) -> list[int]:
+    """返回所有 pending_ceo_decision 状态的任务卡索引。"""
+    reports = data.get("task_reports") or []
+    if not isinstance(reports, list):
+        return []
+    return [
+        i for i, r in enumerate(reports)
+        if isinstance(r, dict) and _card_confirmation_status(r) == "pending_ceo_decision"
+    ]
+
+
+def _get_card_title(report: dict) -> str:
+    """从任务卡字典中提取标题。"""
+    return (
+        report.get("title")
+        or report.get("key_task")
+        or report.get("content")
+        or "（无标题）"
+    ).strip()[:100]
+
+
+def _require_card_not_pending_ceo(report: dict) -> None:
+    """卡片处于 pending_ceo_decision 时拒绝操作。"""
+    if _card_confirmation_status(report) == "pending_ceo_decision":
+        raise HTTPException(409, "task card is waiting for coach decision — cannot proceed until coach decides")
+
+
+def _require_no_pending_ceo_cards(data: dict) -> None:
+    """任一任务卡等待企业教练决策时拒绝整条提交操作。"""
+    if _has_pending_ceo_task_cards(data):
+        raise HTTPException(409, "submission contains task cards waiting for coach decision")
+
+
 # ── Confirmation-center tab mapping ──────────────────────────
 TAB_STATUS_MAP: dict[str, frozenset[str]] = {
     "待审核": SS.TAB_PENDING_REVIEW,
@@ -512,6 +563,7 @@ def pending(
     tab: str = "待审核",
     project_id: int | None = None,
     special_project: str | None = None,
+    include_card_level: bool = False,
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
@@ -519,13 +571,22 @@ def pending(
     _require_confirmation_center(context)
     status_filter = TAB_STATUS_MAP.get(tab, TAB_STATUS_MAP["待审核"])
 
+    # 卡片级扩展：tab=ceo + include_card_level=true 时，也查询主状态为 PENDING_OWNER_REVIEW
+    # 但包含 pending_ceo_decision 卡片的记录
+    expand_card_level = (tab == "ceo" and include_card_level)
+
     effective_project_id = _resolve_pending_project_id(db, project_id, special_project)
     if project_id is None and special_project and effective_project_id is None:
         return []
 
+    if expand_card_level:
+        query_filter = list(status_filter | SS.PENDING_OWNER_REVIEW)
+    else:
+        query_filter = list(status_filter)
+
     rows = (
         db.query(models.UpdateSubmission)
-        .filter(models.UpdateSubmission.confirm_status.in_(list(status_filter)))
+        .filter(models.UpdateSubmission.confirm_status.in_(query_filter))
         .order_by(models.UpdateSubmission.updated_at.desc())
         .limit(500)
         .all()
@@ -534,19 +595,57 @@ def pending(
     cache = P.preload_user_project_roles(context, db)
     result = []
     for row in rows:
-        if W.submission_status(row) not in status_filter:
+        norm_status = W.submission_status(row)
+        if norm_status not in status_filter and not expand_card_level:
             continue
+
         row_project_id = _submission_project_id(db, row)
         if not P.can_view_batch(context, row.submitter, row_project_id, cache):
             continue
         if effective_project_id is not None and row_project_id != effective_project_id:
             continue
-        if not P.role_allows_batch(context, row.submitter, row_project_id, row.confirm_status, cache):
-            continue
+
         human = W.submission_result(row)
+
+        # 卡片级：仅 tab=ceo 时区分提交级 vs 卡片级
+        is_submission_ceo = norm_status in SS.WAITING_CEO_DECISION
+        has_card_ceo = expand_card_level and _has_pending_ceo_task_cards(human)
+
+        # 角色过滤
+        passed_role = P.role_allows_batch(context, row.submitter, row_project_id, row.confirm_status, cache)
+        if not passed_role:
+            # 卡片级例外：project_ceo 对主状态非 WAITING_CEO_DECISION 但含待决策卡片的记录也应可见
+            if has_card_ceo and not is_submission_ceo:
+                roles = cache.get(row_project_id, set())
+                passed_role = ("project_ceo" in roles) or context.get("is_tech_admin", False)
+        if not passed_role:
+            continue
+
+        # 卡片级额外权限限制：只有 project_ceo 或 tech_admin 可见
+        # 防止 company_ceo（is_ceo/can_view_all）或 owner 等角色绕过
+        if expand_card_level and has_card_ceo and not is_submission_ceo:
+            if not context.get("is_tech_admin"):
+                roles = cache.get(row_project_id, set())
+                if "project_ceo" not in roles:
+                    continue
+
+        # 卡片级模式下只保留提交级或卡片级 CEO 事项
+        if expand_card_level:
+            if not is_submission_ceo and not has_card_ceo:
+                continue
+
         item = crud.to_dict(row)
         item["special_project"] = _submission_project_name(db, row, json_payload=human)
         item["related_task"] = human.get("related_task") or (human.get("task") or {}).get("key_task", "")
+
+        if expand_card_level:
+            if is_submission_ceo:
+                item["ceo_decision_scope"] = "submission"
+                item["pending_ceo_card_indices"] = []
+            else:
+                item["ceo_decision_scope"] = "card"
+                item["pending_ceo_card_indices"] = _pending_ceo_card_indices(human)
+
         result.append(item)
     return result
 
@@ -582,6 +681,8 @@ def save(
     _require_confirmation_center(context)
     _require_owner_style_actor(context, row, db, allow_assign=True)
     before = crud.to_dict(row)
+    data = W.submission_result(row)
+    _require_no_pending_ceo_cards(data)
     row.human_result_json = json.dumps(payload.human_result, ensure_ascii=False)
     row.confirm_status = SS.S_NEEDS_REVISION
     crud.log(db, current_user or "管理员", "confirmation_update", "confirmation", row.id, before, payload.human_result)
@@ -606,6 +707,7 @@ def confirm(
 
     now = utc_now()
     data = W.submission_result(row)
+    _require_no_pending_ceo_cards(data)
 
     # Merge human_result from frontend (contains field edits and write-flags)
     if payload.human_result:
@@ -997,7 +1099,12 @@ def confirm_task_card(
 
     before = crud.to_dict(row)
     effective_project_id = _submission_project_id(db, row)
-    data = W.submission_result(row)
+    # 1. 从数据库持久化数据中获取目标卡状态，防止 human_result 绕过
+    persisted_data = W.submission_result(row)
+    _, persisted_report = _get_task_card(persisted_data, card_index)
+    _require_card_not_pending_ceo(persisted_report)
+    # 2. 校验通过后才合并 payload.human_result
+    data = persisted_data
     if payload.human_result:
         data.update(payload.human_result)
     _, report = _get_task_card(data, card_index)
@@ -1049,6 +1156,8 @@ def reject_task_card(
     before = crud.to_dict(row)
     effective_project_id = _submission_project_id(db, row)
     data = W.submission_result(row)
+    _, report = _get_task_card(data, card_index)
+    _require_card_not_pending_ceo(report)
     _mark_task_card(row, data, card_index, "returned", payload.operator, payload.reason)
     row.confirm_status = SS.S_PENDING_OWNER
     row.reject_reason = payload.reason
@@ -1078,6 +1187,8 @@ def transfer_task_card_to_coordinator(
 
     before = crud.to_dict(row)
     data = W.submission_result(row)
+    _, report = _get_task_card(data, card_index)
+    _require_card_not_pending_ceo(report)
     _mark_task_card(
         row, data, card_index, "transferred_to_coordinator",
         payload.operator, payload.note or "",
@@ -1108,9 +1219,22 @@ def escalate_task_card_to_ceo(
         raise HTTPException(403, "permission denied")
     W.require_submission_status(row, SS.OWNER_ACTIONABLE)
 
+    data = W.submission_result(row)
+    _, report = _get_task_card(data, card_index)
+    current_status = _card_confirmation_status(report)
+    # 卡片状态校验：已进入教练流程或已完成的状态不可重复上报
+    _BLOCKED_CARD_STATUSES = frozenset({
+        "pending_ceo_decision", "ceo_decided", "confirmed",
+        "returned", "transferred_to_coordinator",
+    })
+    if current_status in _BLOCKED_CARD_STATUSES:
+        raise HTTPException(409, "task card is already waiting for coach decision"
+                            if current_status == "pending_ceo_decision"
+                            else "task card cannot be escalated in its current state")
+
     before = crud.to_dict(row)
     effective_project_id = _submission_project_id(db, row)
-    data = W.submission_result(row)
+    card_title = _get_card_title(report)
     _mark_task_card(
         row, data, card_index, "pending_ceo_decision",
         payload.operator, payload.note or "",
@@ -1118,9 +1242,80 @@ def escalate_task_card_to_ceo(
     row.confirm_status = SS.S_PENDING_OWNER
     crud.log(
         db, payload.operator, "confirmation_card_escalate_to_coach", "confirmation", row.id,
-        before, {"card_index": card_index, "note": payload.note or ""},
+        before, {"card_index": card_index, "note": payload.note or "", "card_title": card_title},
         project_id=effective_project_id,
     )
+    # 通知项目企业教练
+    from ..services.notify import send as _notify, project_coach_person_ids, person_name_for_account, person_id_for_account
+    caller_name = person_name_for_account(current_user or payload.operator, db)
+    caller_id = person_id_for_account(current_user or payload.operator, db)
+    for coach_id in project_coach_person_ids(effective_project_id, db):
+        if coach_id != caller_id:
+            _notify(db, recipient_id=coach_id, ntype="confirmation_card_escalate_ceo",
+                    title=f"有任务卡需要您决策：{card_title}",
+                    body=f"提交标题：{row.title or '（无标题）'}\n任务卡：第 {card_index + 1} 张\n上报人：{caller_name}\n上报说明：{payload.note or '无'}",
+                    link=f"/work/confirmations?view=ceo&projectId={effective_project_id}&submissionId={row.id}&cardIndex={card_index}",
+                    project_id=effective_project_id)
+    db.commit()
+    return {"ok": True, "submission": crud.to_dict(row)}
+
+
+@router.post("/{submission_id}/cards/{card_index}/ceo-decide")
+def ceo_decide_task_card(
+    submission_id: int,
+    card_index: int,
+    payload: schemas.WorkflowNoteRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """企业教练对单张任务卡批示：批示后回到项目负责人继续确认写入。"""
+    row = _load_submission(db, submission_id)
+    context = get_user_context_from_db(current_user or payload.operator, db)
+    _require_submission_writable(row, context, db)
+    _require_confirmation_center(context)
+    if not (context.get("is_tech_admin") or P.can_ceo_decide(context, row, db)):
+        raise HTTPException(403, "permission denied — 仅该项目企业教练或管理员可批示")
+
+    # 主状态校验：仅 S_PENDING_OWNER 时允许单卡批示
+    if W.submission_status(row) != SS.S_PENDING_OWNER:
+        raise HTTPException(409, "submission is no longer waiting for owner processing")
+
+    data = W.submission_result(row)
+    reports, report = _get_task_card(data, card_index)
+    current_status = _card_confirmation_status(report)
+    if current_status != "pending_ceo_decision":
+        raise HTTPException(409, "task card is not waiting for coach decision")
+
+    before = crud.to_dict(row)
+    effective_project_id = _submission_project_id(db, row)
+    card_title = _get_card_title(report)
+    now = utc_now()
+
+    # 写入企业教练批示字段，不覆盖 owner 原有的上报说明
+    report["confirmation_status"] = "ceo_decided"
+    report["ceo_note"] = payload.note or ""
+    report["ceo_operator"] = payload.operator
+    report["ceo_decided_at"] = now.isoformat()
+    reports[card_index] = report
+    data["task_reports"] = reports
+    row.human_result_json = json.dumps(data, ensure_ascii=False)
+    row.confirm_status = SS.S_PENDING_OWNER
+
+    crud.log(
+        db, payload.operator, "confirmation_card_coach_decision", "confirmation", row.id,
+        before, {"card_index": card_index, "card_title": card_title, "note": payload.note or ""},
+        project_id=effective_project_id,
+    )
+    # 通知项目负责人
+    from ..services.notify import send as _notify, project_owner_ids, person_id_for_account
+    caller_id = person_id_for_account(current_user or payload.operator, db)
+    for owner_id in project_owner_ids(effective_project_id, db):
+        if owner_id != caller_id:
+            _notify(db, recipient_id=owner_id, ntype="confirmation_card_ceo_decided",
+                    title=f"企业教练已批示任务卡：{card_title}",
+                    body=f"提交标题：{row.title or '（无标题）'}\n任务卡：第 {card_index + 1} 张\n企业教练批示：{payload.note or '无'}",
+                    link=f"/work/confirmations?view=all&projectId={effective_project_id}&submissionId={row.id}&cardIndex={card_index}",
+                    project_id=effective_project_id)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
 
@@ -1140,6 +1335,8 @@ def reject(
     _require_owner_style_actor(context, row, db)
     W.require_submission_status(row, SS.OWNER_ACTIONABLE)
     before = crud.to_dict(row)
+    data = W.submission_result(row)
+    _require_no_pending_ceo_cards(data)
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_RETURNED
     row.reject_reason = payload.reason
@@ -1214,6 +1411,8 @@ def withdraw(
         raise HTTPException(403, "只有原提交人或管理员可以撤回")
     W.require_submission_status(row, _WITHDRAWABLE_STATUSES)
     before = crud.to_dict(row)
+    data = W.submission_result(row)
+    _require_no_pending_ceo_cards(data)
     row.confirm_status = SS.S_WITHDRAWN
     crud.log(db, current_user, "confirmation_withdraw", "confirmation", row.id, before, {})
     db.commit()
@@ -1234,6 +1433,8 @@ def reject_final(
     _require_confirmation_center(context)
     _require_owner_style_actor(context, row, db)
     before = crud.to_dict(row)
+    data = W.submission_result(row)
+    _require_no_pending_ceo_cards(data)
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_PERMANENTLY_REJECTED
     row.reject_reason = payload.reason
@@ -1265,6 +1466,8 @@ def transfer_coordinator(
     _require_owner_style_actor(context, row, db)
     W.require_submission_status(row, SS.TRANSFERABLE_TO_COORDINATOR)
     before = crud.to_dict(row)
+    data = W.submission_result(row)
+    _require_no_pending_ceo_cards(data)
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_WAITING_COORDINATOR
     if payload.note:
@@ -1323,6 +1526,8 @@ def escalate_ceo(
         raise HTTPException(403, "permission denied — 仅项目负责人（owner）或超级管理员可上报企业教练")
     W.require_submission_status(row, SS.ESCALATABLE_TO_CEO)
     before = crud.to_dict(row)
+    data = W.submission_result(row)
+    _require_no_pending_ceo_cards(data)
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_WAITING_CEO
     if payload.note:
@@ -1390,6 +1595,8 @@ def mark_unrecognized(
     if not _can_owner_style_action(context, row, db, allow_assign=True):
         raise HTTPException(403, "permission denied")
     before = crud.to_dict(row)
+    data = W.submission_result(row)
+    _require_no_pending_ceo_cards(data)
     row.confirm_status = SS.S_NEEDS_REVISION
     row.reject_reason = payload.reason
     crud.log(db, payload.operator, "confirmation_mark_unrecognized", "confirmation", row.id, before, {"reason": payload.reason})

@@ -29,6 +29,10 @@ from app.routers.confirmations import (
     ceo_decide,
     ceo_decide_task_card,
     pending,
+    save,
+    withdraw,
+    mark_unrecognized,
+    assign,
 )
 from tests.test_execution_submission_to_work_progress_flow import _make_session
 
@@ -779,3 +783,498 @@ class TestRegression:
         result = pending(tab="ceo", current_user="coach", db=db)
         ids = {item["id"] for item in result}
         assert sid not in ids  # 默认不包含卡片级
+
+
+# ════════════════════════════════════════════════════════════════════
+# 七、human_result 绕过防护（Section 三）
+# ════════════════════════════════════════════════════════════════════
+
+class TestHumanResultBypass:
+    """confirm_task_card 不能通过 human_result 覆盖绕过 pending_ceo_decision。"""
+
+    def test_human_result_cannot_overwrite_pending_ceo_card(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        # 验证数据库状态
+        assert _get_card_status(db, sid, 0) == "pending_ceo_decision"
+
+        # 尝试通过 human_result 移除 confirmation_status 绕过
+        bypass_payload = schemas.ConfirmRequest(
+            operator="owner",
+            human_result={
+                "task_reports": [
+                    {
+                        "result_type": "subtask_progress",
+                        "type": "progress",
+                        "matched_subtask_id": team["subtask"].id,
+                        "completed": "绕过写入",
+                        "title": "被覆盖的卡",
+                        # 故意不传 confirmation_status
+                    }
+                ]
+            },
+        )
+        with pytest.raises(HTTPException) as exc:
+            confirm_task_card(sid, 0, bypass_payload, current_user="owner", db=db)
+        assert exc.value.status_code == 409
+
+        # 数据库卡片状态仍为 pending_ceo_decision
+        assert _get_card_status(db, sid, 0) == "pending_ceo_decision"
+
+        # human_result_json 未被覆盖
+        row = db.get(models.UpdateSubmission, sid)
+        data = json.loads(row.human_result_json)
+        report = data["task_reports"][0]
+        assert report.get("confirmation_status") == "pending_ceo_decision"
+        # 没有产生业务写入（completed 未被覆盖）
+        assert report.get("completed") == "测试进展"
+
+    def test_human_result_cannot_overwrite_confirmation_status(self):
+        """即使 human_result 显式设置 confirmation_status=confirmed 也不可绕过。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        bypass_payload = schemas.ConfirmRequest(
+            operator="owner",
+            human_result={
+                "task_reports": [
+                    {
+                        "confirmation_status": "confirmed",  # 试图模拟已确认
+                        "matched_subtask_id": team["subtask"].id,
+                        "completed": "绕过写入",
+                    }
+                ]
+            },
+        )
+        with pytest.raises(HTTPException) as exc:
+            confirm_task_card(sid, 0, bypass_payload, current_user="owner", db=db)
+        assert exc.value.status_code == 409
+        assert _get_card_status(db, sid, 0) == "pending_ceo_decision"
+
+
+# ════════════════════════════════════════════════════════════════════
+# 八、不可达路径防护（Section 四）
+# ════════════════════════════════════════════════════════════════════
+
+class TestPendingCeoBlockMore:
+    """pending_ceo_decision 阻止 save / withdraw / mark-unrecognized。"""
+
+    def _setup(self, db, team):
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        return sid
+
+    def test_pending_ceo_card_blocks_save(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = self._setup(db, team)
+
+        row_before = db.get(models.UpdateSubmission, sid)
+        old_status = row_before.confirm_status
+        old_json = row_before.human_result_json
+
+        with pytest.raises(HTTPException) as exc:
+            save(
+                sid,
+                schemas.ConfirmationSaveRequest(human_result={"task_reports": []}),
+                current_user="owner",
+                db=db,
+            )
+        assert exc.value.status_code == 409
+
+        # submission 主状态未变化
+        row_after = db.get(models.UpdateSubmission, sid)
+        assert row_after.confirm_status == old_status
+        # human_result_json 未被覆盖
+        assert row_after.human_result_json == old_json
+        # 目标卡仍为 pending_ceo_decision
+        assert _get_card_status(db, sid, 0) == "pending_ceo_decision"
+
+    def test_pending_ceo_card_blocks_withdraw(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = self._setup(db, team)
+
+        row_before = db.get(models.UpdateSubmission, sid)
+        old_status = row_before.confirm_status
+
+        with pytest.raises(HTTPException) as exc:
+            withdraw(sid, current_user="tech_admin", db=db)  # tech_admin 可代撤
+        assert exc.value.status_code == 409
+
+        # submission 主状态未变化
+        row_after = db.get(models.UpdateSubmission, sid)
+        assert row_after.confirm_status == old_status
+        # 目标卡仍为 pending_ceo_decision
+        assert _get_card_status(db, sid, 0) == "pending_ceo_decision"
+
+    def test_pending_ceo_card_blocks_mark_unrecognized(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = self._setup(db, team)
+
+        row_before = db.get(models.UpdateSubmission, sid)
+        old_status = row_before.confirm_status
+
+        with pytest.raises(HTTPException) as exc:
+            mark_unrecognized(
+                sid,
+                schemas.RejectRequest(reason="需人工处理", operator="owner"),
+                current_user="owner",
+                db=db,
+            )
+        assert exc.value.status_code == 409
+
+        # submission 主状态未变化
+        row_after = db.get(models.UpdateSubmission, sid)
+        assert row_after.confirm_status == old_status
+        # 目标卡仍为 pending_ceo_decision
+        assert _get_card_status(db, sid, 0) == "pending_ceo_decision"
+
+
+class TestAssignSafeWithPendingCard:
+    """assign 不破坏 pending_ceo_decision 卡片。"""
+
+    def test_assign_preserves_pending_ceo_cards(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        result = assign(
+            sid,
+            schemas.AssignRequest(assignee="新负责人", operator="owner"),
+            current_user="owner",
+            db=db,
+        )
+        assert result["ok"] is True
+
+        # assign 后 pending_ceo_decision 卡片仍存在
+        assert _get_card_status(db, sid, 0) == "pending_ceo_decision"
+        # submission 主状态保持 S_PENDING_OWNER
+        row = db.get(models.UpdateSubmission, sid)
+        assert row.confirm_status == SS.S_PENDING_OWNER
+
+    def test_assign_does_not_block_ceo_pending_query(self):
+        """assign 后企业教练待办仍可查询。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        assign(
+            sid,
+            schemas.AssignRequest(assignee="新负责人", operator="owner"),
+            current_user="owner",
+            db=db,
+        )
+
+        result = pending(tab="ceo", include_card_level=True, current_user="coach", db=db)
+        ids = {item["id"] for item in result}
+        assert sid in ids
+
+
+# ════════════════════════════════════════════════════════════════════
+# 九、企业教练批示主状态校验（Section 五）
+# ════════════════════════════════════════════════════════════════════
+
+class TestCardCeoDecideStatusCheck:
+    """单卡批示必须在 S_PENDING_OWNER 主状态下。"""
+
+    def _make_pending(self, db, team):
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="上报", operator="owner"),
+            current_user="owner", db=db,
+        )
+        return sid
+
+    def test_rejected_when_withdrawn(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = self._make_pending(db, team)
+
+        # 先撤回（需要先绕过 pending_ceo 阻截？不行。
+        # 这里用直接修改数据库模拟撤回后的状态
+        row = db.get(models.UpdateSubmission, sid)
+        row.confirm_status = SS.S_WITHDRAWN
+        db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            ceo_decide_task_card(
+                sid, 0, schemas.WorkflowNoteRequest(note="批示", operator="coach"),
+                current_user="coach", db=db,
+            )
+        assert exc.value.status_code == 409
+
+    def test_rejected_when_needs_revision(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = self._make_pending(db, team)
+
+        row = db.get(models.UpdateSubmission, sid)
+        row.confirm_status = SS.S_NEEDS_REVISION
+        db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            ceo_decide_task_card(
+                sid, 0, schemas.WorkflowNoteRequest(note="批示", operator="coach"),
+                current_user="coach", db=db,
+            )
+        assert exc.value.status_code == 409
+
+    def test_rejected_when_confirmed(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = self._make_pending(db, team)
+
+        row = db.get(models.UpdateSubmission, sid)
+        row.confirm_status = SS.S_CONFIRMED
+        db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            ceo_decide_task_card(
+                sid, 0, schemas.WorkflowNoteRequest(note="批示", operator="coach"),
+                current_user="coach", db=db,
+            )
+        assert exc.value.status_code == 409
+
+    def test_rejected_when_waiting_coordinator(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = self._make_pending(db, team)
+
+        row = db.get(models.UpdateSubmission, sid)
+        row.confirm_status = SS.S_WAITING_COORDINATOR
+        db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            ceo_decide_task_card(
+                sid, 0, schemas.WorkflowNoteRequest(note="批示", operator="coach"),
+                current_user="coach", db=db,
+            )
+        assert exc.value.status_code == 409
+
+    def test_rejected_when_submission_waiting_ceo(self):
+        """整条提交已 S_WAITING_CEO 时不可用单卡批示接口。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = self._make_pending(db, team)
+
+        row = db.get(models.UpdateSubmission, sid)
+        row.confirm_status = SS.S_WAITING_CEO
+        db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            ceo_decide_task_card(
+                sid, 0, schemas.WorkflowNoteRequest(note="批示", operator="coach"),
+                current_user="coach", db=db,
+            )
+        assert exc.value.status_code == 409
+
+    def test_allowed_when_pending_owner(self):
+        """S_PENDING_OWNER 时允许正常批示。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = self._make_pending(db, team)
+
+        # 确认当前是 S_PENDING_OWNER
+        row = db.get(models.UpdateSubmission, sid)
+        assert row.confirm_status == SS.S_PENDING_OWNER
+
+        result = ceo_decide_task_card(
+            sid, 0, schemas.WorkflowNoteRequest(note="同意", operator="coach"),
+            current_user="coach", db=db,
+        )
+        assert result["ok"] is True
+
+
+# ════════════════════════════════════════════════════════════════════
+# 十、通知与日志真实数据库断言（Section 七）
+# ════════════════════════════════════════════════════════════════════
+
+class TestNotificationAndLogDB:
+    """验证通知和日志真实写入数据库。"""
+
+    def _setup(self, db, team):
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="请教练审阅", operator="owner"),
+            current_user="owner", db=db,
+        )
+        return sid
+
+    # ── 上报通知 ────────────────────────────────
+
+    def test_escalate_notification_sent_to_coach(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="请教练审阅", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        notifications = (
+            db.query(models.Notification)
+            .filter(models.Notification.type == "confirmation_card_escalate_ceo")
+            .all()
+        )
+        assert len(notifications) >= 1
+
+        # 通知接收人为 project_ceo
+        coach_notifications = [
+            n for n in notifications
+            if n.recipient_id == team["coach"].id
+        ]
+        assert len(coach_notifications) >= 1
+
+        n = coach_notifications[0]
+        # 标题包含任务卡标题
+        assert "测试任务卡标题" in n.title
+        # 正文包含提交标题
+        assert "进展更新" in n.body
+        # 正文包含任务卡序号（第 1 张）
+        assert "第 1 张" in n.body
+        # 正文包含上报说明
+        assert "请教练审阅" in n.body
+        # link 包含 view=ceo
+        assert "view=ceo" in n.link
+        # link 包含 projectId
+        assert f"projectId={team['project'].id}" in n.link
+        # link 包含 submissionId
+        assert f"submissionId={sid}" in n.link
+        # link 包含 cardIndex
+        assert "cardIndex=0" in n.link
+
+    def test_escalate_notification_not_sent_to_company_ceo(self):
+        """company_ceo 无项目角色不应收到卡片级上报通知。"""
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="请教练审阅", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        notifications = (
+            db.query(models.Notification)
+            .filter(models.Notification.type == "confirmation_card_escalate_ceo")
+            .filter(models.Notification.recipient_id == team["ceo"].id)
+            .all()
+        )
+        assert len(notifications) == 0
+
+    # ── 批示通知 ────────────────────────────────
+
+    def test_ceo_decide_notification_sent_to_owner(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = self._setup(db, team)
+        ceo_decide_task_card(
+            sid, 0, schemas.WorkflowNoteRequest(note="同意该方案", operator="coach"),
+            current_user="coach", db=db,
+        )
+
+        notifications = (
+            db.query(models.Notification)
+            .filter(models.Notification.type == "confirmation_card_ceo_decided")
+            .all()
+        )
+        assert len(notifications) >= 1
+
+        # 通知接收人为 owner
+        owner_notifications = [
+            n for n in notifications
+            if n.recipient_id == team["owner"].id
+        ]
+        assert len(owner_notifications) >= 1
+
+        n = owner_notifications[0]
+        # 标题包含任务卡标题
+        assert "测试任务卡标题" in n.title
+        # 正文包含提交标题
+        assert "进展更新" in n.body
+        # 正文包含任务卡序号
+        assert "第 1 张" in n.body
+        # 正文包含批示内容
+        assert "同意该方案" in n.body
+        # link 包含 view=all
+        assert "view=all" in n.link
+        # link 包含 projectId
+        assert f"projectId={team['project'].id}" in n.link
+        # link 包含 submissionId
+        assert f"submissionId={sid}" in n.link
+        # link 包含 cardIndex
+        assert "cardIndex=0" in n.link
+
+    # ── 操作日志 ────────────────────────────────
+
+    def test_escalate_log_written(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        escalate_task_card_to_ceo(
+            sid, 0, schemas.WorkflowNoteRequest(note="请教练审阅", operator="owner"),
+            current_user="owner", db=db,
+        )
+
+        logs = (
+            db.query(models.OperationLog)
+            .filter(models.OperationLog.action == "confirmation_card_escalate_to_coach")
+            .filter(models.OperationLog.target_type == "confirmation")
+            .filter(models.OperationLog.target_id == sid)
+            .all()
+        )
+        assert len(logs) >= 1
+
+        log = logs[0]
+        # after 数据包含 card_index, card_title, note
+        after_data = json.loads(log.after_json or "{}")
+        assert after_data.get("card_index") == 0
+        assert after_data.get("card_title") == "测试任务卡标题"
+        assert after_data.get("note") == "请教练审阅"
+
+    def test_ceo_decide_log_written(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = self._setup(db, team)
+        ceo_decide_task_card(
+            sid, 0, schemas.WorkflowNoteRequest(note="同意该方案", operator="coach"),
+            current_user="coach", db=db,
+        )
+
+        logs = (
+            db.query(models.OperationLog)
+            .filter(models.OperationLog.action == "confirmation_card_coach_decision")
+            .filter(models.OperationLog.target_type == "confirmation")
+            .filter(models.OperationLog.target_id == sid)
+            .all()
+        )
+        assert len(logs) >= 1
+
+        log = logs[0]
+        after_data = json.loads(log.after_json or "{}")
+        assert after_data.get("card_index") == 0
+        assert after_data.get("card_title") == "测试任务卡标题"
+        assert after_data.get("note") == "同意该方案"

@@ -681,6 +681,8 @@ def save(
     _require_confirmation_center(context)
     _require_owner_style_actor(context, row, db, allow_assign=True)
     before = crud.to_dict(row)
+    data = W.submission_result(row)
+    _require_no_pending_ceo_cards(data)
     row.human_result_json = json.dumps(payload.human_result, ensure_ascii=False)
     row.confirm_status = SS.S_NEEDS_REVISION
     crud.log(db, current_user or "管理员", "confirmation_update", "confirmation", row.id, before, payload.human_result)
@@ -1097,11 +1099,15 @@ def confirm_task_card(
 
     before = crud.to_dict(row)
     effective_project_id = _submission_project_id(db, row)
-    data = W.submission_result(row)
+    # 1. 从数据库持久化数据中获取目标卡状态，防止 human_result 绕过
+    persisted_data = W.submission_result(row)
+    _, persisted_report = _get_task_card(persisted_data, card_index)
+    _require_card_not_pending_ceo(persisted_report)
+    # 2. 校验通过后才合并 payload.human_result
+    data = persisted_data
     if payload.human_result:
         data.update(payload.human_result)
     _, report = _get_task_card(data, card_index)
-    _require_card_not_pending_ceo(report)
     project_context = _submission_project_context(db, row, json_payload=data)
     effective_project_id = project_context["project_id"]
     now = utc_now()
@@ -1247,7 +1253,7 @@ def escalate_task_card_to_ceo(
         if coach_id != caller_id:
             _notify(db, recipient_id=coach_id, ntype="confirmation_card_escalate_ceo",
                     title=f"有任务卡需要您决策：{card_title}",
-                    body=f"提交标题：{row.title or '（无标题）'}\n上报人：{caller_name}\n上报说明：{payload.note or '无'}",
+                    body=f"提交标题：{row.title or '（无标题）'}\n任务卡：第 {card_index + 1} 张\n上报人：{caller_name}\n上报说明：{payload.note or '无'}",
                     link=f"/work/confirmations?view=ceo&projectId={effective_project_id}&submissionId={row.id}&cardIndex={card_index}",
                     project_id=effective_project_id)
     db.commit()
@@ -1269,6 +1275,10 @@ def ceo_decide_task_card(
     _require_confirmation_center(context)
     if not (context.get("is_tech_admin") or P.can_ceo_decide(context, row, db)):
         raise HTTPException(403, "permission denied — 仅该项目企业教练或管理员可批示")
+
+    # 主状态校验：仅 S_PENDING_OWNER 时允许单卡批示
+    if W.submission_status(row) != SS.S_PENDING_OWNER:
+        raise HTTPException(409, "submission is no longer waiting for owner processing")
 
     data = W.submission_result(row)
     reports, report = _get_task_card(data, card_index)
@@ -1303,7 +1313,7 @@ def ceo_decide_task_card(
         if owner_id != caller_id:
             _notify(db, recipient_id=owner_id, ntype="confirmation_card_ceo_decided",
                     title=f"企业教练已批示任务卡：{card_title}",
-                    body=f"企业教练批示：{payload.note or '无'}\n",
+                    body=f"提交标题：{row.title or '（无标题）'}\n任务卡：第 {card_index + 1} 张\n企业教练批示：{payload.note or '无'}",
                     link=f"/work/confirmations?view=all&projectId={effective_project_id}&submissionId={row.id}&cardIndex={card_index}",
                     project_id=effective_project_id)
     db.commit()
@@ -1401,6 +1411,8 @@ def withdraw(
         raise HTTPException(403, "只有原提交人或管理员可以撤回")
     W.require_submission_status(row, _WITHDRAWABLE_STATUSES)
     before = crud.to_dict(row)
+    data = W.submission_result(row)
+    _require_no_pending_ceo_cards(data)
     row.confirm_status = SS.S_WITHDRAWN
     crud.log(db, current_user, "confirmation_withdraw", "confirmation", row.id, before, {})
     db.commit()
@@ -1583,6 +1595,8 @@ def mark_unrecognized(
     if not _can_owner_style_action(context, row, db, allow_assign=True):
         raise HTTPException(403, "permission denied")
     before = crud.to_dict(row)
+    data = W.submission_result(row)
+    _require_no_pending_ceo_cards(data)
     row.confirm_status = SS.S_NEEDS_REVISION
     row.reject_reason = payload.reason
     crud.log(db, payload.operator, "confirmation_mark_unrecognized", "confirmation", row.id, before, {"reason": payload.reason})

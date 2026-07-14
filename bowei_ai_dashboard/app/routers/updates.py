@@ -9,7 +9,7 @@ from .. import crud, models, schemas
 from ..database import get_db
 from ..domain import source_type as ST
 from ..domain import submission_status as SS
-from sqlalchemy import or_ as sql_or
+from sqlalchemy import and_ as sql_and, or_ as sql_or
 
 from ..permissions import (
     PROJECT_ROLE_COORDINATOR,
@@ -48,6 +48,28 @@ def _update_human_result(row: models.UpdateSubmission) -> dict:
 def _can_view_update(context: dict, row: models.UpdateSubmission) -> bool:
     human = _update_human_result(row)
     return can_view_submission(context, human, row.submitter or "")
+
+
+def _submitter_identity_filter(context: dict, current_user: str):
+    """Match new submissions by person_id and legacy rows by stored strings."""
+    conditions = []
+    person_id = context.get("person_id")
+    if person_id is not None:
+        conditions.append(models.UpdateSubmission.submitter_id == person_id)
+
+    legacy_values = {
+        value.strip()
+        for value in (current_user, context.get("name") or "")
+        if value and value.strip()
+    }
+    if legacy_values:
+        conditions.append(
+            sql_and(
+                models.UpdateSubmission.submitter_id.is_(None),
+                models.UpdateSubmission.submitter.in_(legacy_values),
+            )
+        )
+    return sql_or(*conditions)
 
 
 def _project_owner_person_ids(project_id: int, db: Session) -> list[int]:
@@ -364,7 +386,7 @@ def list_updates(
 
     if mine:
         rows = db.query(models.UpdateSubmission).filter(
-            models.UpdateSubmission.submitter == current_user
+            _submitter_identity_filter(context, current_user)
         ).order_by(models.UpdateSubmission.created_at.desc()).all()
         result = []
         for row in rows:

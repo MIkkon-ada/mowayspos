@@ -107,6 +107,26 @@ def project_owner_ids(project_id: int, db: Session) -> list[int]:
     return [m.person_id for m in members if m.person_id]
 
 
+def project_strict_owner_ids(project_id: int, db: Session) -> list[int]:
+    """返回项目真实 owner 的 person_id 列表（稳定排序、去重）。"""
+    ids: list[int] = []
+    seen: set[int] = set()
+    members = (
+        db.query(models.ProjectMember)
+        .filter(
+            models.ProjectMember.project_id == project_id,
+            models.ProjectMember.role == "owner",
+        )
+        .order_by(models.ProjectMember.id)
+        .all()
+    )
+    for member in members:
+        if member.person_id and member.person_id not in seen:
+            seen.add(member.person_id)
+            ids.append(member.person_id)
+    return ids
+
+
 def company_ceo_person_ids(db: Session) -> list[int]:
     """返回系统层 company_ceo 的 person_id 列表（去重）。"""
     ids: list[int] = []

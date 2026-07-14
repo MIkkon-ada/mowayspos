@@ -60,7 +60,7 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
     if (!isPrivileged) return
     function poll() {
       getConfirmationCounts()
-        .then((counts) => setConfirmBadge((counts['待审核'] ?? 0) + (counts.ceo_total ?? counts.ceo ?? 0)))
+        .then((counts) => setConfirmBadge((counts['待审核'] ?? 0) + (counts.coordinator_total ?? 0) + (counts.ceo_total ?? counts.ceo ?? 0)))
         .catch(() => {})
     }
     poll()

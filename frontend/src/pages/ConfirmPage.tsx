@@ -13,6 +13,7 @@ import {
   ceoDecide,
   ceoDecideTaskCard,
   coordinatorFeedback,
+  coordinatorFeedbackTaskCard,
 } from '../api/confirmations'
 import { fetchMyUpdates } from '../api/updates'
 import { fetchSubtasksByAssignee, type SubTaskWithParent } from '../api/subtasks'
@@ -196,6 +197,7 @@ function taskCardDecisionLabel(status?: string) {
   if (status === 'confirmed') return '已确认'
   if (status === 'returned') return '已退回'
   if (status === 'transferred_to_coordinator') return '已转统筹'
+  if (status === 'coordinator_given') return '统筹已反馈'
   if (status === 'pending_ceo_decision') return '已转企业教练'
   if (status === 'ceo_decided') return '企业教练已批示'
   return '未判断'
@@ -205,6 +207,7 @@ function taskCardDecisionTone(status?: string) {
   if (status === 'confirmed') return 'bg-emerald-50 text-emerald-600'
   if (status === 'returned') return 'bg-orange-50 text-orange-600'
   if (status === 'transferred_to_coordinator') return 'bg-violet-50 text-violet-600'
+  if (status === 'coordinator_given') return 'bg-indigo-50 text-indigo-600'
   if (status === 'pending_ceo_decision') return 'bg-slate-100 text-slate-600'
   if (status === 'ceo_decided') return 'bg-sky-50 text-sky-600'
   return 'bg-slate-100 text-slate-500'
@@ -230,6 +233,7 @@ export function ConfirmPage() {
   const [selectedCardIndex, setSelectedCardIndex] = useState(0)
   const [cardDetailOpen, setCardDetailOpen] = useState(false)
   const [cardDecisions, setCardDecisions] = useState<Record<number, 'confirm' | 'return' | 'transfer' | 'ceo'>>({})
+  const [coordinatorCardNote, setCoordinatorCardNote] = useState('')
 
   const selectedProject = selected?.project_id != null ? projects.find((p) => p.id === selected.project_id) ?? null : null
   const projectArchived = isProjectArchived(selectedProject)
@@ -330,6 +334,7 @@ export function ConfirmPage() {
     setCoachNote('')
     setCoachActing(false)
     setCoordinatorNote('')
+    setCoordinatorCardNote('')
     if (nextView === 'ceo' || nextView === 'coordinator') {
       setFilterStatus('')
     } else {
@@ -429,7 +434,7 @@ export function ConfirmPage() {
         .finally(() => { if (!cancelled) setLoading(false) })
     } else if (viewMode === 'coordinator') {
       const coordProjectId = urlProjectId ?? null
-      getPending(coordProjectId, 'coordinator')
+      getPending(coordProjectId, 'coordinator', { includeCardLevel: true })
         .then((d) => {
           if (!cancelled) {
             setItems(d)
@@ -461,7 +466,7 @@ export function ConfirmPage() {
     }
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentProjectId, pendingProjectId, viewMode, urlProjectId, urlSubmissionId])
+  }, [currentProjectId, pendingProjectId, viewMode, urlProjectId, urlSubmissionId, urlCardIndex])
 
   function getAIResult(item: ConfirmationItem): Record<string, unknown> | null {
     try {
@@ -489,6 +494,7 @@ export function ConfirmPage() {
     setActionNote('')
     setCoachNote('')
     setCoordinatorNote('')
+    setCoordinatorCardNote('')
     setActionError(null)
     setActionSuccess(null)
     setSuggestTaskSelections({})
@@ -516,6 +522,7 @@ export function ConfirmPage() {
     setCardKeyTaskOverride({})
     setCardSubtaskOverride({})
 
+    let shouldOpenCard = false
     // 深链 cardIndex：ceo 视图下优先定位待决策卡
     if (isCoachView && urlCardIndex !== undefined) {
       const pendingIndices = item.pending_ceo_card_indices ?? []
@@ -526,16 +533,30 @@ export function ConfirmPage() {
       } else {
         setSelectedCardIndex(0)
       }
+      shouldOpenCard = item.ceo_decision_scope === 'card' && pendingIndices.length > 0
     } else if (isCoachView) {
       const pendingIndices = item.pending_ceo_card_indices ?? []
       setSelectedCardIndex(pendingIndices.length > 0 ? pendingIndices[0] : 0)
+    } else if (isCoordinatorView && item.coordinator_decision_scope === 'card') {
+      const pendingIndices = item.pending_coordinator_card_indices ?? []
+      if (urlCardIndex !== undefined && pendingIndices.includes(urlCardIndex)) {
+        setSelectedCardIndex(urlCardIndex)
+      } else if (pendingIndices.length > 0) {
+        setSelectedCardIndex(pendingIndices[0])
+      } else {
+        setSelectedCardIndex(0)
+      }
+      shouldOpenCard = urlCardIndex !== undefined && pendingIndices.length > 0
+    } else if (isCoordinatorView) {
+      setSelectedCardIndex(0)
     } else if (urlCardIndex !== undefined) {
       setSelectedCardIndex(urlCardIndex)
+      shouldOpenCard = true
     } else {
       setSelectedCardIndex(0)
     }
 
-    setCardDetailOpen(false)
+    setCardDetailOpen(shouldOpenCard)
     setCardDecisions({})
   }
 
@@ -740,10 +761,41 @@ export function ConfirmPage() {
     setCoordinatorActing(true)
     try {
       await coordinatorFeedback(selected.id, coordinatorNote, currentUser.name)
-      setActionSuccess('统筹意见已提交，事项已返回项目负责人。')
       setCoordinatorNote('')
       // 重新加载 coordinator 待办
-      reloadCoordinatorItems()
+      try {
+        await reloadCoordinatorItems()
+        setActionSuccess('统筹意见已提交，事项已返回项目负责人。')
+      } catch {
+        setActionSuccess('统筹意见已提交，但待办列表刷新失败，请手动刷新页面。')
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setActionError(`操作失败：${msg}`)
+    } finally {
+      setCoordinatorActing(false)
+    }
+  }
+
+  async function handleCoordinatorCardFeedback() {
+    if (!selected || !currentUser || !coordinatorCardNote.trim()) return
+    setActionError(null)
+    setActionSuccess(null)
+    setCoordinatorActing(true)
+    try {
+      await coordinatorFeedbackTaskCard(
+        selected.id,
+        activeCardIndex,
+        coordinatorCardNote,
+        currentUser.name,
+      )
+      setCoordinatorCardNote('')
+      try {
+        await reloadCoordinatorItems()
+        setActionSuccess('任务卡统筹意见已提交，事项已返回项目负责人。')
+      } catch {
+        setActionSuccess('统筹意见已提交，但待办列表刷新失败，请手动刷新页面。')
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       setActionError(`操作失败：${msg}`)
@@ -754,20 +806,24 @@ export function ConfirmPage() {
 
   function reloadCoordinatorItems() {
     const coordProjectId = urlProjectId ?? null
-    getPending(coordProjectId, 'coordinator')
+    return getPending(coordProjectId, 'coordinator', { includeCardLevel: true })
       .then((d) => {
         setItems(d)
-        const nextItem =
-          selected
-            ? d.find((item) => item.id === selected.id) ?? d[0]
-            : d[0]
-        if (nextItem) {
-          pickItem(nextItem)
+        const same = selected ? d.find((item) => item.id === selected.id) : undefined
+        if (same) {
+          pickItem(same)
+          const indices = same.pending_coordinator_card_indices ?? []
+          if (indices.length > 0) {
+            setSelectedCardIndex(indices[0])
+            setCardDetailOpen(true)
+          }
+        } else if (d[0]) {
+          pickItem(d[0])
         } else {
           setSelected(null)
+          setCardDetailOpen(false)
         }
       })
-      .catch(() => {})
   }
 
   function reloadCoachItems() {
@@ -838,6 +894,8 @@ export function ConfirmPage() {
   })
   const activeCardIndex = Math.min(selectedCardIndex, Math.max(taskCards.length - 1, 0))
   const activeCard = taskCards[activeCardIndex]
+  const cardWaitingCoordinator =
+    activeCard?.confirmationStatus === 'transferred_to_coordinator'
   const activeReviewCard = activeCard ? normalizeReviewCardData(activeCard, {
     cardIndex: activeCardIndex,
     totalCards: taskCards.length,
@@ -1000,8 +1058,10 @@ export function ConfirmPage() {
                 const isSelected = selected?.id === item.id
                 const r = getHumanResult(item) || getAIResult(item)
                 const summary = String(r?.summary || item.title || '').slice(0, 36)
-                const isCardScope = item.ceo_decision_scope === 'card'
-                const cardPendingCount = (item.pending_ceo_card_indices ?? []).length
+                const isCeoCardScope = item.ceo_decision_scope === 'card'
+                const ceoCardPendingCount = (item.pending_ceo_card_indices ?? []).length
+                const isCoordinatorCardScope = item.coordinator_decision_scope === 'card'
+                const coordinatorCardPendingCount = (item.pending_coordinator_card_indices ?? []).length
                 return (
                   <div
                     key={item.id}
@@ -1025,9 +1085,17 @@ export function ConfirmPage() {
                         {isCoachView && item.ceo_decision_scope === 'submission' && (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-50 text-purple-600">整条提交</span>
                         )}
-                        {isCoachView && isCardScope && (
+                        {isCoachView && isCeoCardScope && (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-50 text-sky-600">
-                            任务卡级{cardPendingCount > 1 ? ` · ${cardPendingCount} 张待决策` : ''}
+                            任务卡级{ceoCardPendingCount > 1 ? ` · ${ceoCardPendingCount} 张待决策` : ''}
+                          </span>
+                        )}
+                        {isCoordinatorView && item.coordinator_decision_scope === 'submission' && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-600">整条提交</span>
+                        )}
+                        {isCoordinatorView && isCoordinatorCardScope && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-50 text-violet-600">
+                            任务卡级 · {coordinatorCardPendingCount} 张待统筹
                           </span>
                         )}
                       </div>
@@ -1120,7 +1188,7 @@ export function ConfirmPage() {
                   )}
 
                   {/* 统筹反馈区 */}
-                  {isCoordinatorView && selected && (
+                  {isCoordinatorView && selected && selected.coordinator_decision_scope === 'submission' && (
                     <section className="rounded-[22px] border p-4" style={{ borderColor: '#A5B4FC', background: 'linear-gradient(135deg,#EEF2FF,#E0E7FF)' }}>
                       <div className="flex items-center gap-2 mb-3">
                         <svg style={{ width: 18, height: 18, color: '#4F46E5' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1192,8 +1260,14 @@ export function ConfirmPage() {
                           <button
                             type="button"
                             key={`${card.id}-summary-${cardIndex}`}
-                            onClick={() => { setSelectedCardIndex(cardIndex); setCardDetailOpen(true) }}
-                            className="text-left rounded-2xl border bg-white p-4 transition-all hover:-translate-y-0.5 hover:shadow-md"
+                            onClick={() => {
+                              if (coordinatorInteractionLocked) return
+                              setSelectedCardIndex(cardIndex)
+                              setCoordinatorCardNote('')
+                              setCardDetailOpen(true)
+                            }}
+                            disabled={coordinatorInteractionLocked}
+                            className="text-left rounded-2xl border bg-white p-4 transition-all hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
                             style={{ borderColor: selectedCard ? '#2563EB' : '#E5EEF9', boxShadow: selectedCard ? '0 10px 24px rgba(37,99,235,0.12)' : '0 1px 3px rgba(15,23,42,0.04)' }}
                           >
                             <div className="flex items-start justify-between gap-3">
@@ -1247,7 +1321,7 @@ export function ConfirmPage() {
                     </span>
                   </div>
                 </div>
-                <button type="button" onClick={() => setCardDetailOpen(false)} className="w-9 h-9 rounded-xl border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-700 flex items-center justify-center">×</button>
+                <button type="button" onClick={() => setCardDetailOpen(false)} disabled={coordinatorInteractionLocked} className="w-9 h-9 rounded-xl border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-700 flex items-center justify-center disabled:cursor-not-allowed disabled:opacity-50">×</button>
               </div>
 
               <div className="overflow-y-auto p-5 space-y-4">
@@ -1336,9 +1410,58 @@ export function ConfirmPage() {
                     </div>
                   )
                 ) : viewMode === 'coordinator' ? (
-                <div className="py-3 text-center text-xs text-slate-400">
-                  请在上方填写统筹反馈意见后提交。
-                </div>
+                  activeCard.confirmationStatus === 'transferred_to_coordinator' ? (
+                    <>
+                      <div className="flex items-center justify-between gap-3 mb-3">
+                        <div>
+                          <p className="text-xs font-bold text-slate-500 tracking-wider">单卡统筹反馈</p>
+                          <p className="text-xs text-slate-400 mt-1">请仅针对当前任务卡提供统筹意见</p>
+                        </div>
+                        <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-violet-100 text-violet-600">待统筹</span>
+                      </div>
+                      <div className="mb-3 p-3 rounded-xl bg-white text-sm text-slate-600 border border-slate-200 space-y-1">
+                        <div><span className="font-semibold text-slate-800">负责人转交说明：</span>{activeCard.coordinatorRequestNote || '（无）'}</div>
+                        <div><span className="font-semibold text-slate-800">转交人：</span>{activeCard.coordinatorRequestOperator || '—'}</div>
+                        <div><span className="font-semibold text-slate-800">转交时间：</span>{fmtTime(activeCard.coordinatorRequestedAt)}</div>
+                      </div>
+                      {actionError && (
+                        <div className="mb-3 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{actionError}</div>
+                      )}
+                      {actionSuccess && (
+                        <div className="mb-3 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-700">{actionSuccess}</div>
+                      )}
+                      <textarea
+                        value={coordinatorCardNote}
+                        onChange={(e) => setCoordinatorCardNote(e.target.value)}
+                        placeholder="请输入当前任务卡的统筹反馈（必填）…"
+                        disabled={coordinatorActing}
+                        className="w-full border border-indigo-200 rounded-xl p-3 text-sm focus:outline-none resize-none mb-3 disabled:opacity-50"
+                        style={{ minHeight: 72, background: 'white' }}
+                      />
+                      <button
+                        onClick={handleCoordinatorCardFeedback}
+                        disabled={coordinatorActing || !coordinatorCardNote.trim()}
+                        className="w-full py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90 disabled:opacity-50"
+                        style={{ background: 'linear-gradient(135deg,#4F46E5,#818CF8)' }}
+                      >
+                        {coordinatorActing ? '提交中…' : '提交反馈'}
+                      </button>
+                    </>
+                  ) : activeCard.confirmationStatus === 'coordinator_given' ? (
+                    <div className="py-3">
+                      <p className="text-sm font-bold text-emerald-700">统筹人已反馈</p>
+                      <div className="mt-3 p-3 rounded-xl bg-emerald-50 text-sm text-slate-700 border border-emerald-100">
+                        <span className="font-semibold">反馈内容：</span>{activeCard.coordinatorNote || '（无）'}
+                      </div>
+                      <p className="mt-2 text-xs text-slate-400">
+                        反馈人：{activeCard.coordinatorOperator || '—'} · 反馈时间：{fmtTime(activeCard.coordinatorFeedbackAt)}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="py-3 text-center text-xs text-slate-400">
+                      该任务卡不需要统筹反馈。
+                    </div>
+                  )
                 ) : viewMode === 'all' ? (
                 <>
                 {actionError && (
@@ -1353,6 +1476,19 @@ export function ConfirmPage() {
                     {actionSuccess}
                   </div>
                 )}
+                {activeCard.confirmationStatus === 'coordinator_given' && (
+                  <div className="mb-3 rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-sm text-slate-700">
+                    <p><span className="font-semibold text-indigo-800">统筹反馈内容：</span>{activeCard.coordinatorNote || '（无）'}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      反馈人：{activeCard.coordinatorOperator || '—'} · 反馈时间：{fmtTime(activeCard.coordinatorFeedbackAt)}
+                    </p>
+                  </div>
+                )}
+                {cardWaitingCoordinator && (
+                  <div className="mb-3 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-700">
+                    该任务卡正在等待项目统筹人反馈，反馈完成后可继续处理。
+                  </div>
+                )}
                 <div className="flex items-center justify-between gap-3 mb-3">
                   <div>
                     <p className="text-xs font-bold text-slate-500 tracking-wider">单卡判断</p>
@@ -1363,10 +1499,12 @@ export function ConfirmPage() {
                   )}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-                  <button type="button" onClick={() => handleTaskCardDecision('confirm')} disabled={acting || projectArchived} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl bg-blue-600 text-white font-semibold disabled:opacity-50">确认入库</button>
-                  <button type="button" onClick={() => handleTaskCardDecision('return')} disabled={acting || projectArchived} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl border border-orange-300 text-orange-600 font-semibold bg-white disabled:opacity-50">退回并重新编辑</button>
-                  <button type="button" onClick={() => handleTaskCardDecision('transfer')} disabled={acting || projectArchived} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl border border-violet-300 text-violet-600 font-semibold bg-white disabled:opacity-50">转交统筹人</button>
-                  <button type="button" onClick={() => handleTaskCardDecision('ceo')} disabled={acting || projectArchived} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl border border-slate-200 text-slate-600 font-semibold bg-white disabled:opacity-50">转交企业教练</button>
+                  <button type="button" onClick={() => handleTaskCardDecision('confirm')} disabled={acting || projectArchived || cardWaitingCoordinator} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl bg-blue-600 text-white font-semibold disabled:opacity-50">确认入库</button>
+                  <button type="button" onClick={() => handleTaskCardDecision('return')} disabled={acting || projectArchived || cardWaitingCoordinator} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl border border-orange-300 text-orange-600 font-semibold bg-white disabled:opacity-50">退回并重新编辑</button>
+                  {!cardWaitingCoordinator && activeCard.confirmationStatus !== 'coordinator_given' && (
+                    <button type="button" onClick={() => handleTaskCardDecision('transfer')} disabled={acting || projectArchived || cardWaitingCoordinator} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl border border-violet-300 text-violet-600 font-semibold bg-white disabled:opacity-50">转交统筹人</button>
+                  )}
+                  <button type="button" onClick={() => handleTaskCardDecision('ceo')} disabled={acting || projectArchived || cardWaitingCoordinator} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl border border-slate-200 text-slate-600 font-semibold bg-white disabled:opacity-50">转交企业教练</button>
                 </div>
                 </>
                 ) : (

@@ -47,6 +47,18 @@ export function coordinatorFeedback(id: number, note: string, operator: string) 
   return apiPost(`/api/confirmations/${id}/coordinator-feedback`, { note, operator })
 }
 
+export function coordinatorFeedbackTaskCard(
+  id: number,
+  cardIndex: number,
+  note: string,
+  operator: string,
+) {
+  return apiPost(
+    `/api/confirmations/${id}/cards/${cardIndex}/coordinator-feedback`,
+    { note, operator },
+  )
+}
+
 export function ceoDecide(id: number, note: string, operator: string) {
   return apiPost(`/api/confirmations/${id}/ceo-decide`, { note, operator })
 }

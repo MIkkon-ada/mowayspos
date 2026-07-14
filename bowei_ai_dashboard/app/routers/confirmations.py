@@ -137,6 +137,31 @@ def _pending_ceo_card_indices(data: dict) -> list[int]:
     ]
 
 
+def _has_pending_coordinator_task_cards(data: dict) -> bool:
+    """是否存在等待项目统筹反馈的任务卡。"""
+    reports = data.get("task_reports") or []
+    if not isinstance(reports, list):
+        return False
+    return any(
+        isinstance(report, dict)
+        and _card_confirmation_status(report) == "transferred_to_coordinator"
+        for report in reports
+    )
+
+
+def _pending_coordinator_card_indices(data: dict) -> list[int]:
+    """返回所有 transferred_to_coordinator 状态的任务卡索引。"""
+    reports = data.get("task_reports") or []
+    if not isinstance(reports, list):
+        return []
+    return [
+        index
+        for index, report in enumerate(reports)
+        if isinstance(report, dict)
+        and _card_confirmation_status(report) == "transferred_to_coordinator"
+    ]
+
+
 def _get_card_title(report: dict) -> str:
     """从任务卡字典中提取标题。"""
     return (
@@ -157,6 +182,63 @@ def _require_no_pending_ceo_cards(data: dict) -> None:
     """任一任务卡等待企业教练决策时拒绝整条提交操作。"""
     if _has_pending_ceo_task_cards(data):
         raise HTTPException(409, "submission contains task cards waiting for coach decision")
+
+
+def _require_no_pending_coordinator_cards(data: dict) -> None:
+    """任一任务卡等待统筹反馈时拒绝整条提交操作。"""
+    if _has_pending_coordinator_task_cards(data):
+        raise HTTPException(409, "submission contains task cards waiting for coordinator feedback")
+
+
+_CARD_OWNER_ACTIONABLE = frozenset({"", "pending", "ceo_decided", "coordinator_given"})
+
+_CARD_WORKFLOW_FIELDS = frozenset({
+    "confirmation_status",
+    "confirmation_note",
+    "confirmation_operator",
+    "confirmation_at",
+    "coordinator_request_note",
+    "coordinator_request_operator",
+    "coordinator_requested_at",
+    "coordinator_note",
+    "coordinator_operator",
+    "coordinator_feedback_at",
+    "ceo_note",
+    "ceo_operator",
+    "ceo_decided_at",
+})
+
+
+def _require_card_owner_actionable(report: dict) -> None:
+    """只允许 owner 处理仍待判断或已收到外部反馈的任务卡。"""
+    if _card_confirmation_status(report) not in _CARD_OWNER_ACTIONABLE:
+        raise HTTPException(409, "task card cannot be processed in its current state")
+
+
+def _merge_card_confirmation_payload(data: dict, human_result: dict | None) -> dict:
+    """合并 owner 编辑内容，但任务卡工作流字段始终以后端持久化值为准。"""
+    if not human_result:
+        return data
+    incoming = dict(human_result)
+    if "task_reports" in incoming:
+        persisted_reports = _task_reports(data)
+        incoming_reports = incoming["task_reports"]
+        if not isinstance(incoming_reports, list) or len(incoming_reports) != len(persisted_reports):
+            raise HTTPException(409, "task card list cannot be changed during confirmation")
+        merged_reports: list[dict] = []
+        for persisted_report, incoming_report in zip(persisted_reports, incoming_reports):
+            if not isinstance(persisted_report, dict) or not isinstance(incoming_report, dict):
+                raise HTTPException(400, "task card is not an object")
+            merged_report = dict(incoming_report)
+            for field in _CARD_WORKFLOW_FIELDS:
+                merged_report.pop(field, None)
+                if field in persisted_report:
+                    merged_report[field] = persisted_report[field]
+            merged_reports.append(merged_report)
+        incoming["task_reports"] = merged_reports
+    merged = dict(data)
+    merged.update(incoming)
+    return merged
 
 
 # ── Confirmation-center tab mapping ──────────────────────────
@@ -573,7 +655,7 @@ def _count_visible_coordinator_pending_submissions(
 ) -> int:
     """统计当前用户可见的统筹待办 submission 数量。
 
-    查询候选状态：WAITING_COORDINATOR_FEEDBACK。
+    查询候选状态：WAITING_COORDINATOR_FEEDBACK | PENDING_OWNER_REVIEW。
     权限规则：
     - tech_admin：可见全部项目
     - 非 tech_admin：仅可见自己担任 coordinator 的项目
@@ -584,7 +666,7 @@ def _count_visible_coordinator_pending_submissions(
     if not is_tech_admin:
         cache = P.preload_user_project_roles(context, db)
 
-    query_statuses = list(SS.WAITING_COORDINATOR_FEEDBACK)
+    query_statuses = list(set(SS.WAITING_COORDINATOR_FEEDBACK | SS.PENDING_OWNER_REVIEW))
     rows = (
         db.query(models.UpdateSubmission)
         .filter(models.UpdateSubmission.confirm_status.in_(query_statuses))
@@ -603,6 +685,12 @@ def _count_visible_coordinator_pending_submissions(
 
         if norm_status in SS.WAITING_COORDINATOR_FEEDBACK:
             visible_submission_ids.add(row.id)
+            continue
+
+        if norm_status in SS.PENDING_OWNER_REVIEW:
+            data = W.submission_result(row)
+            if _has_pending_coordinator_task_cards(data):
+                visible_submission_ids.add(row.id)
 
     return len(visible_submission_ids)
 
@@ -669,9 +757,10 @@ def pending(
     _require_confirmation_center(context)
     status_filter = TAB_STATUS_MAP.get(tab, TAB_STATUS_MAP["待审核"])
 
-    # 卡片级扩展：tab=ceo + include_card_level=true 时，也查询主状态为 PENDING_OWNER_REVIEW
-    # 但包含 pending_ceo_decision 卡片的记录
-    expand_card_level = (tab == "ceo" and include_card_level)
+    # 卡片级扩展：CEO / coordinator tab 在显式开启时也查询 PENDING_OWNER_REVIEW。
+    expand_ceo_card_level = tab == "ceo" and include_card_level
+    expand_coordinator_card_level = tab == "coordinator" and include_card_level
+    expand_card_level = expand_ceo_card_level or expand_coordinator_card_level
 
     # 统一 CEO tab 标记：提交级、卡片级、新旧查询均使用一致的 project_ceo 权限
     is_ceo_tab = tab == "ceo"
@@ -691,7 +780,6 @@ def pending(
         db.query(models.UpdateSubmission)
         .filter(models.UpdateSubmission.confirm_status.in_(query_filter))
         .order_by(models.UpdateSubmission.updated_at.desc())
-        .limit(500)
         .all()
     )
     # 预加载角色，消除循环 N+1
@@ -726,9 +814,15 @@ def pending(
 
         human = W.submission_result(row)
 
-        # 卡片级：仅 tab=ceo 时区分提交级 vs 卡片级
+        # 卡片级：按当前 tab 区分提交级 vs 卡片级。
         is_submission_ceo = norm_status in SS.WAITING_CEO_DECISION
-        has_card_ceo = expand_card_level and _has_pending_ceo_task_cards(human)
+        has_card_ceo = expand_ceo_card_level and _has_pending_ceo_task_cards(human)
+        is_submission_coordinator = norm_status in SS.WAITING_COORDINATOR_FEEDBACK
+        has_card_coordinator = (
+            expand_coordinator_card_level
+            and norm_status in SS.PENDING_OWNER_REVIEW
+            and _has_pending_coordinator_task_cards(human)
+        )
 
         # 角色过滤
         passed_role = P.role_allows_batch(context, row.submitter, row_project_id, row.confirm_status, cache)
@@ -737,27 +831,42 @@ def pending(
             if has_card_ceo and not is_submission_ceo:
                 roles2 = cache.get(row_project_id, set())
                 passed_role = ("project_ceo" in roles2) or context.get("is_tech_admin", False)
+            elif has_card_coordinator and not is_submission_coordinator:
+                roles2 = cache.get(row_project_id, set())
+                passed_role = ("coordinator" in roles2) or context.get("is_tech_admin", False)
         if not passed_role:
             continue
 
-        # 卡片级模式下只保留提交级或卡片级 CEO 事项
-        if expand_card_level:
+        # 卡片级模式下只保留当前 tab 对应的提交级或卡片级事项。
+        if expand_ceo_card_level:
             if not is_submission_ceo and not has_card_ceo:
+                continue
+        elif expand_coordinator_card_level:
+            if not is_submission_coordinator and not has_card_coordinator:
                 continue
 
         item = crud.to_dict(row)
         item["special_project"] = _submission_project_name(db, row, json_payload=human)
         item["related_task"] = human.get("related_task") or (human.get("task") or {}).get("key_task", "")
 
-        if expand_card_level:
+        if expand_ceo_card_level:
             if is_submission_ceo:
                 item["ceo_decision_scope"] = "submission"
                 item["pending_ceo_card_indices"] = []
             else:
                 item["ceo_decision_scope"] = "card"
                 item["pending_ceo_card_indices"] = _pending_ceo_card_indices(human)
+        elif expand_coordinator_card_level:
+            if is_submission_coordinator:
+                item["coordinator_decision_scope"] = "submission"
+                item["pending_coordinator_card_indices"] = []
+            else:
+                item["coordinator_decision_scope"] = "card"
+                item["pending_coordinator_card_indices"] = _pending_coordinator_card_indices(human)
 
         result.append(item)
+        if len(result) >= 500:
+            break
     return result
 
 
@@ -794,9 +903,11 @@ def save(
     before = crud.to_dict(row)
     data = W.submission_result(row)
     _require_no_pending_ceo_cards(data)
-    row.human_result_json = json.dumps(payload.human_result, ensure_ascii=False)
+    _require_no_pending_coordinator_cards(data)
+    merged_data = _merge_card_confirmation_payload(data, payload.human_result)
+    row.human_result_json = json.dumps(merged_data, ensure_ascii=False)
     row.confirm_status = SS.S_NEEDS_REVISION
-    crud.log(db, current_user or "管理员", "confirmation_update", "confirmation", row.id, before, payload.human_result)
+    crud.log(db, current_user or "管理员", "confirmation_update", "confirmation", row.id, before, merged_data)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
 
@@ -819,10 +930,11 @@ def confirm(
     now = utc_now()
     data = W.submission_result(row)
     _require_no_pending_ceo_cards(data)
+    _require_no_pending_coordinator_cards(data)
 
     # Merge human_result from frontend (contains field edits and write-flags)
     if payload.human_result:
-        hr = payload.human_result
+        hr = _merge_card_confirmation_payload(data, payload.human_result)
         for k, v in hr.items():
             if k not in ("task", "achievements", "issues"):
                 data[k] = v
@@ -1213,11 +1325,9 @@ def confirm_task_card(
     # 1. 从数据库持久化数据中获取目标卡状态，防止 human_result 绕过
     persisted_data = W.submission_result(row)
     _, persisted_report = _get_task_card(persisted_data, card_index)
-    _require_card_not_pending_ceo(persisted_report)
+    _require_card_owner_actionable(persisted_report)
     # 2. 校验通过后才合并 payload.human_result
-    data = persisted_data
-    if payload.human_result:
-        data.update(payload.human_result)
+    data = _merge_card_confirmation_payload(persisted_data, payload.human_result)
     _, report = _get_task_card(data, card_index)
     project_context = _submission_project_context(db, row, json_payload=data)
     effective_project_id = project_context["project_id"]
@@ -1268,7 +1378,7 @@ def reject_task_card(
     effective_project_id = _submission_project_id(db, row)
     data = W.submission_result(row)
     _, report = _get_task_card(data, card_index)
-    _require_card_not_pending_ceo(report)
+    _require_card_owner_actionable(report)
     _mark_task_card(row, data, card_index, "returned", payload.operator, payload.reason)
     row.confirm_status = SS.S_PENDING_OWNER
     row.reject_reason = payload.reason
@@ -1298,20 +1408,152 @@ def transfer_task_card_to_coordinator(
 
     before = crud.to_dict(row)
     data = W.submission_result(row)
-    _, report = _get_task_card(data, card_index)
-    _require_card_not_pending_ceo(report)
-    _mark_task_card(
-        row, data, card_index, "transferred_to_coordinator",
-        payload.operator, payload.note or "",
-    )
+    reports, report = _get_task_card(data, card_index)
+    if _card_confirmation_status(report) not in {"", "pending"}:
+        raise HTTPException(409, "task card cannot be transferred in its current state")
+
+    effective_project_id = _submission_project_id(db, row)
+    card_title = _get_card_title(report)
+    now = utc_now().isoformat()
+    note = payload.note or ""
+    report["confirmation_status"] = "transferred_to_coordinator"
+    report["confirmation_note"] = note
+    report["confirmation_operator"] = payload.operator
+    report["confirmation_at"] = now
+    report["coordinator_request_note"] = note
+    report["coordinator_request_operator"] = payload.operator
+    report["coordinator_requested_at"] = now
+    reports[card_index] = report
+    data["task_reports"] = reports
+    row.human_result_json = json.dumps(data, ensure_ascii=False)
     row.confirm_status = SS.S_PENDING_OWNER
     crud.log(
         db, payload.operator, "confirmation_card_forward_to_coordinator", "confirmation", row.id,
-        before, {"card_index": card_index, "note": payload.note or ""},
+        before, {
+            "card_index": card_index,
+            "card_title": card_title,
+            "note": note,
+            "project_id": effective_project_id,
+        },
         project_id=effective_project_id,
     )
+    from ..services.notify import send as _notify, project_coordinator_ids, person_name_for_account, person_id_for_account
+    caller_name = person_name_for_account(current_user or payload.operator, db)
+    caller_id = person_id_for_account(current_user or payload.operator, db)
+    for coordinator_id in project_coordinator_ids(effective_project_id, db):
+        if coordinator_id != caller_id:
+            _notify(
+                db,
+                recipient_id=coordinator_id,
+                ntype="confirmation_card_transferred_to_coordinator",
+                title=f"有任务卡需要你提供统筹意见：{card_title}",
+                body=(
+                    f"提交标题：{row.title or '（无标题）'}\n"
+                    f"任务卡：第 {card_index + 1} 张\n"
+                    f"任务卡标题：{card_title}\n"
+                    f"转交人：{caller_name}\n"
+                    f"转交说明：{note or '无'}"
+                ),
+                link=(
+                    f"/work/confirmations?view=coordinator&projectId={effective_project_id}"
+                    f"&submissionId={row.id}&cardIndex={card_index}"
+                ),
+                project_id=effective_project_id,
+            )
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
+
+
+def coordinator_feedback_task_card(
+    submission_id: int,
+    card_index: int,
+    payload: schemas.WorkflowNoteRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """项目统筹对单张任务卡反馈，完成后返回 owner 继续处理。"""
+    row = _load_submission(db, submission_id)
+    context = get_user_context_from_db(current_user or payload.operator, db)
+    _require_submission_writable(row, context, db)
+    _require_confirmation_center(context)
+    if not (context.get("is_tech_admin") or P.can_coordinate(context, row, db)):
+        raise HTTPException(403, "permission denied — 仅该项目统筹人或管理员可反馈")
+    if W.submission_status(row) != SS.S_PENDING_OWNER:
+        raise HTTPException(409, "submission is no longer waiting for owner processing")
+
+    data = W.submission_result(row)
+    reports, report = _get_task_card(data, card_index)
+    if _card_confirmation_status(report) != "transferred_to_coordinator":
+        raise HTTPException(409, "task card is not waiting for coordinator feedback")
+    note = (payload.note or "").strip()
+    if not note:
+        raise HTTPException(422, "coordinator feedback note is required")
+
+    before = crud.to_dict(row)
+    effective_project_id = _submission_project_id(db, row)
+    card_title = _get_card_title(report)
+    report["confirmation_status"] = "coordinator_given"
+    report["coordinator_note"] = note
+    report["coordinator_operator"] = payload.operator
+    report["coordinator_feedback_at"] = utc_now().isoformat()
+    reports[card_index] = report
+    data["task_reports"] = reports
+    row.human_result_json = json.dumps(data, ensure_ascii=False)
+    row.confirm_status = SS.S_PENDING_OWNER
+
+    crud.log(
+        db,
+        payload.operator,
+        "confirmation_card_coordinator_feedback",
+        "confirmation",
+        row.id,
+        before,
+        {
+            "card_index": card_index,
+            "card_title": card_title,
+            "note": note,
+            "project_id": effective_project_id,
+        },
+        project_id=effective_project_id,
+    )
+    from ..services.notify import send as _notify, project_owner_ids, person_id_for_account
+    caller_id = person_id_for_account(current_user or payload.operator, db)
+    strict_owner_ids = {
+        member.person_id
+        for member in db.query(models.ProjectMember).filter(
+            models.ProjectMember.project_id == effective_project_id,
+            models.ProjectMember.role == "owner",
+        ).all()
+        if member.person_id
+    }
+    for owner_id in set(project_owner_ids(effective_project_id, db)):
+        if owner_id in strict_owner_ids and owner_id != caller_id:
+            _notify(
+                db,
+                recipient_id=owner_id,
+                ntype="confirmation_card_coordinator_feedback",
+                title=f"统筹人已反馈任务卡：{card_title}",
+                body=(
+                    f"提交标题：{row.title or '（无标题）'}\n"
+                    f"任务卡：第 {card_index + 1} 张\n"
+                    f"任务卡标题：{card_title}\n"
+                    f"统筹意见：{note}"
+                ),
+                link=(
+                    f"/work/confirmations?view=all&projectId={effective_project_id}"
+                    f"&submissionId={row.id}&cardIndex={card_index}"
+                ),
+                project_id=effective_project_id,
+            )
+    db.commit()
+    return {"ok": True, "submission": crud.to_dict(row)}
+
+
+router.add_api_route(
+    "/{submission_id}/cards/{card_index}/coordinator-feedback",
+    coordinator_feedback_task_card,
+    methods=["POST"],
+)
 
 
 @router.post("/{submission_id}/cards/{card_index}/escalate-ceo")
@@ -1448,6 +1690,7 @@ def reject(
     before = crud.to_dict(row)
     data = W.submission_result(row)
     _require_no_pending_ceo_cards(data)
+    _require_no_pending_coordinator_cards(data)
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_RETURNED
     row.reject_reason = payload.reason
@@ -1524,6 +1767,7 @@ def withdraw(
     before = crud.to_dict(row)
     data = W.submission_result(row)
     _require_no_pending_ceo_cards(data)
+    _require_no_pending_coordinator_cards(data)
     row.confirm_status = SS.S_WITHDRAWN
     crud.log(db, current_user, "confirmation_withdraw", "confirmation", row.id, before, {})
     db.commit()
@@ -1546,6 +1790,7 @@ def reject_final(
     before = crud.to_dict(row)
     data = W.submission_result(row)
     _require_no_pending_ceo_cards(data)
+    _require_no_pending_coordinator_cards(data)
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_PERMANENTLY_REJECTED
     row.reject_reason = payload.reason
@@ -1579,6 +1824,7 @@ def transfer_coordinator(
     before = crud.to_dict(row)
     data = W.submission_result(row)
     _require_no_pending_ceo_cards(data)
+    _require_no_pending_coordinator_cards(data)
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_WAITING_COORDINATOR
     if payload.note:
@@ -1650,6 +1896,7 @@ def escalate_ceo(
     before = crud.to_dict(row)
     data = W.submission_result(row)
     _require_no_pending_ceo_cards(data)
+    _require_no_pending_coordinator_cards(data)
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_WAITING_CEO
     if payload.note:
@@ -1719,6 +1966,7 @@ def mark_unrecognized(
     before = crud.to_dict(row)
     data = W.submission_result(row)
     _require_no_pending_ceo_cards(data)
+    _require_no_pending_coordinator_cards(data)
     row.confirm_status = SS.S_NEEDS_REVISION
     row.reject_reason = payload.reason
     crud.log(db, payload.operator, "confirmation_mark_unrecognized", "confirmation", row.id, before, {"reason": payload.reason})
@@ -1741,6 +1989,7 @@ def assign(
     before = crud.to_dict(row)
     project_id = _submission_project_id(db, row)
     data = W.submission_result(row)
+    _require_no_pending_coordinator_cards(data)
     data["assigned_to"] = payload.assignee
     if "task" in data:
         data["task"]["owner"] = payload.assignee

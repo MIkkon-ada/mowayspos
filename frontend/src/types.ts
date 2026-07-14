@@ -344,5 +344,7 @@ export type ConfirmationItem = {
   ceo_note?: string
   ceo_decision_scope?: 'submission' | 'card'
   pending_ceo_card_indices?: number[]
+  coordinator_decision_scope?: 'submission' | 'card'
+  pending_coordinator_card_indices?: number[]
   [key: string]: unknown
 }

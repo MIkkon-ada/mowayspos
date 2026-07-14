@@ -27,20 +27,33 @@ export function confirmSubmission(
   id: number,
   operator: string,
   human_result?: Record<string, unknown>,
-) {
-  return apiPost(`/api/confirmations/${id}/confirm`, { operator, human_result })
+): Promise<{ ok?: boolean; submission?: ConfirmationItem }> {
+  return apiPost<{ ok?: boolean; submission?: ConfirmationItem }>(`/api/confirmations/${id}/confirm`, { operator, human_result })
 }
 
-export function rejectSubmission(id: number, reason: string, operator: string) {
-  return apiPost(`/api/confirmations/${id}/reject`, { reason, operator })
+export function rejectSubmission(id: number, reason: string, operator: string): Promise<{ ok?: boolean; submission?: ConfirmationItem }> {
+  return apiPost<{ ok?: boolean; submission?: ConfirmationItem }>(`/api/confirmations/${id}/reject`, { reason, operator })
 }
 
-export function transferCoordinator(id: number, note: string, operator: string) {
-  return apiPost(`/api/confirmations/${id}/transfer-coordinator`, { note, operator })
+export function resubmitSubmission(
+  id: number,
+  supplementNote: string,
+  operator: string,
+  humanResult?: Record<string, unknown>,
+): Promise<{ ok?: boolean; submission?: ConfirmationItem }> {
+  return apiPost<{ ok?: boolean; submission?: ConfirmationItem }>(`/api/confirmations/${id}/resubmit`, {
+    supplement_note: supplementNote,
+    operator,
+    human_result: humanResult,
+  })
 }
 
-export function escalateCeo(id: number, note: string, operator: string) {
-  return apiPost(`/api/confirmations/${id}/escalate-ceo`, { note, operator })
+export function transferCoordinator(id: number, note: string, operator: string): Promise<{ ok?: boolean; submission?: ConfirmationItem }> {
+  return apiPost<{ ok?: boolean; submission?: ConfirmationItem }>(`/api/confirmations/${id}/transfer-coordinator`, { note, operator })
+}
+
+export function escalateCeo(id: number, note: string, operator: string): Promise<{ ok?: boolean; submission?: ConfirmationItem }> {
+  return apiPost<{ ok?: boolean; submission?: ConfirmationItem }>(`/api/confirmations/${id}/escalate-ceo`, { note, operator })
 }
 
 export function coordinatorFeedback(id: number, note: string, operator: string) {

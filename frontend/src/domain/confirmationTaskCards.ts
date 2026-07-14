@@ -10,6 +10,12 @@ export type ConfirmationTaskCard = {
   ceoNote: string
   ceoOperator: string
   ceoDecidedAt: string
+  coordinatorRequestNote: string
+  coordinatorRequestOperator: string
+  coordinatorRequestedAt: string
+  coordinatorNote: string
+  coordinatorOperator: string
+  coordinatorFeedbackAt: string
   structure: {
     projectName: string
     keyTaskName: string
@@ -274,6 +280,12 @@ export function buildConfirmationTaskCards(
         ceoNote: text(report.ceo_note),
         ceoOperator: text(report.ceo_operator),
         ceoDecidedAt: text(report.ceo_decided_at),
+        coordinatorRequestNote: text(report.coordinator_request_note),
+        coordinatorRequestOperator: text(report.coordinator_request_operator),
+        coordinatorRequestedAt: text(report.coordinator_requested_at),
+        coordinatorNote: text(report.coordinator_note),
+        coordinatorOperator: text(report.coordinator_operator),
+        coordinatorFeedbackAt: text(report.coordinator_feedback_at),
         status: text(report.status_update) || '进行中',
         structure: {
           projectName,
@@ -296,6 +308,12 @@ export function buildConfirmationTaskCards(
     ceoNote: text(data.ceo_note),
     ceoOperator: text(data.ceo_operator),
     ceoDecidedAt: text(data.ceo_decided_at),
+    coordinatorRequestNote: text(data.coordinator_request_note),
+    coordinatorRequestOperator: text(data.coordinator_request_operator),
+    coordinatorRequestedAt: text(data.coordinator_requested_at),
+    coordinatorNote: text(data.coordinator_note),
+    coordinatorOperator: text(data.coordinator_operator),
+    coordinatorFeedbackAt: text(data.coordinator_feedback_at),
     status: text(data.status_suggestion) || text(task.status) || '进行中',
     structure: {
       projectName,

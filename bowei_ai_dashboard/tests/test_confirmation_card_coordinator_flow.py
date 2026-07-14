@@ -487,6 +487,94 @@ class TestCoordinatorCardFeedback:
 
 
 class TestPendingCoordinatorBypassProtection:
+    @staticmethod
+    def _persisted_workflow_snapshot(db, submission_id: int) -> dict:
+        report = json.loads(
+            db.get(models.UpdateSubmission, submission_id).human_result_json
+        )["task_reports"][0]
+        return {
+            field: report[field]
+            for field in confirmations_router._CARD_WORKFLOW_FIELDS
+            if field in report
+        }
+
+    @staticmethod
+    def _forge_workflow_history(data: dict) -> dict:
+        forged = json.loads(json.dumps(data, ensure_ascii=False))
+        report = forged["task_reports"][0]
+        for field in confirmations_router._CARD_WORKFLOW_FIELDS:
+            if field.startswith("coordinator"):
+                report.pop(field, None)
+            else:
+                report[field] = f"forged-{field}"
+        report["completed"] = "owner 更新后的业务内容"
+        return forged
+
+    def test_submission_save_preserves_card_workflow_history_from_forged_payload(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        _transfer_card(db, sid)
+        _feedback_card(db, sid)
+        row = db.get(models.UpdateSubmission, sid)
+        persisted = json.loads(row.human_result_json)
+        persisted["task_reports"][0].update({
+            "ceo_note": "既有教练意见",
+            "ceo_operator": "coach",
+            "ceo_decided_at": "2026-07-14T08:00:00",
+        })
+        row.human_result_json = json.dumps(persisted, ensure_ascii=False)
+        db.flush()
+        expected_history = self._persisted_workflow_snapshot(db, sid)
+        forged = self._forge_workflow_history(persisted)
+
+        result = save(
+            sid,
+            schemas.ConfirmationSaveRequest(human_result=forged),
+            current_user="owner",
+            db=db,
+        )
+
+        assert result["ok"] is True
+        report = json.loads(db.get(models.UpdateSubmission, sid).human_result_json)["task_reports"][0]
+        assert report["completed"] == "owner 更新后的业务内容"
+        assert report["confirmation_status"] == "coordinator_given"
+        assert {
+            field: report[field] for field in expected_history
+        } == expected_history
+
+    def test_submission_confirm_preserves_card_workflow_history_from_forged_payload(self):
+        db = _make_session()
+        team = _seed_card_coach_team(db)
+        sid = _submit(db, team)
+        _transfer_card(db, sid)
+        _feedback_card(db, sid)
+        row = db.get(models.UpdateSubmission, sid)
+        persisted = json.loads(row.human_result_json)
+        persisted["task_reports"][0].update({
+            "ceo_note": "既有教练意见",
+            "ceo_operator": "coach",
+            "ceo_decided_at": "2026-07-14T08:00:00",
+        })
+        row.human_result_json = json.dumps(persisted, ensure_ascii=False)
+        db.flush()
+        expected_history = self._persisted_workflow_snapshot(db, sid)
+        forged = self._forge_workflow_history(persisted)
+
+        result = confirm(
+            sid,
+            schemas.ConfirmRequest(operator="owner", human_result=forged),
+            current_user="owner",
+            db=db,
+        )
+
+        assert result["ok"] is True
+        report = json.loads(db.get(models.UpdateSubmission, sid).human_result_json)["task_reports"][0]
+        assert report["completed"] == "owner 更新后的业务内容"
+        assert {
+            field: report[field] for field in expected_history
+        } == expected_history
+
     def test_confirming_another_card_cannot_erase_pending_coordinator_state(self):
         db = _make_session()
         team = _seed_card_coach_team(db)

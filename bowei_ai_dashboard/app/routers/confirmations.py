@@ -904,9 +904,10 @@ def save(
     data = W.submission_result(row)
     _require_no_pending_ceo_cards(data)
     _require_no_pending_coordinator_cards(data)
-    row.human_result_json = json.dumps(payload.human_result, ensure_ascii=False)
+    merged_data = _merge_card_confirmation_payload(data, payload.human_result)
+    row.human_result_json = json.dumps(merged_data, ensure_ascii=False)
     row.confirm_status = SS.S_NEEDS_REVISION
-    crud.log(db, current_user or "管理员", "confirmation_update", "confirmation", row.id, before, payload.human_result)
+    crud.log(db, current_user or "管理员", "confirmation_update", "confirmation", row.id, before, merged_data)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
 
@@ -933,7 +934,7 @@ def confirm(
 
     # Merge human_result from frontend (contains field edits and write-flags)
     if payload.human_result:
-        hr = payload.human_result
+        hr = _merge_card_confirmation_payload(data, payload.human_result)
         for k, v in hr.items():
             if k not in ("task", "achievements", "issues"):
                 data[k] = v

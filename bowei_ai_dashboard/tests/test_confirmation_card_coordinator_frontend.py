@@ -126,16 +126,27 @@ class TestCoordinatorCardLoadingAndDeepLink:
         assert "setSelected(null)" in body
         assert "setCardDetailOpen(false)" in body
 
-    def test_reload_failure_is_not_silently_swallowed(self):
+    def test_post_failures_remain_operation_errors(self):
         source = _read("pages/ConfirmPage.tsx")
-        reload_body = _extract_function(source, "reloadCoordinatorItems")
-        submission_handler = _extract_function(source, "handleCoordinatorFeedback")
-        card_handler = _extract_function(source, "handleCoordinatorCardFeedback")
-        assert ".catch(() => {})" not in reload_body
-        assert "await reloadCoordinatorItems()" in submission_handler
-        assert "await reloadCoordinatorItems()" in card_handler
-        assert submission_handler.index("await reloadCoordinatorItems()") < submission_handler.index("setActionSuccess('统筹意见已提交")
-        assert card_handler.index("await reloadCoordinatorItems()") < card_handler.index("setActionSuccess('任务卡统筹意见已提交")
+        for name, post_call in (
+            ("handleCoordinatorFeedback", "await coordinatorFeedback("),
+            ("handleCoordinatorCardFeedback", "await coordinatorFeedbackTaskCard("),
+        ):
+            body = _extract_function(source, name)
+            assert post_call in body
+            assert "setActionError(`操作失败：${msg}`)" in body
+            assert body.index(post_call) < body.rindex("catch (err: unknown)")
+
+    def test_reload_failures_are_success_warnings_in_both_handlers(self):
+        source = _read("pages/ConfirmPage.tsx")
+        warning = "统筹意见已提交，但待办列表刷新失败，请手动刷新页面。"
+        for name in ("handleCoordinatorFeedback", "handleCoordinatorCardFeedback"):
+            body = _extract_function(source, name)
+            assert body.count("try {") >= 2
+            assert body.count("catch") >= 2
+            assert "await reloadCoordinatorItems()" in body
+            assert f"setActionSuccess('{warning}')" in body
+            assert ".catch(() => {})" not in body
 
 
 class TestCoordinatorScopeRendering:
@@ -215,6 +226,19 @@ class TestCoordinatorCardModal:
 
 
 class TestOwnerCoordinatorFeedback:
+    def test_waiting_coordinator_disables_every_owner_card_action(self):
+        source = _read("pages/ConfirmPage.tsx")
+        assert "const cardWaitingCoordinator =\n    activeCard?.confirmationStatus === 'transferred_to_coordinator'" in source
+        _, owner = _card_modal_regions(source)
+        action_region = owner[:owner.find("该视图下仅查看记录")]
+        assert "该任务卡正在等待项目统筹人反馈，反馈完成后可继续处理。" in action_region
+        for action in ("confirm", "return", "ceo"):
+            marker = f"handleTaskCardDecision('{action}')"
+            button = action_region[action_region.index(marker):]
+            assert "cardWaitingCoordinator" in button[:500]
+        transfer = action_region[action_region.index("handleTaskCardDecision('transfer')") - 250:]
+        assert "!cardWaitingCoordinator" in transfer[:500]
+
     def test_owner_sees_read_only_feedback_before_actions(self):
         _, owner = _card_modal_regions(_read("pages/ConfirmPage.tsx"))
         owner_region = owner[:owner.index("</div>", owner.index("grid grid-cols-1 sm:grid-cols-2")) + 6]
@@ -235,6 +259,10 @@ class TestOwnerCoordinatorFeedback:
         assert transfer >= 0
         guard = action_region.rfind("activeCard.confirmationStatus !== 'coordinator_given'", 0, transfer)
         assert guard >= 0
+        for action in ("confirm", "return", "ceo"):
+            marker = f"handleTaskCardDecision('{action}')"
+            button = action_region[action_region.index(marker):]
+            assert "cardWaitingCoordinator" in button[:500]
 
 
 class TestCoordinatorCardStatusLabels:

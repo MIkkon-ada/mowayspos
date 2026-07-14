@@ -763,8 +763,12 @@ export function ConfirmPage() {
       await coordinatorFeedback(selected.id, coordinatorNote, currentUser.name)
       setCoordinatorNote('')
       // 重新加载 coordinator 待办
-      await reloadCoordinatorItems()
-      setActionSuccess('统筹意见已提交，事项已返回项目负责人。')
+      try {
+        await reloadCoordinatorItems()
+        setActionSuccess('统筹意见已提交，事项已返回项目负责人。')
+      } catch {
+        setActionSuccess('统筹意见已提交，但待办列表刷新失败，请手动刷新页面。')
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       setActionError(`操作失败：${msg}`)
@@ -786,8 +790,12 @@ export function ConfirmPage() {
         currentUser.name,
       )
       setCoordinatorCardNote('')
-      await reloadCoordinatorItems()
-      setActionSuccess('任务卡统筹意见已提交，事项已返回项目负责人。')
+      try {
+        await reloadCoordinatorItems()
+        setActionSuccess('任务卡统筹意见已提交，事项已返回项目负责人。')
+      } catch {
+        setActionSuccess('统筹意见已提交，但待办列表刷新失败，请手动刷新页面。')
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       setActionError(`操作失败：${msg}`)
@@ -886,6 +894,8 @@ export function ConfirmPage() {
   })
   const activeCardIndex = Math.min(selectedCardIndex, Math.max(taskCards.length - 1, 0))
   const activeCard = taskCards[activeCardIndex]
+  const cardWaitingCoordinator =
+    activeCard?.confirmationStatus === 'transferred_to_coordinator'
   const activeReviewCard = activeCard ? normalizeReviewCardData(activeCard, {
     cardIndex: activeCardIndex,
     totalCards: taskCards.length,
@@ -1474,6 +1484,11 @@ export function ConfirmPage() {
                     </p>
                   </div>
                 )}
+                {cardWaitingCoordinator && (
+                  <div className="mb-3 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-700">
+                    该任务卡正在等待项目统筹人反馈，反馈完成后可继续处理。
+                  </div>
+                )}
                 <div className="flex items-center justify-between gap-3 mb-3">
                   <div>
                     <p className="text-xs font-bold text-slate-500 tracking-wider">单卡判断</p>
@@ -1484,12 +1499,12 @@ export function ConfirmPage() {
                   )}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-                  <button type="button" onClick={() => handleTaskCardDecision('confirm')} disabled={acting || projectArchived} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl bg-blue-600 text-white font-semibold disabled:opacity-50">确认入库</button>
-                  <button type="button" onClick={() => handleTaskCardDecision('return')} disabled={acting || projectArchived} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl border border-orange-300 text-orange-600 font-semibold bg-white disabled:opacity-50">退回并重新编辑</button>
-                  {activeCard.confirmationStatus !== 'coordinator_given' && (
-                    <button type="button" onClick={() => handleTaskCardDecision('transfer')} disabled={acting || projectArchived} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl border border-violet-300 text-violet-600 font-semibold bg-white disabled:opacity-50">转交统筹人</button>
+                  <button type="button" onClick={() => handleTaskCardDecision('confirm')} disabled={acting || projectArchived || cardWaitingCoordinator} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl bg-blue-600 text-white font-semibold disabled:opacity-50">确认入库</button>
+                  <button type="button" onClick={() => handleTaskCardDecision('return')} disabled={acting || projectArchived || cardWaitingCoordinator} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl border border-orange-300 text-orange-600 font-semibold bg-white disabled:opacity-50">退回并重新编辑</button>
+                  {!cardWaitingCoordinator && activeCard.confirmationStatus !== 'coordinator_given' && (
+                    <button type="button" onClick={() => handleTaskCardDecision('transfer')} disabled={acting || projectArchived || cardWaitingCoordinator} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl border border-violet-300 text-violet-600 font-semibold bg-white disabled:opacity-50">转交统筹人</button>
                   )}
-                  <button type="button" onClick={() => handleTaskCardDecision('ceo')} disabled={acting || projectArchived} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl border border-slate-200 text-slate-600 font-semibold bg-white disabled:opacity-50">转交企业教练</button>
+                  <button type="button" onClick={() => handleTaskCardDecision('ceo')} disabled={acting || projectArchived || cardWaitingCoordinator} title={projectArchived ? '项目已归档，不可继续确认入库。' : undefined} className="h-11 rounded-xl border border-slate-200 text-slate-600 font-semibold bg-white disabled:opacity-50">转交企业教练</button>
                 </div>
                 </>
                 ) : (

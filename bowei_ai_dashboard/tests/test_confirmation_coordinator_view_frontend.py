@@ -276,10 +276,14 @@ class TestPickItemCoordinatorIsolation:
         assert pick_body, "pickItem 函数必须存在"
         assert "setCoordinatorNote('')" in pick_body
 
-    def test_pick_item_clears_coordinator_acting(self):
+    def test_pick_item_does_not_clear_coordinator_acting(self):
+        """pickItem 不得主动解锁 coordinatorActing，解锁权在 handleCoordinatorFeedback finally。"""
         source = _read_tsx("pages/ConfirmPage.tsx")
         pick_body = _extract_function(source, "pickItem")
-        assert "setCoordinatorActing(false)" in pick_body
+        assert "setCoordinatorActing(false)" not in pick_body, (
+            "pickItem 不得调用 setCoordinatorActing(false)；"
+            "解锁只能由 handleCoordinatorFeedback 的 finally 完成"
+        )
 
     def test_pick_item_clears_action_note(self):
         source = _read_tsx("pages/ConfirmPage.tsx")
@@ -484,6 +488,82 @@ class TestCoordinatorHeaderText:
     def test_left_panel_title(self):
         source = _read_tsx("pages/ConfirmPage.tsx")
         assert "待我统筹" in source
+
+
+class TestCoordinatorInteractionLock:
+    """测试 coordinator 视图异步交互锁守卫。"""
+
+    def test_coordinator_interaction_locked_variable(self):
+        """coordinatorInteractionLocked 派生变量必须存在。"""
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        assert "coordinatorInteractionLocked" in source, (
+            "必须定义 coordinatorInteractionLocked 派生变量"
+        )
+        idx = source.find("coordinatorInteractionLocked")
+        region = source[idx:idx + 100]
+        assert "isCoordinatorView" in region
+        assert "coordinatorActing" in region
+
+    def test_switch_view_guards_coordinator_acting(self):
+        """switchView 函数开头必须包含互动锁守卫。"""
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        switch_body = _extract_function(source, "switchView")
+        assert switch_body, "switchView 函数必须存在"
+        assert "isCoordinatorView" in switch_body
+        assert "coordinatorActing" in switch_body
+        # 守卫必须是 switchView 内的第一行逻辑
+        guard_idx = switch_body.find("isCoordinatorView && coordinatorActing")
+        set_view_idx = switch_body.find("setViewMode(nextView)")
+        assert guard_idx >= 0, "switchView 必须包含 isCoordinatorView && coordinatorActing 守卫"
+        assert guard_idx < set_view_idx, (
+            "互动锁守卫必须在 setViewMode 之前"
+        )
+
+    def test_view_switcher_buttons_disabled(self):
+        """所有 view switcher 按钮必须设置 disabled={coordinatorInteractionLocked}。"""
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        # 四个按钮的 switchView 调用
+        buttons = [
+            "switchView('mine')",
+            "switchView('all')",
+            "switchView('coordinator')",
+            "switchView('ceo')",
+        ]
+        for btn in buttons:
+            idx = source.find(btn)
+            assert idx >= 0, f"找不到 {btn} 按钮"
+            # disabled 在 onClick 之后、className 之前，扩大搜索范围
+            after = source[idx:idx + 250]
+            assert "disabled={coordinatorInteractionLocked}" in after, (
+                f"{btn} 按钮缺少 disabled={{coordinatorInteractionLocked}}"
+            )
+
+    def test_list_item_click_guard(self):
+        """列表项 onClick 必须包含 coordinatorActing 守卫。"""
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        # 列表项 onClick 中是第 3 次出现（0: 变量声明, 1: switchView, 2: 列表项onClick）
+        idx = _find_nth(source, "isCoordinatorView && coordinatorActing", 2)
+        assert idx >= 0, (
+            "列表项 onClick 中未找到 isCoordinatorView && coordinatorActing 守卫"
+        )
+        # 验证上下文在 onClick 处理器中
+        region = source[idx:idx + 80]
+        assert "return" in region, "守卫必须包含 return 语句"
+
+    def test_coordinator_textarea_disabled(self):
+        """coordinator 反馈 textarea 必须设置 disabled={coordinatorActing}。"""
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        # 找到 "提供统筹意见" section 附近的 textarea
+        idx_fb = source.find("提供统筹意见")
+        assert idx_fb >= 0
+        region = source[idx_fb:idx_fb + 3500]
+        # 找到 coordinatorNote 的 textarea
+        ta_idx = region.find("coordinatorNote")
+        assert ta_idx >= 0
+        ta_region = region[ta_idx:ta_idx + 400]
+        assert "disabled={coordinatorActing}" in ta_region, (
+            "统筹反馈 textarea 必须设置 disabled={{coordinatorActing}}"
+        )
 
 
 # ── Sidebar.tsx ──────────────────────────────────────────────────

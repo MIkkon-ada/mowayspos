@@ -321,6 +321,7 @@ export function ConfirmPage() {
   }, [viewMode])
 
   function switchView(nextView: ConfirmViewMode) {
+    if (isCoordinatorView && coordinatorActing) return
     setViewMode(nextView)
     setSelected(null)
     setActionNote('')
@@ -362,6 +363,8 @@ export function ConfirmPage() {
 
   const [coordinatorNote, setCoordinatorNote] = useState('')
   const [coordinatorActing, setCoordinatorActing] = useState(false)
+
+  const coordinatorInteractionLocked = isCoordinatorView && coordinatorActing
 
   const [cardEditMode, setCardEditMode] = useState<Record<number, boolean>>({})
   const [cardProjOverride, setCardProjOverride] = useState<Record<number, string>>({})
@@ -486,7 +489,6 @@ export function ConfirmPage() {
     setActionNote('')
     setCoachNote('')
     setCoordinatorNote('')
-    setCoordinatorActing(false)
     setActionError(null)
     setActionSuccess(null)
     setSuggestTaskSelections({})
@@ -905,22 +907,22 @@ export function ConfirmPage() {
             </p>
           </div>
         <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: '#E9EFF6' }}>
-          <button onClick={() => switchView('mine')} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${viewMode === 'mine' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+          <button onClick={() => switchView('mine')} disabled={coordinatorInteractionLocked} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 ${viewMode === 'mine' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
             我的提交记录
           </button>
           {isReviewer && (
-            <button onClick={() => switchView('all')} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 ${viewMode === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+            <button onClick={() => switchView('all')} disabled={coordinatorInteractionLocked} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1 ${viewMode === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
               待确认
               {pendingCount > 0 && <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${viewMode === 'all' ? 'bg-white/20 text-white' : 'bg-orange-100 text-orange-600'}`}>{pendingCount}</span>}
             </button>
           )}
           {canUseCoordinatorView && (
-            <button onClick={() => switchView('coordinator')} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${viewMode === 'coordinator' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+            <button onClick={() => switchView('coordinator')} disabled={coordinatorInteractionLocked} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 ${viewMode === 'coordinator' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
               待我统筹
             </button>
           )}
           {canUseCoachDecisionView && (
-            <button onClick={() => switchView('ceo')} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${viewMode === 'ceo' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+            <button onClick={() => switchView('ceo')} disabled={coordinatorInteractionLocked} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 ${viewMode === 'ceo' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
               待我决策
             </button>
           )}
@@ -1003,8 +1005,12 @@ export function ConfirmPage() {
                 return (
                   <div
                     key={item.id}
-                    onClick={() => pickItem(item)}
-                    className="cursor-pointer px-4 py-3 transition-colors hover:bg-sky-50 border rounded-2xl"
+                    onClick={() => {
+                      if (isCoordinatorView && coordinatorActing) return
+                      pickItem(item)
+                    }}
+                    aria-disabled={isCoordinatorView && coordinatorActing}
+                    className={`px-4 py-3 transition-colors border rounded-2xl ${isCoordinatorView && coordinatorActing ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-sky-50'}`}
                     style={{
                       borderColor: isSelected ? '#93C5FD' : '#EEF2F7',
                       borderLeft: `4px solid ${isSelected ? '#2563EB' : 'transparent'}`,
@@ -1150,7 +1156,8 @@ export function ConfirmPage() {
                         value={coordinatorNote}
                         onChange={(e) => setCoordinatorNote(e.target.value)}
                         placeholder="请输入统筹反馈意见（必填）…"
-                        className="w-full border border-indigo-200 rounded-xl p-3 text-sm focus:outline-none resize-none mb-3"
+                        disabled={coordinatorActing}
+                        className="w-full border border-indigo-200 rounded-xl p-3 text-sm focus:outline-none resize-none mb-3 disabled:opacity-50"
                         style={{ minHeight: 80, background: 'white' }}
                       />
                       <button

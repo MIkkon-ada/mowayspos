@@ -1178,6 +1178,25 @@ export function ConfirmPage() {
 
           {/* Right: detail panel */}
           <div className="flex-1 flex flex-col bg-white rounded-2xl border overflow-hidden" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+            {/* Scrollable body */}
+            {/* Page-level action feedback */}
+            {(actionError || actionSuccess) && (
+              <div className="flex-shrink-0 px-4 pt-3 space-y-2">
+                {actionError && (
+                  <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    {actionError}
+                  </div>
+                )}
+                {actionSuccess && (
+                  <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                    <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+                    {actionSuccess}
+                  </div>
+                )}
+              </div>
+            )}
+
             {selected ? (
               <>
                 {/* Detail header */}
@@ -1204,22 +1223,7 @@ export function ConfirmPage() {
                   </div>
                 </div>
 
-                {/* Scrollable body */}
                 <div className="flex-1 overflow-y-auto min-h-0 px-4 py-3 space-y-4">
-                  {/* Page-level action feedback */}
-                  {actionError && (
-                    <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                      <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                      {actionError}
-                    </div>
-                  )}
-                  {actionSuccess && (
-                    <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                      <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
-                      {actionSuccess}
-                    </div>
-                  )}
-
                   {/* 企业教练决策区 — 仅提交级 */}
                   {isCoachView && selected && selected.ceo_decision_scope === 'submission' && (
                     <section className="rounded-[22px] border p-4" style={{ borderColor: '#C4B5FD', background: 'linear-gradient(135deg,#F5F3FF,#EEF2FF)' }}>
@@ -1293,6 +1297,32 @@ export function ConfirmPage() {
                     </section>
                   )}
 
+                  {/* Submitter supplement display */}
+                  {(viewMode === 'mine' || viewMode === 'all') && Boolean(selectedResult?.supplement_note) && (
+                    <section className="rounded-[22px] border border-emerald-100 bg-emerald-50/60 p-4">
+                      <p className="text-sm font-bold text-emerald-800">提交人补充说明</p>
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{renderVal(selectedResult?.supplement_note)}</p>
+                    </section>
+                  )}
+
+                  {/* Submission coordinator feedback display */}
+                  {viewMode === 'all' && Boolean(selected.coordinator_note?.trim()) && (
+                    <section className="rounded-[22px] border border-indigo-200 bg-indigo-50/60 p-4">
+                      <p className="text-sm font-bold text-indigo-800">统筹反馈意见</p>
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{selected.coordinator_note}</p>
+                      <p className="mt-2 text-xs text-indigo-600/80">该意见由项目统筹反馈，项目负责人可据此继续确认、退回或上报企业教练。</p>
+                    </section>
+                  )}
+
+                  {/* Submission coach decision display */}
+                  {viewMode === 'all' && Boolean(selected.ceo_note?.trim()) && (
+                    <section className="rounded-[22px] border border-violet-200 bg-violet-50/60 p-4">
+                      <p className="text-sm font-bold text-violet-800">企业教练批示</p>
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{selected.ceo_note}</p>
+                      <p className="mt-2 text-xs text-violet-600/80">企业教练已完成决策，请项目负责人据此继续处理。</p>
+                    </section>
+                  )}
+
                   {/* Submission-level owner actions */}
                   {viewMode === 'all' && canUseOwnerActions && selected && SS.OWNER_ACTIONABLE.has(selectedStatus) && (
                     <section className="rounded-[22px] border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-4">
@@ -1336,12 +1366,6 @@ export function ConfirmPage() {
                   )}
 
                   {/* Member resubmit section */}
-                  {(viewMode === 'mine' || viewMode === 'all') && Boolean(selectedResult?.supplement_note) && (
-                    <section className="rounded-[22px] border border-emerald-100 bg-emerald-50/60 p-4">
-                      <p className="text-sm font-bold text-emerald-800">提交人补充说明</p>
-                      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{renderVal(selectedResult?.supplement_note)}</p>
-                    </section>
-                  )}
                   {isSubmitterView && isReturned && (
                     <section className="rounded-[22px] border border-orange-200 bg-gradient-to-br from-orange-50 to-white p-4">
                       <p className="text-sm font-bold text-orange-800">负责人已退回，请补充后重新提交</p>

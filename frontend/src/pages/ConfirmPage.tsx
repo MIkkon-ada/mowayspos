@@ -420,13 +420,18 @@ export function ConfirmPage() {
           if (!cancelled) {
             const mapped = d as unknown as ConfirmationItem[]
             setItems(mapped)
-            const requested = urlSubmissionId != null
-              ? mapped.find(i => i.id === urlSubmissionId)
-              : undefined
-            const target = requested ?? mapped[0]
-            if (target) pickItem(target)
-            if (urlSubmissionId != null && !requested) {
-              setLoadError('该提交不存在或不属于当前账号')
+            if (urlSubmissionId != null) {
+              const requested = mapped.find(i => i.id === urlSubmissionId)
+              if (requested) {
+                pickItem(requested)
+              } else {
+                setSelected(null)
+                setCardDetailOpen(false)
+                setLoadError('该提交不存在或不属于当前账号')
+              }
+            } else {
+              const target = mapped[0]
+              if (target) pickItem(target)
             }
           }
         })
@@ -502,6 +507,7 @@ export function ConfirmPage() {
 
   function pickItem(item: ConfirmationItem) {
     setSelected(item)
+    setLoadError(null)
     const r = getAIResult(item)
     const aiProject = getProjectDisplayName(projects, { ...(item as Record<string, unknown>), ...(r ?? {}) })
     const itemProjectId = item.project_id ?? pendingProjectId ?? currentProjectId
@@ -1200,6 +1206,20 @@ export function ConfirmPage() {
 
                 {/* Scrollable body */}
                 <div className="flex-1 overflow-y-auto min-h-0 px-4 py-3 space-y-4">
+                  {/* Page-level action feedback */}
+                  {actionError && (
+                    <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      {actionError}
+                    </div>
+                  )}
+                  {actionSuccess && (
+                    <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                      <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+                      {actionSuccess}
+                    </div>
+                  )}
+
                   {/* 企业教练决策区 — 仅提交级 */}
                   {isCoachView && selected && selected.ceo_decision_scope === 'submission' && (
                     <section className="rounded-[22px] border p-4" style={{ borderColor: '#C4B5FD', background: 'linear-gradient(135deg,#F5F3FF,#EEF2FF)' }}>
@@ -1215,18 +1235,6 @@ export function ConfirmPage() {
                         <span className="font-semibold text-slate-800">负责人上报说明：</span>
                         {selected.reject_reason || selected.ceo_note || '（无）'}
                       </div>
-                      {actionError && (
-                        <div className="mb-3 flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-                          <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                          {actionError}
-                        </div>
-                      )}
-                      {actionSuccess && (
-                        <div className="mb-3 flex items-center gap-2 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-700">
-                          <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
-                          {actionSuccess}
-                        </div>
-                      )}
                       <textarea
                         value={coachNote}
                         onChange={(e) => setCoachNote(e.target.value)}
@@ -1266,18 +1274,6 @@ export function ConfirmPage() {
                         <div><span className="font-semibold text-slate-800">提交时间：</span>{fmtTime(selected.created_at)}</div>
                         <div><span className="font-semibold text-slate-800">提交标题：</span>{String(confirmationContext.keyTaskName || selected?.related_task || '—')}</div>
                       </div>
-                      {actionError && (
-                        <div className="mb-3 flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-                          <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                          {actionError}
-                        </div>
-                      )}
-                      {actionSuccess && (
-                        <div className="mb-3 flex items-center gap-2 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-700">
-                          <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
-                          {actionSuccess}
-                        </div>
-                      )}
                       <textarea
                         value={coordinatorNote}
                         onChange={(e) => setCoordinatorNote(e.target.value)}
@@ -1311,12 +1307,6 @@ export function ConfirmPage() {
                         <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
                           本次提交仍有任务卡等待统筹反馈或企业教练批示，暂不可执行整条操作。
                         </div>
-                      )}
-                      {actionError && (
-                        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>
-                      )}
-                      {actionSuccess && (
-                        <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{actionSuccess}</div>
                       )}
                       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                         <button type="button" onClick={handleConfirm} disabled={submissionActionsLocked} className="h-11 rounded-xl bg-blue-600 text-white font-semibold disabled:opacity-50">整条确认入库</button>
@@ -1360,8 +1350,6 @@ export function ConfirmPage() {
                         <p><span className="font-semibold text-slate-900">原提交时间：</span>{fmtTime(selected.created_at)}</p>
                         <p><span className="font-semibold text-slate-900">原提交内容摘要：</span>{String(confirmationContext.keyTaskName || selected.related_task || selected.title || '—')}</p>
                       </div>
-                      {actionError && <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>}
-                      {actionSuccess && <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{actionSuccess}</div>}
                       <label className="mt-3 block text-xs font-bold text-slate-700">补充说明</label>
                       <textarea
                         value={supplementNote}

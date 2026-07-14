@@ -225,8 +225,24 @@ class TestMineViewAndResubmit:
         ]
         assert "urlSubmissionId" in branch
         assert "mapped.find(i => i.id === urlSubmissionId)" in branch
-        assert "pickItem(target)" in branch
+        assert "requested ?? mapped[0]" not in branch
+        assert "pickItem(requested)" in branch
+        assert "setSelected(null)" in branch
+        assert "setCardDetailOpen(false)" in branch
+        assert "pickItem(mapped[0])" not in branch
         assert "该提交不存在或不属于当前账号" in branch
+
+    def test_mine_without_submission_id_selects_first_record(self):
+        branch = self.page[
+            self.page.find("if (viewMode === 'mine')"):
+            self.page.find("} else if (viewMode === 'ceo')")
+        ]
+        assert "const target = mapped[0]" in branch
+        assert "if (target) pickItem(target)" in branch
+
+    def test_clicking_mine_record_clears_invalid_deep_link_error(self):
+        body = _extract_function(self.page, "pickItem")
+        assert "setLoadError(null)" in body
 
     def test_mine_submitter_view_does_not_compare_names(self):
         assert "const isSubmitterView = viewMode === 'mine'" in self.page
@@ -279,6 +295,81 @@ class TestMineViewAndResubmit:
     def test_status_filter_has_required_labels(self):
         for label in ("全部状态", "待负责人处理", "已退回", "已转交统筹", "待企业教练决策", "已入库"):
             assert label in self.page
+
+
+class TestPersistentPageFeedback:
+    @classmethod
+    def setup_class(cls):
+        cls.page = _read("pages/ConfirmPage.tsx")
+
+    def test_page_level_feedback_is_unconditional_inside_selected_detail(self):
+        region = _between(
+            self.page,
+            "{/* Page-level action feedback */}",
+            "{/* 企业教练决策区 — 仅提交级 */}",
+        )
+        assert "actionError" in region
+        assert "actionSuccess" in region
+
+    def test_owner_and_member_sections_do_not_duplicate_page_feedback(self):
+        owner = _between(
+            self.page,
+            "{/* Submission-level owner actions */}",
+            "{/* Member resubmit section */}",
+        )
+        member = _between(
+            self.page,
+            "{/* Member resubmit section */}",
+            "{/* Task card overview */}",
+        )
+        for region in (owner, member):
+            assert "{actionError" not in region
+            assert "{actionSuccess" not in region
+
+    def test_coach_and_coordinator_sections_use_page_feedback(self):
+        coach = _between(
+            self.page,
+            "{/* 企业教练决策区 — 仅提交级 */}",
+            "{/* 统筹反馈区 */}",
+        )
+        coordinator = _between(
+            self.page,
+            "{/* 统筹反馈区 */}",
+            "{/* Submission-level owner actions */}",
+        )
+        for region in (coach, coordinator):
+            assert "{actionError" not in region
+            assert "{actionSuccess" not in region
+
+    def test_main_detail_renders_feedback_once(self):
+        start = self.page.find("{/* Scrollable body */}")
+        end = self.page.find("cardDetailOpen && activeCard && activeReviewCard", start)
+        assert start >= 0 and end > start
+        detail = self.page[start:end]
+        assert detail.count("{actionError &&") == 1
+        assert detail.count("{actionSuccess &&") == 1
+
+    def test_status_changing_handlers_keep_success_messages(self):
+        expected = {
+            "handleConfirm": "已确认入库",
+            "handleDecision": "已退回",
+            "handleResubmit": "已重新提交，等待项目负责人审核",
+        }
+        for handler, message in expected.items():
+            assert message in _extract_function(self.page, handler)
+        feedback = _between(
+            self.page,
+            "{/* Page-level action feedback */}",
+            "{/* 企业教练决策区 — 仅提交级 */}",
+        )
+        assert "actionSuccess" in feedback
+
+    def test_unrelated_test_has_no_fix_2b_branch_exemption(self):
+        source = (
+            Path(__file__).resolve().parent
+            / "test_ai_confirm_related_subtask_writeback.py"
+        ).read_text(encoding="utf-8")
+        assert "n4-p3-r3-fix-2b" not in source.lower()
 
 
 class TestOwnerActionPermissions:

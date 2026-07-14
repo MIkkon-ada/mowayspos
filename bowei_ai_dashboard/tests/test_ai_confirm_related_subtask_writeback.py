@@ -669,9 +669,6 @@ def test_confirm_page_not_modified():
     # N4-P3-FIX-1A explicitly modifies ConfirmPage.tsx
     if branch and "n4-p3-fix-1a" in branch.lower():
         return  # allowed
-    # N4-P3-R3-FIX-2B explicitly restores submission-level actions in ConfirmPage.tsx
-    if branch and "n4-p3-r3-fix-2b" in branch.lower():
-        return  # allowed
 
     result = subprocess.run(
         ["git", "diff", "--name-only", "HEAD"],

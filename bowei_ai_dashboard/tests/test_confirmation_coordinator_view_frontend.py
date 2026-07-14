@@ -17,130 +17,349 @@ def _read_txt(filepath: str) -> str:
     return (FRONTEND_DIR / filepath).read_text(encoding="utf-8")
 
 
+def _extract_function(source: str, func_name: str) -> str:
+    """Extract the body of a named function from source code."""
+    idx = source.find(f"function {func_name}")
+    if idx < 0:
+        return ""
+    brace_idx = source.index("{", source.index("(", idx))
+    depth = 1
+    i = brace_idx + 1
+    while depth > 0 and i < len(source):
+        if source[i] == "{":
+            depth += 1
+        elif source[i] == "}":
+            depth -= 1
+        i += 1
+    return source[idx:i]
+
+
+def _find_nth(source: str, pattern: str, n: int) -> int:
+    """Find the nth occurrence (0-indexed) of pattern in source."""
+    idx = -1
+    for _ in range(n + 1):
+        idx = source.find(pattern, idx + 1)
+        if idx < 0:
+            return -1
+    return idx
+
+
 # ── ConfirmPage.tsx ──────────────────────────────────────────────
 
 class TestConfirmViewMode:
-    """测试 ConfirmViewMode 包含 coordinator。"""
+    """测试 ConfirmViewMode 类型定义包含 coordinator。"""
 
-    def test_viewmode_includes_coordinator(self):
+    def test_viewmode_type_includes_coordinator(self):
         source = _read_tsx("pages/ConfirmPage.tsx")
-        assert "'coordinator'" in source
-        assert "type ConfirmViewMode" in source
+        idx = source.find("type ConfirmViewMode")
+        assert idx >= 0, "ConfirmViewMode 类型定义必须存在"
+        snippet = source[idx:idx + 120]
+        assert "'coordinator'" in snippet, (
+            "ConfirmViewMode 类型定义必须包含 'coordinator'"
+        )
+
+    def test_viewmode_includes_ceo(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        idx = source.find("type ConfirmViewMode")
+        assert idx >= 0
+        snippet = source[idx:idx + 120]
+        assert "'ceo'" in snippet
 
 
 class TestCoordinatorFeedbackImport:
-    """测试导入 coordinatorFeedback。"""
+    """测试导入关系。"""
 
-    def test_coordinator_feedback_imported(self):
+    def test_coordinator_feedback_imported_from_api(self):
         source = _read_tsx("pages/ConfirmPage.tsx")
-        assert "coordinatorFeedback" in source
+        import_section = source[:source.find("export function ConfirmPage")]
+        assert "coordinatorFeedback" in import_section, (
+            "coordinatorFeedback 必须在 import 区导入"
+        )
+
+    def test_transfer_coordinator_imported(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        import_section = source[:source.find("export function ConfirmPage")]
+        assert "transferCoordinator" in import_section
 
 
 class TestCanUseCoordinatorView:
     """测试 canUseCoordinatorView 权限判断。"""
 
-    def test_can_use_coordinator_view_exists(self):
+    def _get_definition(self) -> str:
         source = _read_tsx("pages/ConfirmPage.tsx")
-        assert "canUseCoordinatorView" in source
+        idx = source.find("canUseCoordinatorView")
+        assert idx >= 0, "canUseCoordinatorView 必须存在"
+        return source[idx:idx + 400]
 
     def test_includes_coordinator_role(self):
-        source = _read_tsx("pages/ConfirmPage.tsx")
-        # coordinator 角色必须被包含
-        assert "includes('coordinator')" in source
+        snippet = self._get_definition()
+        assert "includes('coordinator')" in snippet
 
     def test_includes_tech_admin(self):
-        source = _read_tsx("pages/ConfirmPage.tsx")
-        assert "is_tech_admin" in source
+        snippet = self._get_definition()
+        assert "is_tech_admin" in snippet
 
-    def test_does_not_include_is_ceo(self):
-        """canUseCoordinatorView 不得包含 is_ceo。"""
-        # 搜索 canUseCoordinatorView 的定义区域
-        source = _read_tsx("pages/ConfirmPage.tsx")
-        idx = source.find("canUseCoordinatorView")
-        assert idx >= 0
-        # 截取定义部分
-        snippet = source[idx:idx + 300]
-        assert "is_ceo" not in snippet or "coordinatorView" in snippet and "is_ceo" not in snippet
+    def test_excludes_is_ceo(self):
+        snippet = self._get_definition()
+        assert "is_ceo" not in snippet
 
-    def test_does_not_include_owner_directly(self):
-        """canUseCoordinatorView 不得直接检查 owner。"""
-        source = _read_tsx("pages/ConfirmPage.tsx")
-        idx = source.find("canUseCoordinatorView")
-        assert idx >= 0
-        snippet = source[idx:idx + 300]
+    def test_excludes_can_view_all(self):
+        snippet = self._get_definition()
+        assert "can_view_all" not in snippet
+
+    def test_excludes_owner_role(self):
+        snippet = self._get_definition()
         assert ".includes('owner')" not in snippet
+
+    def test_excludes_project_ceo_role(self):
+        snippet = self._get_definition()
+        assert ".includes('project_ceo')" not in snippet
 
 
 class TestCoordinatorUITab:
-    """测试"待我统筹"入口存在。"""
+    """测试"待我统筹"入口和条件渲染。"""
 
     def test_tab_button_exists(self):
         source = _read_tsx("pages/ConfirmPage.tsx")
         assert "待我统筹" in source
 
-    def test_switch_view_coordinator(self):
+    def test_switch_view_coordinator_call(self):
         source = _read_tsx("pages/ConfirmPage.tsx")
         assert "switchView('coordinator')" in source
 
+    def test_tab_guarded_by_can_use(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        idx_btn = source.find("待我统筹")
+        assert idx_btn >= 0
+        # 向上搜索更大范围（JSX 元素跨度可能很大）
+        before = source[max(0, idx_btn - 500):idx_btn]
+        assert "canUseCoordinatorView" in before, (
+            "「待我统筹」按钮必须在 canUseCoordinatorView 条件内"
+        )
+
+    def test_coordinator_tab_between_all_and_ceo(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        idx_all = source.find("switchView('all')")
+        idx_coord = source.find("switchView('coordinator')")
+        idx_ceo = source.find("switchView('ceo')")
+        assert idx_all < idx_coord < idx_ceo, (
+            f"按钮顺序错误: all@{idx_all} coordinator@{idx_coord} ceo@{idx_ceo}"
+        )
+
+
+class TestDeepLinkFilterSync:
+    """测试 viewMode → filterStatus 同步 effect。"""
+
+    def _find_filter_sync_use_effect(self, source: str) -> int:
+        """返回依赖 viewMode 且调用 setFilterStatus('') 的 useEffect 起始位置。"""
+        import re
+        for m in re.finditer(r"useEffect\(\(\)\s*=>\s*\{", source):
+            j = source.index("{", m.end())
+            brace_depth = 1
+            while brace_depth > 0 and j < len(source) - 1:
+                j += 1
+                if source[j] == "{":
+                    brace_depth += 1
+                elif source[j] == "}":
+                    brace_depth -= 1
+            dep_start = source.index("[", j)
+            dep_end = source.index("]", dep_start) + 1
+            dep_array = source[dep_start:dep_end]
+            if "viewMode" in dep_array:
+                body = source[m.start():dep_end]
+                if "setFilterStatus('')" in body:
+                    return m.start()
+        return -1
+
+    def test_effect_syncs_filter_status(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        idx = self._find_filter_sync_use_effect(source)
+        assert idx >= 0, (
+            "必须存在一个 useEffect 依赖 viewMode 并调用 setFilterStatus('')"
+        )
+
+    def test_filter_sync_not_only_in_switch_view(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        switch_body = _extract_function(source, "switchView")
+        assert switch_body, "switchView 函数必须存在"
+        assert "setFilterStatus('')" in switch_body
+        # 同时验证有独立 useEffect 做同样的事
+        idx = self._find_filter_sync_use_effect(source)
+        assert idx >= 0, (
+            "除 switchView 外，必须存在独立的 useEffect(viewMode) 同步 filterStatus"
+        )
+
+    def test_ceo_view_also_clears_filter(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        idx = self._find_filter_sync_use_effect(source)
+        assert idx >= 0
+        region = source[idx:idx + 200]
+        assert "viewMode === 'ceo'" in region, (
+            "useEffect 中 ceo 视图同样必须清空 filterStatus"
+        )
+
 
 class TestCoordinatorDataLoading:
-    """测试 coordinator 视图数据加载。"""
+    """测试 coordinator 视图数据加载分支。"""
 
-    def test_calls_get_pending_coordinator(self):
+    def _find_data_loading_coordinator(self) -> tuple[str, int]:
+        """找到数据加载 useEffect 中的 coordinator 分支。
+        
+        viewMode === 'coordinator' 出现在多处，数据加载分支是第3个(0-indexed)：
+        0: isCoordinatorView 常量声明
+        1: useEffect 中的 filter sync
+        2: 数据加载 useEffect 中的 else if
+        """
         source = _read_tsx("pages/ConfirmPage.tsx")
-        assert "getPending(" in source
-        assert "'coordinator'" in source
+        # 实际运行时由于新增代码，需要动态定位：找到 useEffect 中数据加载区域
+        # 策略：找到 else if (viewMode === 'coordinator') 模式
+        pattern = "else if (viewMode === 'coordinator')"
+        idx = source.find(pattern)
+        if idx < 0:
+            # 回退：找 viewMode === 'coordinator' 且上下文中包含 getPending
+            for start in range(0, len(source)):
+                pos = source.find("viewMode === 'coordinator'", start)
+                if pos < 0:
+                    break
+                region = source[pos:pos + 1200]
+                if "getPending(" in region:
+                    return source, pos
+                start = pos + 1
+        return source, idx
 
-    def test_clear_status_filter_on_coordinator(self):
-        source = _read_tsx("pages/ConfirmPage.tsx")
-        # switchView 中 coordinator 视图应清除状态筛选
-        idx = source.find("function switchView")
+    def test_coordinator_branch_calls_get_pending(self):
+        source, idx = self._find_data_loading_coordinator()
+        assert idx >= 0, "找不到 coordinator 数据加载分支"
+        region = source[idx:idx + 1200]
+        assert "getPending(" in region, (
+            "coordinator 数据加载分支必须调用 getPending"
+        )
+        assert "'coordinator'" in region, (
+            "coordinator 分支必须传入 'coordinator' 作为 tab 参数"
+        )
+
+    def test_coordinator_branch_uses_url_submission_id(self):
+        source, idx = self._find_data_loading_coordinator()
         assert idx >= 0
-        snippet = source[idx:idx + 600]
-        assert "setFilterStatus('')" in snippet
-        assert "'coordinator'" in snippet or "nextView" in snippet
+        region = source[idx:idx + 1200]
+        assert "urlSubmissionId" in region
 
+    def test_coordinator_branch_finds_target_by_id(self):
+        source, idx = self._find_data_loading_coordinator()
+        assert idx >= 0
+        region = source[idx:idx + 1200]
+        assert ".find(" in region or "d.find(" in region
 
-class TestCoordinatorURLLoading:
-    """测试 URL 参数解析。"""
+    def test_coordinator_branch_calls_pick_item(self):
+        source, idx = self._find_data_loading_coordinator()
+        assert idx >= 0
+        region = source[idx:idx + 1200]
+        assert "pickItem(" in region
 
-    def test_resolve_initial_view_coordinator(self):
+    def test_clear_status_filter_not_only_switch_view(self):
+        """深链不清空筛选的实现错误时必须检测失败。"""
         source = _read_tsx("pages/ConfirmPage.tsx")
-        assert "'coordinator'" in source
-        # resolveInitialView 中应有 coordinator 分支
-        assert "resolveInitialView" in source
-        # coordinator 在 ceo 之后 all 之前
-        idx_ceo = source.find("urlView === 'ceo'")
-        idx_coord = source.find("urlView === 'coordinator'")
-        assert idx_ceo >= 0
-        assert idx_coord >= 0
+        found = TestDeepLinkFilterSync._find_filter_sync_use_effect(
+            TestDeepLinkFilterSync(), source
+        )
+        assert found >= 0, (
+            "必须存在独立的 useEffect([viewMode]) 调用 setFilterStatus('')"
+        )
 
-    def test_coordinator_view_loads_data(self):
+
+class TestPickItemCoordinatorIsolation:
+    """测试 pickItem 清空所有状态包括 coordinator。"""
+
+    def test_pick_item_clears_coordinator_note(self):
         source = _read_tsx("pages/ConfirmPage.tsx")
-        # useEffect 中应有 viewMode === 'coordinator' 的数据加载分支
-        assert "viewMode === 'coordinator'" in source
+        pick_body = _extract_function(source, "pickItem")
+        assert pick_body, "pickItem 函数必须存在"
+        assert "setCoordinatorNote('')" in pick_body
+
+    def test_pick_item_clears_coordinator_acting(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        pick_body = _extract_function(source, "pickItem")
+        assert "setCoordinatorActing(false)" in pick_body
+
+    def test_pick_item_clears_action_note(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        pick_body = _extract_function(source, "pickItem")
+        assert "setActionNote('')" in pick_body
+
+    def test_pick_item_clears_coach_note(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        pick_body = _extract_function(source, "pickItem")
+        assert "setCoachNote('')" in pick_body
+
+    def test_pick_item_clears_action_error(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        pick_body = _extract_function(source, "pickItem")
+        assert "setActionError(null)" in pick_body
+
+    def test_pick_item_clears_action_success(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        pick_body = _extract_function(source, "pickItem")
+        assert "setActionSuccess(null)" in pick_body
 
 
 class TestCoordinatorFeedbackHandler:
     """测试 handleCoordinatorFeedback 处理函数。"""
 
-    def test_handler_exists(self):
+    def test_handler_calls_coordinator_feedback_api(self):
         source = _read_tsx("pages/ConfirmPage.tsx")
-        assert "handleCoordinatorFeedback" in source
+        handler_body = _extract_function(source, "handleCoordinatorFeedback")
+        assert handler_body, "handleCoordinatorFeedback 函数必须存在"
+        assert "coordinatorFeedback(" in handler_body
 
-    def test_calls_coordinator_feedback_api(self):
+    def test_handler_checks_note_not_empty(self):
         source = _read_tsx("pages/ConfirmPage.tsx")
-        assert "coordinatorFeedback(" in source
+        handler_body = _extract_function(source, "handleCoordinatorFeedback")
+        assert "coordinatorNote.trim()" in handler_body
 
-    def test_reloads_after_feedback(self):
+    def test_handler_sets_acting_state(self):
         source = _read_tsx("pages/ConfirmPage.tsx")
-        assert "reloadCoordinatorItems" in source
+        handler_body = _extract_function(source, "handleCoordinatorFeedback")
+        assert "setCoordinatorActing(true)" in handler_body
+        assert "setCoordinatorActing(false)" in handler_body
 
-    def test_empty_note_disabled(self):
-        """空反馈不可提交。"""
+    def test_handler_reloads_after_success(self):
         source = _read_tsx("pages/ConfirmPage.tsx")
-        # 按钮 disabled 条件应包含 !coordinatorNote.trim()
+        handler_body = _extract_function(source, "handleCoordinatorFeedback")
+        assert "reloadCoordinatorItems()" in handler_body
+
+    def test_handler_clears_note_after_success(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        handler_body = _extract_function(source, "handleCoordinatorFeedback")
+        api_idx = handler_body.find("coordinatorFeedback(")
+        clear_idx = handler_body.find("setCoordinatorNote('')", api_idx)
+        assert clear_idx > api_idx
+
+    def test_empty_note_disabled_on_button(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
         assert "coordinatorActing || !coordinatorNote.trim()" in source
+
+
+class TestReloadCoordinatorItems:
+    """测试 reloadCoordinatorItems 使用 pickItem。"""
+
+    def test_reload_coordinator_items_exists(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        assert "function reloadCoordinatorItems" in source
+
+    def test_reload_uses_pick_item(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        body = _extract_function(source, "reloadCoordinatorItems")
+        assert "pickItem(" in body
+
+    def test_reload_not_direct_set_selected_for_next(self):
+        """直接 setSelected 会导致状态不完整初始化。"""
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        body = _extract_function(source, "reloadCoordinatorItems")
+        set_sel_count = body.count("setSelected(")
+        assert set_sel_count <= 1, (
+            f"reloadCoordinatorItems 中 setSelected 仅允许 1 次（空列表），"
+            f"实际 {set_sel_count} 次"
+        )
 
 
 class TestCoordinatorSuccessMessage:
@@ -148,33 +367,103 @@ class TestCoordinatorSuccessMessage:
 
     def test_success_message(self):
         source = _read_tsx("pages/ConfirmPage.tsx")
-        assert "统筹意见已提交" in source
+        handler_body = _extract_function(source, "handleCoordinatorFeedback")
+        assert "统筹意见已提交，事项已返回项目负责人。" in handler_body
 
 
 class TestCoordinatorViewIsolation:
-    """测试 coordinator 视图不显示 owner/coach 操作。"""
+    """测试 coordinator 视图不显示 owner/coach 操作区域。"""
 
-    def test_no_owner_action_buttons_in_coordinator(self):
-        """coordinator 视图不显示 owner 操作区域。"""
+    def _get_feedback_section(self) -> tuple[str, int]:
+        """定位 coordinator 反馈 UI section。"""
         source = _read_tsx("pages/ConfirmPage.tsx")
-        # 搜索 card modal 中的条件分支
-        assert "viewMode === 'coordinator'" in source
+        idx = source.find("提供统筹意见")
+        return source, idx
 
-    def test_coordinator_feedback_ui_exists(self):
-        """统筹反馈 UI 区域存在。"""
+    def test_coordinator_feedback_section_exists(self):
+        _, idx = self._get_feedback_section()
+        assert idx >= 0, "必须存在「提供统筹意见」section"
+
+    def test_coordinator_section_shows_transfer_note(self):
+        source, idx = self._get_feedback_section()
+        assert idx >= 0
+        # 获取足够大的区域覆盖整个 section
+        region = source[idx:idx + 3000]
+        assert "负责人转交说明" in region
+
+    def test_coordinator_section_shows_submitter(self):
+        source, idx = self._get_feedback_section()
+        assert idx >= 0
+        region = source[idx:idx + 3000]
+        assert "提交人" in region
+
+    def test_coordinator_section_shows_submit_time(self):
+        source, idx = self._get_feedback_section()
+        assert idx >= 0
+        region = source[idx:idx + 3000]
+        assert "提交时间" in region
+
+    def _get_card_modal_coordinator(self):
+        """定位任务卡弹窗底部 JSX 中 viewMode === 'coordinator' 分支。
+        
+        策略：找到任务卡弹窗 JSX 区域（{cardDetailOpen && ...），
+        然后在该区域内搜索 coordinator 条件分支。
+        """
         source = _read_tsx("pages/ConfirmPage.tsx")
-        assert "统筹意见" in source or "协调人" in source or "提供统筹" in source
+        # cardDetailOpen 在 state 声明和 JSX 中都有，需要找 JSX 区域
+        # 使用弹窗特有的标记："cardDetailOpen && activeCard && activeReviewCard"
+        idx_modal = source.find("cardDetailOpen && activeCard && activeReviewCard")
+        assert idx_modal >= 0, "任务卡弹窗 JSX 必须存在"
+        # 从弹窗区域内搜索 coordinator 分支
+        idx_coord = source.find("viewMode === 'coordinator'", idx_modal)
+        assert idx_coord >= 0, "弹窗底部必须有 coordinator 分支"
+        idx_all = source.find("viewMode === 'all'", idx_coord)
+        assert idx_all > idx_coord, "coordinator 分支后必须有 all 分支"
+        return source, idx_coord, idx_all
+
+    def test_coordinator_modal_before_all_in_chain(self):
+        """任务卡弹窗底部条件链中 coordinator 分支必须在 all 之前判断。"""
+        _, idx_coord, idx_all = self._get_card_modal_coordinator()
+        assert idx_coord < idx_all, (
+            "条件链中 coordinator 判断必须在 all 之前"
+        )
+
+    def test_coordinator_modal_no_handle_task_card_decision(self):
+        source, idx_coord, idx_all = self._get_card_modal_coordinator()
+        region = source[idx_coord:idx_all]
+        assert "handleTaskCardDecision" not in region
+
+    def test_coordinator_modal_no_confirm_入库(self):
+        source, idx_coord, idx_all = self._get_card_modal_coordinator()
+        region = source[idx_coord:idx_all]
+        assert "确认入库" not in region
+
+    def test_coordinator_modal_no_退回(self):
+        source, idx_coord, idx_all = self._get_card_modal_coordinator()
+        region = source[idx_coord:idx_all]
+        assert "退回并重新编辑" not in region
+
+    def test_coordinator_modal_no_transfer_coordinator_button(self):
+        source, idx_coord, idx_all = self._get_card_modal_coordinator()
+        region = source[idx_coord:idx_all]
+        assert "转交统筹人" not in region
+
+    def test_coordinator_modal_no_企业教练_button(self):
+        source, idx_coord, idx_all = self._get_card_modal_coordinator()
+        region = source[idx_coord:idx_all]
+        assert "转交企业教练" not in region
 
     def test_coordinator_note_textarea_exists(self):
-        source = _read_tsx("pages/ConfirmPage.tsx")
-        assert "setCoordinatorNote" in source
-
-    def test_no_task_card_decision_in_coordinator(self):
-        """coordinator 视图不显示单卡判断按钮（确认/退回/转交/上报）。"""
-        source = _read_tsx("pages/ConfirmPage.tsx")
-        # 单卡判断区前面有 coordinator 条件分支
-        idx = source.find("viewMode === 'coordinator'")
+        source, idx = self._get_feedback_section()
         assert idx >= 0
+        region = source[idx:idx + 4000]
+        assert "setCoordinatorNote" in region
+
+    def test_coordinator_submit_feedback_button_exists(self):
+        source, idx = self._get_feedback_section()
+        assert idx >= 0
+        region = source[idx:idx + 4000]
+        assert "提交反馈" in region
 
 
 class TestCoordinatorEmptyState:
@@ -185,6 +474,18 @@ class TestCoordinatorEmptyState:
         assert "暂无待你反馈的统筹事项" in source
 
 
+class TestCoordinatorHeaderText:
+    """测试标题和说明文案。"""
+
+    def test_header_description(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        assert "处理项目负责人转交的统筹意见事项。" in source
+
+    def test_left_panel_title(self):
+        source = _read_tsx("pages/ConfirmPage.tsx")
+        assert "待我统筹" in source
+
+
 # ── Sidebar.tsx ──────────────────────────────────────────────────
 
 class TestSidebarBadge:
@@ -193,6 +494,9 @@ class TestSidebarBadge:
     def test_badge_includes_coordinator_total(self):
         source = _read_tsx("components/Sidebar.tsx")
         assert "coordinator_total" in source
+
+    def test_set_confirm_badge_exists(self):
+        source = _read_tsx("components/Sidebar.tsx")
         assert "setConfirmBadge" in source
 
 
@@ -204,4 +508,11 @@ class TestConfirmationAPI:
     def test_coordinator_feedback_api_exists(self):
         source = _read_tsx("api/confirmations.ts")
         assert "coordinatorFeedback" in source
+
+    def test_coordinator_feedback_route(self):
+        source = _read_tsx("api/confirmations.ts")
         assert "coordinator-feedback" in source
+
+    def test_transfer_coordinator_route(self):
+        source = _read_tsx("api/confirmations.ts")
+        assert "transfer-coordinator" in source

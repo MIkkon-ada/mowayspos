@@ -112,10 +112,11 @@ class TestDataLoading:
 
     def test_ceo_view_calls_get_pending_with_ceo_tab(self):
         """ceo 视图调用 getPending(..., 'ceo', { includeCardLevel: true })。"""
-        # 第二个 viewMode === 'ceo' 出现在数据加载 useEffect 中
-        second_ceo = _find_nth(self.source, "viewMode === 'ceo'", 1)
-        assert second_ceo is not None
-        snippet = second_ceo[:300]
+        # 第三个 viewMode === 'ceo' 出现在数据加载 useEffect 中
+        # (1: isCoachView, 2: filter-sync useEffect, 3: 数据加载)
+        third_ceo = _find_nth(self.source, "viewMode === 'ceo'", 2)
+        assert third_ceo is not None
+        snippet = third_ceo[:300]
         assert "getPending" in snippet
         assert "'ceo'" in snippet
         assert "includeCardLevel" in snippet

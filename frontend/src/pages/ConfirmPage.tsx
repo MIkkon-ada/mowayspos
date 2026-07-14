@@ -313,6 +313,13 @@ export function ConfirmPage() {
   const isCoachView = viewMode === 'ceo'
   const isCoordinatorView = viewMode === 'coordinator'
 
+  // 统一 effect：深链初始化及手动切换时同步 filterStatus
+  useEffect(() => {
+    if (viewMode === 'ceo' || viewMode === 'coordinator') {
+      setFilterStatus('')
+    }
+  }, [viewMode])
+
   function switchView(nextView: ConfirmViewMode) {
     setViewMode(nextView)
     setSelected(null)
@@ -478,6 +485,8 @@ export function ConfirmPage() {
     setPendingAction(null)
     setActionNote('')
     setCoachNote('')
+    setCoordinatorNote('')
+    setCoordinatorActing(false)
     setActionError(null)
     setActionSuccess(null)
     setSuggestTaskSelections({})
@@ -746,13 +755,12 @@ export function ConfirmPage() {
     getPending(coordProjectId, 'coordinator')
       .then((d) => {
         setItems(d)
-        if (selected && d.length > 0) {
-          const same = d.find(i => i.id === selected.id)
-          if (same) {
-            setSelected(same)
-          } else {
-            setSelected(d[0] || null)
-          }
+        const nextItem =
+          selected
+            ? d.find((item) => item.id === selected.id) ?? d[0]
+            : d[0]
+        if (nextItem) {
+          pickItem(nextItem)
         } else {
           setSelected(null)
         }

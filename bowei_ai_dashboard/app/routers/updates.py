@@ -50,23 +50,43 @@ def _can_view_update(context: dict, row: models.UpdateSubmission) -> bool:
     return can_view_submission(context, human, row.submitter or "")
 
 
-def _submitter_identity_filter(context: dict, current_user: str):
+def _unique_active_person_id_for_name(db: Session, name: str) -> int | None:
+    rows = (
+        db.query(models.Person.id)
+        .filter(models.Person.name == name, models.Person.is_active.is_(True))
+        .limit(2)
+        .all()
+    )
+    return rows[0][0] if len(rows) == 1 else None
+
+
+def _submitter_identity_filter(db: Session, context: dict, current_user: str):
     """Match new submissions by person_id and legacy rows by stored strings."""
     conditions = []
     person_id = context.get("person_id")
     if person_id is not None:
         conditions.append(models.UpdateSubmission.submitter_id == person_id)
 
-    legacy_values = {
-        value.strip()
-        for value in (current_user, context.get("name") or "")
-        if value and value.strip()
-    }
-    if legacy_values:
+    current_user = (current_user or "").strip()
+    if current_user:
         conditions.append(
             sql_and(
                 models.UpdateSubmission.submitter_id.is_(None),
-                models.UpdateSubmission.submitter.in_(legacy_values),
+                models.UpdateSubmission.submitter == current_user,
+            )
+        )
+
+    context_name = (context.get("name") or "").strip()
+    if (
+        person_id is not None
+        and context_name
+        and context_name != current_user
+        and _unique_active_person_id_for_name(db, context_name) == person_id
+    ):
+        conditions.append(
+            sql_and(
+                models.UpdateSubmission.submitter_id.is_(None),
+                models.UpdateSubmission.submitter == context_name,
             )
         )
     return sql_or(*conditions)
@@ -386,7 +406,7 @@ def list_updates(
 
     if mine:
         rows = db.query(models.UpdateSubmission).filter(
-            _submitter_identity_filter(context, current_user)
+            _submitter_identity_filter(db, context, current_user)
         ).order_by(models.UpdateSubmission.created_at.desc()).all()
         result = []
         for row in rows:

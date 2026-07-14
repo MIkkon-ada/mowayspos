@@ -117,6 +117,27 @@ def _seed_team(db):
     }
 
 
+def _seed_unique_legacy_submitter(db):
+    person = models.Person(
+        id=8, name="唯一历史提交人", system_role="normal_member", is_active=True
+    )
+    db.add_all(
+        [
+            person,
+            models.Account(
+                username="unique_legacy_account",
+                password_hash="x",
+                person_id=person.id,
+                status="active",
+            ),
+        ]
+    )
+    db.flush()
+    db.add(models.ProjectMember(project_id=1, person_id=person.id, role="member"))
+    db.commit()
+    return person
+
+
 def _submission(
     db,
     *,
@@ -173,15 +194,42 @@ class TestMineQueryIdentity:
 
         assert mine.id not in _ids(rows)
 
-    @pytest.mark.parametrize("legacy_submitter", ["submitter_account", "提交人姓名"])
-    def test_legacy_submission_matches_username_or_person_name(self, legacy_submitter):
+    def test_legacy_username_matches_only_its_account(self):
         db = _make_session()
         _seed_team(db)
-        legacy = _submission(db, submitter=legacy_submitter, submitter_id=None)
+        legacy = _submission(db, submitter="submitter_account", submitter_id=None)
 
-        rows = list_updates(mine=True, current_user="submitter_account", db=db)
+        submitter_rows = list_updates(
+            mine=True, current_user="submitter_account", db=db
+        )
+        other_rows = list_updates(mine=True, current_user="other_account", db=db)
+
+        assert _ids(submitter_rows) == {legacy.id}
+        assert legacy.id not in _ids(other_rows)
+
+    def test_legacy_unique_person_name_matches_its_person(self):
+        db = _make_session()
+        _seed_team(db)
+        unique_person = _seed_unique_legacy_submitter(db)
+        legacy = _submission(db, submitter=unique_person.name, submitter_id=None)
+
+        rows = list_updates(
+            mine=True, current_user="unique_legacy_account", db=db
+        )
 
         assert _ids(rows) == {legacy.id}
+
+    @pytest.mark.parametrize("actor", ["submitter_account", "other_account"])
+    def test_legacy_ambiguous_person_name_is_not_visible(self, actor):
+        db = _make_session()
+        team = _seed_team(db)
+        legacy = _submission(
+            db, submitter=team["submitter"].name, submitter_id=None
+        )
+
+        rows = list_updates(mine=True, current_user=actor, db=db)
+
+        assert legacy.id not in _ids(rows)
 
 
 class TestSubmitterNotificationIdentity:
@@ -207,16 +255,10 @@ class TestSubmitterNotificationIdentity:
         assert notification.recipient_id == team["submitter"].id
         assert notification.recipient == team["submitter"].name
 
-    @pytest.mark.parametrize(
-        ("legacy_submitter", "expected_person_id"),
-        [("submitter_account", 1), ("提交人姓名", 1)],
-    )
-    def test_reject_notification_preserves_legacy_string_resolution(
-        self, legacy_submitter, expected_person_id
-    ):
+    def test_reject_notification_resolves_legacy_username(self):
         db = _make_session()
         _seed_team(db)
-        row = _submission(db, submitter=legacy_submitter, submitter_id=None)
+        row = _submission(db, submitter="submitter_account", submitter_id=None)
 
         reject(
             row.id,
@@ -228,7 +270,44 @@ class TestSubmitterNotificationIdentity:
         notification = db.query(models.Notification).filter_by(
             type="submission_rejected"
         ).one()
-        assert notification.recipient_id == expected_person_id
+        assert notification.recipient_id == 1
+
+    def test_reject_notification_resolves_unique_legacy_person_name(self):
+        db = _make_session()
+        _seed_team(db)
+        unique_person = _seed_unique_legacy_submitter(db)
+        row = _submission(db, submitter=unique_person.name, submitter_id=None)
+
+        reject(
+            row.id,
+            schemas.RejectRequest(reason="请补充", operator="owner"),
+            current_user="owner",
+            db=db,
+        )
+
+        notification = db.query(models.Notification).filter_by(
+            type="submission_rejected"
+        ).one()
+        assert notification.recipient_id == unique_person.id
+
+    def test_reject_does_not_create_notification_for_ambiguous_legacy_name(self):
+        db = _make_session()
+        team = _seed_team(db)
+        row = _submission(
+            db, submitter=team["submitter"].name, submitter_id=None
+        )
+
+        reject(
+            row.id,
+            schemas.RejectRequest(reason="请补充", operator="owner"),
+            current_user="owner",
+            db=db,
+        )
+
+        notifications = db.query(models.Notification).filter_by(
+            type="submission_rejected"
+        ).all()
+        assert notifications == []
 
 
 class TestResubmitIdentity:
@@ -271,13 +350,12 @@ class TestResubmitIdentity:
 
         assert exc.value.status_code == 403
 
-    @pytest.mark.parametrize("legacy_submitter", ["submitter_account", "提交人姓名"])
-    def test_legacy_submitter_can_resubmit_by_username_or_name(self, legacy_submitter):
+    def test_legacy_submitter_can_resubmit_by_username(self):
         db = _make_session()
         _seed_team(db)
         row = _submission(
             db,
-            submitter=legacy_submitter,
+            submitter="submitter_account",
             submitter_id=None,
             status=SS.S_RETURNED,
         )
@@ -290,6 +368,47 @@ class TestResubmitIdentity:
         )
 
         assert result["submission"]["confirm_status"] == SS.S_PENDING_OWNER
+
+    def test_legacy_submitter_can_resubmit_by_unique_person_name(self):
+        db = _make_session()
+        _seed_team(db)
+        unique_person = _seed_unique_legacy_submitter(db)
+        row = _submission(
+            db,
+            submitter=unique_person.name,
+            submitter_id=None,
+            status=SS.S_RETURNED,
+        )
+
+        result = resubmit(
+            row.id,
+            schemas.ResubmitRequest(),
+            current_user="unique_legacy_account",
+            db=db,
+        )
+
+        assert result["submission"]["confirm_status"] == SS.S_PENDING_OWNER
+
+    @pytest.mark.parametrize("actor", ["submitter_account", "other_account"])
+    def test_legacy_ambiguous_person_name_cannot_resubmit(self, actor):
+        db = _make_session()
+        team = _seed_team(db)
+        row = _submission(
+            db,
+            submitter=team["submitter"].name,
+            submitter_id=None,
+            status=SS.S_RETURNED,
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            resubmit(
+                row.id,
+                schemas.ResubmitRequest(),
+                current_user=actor,
+                db=db,
+            )
+
+        assert exc.value.status_code == 403
 
     def test_tech_admin_does_not_gain_resubmit_permission(self):
         db = _make_session()
@@ -326,15 +445,39 @@ class TestWithdrawIdentity:
 
         assert result["submission"]["confirm_status"] == SS.S_WITHDRAWN
 
-    @pytest.mark.parametrize("legacy_submitter", ["submitter_account", "提交人姓名"])
-    def test_legacy_submitter_can_withdraw_by_username_or_name(self, legacy_submitter):
+    def test_legacy_submitter_can_withdraw_by_username(self):
         db = _make_session()
         _seed_team(db)
-        row = _submission(db, submitter=legacy_submitter, submitter_id=None)
+        row = _submission(db, submitter="submitter_account", submitter_id=None)
 
         result = withdraw(row.id, current_user="submitter_account", db=db)
 
         assert result["submission"]["confirm_status"] == SS.S_WITHDRAWN
+
+    def test_legacy_submitter_can_withdraw_by_unique_person_name(self):
+        db = _make_session()
+        _seed_team(db)
+        unique_person = _seed_unique_legacy_submitter(db)
+        row = _submission(db, submitter=unique_person.name, submitter_id=None)
+
+        result = withdraw(
+            row.id, current_user="unique_legacy_account", db=db
+        )
+
+        assert result["submission"]["confirm_status"] == SS.S_WITHDRAWN
+
+    @pytest.mark.parametrize("actor", ["submitter_account", "other_account"])
+    def test_legacy_ambiguous_person_name_cannot_withdraw(self, actor):
+        db = _make_session()
+        team = _seed_team(db)
+        row = _submission(
+            db, submitter=team["submitter"].name, submitter_id=None
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            withdraw(row.id, current_user=actor, db=db)
+
+        assert exc.value.status_code == 403
 
     @pytest.mark.parametrize(
         "actor", ["other_account", "owner", "coordinator", "coach", "company_ceo"]

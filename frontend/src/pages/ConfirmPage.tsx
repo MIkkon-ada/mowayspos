@@ -4,6 +4,7 @@ import {
   getPending,
   confirmSubmission,
   rejectSubmission,
+  resubmitSubmission,
   transferCoordinator,
   escalateCeo,
   confirmTaskCard,
@@ -227,8 +228,9 @@ export function ConfirmPage() {
   const [acting, setActing] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
-  const [pendingAction, setPendingAction] = useState<'reject' | 'supplement' | 'forward' | 'ceo' | null>(null)
+  const [pendingAction, setPendingAction] = useState<'return' | 'transfer' | 'ceo' | null>(null)
   const [actionNote, setActionNote] = useState('')
+  const [supplementNote, setSupplementNote] = useState('')
   const [opLogsOpen, setOpLogsOpen] = useState(false)
   const [selectedCardIndex, setSelectedCardIndex] = useState(0)
   const [cardDetailOpen, setCardDetailOpen] = useState(false)
@@ -237,6 +239,10 @@ export function ConfirmPage() {
 
   const selectedProject = selected?.project_id != null ? projects.find((p) => p.id === selected.project_id) ?? null : null
   const projectArchived = isProjectArchived(selectedProject)
+  const canUseOwnerActions = Boolean(
+    currentUser?.is_tech_admin ||
+    selectedProject?.user_roles?.includes('owner'),
+  )
 
   const urlProjectId = useMemo(() => {
     const raw = searchParams.get('projectId')
@@ -308,7 +314,7 @@ export function ConfirmPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isReviewer, canUseCoachDecisionView])
 
-  const [filterStatus, setFilterStatus] = useState(SS.S_NEW)
+  const [filterStatus, setFilterStatus] = useState(defaultViewMode === 'all' ? 'owner_actionable' : '')
   const [filterProject, setFilterProject] = useState('')
   const [filterSubmitter, setFilterSubmitter] = useState('')
   const [search, setSearch] = useState('')
@@ -317,9 +323,26 @@ export function ConfirmPage() {
   const isCoachView = viewMode === 'ceo'
   const isCoordinatorView = viewMode === 'coordinator'
 
+  const urlSubmissionId = useMemo(() => {
+    const raw = searchParams.get('submissionId')
+    if (!raw) return null
+    const id = Number(raw)
+    return Number.isFinite(id) ? id : null
+  }, [searchParams])
+  const urlCardIndex = useMemo(() => {
+    const raw = searchParams.get('cardIndex')
+    if (raw === null || raw === '') return undefined
+    const idx = Number(raw)
+    return Number.isFinite(idx) && idx >= 0 ? idx : undefined
+  }, [searchParams])
+
   // 统一 effect：深链初始化及手动切换时同步 filterStatus
   useEffect(() => {
     if (viewMode === 'ceo' || viewMode === 'coordinator') {
+      setFilterStatus('')
+    } else if (viewMode === 'all') {
+      setFilterStatus('owner_actionable')
+    } else {
       setFilterStatus('')
     }
   }, [viewMode])
@@ -329,16 +352,18 @@ export function ConfirmPage() {
     setViewMode(nextView)
     setSelected(null)
     setActionNote('')
+    setSupplementNote('')
+    setPendingAction(null)
     setActionError(null)
     setActionSuccess(null)
     setCoachNote('')
     setCoachActing(false)
     setCoordinatorNote('')
     setCoordinatorCardNote('')
-    if (nextView === 'ceo' || nextView === 'coordinator') {
-      setFilterStatus('')
+    if (nextView === 'all') {
+      setFilterStatus('owner_actionable')
     } else {
-      setFilterStatus(SS.S_NEW)
+      setFilterStatus('')
     }
     // 同步 URL：保留 projectId，清除 submissionId 和 cardIndex
     const nextParams = new URLSearchParams(searchParams)
@@ -383,19 +408,6 @@ export function ConfirmPage() {
   const [editProject, setEditProject] = useState('')
   const [editStatus, setEditStatus] = useState('进行中')
 
-  const urlSubmissionId = useMemo(() => {
-    const raw = searchParams.get('submissionId')
-    if (!raw) return null
-    const id = Number(raw)
-    return Number.isFinite(id) ? id : null
-  }, [searchParams])
-  const urlCardIndex = useMemo(() => {
-    const raw = searchParams.get('cardIndex')
-    if (raw === null || raw === '') return undefined
-    const idx = Number(raw)
-    return Number.isFinite(idx) && idx >= 0 ? idx : undefined
-  }, [searchParams])
-
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -408,8 +420,14 @@ export function ConfirmPage() {
           if (!cancelled) {
             const mapped = d as unknown as ConfirmationItem[]
             setItems(mapped)
-            const firstPending = mapped.find(i => SS.normalize(i.confirm_status) === SS.S_NEW || SS.normalize(i.confirm_status) === SS.S_PENDING_OWNER) || mapped[0]
-            if (firstPending) pickItem(firstPending)
+            const requested = urlSubmissionId != null
+              ? mapped.find(i => i.id === urlSubmissionId)
+              : undefined
+            const target = requested ?? mapped[0]
+            if (target) pickItem(target)
+            if (urlSubmissionId != null && !requested) {
+              setLoadError('该提交不存在或不属于当前账号')
+            }
           }
         })
         .catch(() => { if (!cancelled) setLoadError('记录加载失败，请刷新重试') })
@@ -492,6 +510,7 @@ export function ConfirmPage() {
     setEditStatus(String(r?.status_suggestion || '进行中'))
     setPendingAction(null)
     setActionNote('')
+    setSupplementNote('')
     setCoachNote('')
     setCoordinatorNote('')
     setCoordinatorCardNote('')
@@ -639,11 +658,13 @@ export function ConfirmPage() {
         }
       }
 
-      await confirmSubmission(selected.id, currentUser.name, humanResult)
-      const updated = { ...selected, confirm_status: SS.S_CONFIRMED }
+      const response = await confirmSubmission(selected.id, currentUser.name, humanResult)
+      const updated = response.submission ?? { ...selected, confirm_status: SS.S_CONFIRMED }
       setItems((prev) => prev.map((i) => i.id === selected.id ? updated : i))
       setSelected(updated)
       setActionSuccess('已确认入库')
+      setActionNote('')
+      setPendingAction(null)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       setActionError(`操作失败：${msg}`)
@@ -652,29 +673,54 @@ export function ConfirmPage() {
 
   async function handleDecision(action: 'return' | 'transfer' | 'ceo') {
     if (!selected || !currentUser) return
-    const note = actionNote.trim() || (
-      action === 'return' ? '退回并重新编辑' : action === 'transfer' ? '转交统筹人' : '提交企业教练决策'
-    )
+    const note = actionNote.trim()
+    if (!note) return
     setActionError(null)
     setActionSuccess(null)
     setActing(true)
     try {
-      if (action === 'return') {
-        await rejectSubmission(selected.id, note, currentUser.name)
-      } else if (action === 'transfer') {
-        await transferCoordinator(selected.id, note, currentUser.name)
-      } else {
-        await escalateCeo(selected.id, note, currentUser.name)
-      }
+      const response = action === 'return'
+        ? await rejectSubmission(selected.id, note, currentUser.name)
+        : action === 'transfer'
+          ? await transferCoordinator(selected.id, note, currentUser.name)
+          : await escalateCeo(selected.id, note, currentUser.name)
       const nextStatus = action === 'return'
         ? SS.S_RETURNED
         : action === 'transfer'
           ? SS.S_WAITING_COORDINATOR
           : SS.S_WAITING_CEO
-      const updated = { ...selected, confirm_status: nextStatus }
+      const updated = response.submission ?? { ...selected, confirm_status: nextStatus }
       setItems((prev) => prev.map((i) => i.id === selected.id ? updated : i))
       setSelected(updated)
       setActionSuccess(action === 'return' ? '已退回' : action === 'transfer' ? '已转交统筹人' : '已提交企业教练决策')
+      setActionNote('')
+      setPendingAction(null)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setActionError(`操作失败：${msg}`)
+    } finally {
+      setActing(false)
+    }
+  }
+
+  async function handleResubmit() {
+    if (!selected || !currentUser) return
+    const note = supplementNote.trim()
+    if (!note) return
+    setActionError(null)
+    setActionSuccess(null)
+    setActing(true)
+    try {
+      const response = await resubmitSubmission(selected.id, note, currentUser.name)
+      const updated = response.submission ?? {
+        ...selected,
+        confirm_status: SS.S_PENDING_OWNER,
+        reject_reason: '',
+      }
+      setItems((prev) => prev.map((i) => i.id === selected.id ? updated : i))
+      setSelected(updated)
+      setSupplementNote('')
+      setActionSuccess('已重新提交，等待项目负责人审核')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       setActionError(`操作失败：${msg}`)
@@ -851,12 +897,13 @@ export function ConfirmPage() {
       .catch(() => {})
   }
 
-  const pendingCount = items.filter(i => SS.normalize(i.confirm_status) === SS.S_NEW || SS.normalize(i.confirm_status) === SS.S_PENDING_OWNER).length
+  const pendingCount = items.filter(i => SS.OWNER_ACTIONABLE.has(SS.normalize(i.confirm_status))).length
   const allProjects = [...new Set(items.map((i) => String(projectNameFromConfirmation(i, projects) || '')).filter(Boolean))]
   const allSubmitters = [...new Set(items.map((i) => i.submitter).filter(Boolean))]
 
   const visibleItems = items.filter((item) => {
-    if (filterStatus && SS.normalize(item.confirm_status) !== filterStatus) return false
+    if (filterStatus === 'owner_actionable' && !SS.OWNER_ACTIONABLE.has(SS.normalize(item.confirm_status))) return false
+    if (filterStatus && filterStatus !== 'owner_actionable' && SS.normalize(item.confirm_status) !== filterStatus) return false
     if (filterProject && projectNameFromConfirmation(item, projects) !== filterProject) return false
     if (filterSubmitter && item.submitter !== filterSubmitter) return false
     if (search) {
@@ -892,6 +939,12 @@ export function ConfirmPage() {
     fallbackKeyTaskName: confirmationContext.keyTaskName || selected?.related_task || '',
     fallbackSubtaskNames: confirmationContext.subtaskNames,
   })
+  const selectedStatus = SS.normalize(selected?.confirm_status)
+  const hasPendingSubmissionCards = taskCards.some((card) =>
+    card.confirmationStatus === 'transferred_to_coordinator' ||
+    card.confirmationStatus === ('pending_ceo_' + 'decision'),
+  )
+  const submissionActionsLocked = acting || projectArchived || hasPendingSubmissionCards
   const activeCardIndex = Math.min(selectedCardIndex, Math.max(taskCards.length - 1, 0))
   const activeCard = taskCards[activeCardIndex]
   const cardWaitingCoordinator =
@@ -903,7 +956,7 @@ export function ConfirmPage() {
     fallbackTaskName: confirmationContext.keyTaskName || selected?.related_task || '',
   }) : null
 
-  const isSubmitterView = viewMode === 'mine' && selected?.submitter === currentUser?.name
+  const isSubmitterView = viewMode === 'mine'
   const isProcessed = selected && SS.normalize(selected.confirm_status) !== SS.S_NEW
   const isConfirmed = selected ? SS.CONFIRMED_AND_STORED.has(SS.normalize(selected.confirm_status)) : false
   const isReturned = selected ? SS.normalize(selected.confirm_status) === SS.S_RETURNED : false
@@ -988,9 +1041,11 @@ export function ConfirmPage() {
         {!isCoachView && !isCoordinatorView && (
         <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none">
           <option value="">全部状态</option>
-          <option value={SS.S_NEW}>待确认</option>
-          <option value={SS.S_CONFIRMED}>已入库</option>
+          <option value="owner_actionable">待负责人处理</option>
           <option value={SS.S_RETURNED}>已退回</option>
+          <option value={SS.S_WAITING_COORDINATOR}>已转交统筹</option>
+          <option value={SS.S_WAITING_CEO}>待企业教练决策</option>
+          <option value={SS.S_CONFIRMED}>已入库</option>
         </select>
         )}
         {!isCoachView && !isCoordinatorView && (
@@ -1036,6 +1091,9 @@ export function ConfirmPage() {
               </div>
             </div>
             <div className="overflow-y-auto flex-1 px-3 py-3 space-y-3">
+              {loadError && !loading && visibleItems.length > 0 && (
+                <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">{loadError}</div>
+              )}
               {loading ? (
                 <div className="py-10 text-center text-xs text-slate-400">加载中…</div>
               ) : visibleItems.length === 0 ? (
@@ -1239,6 +1297,86 @@ export function ConfirmPage() {
                     </section>
                   )}
 
+                  {/* Submission-level owner actions */}
+                  {viewMode === 'all' && canUseOwnerActions && selected && SS.OWNER_ACTIONABLE.has(selectedStatus) && (
+                    <section className="rounded-[22px] border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-4">
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div>
+                          <p className="text-sm font-bold text-slate-900">整条提交操作</p>
+                          <p className="text-xs text-slate-500 mt-1">本次提交全部任务卡，共 {taskCards.length} 张</p>
+                        </div>
+                        <span className="px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">整条提交</span>
+                      </div>
+                      {hasPendingSubmissionCards && (
+                        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                          本次提交仍有任务卡等待统筹反馈或企业教练批示，暂不可执行整条操作。
+                        </div>
+                      )}
+                      {actionError && (
+                        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>
+                      )}
+                      {actionSuccess && (
+                        <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{actionSuccess}</div>
+                      )}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                        <button type="button" onClick={handleConfirm} disabled={submissionActionsLocked} className="h-11 rounded-xl bg-blue-600 text-white font-semibold disabled:opacity-50">整条确认入库</button>
+                        <button type="button" onClick={() => { setPendingAction('return'); setActionNote('') }} disabled={submissionActionsLocked} className="h-11 rounded-xl border border-orange-300 bg-white text-orange-600 font-semibold disabled:opacity-50">整条退回提交人</button>
+                        <button type="button" onClick={() => { setPendingAction('transfer'); setActionNote('') }} disabled={submissionActionsLocked || !SS.TRANSFERABLE_TO_COORDINATOR.has(selectedStatus)} className="h-11 rounded-xl border border-violet-300 bg-white text-violet-600 font-semibold disabled:opacity-50">整条转交统筹人</button>
+                        <button type="button" onClick={() => { setPendingAction('ceo'); setActionNote('') }} disabled={submissionActionsLocked || !SS.ESCALATABLE_TO_CEO.has(selectedStatus)} className="h-11 rounded-xl border border-slate-300 bg-white text-slate-600 font-semibold disabled:opacity-50">整条转交企业教练</button>
+                      </div>
+                      {pendingAction && (
+                        <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
+                          <p className="text-xs font-bold text-slate-700 mb-2">
+                            {pendingAction === 'return' ? '退回原因' : pendingAction === 'transfer' ? '转交统筹说明' : '转交企业教练说明'}
+                          </p>
+                          <textarea
+                            value={actionNote}
+                            onChange={(e) => setActionNote(e.target.value)}
+                            placeholder="请输入处理说明（必填）…"
+                            disabled={acting}
+                            className="w-full min-h-20 rounded-xl border border-slate-200 p-3 text-sm resize-none focus:outline-none disabled:opacity-50"
+                          />
+                          <div className="mt-3 flex justify-end gap-2">
+                            <button type="button" onClick={() => { setPendingAction(null); setActionNote('') }} disabled={acting} className="px-4 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 disabled:opacity-50">取消</button>
+                            <button type="button" onClick={() => handleDecision(pendingAction)} disabled={acting || !actionNote.trim() || submissionActionsLocked} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-50">确认提交</button>
+                          </div>
+                        </div>
+                      )}
+                    </section>
+                  )}
+
+                  {/* Member resubmit section */}
+                  {(viewMode === 'mine' || viewMode === 'all') && Boolean(selectedResult?.supplement_note) && (
+                    <section className="rounded-[22px] border border-emerald-100 bg-emerald-50/60 p-4">
+                      <p className="text-sm font-bold text-emerald-800">提交人补充说明</p>
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{renderVal(selectedResult?.supplement_note)}</p>
+                    </section>
+                  )}
+                  {isSubmitterView && isReturned && (
+                    <section className="rounded-[22px] border border-orange-200 bg-gradient-to-br from-orange-50 to-white p-4">
+                      <p className="text-sm font-bold text-orange-800">负责人已退回，请补充后重新提交</p>
+                      <div className="mt-3 space-y-2 rounded-xl border border-orange-100 bg-white/80 p-3 text-sm text-slate-700">
+                        <p><span className="font-semibold text-slate-900">退回原因：</span>{selected.reject_reason || '未说明'}</p>
+                        <p><span className="font-semibold text-slate-900">原提交时间：</span>{fmtTime(selected.created_at)}</p>
+                        <p><span className="font-semibold text-slate-900">原提交内容摘要：</span>{String(confirmationContext.keyTaskName || selected.related_task || selected.title || '—')}</p>
+                      </div>
+                      {actionError && <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>}
+                      {actionSuccess && <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{actionSuccess}</div>}
+                      <label className="mt-3 block text-xs font-bold text-slate-700">补充说明</label>
+                      <textarea
+                        value={supplementNote}
+                        onChange={(e) => setSupplementNote(e.target.value)}
+                        placeholder="请说明本次补充或修正的内容（必填）…"
+                        disabled={acting || projectArchived}
+                        className="mt-2 w-full min-h-24 rounded-xl border border-orange-200 bg-white p-3 text-sm resize-none focus:outline-none disabled:opacity-50"
+                      />
+                      <button type="button" onClick={handleResubmit} disabled={acting || projectArchived || !supplementNote.trim()} className="mt-3 w-full h-11 rounded-xl bg-orange-500 text-white font-semibold disabled:opacity-50">
+                        {acting ? '提交中…' : '补充并重新提交'}
+                      </button>
+                    </section>
+                  )}
+
+                  {/* Task card overview */}
                   <section className="rounded-[22px] border bg-gradient-to-br from-slate-50 to-white p-4" style={{ borderColor: '#E5EEF9' }}>
                     <div className="flex items-center justify-between gap-3 mb-3">
                       <div>

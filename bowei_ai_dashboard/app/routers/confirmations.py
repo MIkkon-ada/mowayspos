@@ -1355,7 +1355,9 @@ def confirm(
                     recipient=row.submitter, ntype="submission_confirmed",
                     title=f"你的提交已确认入库：{row.title or '（无标题）'}",
                     body="感谢你的反馈，提交内容已核实写入",
-                    link=f"/project/{project_id}/confirm" if project_id else "",
+                    link=(f"/work/confirmations?view=mine"
+                          f"{'&projectId=' + str(project_id) if project_id is not None else ''}"
+                          f"&submissionId={row.id}"),
                     project_id=project_id)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
@@ -1759,7 +1761,9 @@ def reject(
                     recipient=row.submitter, ntype="submission_rejected",
                     title=f"你的提交被打回：{row.title or '（无标题）'}",
                     body=f"打回原因：{payload.reason or '未说明'}，请补充后重新提交",
-                    link=f"/project/{project_id}/confirm" if project_id else "",
+                    link=(f"/work/confirmations?view=mine"
+                          f"{'&projectId=' + str(project_id) if project_id is not None else ''}"
+                          f"&submissionId={row.id}"),
                     project_id=project_id)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
@@ -1802,7 +1806,9 @@ def resubmit(
                 _notify(db, recipient_id=owner_id, ntype="submission_resubmitted",
                         title=f"提交人已重新提交：{row.title or '（无标题）'}",
                         body=f"提交人：{operator}，请前往 AI 确认中心处理",
-                        link=f"/project/{project_id}/confirm",
+                        link=(f"/work/confirmations?view=all"
+                              f"{'&projectId=' + str(project_id) if project_id is not None else ''}"
+                              f"&submissionId={row.id}"),
                         project_id=project_id)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
@@ -1861,7 +1867,9 @@ def reject_final(
                     recipient=row.submitter, ntype="submission_rejected",
                     title=f"你的提交被标记为不入库：{row.title or '（无标题）'}",
                     body=f"原因：{payload.reason or '未说明'}",
-                    link=f"/project/{project_id}/confirm" if project_id else "",
+                    link=(f"/work/confirmations?view=mine"
+                          f"{'&projectId=' + str(project_id) if project_id is not None else ''}"
+                          f"&submissionId={row.id}"),
                     project_id=project_id)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}

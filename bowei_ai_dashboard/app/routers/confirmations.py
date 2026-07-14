@@ -1799,9 +1799,9 @@ def resubmit(
     row.reject_reason = None
     crud.log(db, operator, "confirmation_resubmit", "confirmation", row.id, before, {"note": payload.supplement_note or ""})
     if project_id:
-        from ..services.notify import send as _notify, project_owner_ids
+        from ..services.notify import send as _notify, project_strict_owner_ids
         submitter_id = context.get("person_id")
-        for owner_id in project_owner_ids(project_id, db):
+        for owner_id in project_strict_owner_ids(project_id, db):
             if owner_id != submitter_id:
                 _notify(db, recipient_id=owner_id, ntype="submission_resubmitted",
                         title=f"提交人已重新提交：{row.title or '（无标题）'}",
@@ -1933,9 +1933,9 @@ def coordinator_feedback(
     row.confirm_status = SS.S_COORDINATOR_GIVEN
     row.coordinator_note = payload.note or ""
     crud.log(db, payload.operator, "confirmation_coordinator_feedback", "confirmation", row.id, before, {"note": payload.note})
-    from ..services.notify import send as _notify, project_owner_ids, person_id_for_account
+    from ..services.notify import send as _notify, project_strict_owner_ids, person_id_for_account
     caller_id = person_id_for_account(current_user or payload.operator, db)
-    for owner_id in project_owner_ids(project_id, db):
+    for owner_id in project_strict_owner_ids(project_id, db):
         if owner_id != caller_id:
             _notify(db, recipient_id=owner_id, ntype="coordinator_feedback",
                     title=f"统筹人已反馈意见：{row.title or '（无标题）'}",
@@ -1978,7 +1978,8 @@ def escalate_ceo(
             _notify(db, recipient_id=coach_id, ntype="escalate_ceo",
                     title=f"有提交需要您决策：{row.title or '（无标题）'}",
                     body=f"上报人：{caller_name}，备注：{payload.note or '无'}",
-                    link=f"/project/{project_id}/confirm" if project_id else "",
+                    link=(f"/work/confirmations?view=ceo"
+                          f"&projectId={project_id}&submissionId={row.id}"),
                     project_id=project_id)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
@@ -2004,14 +2005,15 @@ def ceo_decide(
     row.confirm_status = SS.S_CEO_DECIDED
     row.ceo_note = payload.note or ""
     crud.log(db, payload.operator, "confirmation_coach_decision", "confirmation", row.id, before, {"note": payload.note})
-    from ..services.notify import send as _notify, project_owner_ids, person_id_for_account
+    from ..services.notify import send as _notify, project_strict_owner_ids, person_id_for_account
     caller_id = person_id_for_account(current_user or payload.operator, db)
-    for owner_id in project_owner_ids(project_id, db):
+    for owner_id in project_strict_owner_ids(project_id, db):
         if owner_id != caller_id:
             _notify(db, recipient_id=owner_id, ntype="ceo_decided",
                     title=f"企业教练已批示，请跟进处理：{row.title or '（无标题）'}",
                     body=f"批示：{payload.note or '无'}",
-                    link=f"/project/{project_id}/confirm",
+                    link=(f"/work/confirmations?view=all"
+                          f"&projectId={project_id}&submissionId={row.id}"),
                     project_id=project_id)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}

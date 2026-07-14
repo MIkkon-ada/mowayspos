@@ -262,6 +262,60 @@ def _load_submission(db: Session, submission_id: int) -> models.UpdateSubmission
     return row
 
 
+def _is_submission_submitter(
+    row: models.UpdateSubmission,
+    context: dict,
+    current_user: str,
+    db: Session,
+) -> bool:
+    """Use submitter_id for new rows; only legacy rows may match stored strings."""
+    if row.submitter_id is not None:
+        person_id = context.get("person_id")
+        return person_id is not None and row.submitter_id == person_id
+
+    submitter = (row.submitter or "").strip()
+    current_user = (current_user or "").strip()
+    if submitter and submitter == current_user:
+        return True
+
+    person_id = context.get("person_id")
+    context_name = (context.get("name") or "").strip()
+    return bool(
+        submitter
+        and person_id is not None
+        and context_name
+        and submitter == context_name
+        and _unique_active_person_id_for_name(db, context_name) == person_id
+    )
+
+
+def _unique_active_person_id_for_name(db: Session, name: str) -> int | None:
+    rows = (
+        db.query(models.Person.id)
+        .filter(models.Person.name == name, models.Person.is_active.is_(True))
+        .limit(2)
+        .all()
+    )
+    return rows[0][0] if len(rows) == 1 else None
+
+
+def _submission_recipient_id(
+    row: models.UpdateSubmission,
+    db: Session,
+) -> int | None:
+    """Resolve a submitter notification recipient without re-resolving new rows."""
+    if row.submitter_id is not None:
+        return row.submitter_id
+    if not row.submitter:
+        return None
+    from ..services.notify import person_id_for_account
+
+    return (
+        person_id_for_account(row.submitter, db)
+        or _unique_active_person_id_for_name(db, row.submitter.strip())
+    )
+
+
 
 
 def _submission_project_context(
@@ -1293,14 +1347,16 @@ def confirm(
                  project_id=effective_project_id)
     crud.log(db, payload.operator, "confirmation_approve", "confirmation", row.id, before, data,
              project_id=effective_project_id)
-    if row.submitter:
-        from ..services.notify import send as _notify, person_id_for_account
-        _notify(db, recipient_id=person_id_for_account(row.submitter, db),
-                recipient=row.submitter, ntype="submission_confirmed",
-                title=f"你的提交已确认入库：{row.title or '（无标题）'}",
-                body="感谢你的反馈，提交内容已核实写入",
-                link=f"/project/{project_id}/confirm" if project_id else "",
-                project_id=project_id)
+    if row.submitter_id is not None or row.submitter:
+        recipient_id = _submission_recipient_id(row, db)
+        if recipient_id is not None:
+            from ..services.notify import send as _notify
+            _notify(db, recipient_id=recipient_id,
+                    recipient=row.submitter, ntype="submission_confirmed",
+                    title=f"你的提交已确认入库：{row.title or '（无标题）'}",
+                    body="感谢你的反馈，提交内容已核实写入",
+                    link=f"/project/{project_id}/confirm" if project_id else "",
+                    project_id=project_id)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
 
@@ -1695,14 +1751,16 @@ def reject(
     row.confirm_status = SS.S_RETURNED
     row.reject_reason = payload.reason
     crud.log(db, payload.operator, "confirmation_return", "confirmation", row.id, before, {"reason": payload.reason})
-    if row.submitter:
-        from ..services.notify import send as _notify, person_id_for_account
-        _notify(db, recipient_id=person_id_for_account(row.submitter, db),
-                recipient=row.submitter, ntype="submission_rejected",
-                title=f"你的提交被打回：{row.title or '（无标题）'}",
-                body=f"打回原因：{payload.reason or '未说明'}，请补充后重新提交",
-                link=f"/project/{project_id}/confirm" if project_id else "",
-                project_id=project_id)
+    if row.submitter_id is not None or row.submitter:
+        recipient_id = _submission_recipient_id(row, db)
+        if recipient_id is not None:
+            from ..services.notify import send as _notify
+            _notify(db, recipient_id=recipient_id,
+                    recipient=row.submitter, ntype="submission_rejected",
+                    title=f"你的提交被打回：{row.title or '（无标题）'}",
+                    body=f"打回原因：{payload.reason or '未说明'}，请补充后重新提交",
+                    link=f"/project/{project_id}/confirm" if project_id else "",
+                    project_id=project_id)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
 
@@ -1719,7 +1777,7 @@ def resubmit(
     context = get_user_context_from_db(current_user, db)
     _require_submission_writable(row, context, db)
     operator = payload.operator or current_user
-    if row.submitter and row.submitter != operator:
+    if not _is_submission_submitter(row, context, current_user, db):
         raise HTTPException(403, "只有原提交人可以重新提交")
     W.require_submission_status(row, SS.RETURNED_TO_SUBMITTER)
     before = crud.to_dict(row)
@@ -1737,8 +1795,8 @@ def resubmit(
     row.reject_reason = None
     crud.log(db, operator, "confirmation_resubmit", "confirmation", row.id, before, {"note": payload.supplement_note or ""})
     if project_id:
-        from ..services.notify import send as _notify, project_owner_ids, person_id_for_account
-        submitter_id = person_id_for_account(operator, db)
+        from ..services.notify import send as _notify, project_owner_ids
+        submitter_id = context.get("person_id")
         for owner_id in project_owner_ids(project_id, db):
             if owner_id != submitter_id:
                 _notify(db, recipient_id=owner_id, ntype="submission_resubmitted",
@@ -1761,7 +1819,7 @@ def withdraw(
     context = get_user_context_from_db(current_user, db)
     _require_submission_writable(row, context, db)
     is_tech_admin = context.get("is_tech_admin", False)
-    if row.submitter != current_user and not is_tech_admin:
+    if not _is_submission_submitter(row, context, current_user, db) and not is_tech_admin:
         raise HTTPException(403, "只有原提交人或管理员可以撤回")
     W.require_submission_status(row, _WITHDRAWABLE_STATUSES)
     before = crud.to_dict(row)
@@ -1795,14 +1853,16 @@ def reject_final(
     row.confirm_status = SS.S_PERMANENTLY_REJECTED
     row.reject_reason = payload.reason
     crud.log(db, payload.operator, "confirmation_mark_not_imported", "confirmation", row.id, before, {"reason": payload.reason})
-    if row.submitter:
-        from ..services.notify import send as _notify, person_id_for_account
-        _notify(db, recipient_id=person_id_for_account(row.submitter, db),
-                recipient=row.submitter, ntype="submission_rejected",
-                title=f"你的提交被标记为不入库：{row.title or '（无标题）'}",
-                body=f"原因：{payload.reason or '未说明'}",
-                link=f"/project/{project_id}/confirm" if project_id else "",
-                project_id=project_id)
+    if row.submitter_id is not None or row.submitter:
+        recipient_id = _submission_recipient_id(row, db)
+        if recipient_id is not None:
+            from ..services.notify import send as _notify
+            _notify(db, recipient_id=recipient_id,
+                    recipient=row.submitter, ntype="submission_rejected",
+                    title=f"你的提交被标记为不入库：{row.title or '（无标题）'}",
+                    body=f"原因：{payload.reason or '未说明'}",
+                    link=f"/project/{project_id}/confirm" if project_id else "",
+                    project_id=project_id)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
 

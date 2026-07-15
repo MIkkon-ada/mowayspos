@@ -206,7 +206,7 @@ export function AppRoutes() {
           <Route path="mytasks" element={<LegacyMemberProjectRedirect />} />
           <Route path="achievements" element={<LegacyProjectRedirect to="/work/achievements" includeProjectId />} />
           <Route path="issues" element={<LegacyProjectRedirect to="/work/issues" includeProjectId />} />
-          <Route path="confirm" element={<LegacyProjectRedirect to="/work/confirmations" />} />
+          <Route path="confirm" element={<LegacyProjectRedirect to="/work/confirmations" includeProjectId />} />
           <Route path="coordinate" element={<LegacyProjectRedirect to="/work/org" includeProjectId />} />
           <Route path="org" element={<LegacyProjectRedirect to="/work/org" includeProjectId />} />
           <Route path="decisions" element={<LegacyCoachDecisionRedirect />} />

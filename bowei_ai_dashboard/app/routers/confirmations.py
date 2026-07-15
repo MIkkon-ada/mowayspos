@@ -237,12 +237,18 @@ def _pending_coordinator_card_indices(data: dict) -> list[int]:
 
 def _get_card_title(report: dict) -> str:
     """从任务卡字典中提取标题。"""
-    return (
-        report.get("title")
-        or report.get("key_task")
-        or report.get("content")
-        or "（无标题）"
-    ).strip()[:100]
+    for field in (
+        "matched_subtask_title",
+        "subtask_title",
+        "title",
+        "parent_key_task",
+        "key_task",
+        "content",
+    ):
+        title = str(report.get(field) or "").strip()
+        if title:
+            return title[:100]
+    return "（无标题）"
 
 
 def _require_card_not_pending_ceo(report: dict) -> None:

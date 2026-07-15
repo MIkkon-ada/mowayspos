@@ -351,6 +351,8 @@ export function ConfirmPage() {
     if (isCoordinatorView && coordinatorActing) return
     setViewMode(nextView)
     setSelected(null)
+    setWriteToAchievements(true)
+    setWriteToIssues(true)
     setActionNote('')
     setSupplementNote('')
     setPendingAction(null)
@@ -382,7 +384,7 @@ export function ConfirmPage() {
   const [targetTaskId, setTargetTaskId] = useState<number | null>(null)
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('')
   const [writeToIssues, setWriteToIssues] = useState(true)
-  const [writeToAchievements, setWriteToAchievements] = useState(false)
+  const [writeToAchievements, setWriteToAchievements] = useState(true)
 
   const [pendingItemTypes, setPendingItemTypes] = useState<Record<number, string>>({})
   const [pendingItemHelpers, setPendingItemHelpers] = useState<Record<number, string>>({})
@@ -508,6 +510,8 @@ export function ConfirmPage() {
   function pickItem(item: ConfirmationItem) {
     setSelected(item)
     setLoadError(null)
+    setWriteToAchievements(true)
+    setWriteToIssues(true)
     const r = getAIResult(item)
     const aiProject = getProjectDisplayName(projects, { ...(item as Record<string, unknown>), ...(r ?? {}) })
     const itemProjectId = item.project_id ?? pendingProjectId ?? currentProjectId
@@ -1338,6 +1342,55 @@ export function ConfirmPage() {
                           本次提交仍有任务卡等待统筹反馈或企业教练批示，暂不可执行整条操作。
                         </div>
                       )}
+                      <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="mb-3">
+                          <p className="text-sm font-bold text-slate-900">本次入库范围</p>
+                          <p className="mt-1 text-xs text-slate-500">关闭某项后，本次确认仍会写入工作推进表，但不会写入对应资产库。</p>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 lg:grid-cols-3">
+                          <div className="flex min-h-16 items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2.5">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">工作推进表</p>
+                              <p className="mt-0.5 text-xs text-slate-500">本次确认始终写入工作推进记录</p>
+                            </div>
+                            <span className="flex-shrink-0 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">必写</span>
+                          </div>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={writeToAchievements}
+                            onClick={() => setWriteToAchievements((value) => !value)}
+                            disabled={submissionActionsLocked}
+                            className="flex min-h-16 items-center justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50/60 px-3 py-2.5 text-left transition hover:border-violet-300 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">成果库</p>
+                              <p className="mt-0.5 text-xs text-slate-500">将本次已审核成果写入成果库</p>
+                            </div>
+                            <div className="flex flex-shrink-0 items-center gap-2">
+                              <span className="text-xs font-semibold text-violet-700">{writeToAchievements ? '已开启' : '已关闭'}</span>
+                              <ToggleSwitch on={writeToAchievements} />
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={writeToIssues}
+                            onClick={() => setWriteToIssues((value) => !value)}
+                            disabled={submissionActionsLocked}
+                            className="flex min-h-16 items-center justify-between gap-3 rounded-xl border border-orange-200 bg-orange-50/60 px-3 py-2.5 text-left transition hover:border-orange-300 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">问题中心</p>
+                              <p className="mt-0.5 text-xs text-slate-500">将本次已审核问题写入问题中心</p>
+                            </div>
+                            <div className="flex flex-shrink-0 items-center gap-2">
+                              <span className="text-xs font-semibold text-orange-700">{writeToIssues ? '已开启' : '已关闭'}</span>
+                              <ToggleSwitch on={writeToIssues} />
+                            </div>
+                          </button>
+                        </div>
+                      </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                         <button type="button" onClick={handleConfirm} disabled={submissionActionsLocked} className="h-11 rounded-xl bg-blue-600 text-white font-semibold disabled:opacity-50">整条确认入库</button>
                         <button type="button" onClick={() => { setPendingAction('return'); setActionNote('') }} disabled={submissionActionsLocked} className="h-11 rounded-xl border border-orange-300 bg-white text-orange-600 font-semibold disabled:opacity-50">整条退回提交人</button>

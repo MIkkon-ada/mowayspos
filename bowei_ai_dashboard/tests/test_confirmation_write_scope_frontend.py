@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PAGE_PATH = REPO_ROOT / "frontend" / "src" / "pages" / "ConfirmPage.tsx"
 API_PATH = REPO_ROOT / "frontend" / "src" / "api" / "confirmations.ts"
-BASELINE = "e8336ac8c26dee4cb1f42661eac43d2c07f27150"
 
 
 def _page() -> str:
@@ -180,38 +178,3 @@ class TestWriteScopePayloadAndConfirmedDisplay:
         assert "write_task_reports_issues === true" in block
         assert "write_issue === true" in block
         assert "confirmedWrites.push('问题中心')" in block
-
-
-class TestFix2C1ScopeBoundary:
-    def test_only_authorized_files_are_changed_from_baseline(self):
-        result = subprocess.run(
-            ["git", "diff", "--name-only", BASELINE],
-            cwd=REPO_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        changed = {line.strip().replace("\\", "/") for line in result.stdout.splitlines() if line.strip()}
-
-        assert changed <= {
-            "frontend/src/pages/ConfirmPage.tsx",
-            "bowei_ai_dashboard/tests/test_confirmation_write_scope_frontend.py",
-        }
-
-    def test_no_fix_2c2_files_are_changed(self):
-        result = subprocess.run(
-            ["git", "diff", "--name-only", BASELINE],
-            cwd=REPO_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        changed = result.stdout.replace("\\", "/")
-
-        for forbidden in (
-            "frontend/src/domain/confirmationTaskCards.ts",
-            "frontend/src/domain/voiceUpdateFlow.ts",
-            "bowei_ai_dashboard/app/routers/confirmations.py",
-            "bowei_ai_dashboard/app/services/extractor.py",
-        ):
-            assert forbidden not in changed

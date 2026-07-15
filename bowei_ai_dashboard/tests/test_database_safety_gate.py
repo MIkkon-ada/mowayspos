@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 import subprocess
@@ -61,14 +62,71 @@ def _configured_protected_path() -> Path:
     return Path(raw.split(separator)[0]).resolve()
 
 
-def test_t1_missing_database_url_fails_closed_without_repository_file(tmp_path: Path):
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _snapshot_file_state(path: Path) -> dict[str, object]:
+    sidecars = {
+        suffix: os.path.exists(f"{path}{suffix}")
+        for suffix in ("-wal", "-shm", "-journal")
+    }
+    if not path.exists():
+        return {
+            "exists": False,
+            "sha256": None,
+            "size": None,
+            "last_write_time_utc_ns": None,
+            "sidecars": sidecars,
+        }
+
+    stat = path.stat()
+    return {
+        "exists": True,
+        "sha256": _sha256(path),
+        "size": stat.st_size,
+        "last_write_time_utc_ns": stat.st_mtime_ns,
+        "sidecars": sidecars,
+    }
+
+
+def _assert_file_state_unchanged(path: Path, before: dict[str, object]) -> None:
+    assert _snapshot_file_state(path) == before
+
+
+def test_t1_missing_database_url_fails_closed_without_mutating_repository_file(
+    tmp_path: Path,
+):
+    repository_db = BACKEND_ROOT / "bowei_ai_dashboard.db"
+    fallback_db = tmp_path / "bowei_ai_dashboard.db"
+    repository_before = _snapshot_file_state(repository_db)
+    fallback_before = _snapshot_file_state(fallback_db)
+
     result = _run_python("import app.database", cwd=tmp_path)
     output = _output(result)
 
     assert result.returncode != 0
     assert all(message in output for message in FAIL_CLOSED_TEXT)
-    assert not (BACKEND_ROOT / "bowei_ai_dashboard.db").exists()
-    assert not (tmp_path / "bowei_ai_dashboard.db").exists()
+    _assert_file_state_unchanged(repository_db, repository_before)
+    _assert_file_state_unchanged(fallback_db, fallback_before)
+
+
+def test_missing_database_url_preserves_preexisting_repository_database(tmp_path: Path):
+    repository_dir = tmp_path / "preexisting-repository"
+    repository_dir.mkdir()
+    repository_db = repository_dir / "bowei_ai_dashboard.db"
+    repository_db.write_bytes(b"ordinary test fixture, not a SQLite database")
+    before = _snapshot_file_state(repository_db)
+
+    result = _run_python("import app.database", cwd=repository_dir)
+
+    assert result.returncode != 0
+    assert all(message in _output(result) for message in FAIL_CLOSED_TEXT)
+    _assert_file_state_unchanged(repository_db, before)
 
 
 def test_t2_empty_database_url_fails_closed(tmp_path: Path):

@@ -1,4 +1,5 @@
 import json
+import unicodedata
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -59,6 +60,78 @@ def _parse_subtask_issue(item: object) -> dict | None:
                     return {"issue_type": IT.normalize(itype), "description": text[len(prefix):].strip(), "priority": "中"}
         return {"issue_type": IT.TYPE_ISSUE, "description": text, "priority": "中"}
     return None
+
+
+_ISSUE_DEDUPE_PREFIXES = (
+    "需要负责人决策",
+    "需要负责人确认",
+    "风险提示：",
+    "风险提示:",
+    "需决策：",
+    "需决策:",
+    "待协调：",
+    "待协调:",
+    "问题：",
+    "问题:",
+    "风险：",
+    "风险:",
+    "决策：",
+    "决策:",
+)
+_ISSUE_DICE_THRESHOLD = 0.85
+
+
+def _normalized_asset_key(value: object) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).strip().lower()
+    return "".join(
+        char for char in text
+        if not char.isspace() and not unicodedata.category(char).startswith(("P", "Z"))
+    )
+
+
+def _normalized_issue_key(value: object) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).strip()
+    removed = True
+    while text and removed:
+        removed = False
+        for prefix in _ISSUE_DEDUPE_PREFIXES:
+            if text.startswith(prefix):
+                text = text[len(prefix):].strip()
+                removed = True
+                break
+    return _normalized_asset_key(text)
+
+
+def _issue_bigrams(value: str) -> set[str]:
+    return {value[index:index + 2] for index in range(len(value) - 1)}
+
+
+def _issue_keys_are_duplicate(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    shorter, longer = sorted((left, right), key=len)
+    if len(shorter) < 8:
+        return False
+    if shorter in longer:
+        return True
+    left_bigrams = _issue_bigrams(left)
+    right_bigrams = _issue_bigrams(right)
+    if not left_bigrams or not right_bigrams:
+        return False
+    dice = 2 * len(left_bigrams & right_bigrams) / (len(left_bigrams) + len(right_bigrams))
+    return dice >= _ISSUE_DICE_THRESHOLD
+
+
+def _contains_duplicate_issue(key: str, existing_keys: list[str]) -> bool:
+    return any(_issue_keys_are_duplicate(key, existing) for existing in existing_keys)
+
+
+def _item_write_enabled(item: object, flag: str) -> bool:
+    if not isinstance(item, dict):
+        return True
+    return str(item.get(flag, "true")).lower() != "false"
 
 
 _ISSUE_STORAGE_LABELS: dict[str, str] = {
@@ -1103,11 +1176,78 @@ def confirm(
     project_id = effective_project_id
 
     # ── 新格式：按 task_reports 更新匹配关键任务 ────────────────────
-    key_task_issues_written = False
     if write_mode == "task_reports":
         write_tr_achievements = bool(data.get("write_task_reports_achievements", True))
         write_tr_issues = bool(data.get("write_task_reports_issues", True))
         task_reports_list = data.get("task_reports") or []
+
+        report_achievement_keys: set[str] = set()
+        report_achievement_keys_by_subtask: dict[int, set[str]] = {}
+        report_issue_keys: list[str] = []
+        report_issue_keys_by_subtask: dict[int, list[str]] = {}
+
+        def write_report_achievement(ach_item: object, related_task_id: int | None, related_subtask_id: int) -> None:
+            if not isinstance(ach_item, dict) or not _item_write_enabled(ach_item, "write_achievement"):
+                return
+            key = _normalized_asset_key(ach_item.get("name"))
+            if not key:
+                return
+            scoped_keys = report_achievement_keys_by_subtask.setdefault(related_subtask_id, set())
+            if key in scoped_keys:
+                return
+            scoped_keys.add(key)
+            report_achievement_keys.add(key)
+            ach_dict = dict(ach_item)
+            ach_dict.setdefault("special_project", project)
+            ach_dict.setdefault("owner", row.submitter or "")
+            ach = W.fulfill_or_create_achievement(
+                db,
+                ach_dict,
+                row.source_type,
+                related_task_id,
+                ach_dict.get("special_project") or project,
+                submission_id=row.id,
+            )
+            if ach:
+                ach.confirmed_by = payload.operator
+                ach.confirmed_at = now
+                ach.related_task_id = related_task_id
+                ach.related_subtask_id = related_subtask_id
+                if effective_project_id:
+                    ach.project_id = effective_project_id
+
+        def write_issue_item(
+            issue_item: object,
+            related_task_id: int | None,
+            related_subtask_id: int | None,
+        ) -> None:
+            parsed = _parse_subtask_issue(issue_item)
+            if not parsed:
+                return
+            raw = issue_item if isinstance(issue_item, dict) else {}
+            coordination = raw.get("need_coordination") or raw.get("helper") or []
+            if isinstance(coordination, list):
+                helper = "、".join(str(value) for value in coordination if str(value).strip())
+            else:
+                helper = str(coordination or "")
+            norm_type = parsed["issue_type"]
+            issue = models.Issue(
+                issue_type=_storage_issue_type(norm_type),
+                description=parsed["description"],
+                owner=row.submitter or "",
+                helper=helper,
+                priority=parsed["priority"],
+                status=_issue_status_for(norm_type),
+                special_project=project,
+                source_type=ST.normalize(row.source_type or "人工录入"),
+                confirmed_by=payload.operator,
+                source_submission_id=row.id,
+                related_task_id=related_task_id,
+                related_subtask_id=related_subtask_id,
+            )
+            if effective_project_id:
+                issue.project_id = effective_project_id
+            db.add(issue)
 
         # ── Pre-validate: every suggest_new_subtask item must carry parent_task_id ──
         for _report in task_reports_list:
@@ -1144,21 +1284,7 @@ def confirm(
                         row.related_task_id = parent_task.id
                     if write_tr_achievements:
                         for ach_item in (report.get("achievements") or []):
-                            if isinstance(ach_item, dict) and ach_item.get("name"):
-                                ach_dict = dict(ach_item)
-                                ach_dict.setdefault("special_project", project)
-                                ach_dict.setdefault("owner", row.submitter or "")
-                                ach = W.fulfill_or_create_achievement(
-                                    db, ach_dict, row.source_type, parent_task.id,
-                                    ach_dict.get("special_project") or project,
-                                    submission_id=row.id,
-                                )
-                                if ach:
-                                    ach.confirmed_by = payload.operator
-                                    ach.confirmed_at = now
-                                    ach.related_subtask_id = new_sub.id
-                                    if effective_project_id and not ach.project_id:
-                                        ach.project_id = effective_project_id
+                            write_report_achievement(ach_item, parent_task.id, new_sub.id)
                     crud.log(
                         db, payload.operator, "confirmation_card_create_subtask", "subtask", new_sub.id,
                         {}, {"title": new_sub.title, "task_id": parent_task.id,
@@ -1212,69 +1338,70 @@ def confirm(
             # Write per-subtask achievements
             if write_tr_achievements:
                 for ach_item in (report.get("achievements") or []):
-                    if isinstance(ach_item, dict) and ach_item.get("name"):
-                        ach_dict = dict(ach_item)
-                        ach_dict.setdefault("special_project", project)
-                        ach_dict.setdefault("owner", row.submitter or "")
-                        ach = W.fulfill_or_create_achievement(
-                            db, ach_dict, row.source_type, task_id,
-                            ach_dict.get("special_project") or project,
-                            submission_id=row.id,
-                        )
-                        if ach:
-                            ach.confirmed_by = payload.operator
-                            ach.confirmed_at = now
-                            ach.related_subtask_id = int(matched_id)
-                            if effective_project_id and not ach.project_id:
-                                ach.project_id = effective_project_id
+                    write_report_achievement(ach_item, subtask.task_id, int(matched_id))
 
             # Write per-subtask issues
             if write_tr_issues:
                 for issue_item in (report.get("subtask_issues") or []):
                     parsed = _parse_subtask_issue(issue_item)
+                    if not parsed or not _item_write_enabled(issue_item, "write_issue"):
+                        continue
+                    key = _normalized_issue_key(parsed["description"])
+                    scoped_keys = report_issue_keys_by_subtask.setdefault(int(matched_id), [])
+                    if not key or _contains_duplicate_issue(key, scoped_keys):
+                        continue
+                    scoped_keys.append(key)
+                    report_issue_keys.append(key)
+                    write_issue_item(issue_item, subtask.task_id, int(matched_id))
+
+        # Submission-level assets are unassigned to a particular subtask. Reports
+        # are processed first so a duplicate keeps its precise subtask attribution.
+        if write_tr_achievements:
+            top_achievement_keys: set[str] = set()
+            for ach_item in (data.get("achievements") or []):
+                if not isinstance(ach_item, dict) or not _item_write_enabled(ach_item, "write_achievement"):
+                    continue
+                key = _normalized_asset_key(ach_item.get("name"))
+                if not key or key in report_achievement_keys or key in top_achievement_keys:
+                    continue
+                top_achievement_keys.add(key)
+                ach_dict = dict(ach_item)
+                ach_dict.setdefault("special_project", project)
+                ach_dict.setdefault("owner", row.submitter or "")
+                ach = W.fulfill_or_create_achievement(
+                    db,
+                    ach_dict,
+                    row.source_type,
+                    task_id,
+                    ach_dict.get("special_project") or project,
+                    submission_id=row.id,
+                )
+                if ach:
+                    ach.confirmed_by = payload.operator
+                    ach.confirmed_at = now
+                    ach.related_task_id = task_id
+                    ach.related_subtask_id = None
+                    if effective_project_id:
+                        ach.project_id = effective_project_id
+
+        if write_tr_issues:
+            top_issue_keys: list[str] = []
+            for source_name in ("key_task_issues", "issues", "pending_items"):
+                for issue_item in (data.get(source_name) or []):
+                    if not _item_write_enabled(issue_item, "write_issue"):
+                        continue
+                    parsed = _parse_subtask_issue(issue_item)
                     if not parsed:
                         continue
-                    norm_type = parsed["issue_type"]
-                    issue = models.Issue(
-                        issue_type=_storage_issue_type(norm_type),
-                        description=parsed["description"],
-                        owner=row.submitter or "",
-                        priority=parsed["priority"],
-                        status=_issue_status_for(norm_type),
-                        special_project=project,
-                        source_type=ST.normalize(row.source_type or "人工录入"),
-                        confirmed_by=payload.operator,
-                        source_submission_id=row.id,
-                        related_task_id=subtask.task_id if subtask else None,
-                    )
-                    issue.related_subtask_id = int(matched_id)
-                    if effective_project_id:
-                        issue.project_id = effective_project_id
-                    db.add(issue)
-
-        # key_task_issues → 问题库
-        if write_tr_issues:
-            for ki in (data.get("key_task_issues") or []):
-                if not isinstance(ki, dict) or not (ki.get("description") or "").strip():
-                    continue
-                norm_type = IT.normalize(ki.get("issue_type"))
-                issue = models.Issue(
-                    issue_type=_storage_issue_type(norm_type),
-                    description=ki["description"].strip(),
-                    owner=row.submitter or "",
-                    helper="、".join(ki.get("need_coordination") or []),
-                    priority=ki.get("priority") or "中",
-                    status=_issue_status_for(norm_type),
-                    special_project=project,
-                    source_type=ST.normalize(row.source_type or "人工录入"),
-                    confirmed_by=payload.operator,
-                    source_submission_id=row.id,
-                )
-                if not ki.get("need_coordination"):
-                    issue.helper = ""
-                if effective_project_id:
-                    issue.project_id = effective_project_id
-                db.add(issue)
+                    key = _normalized_issue_key(parsed["description"])
+                    if (
+                        not key
+                        or _contains_duplicate_issue(key, report_issue_keys)
+                        or _contains_duplicate_issue(key, top_issue_keys)
+                    ):
+                        continue
+                    top_issue_keys.append(key)
+                    write_issue_item(issue_item, task_id, None)
 
     # ── 旧格式：平铺 achievements / issues ───────────────────────
     else:

@@ -26,6 +26,7 @@ import * as SS from '../domain/submissionStatus'
 import { getConfirmationContext } from '../domain/confirmationFlow'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
 import { buildConfirmationTaskCards, normalizeReviewCardData } from '../domain/confirmationTaskCards'
+import { buildConfirmationAssetProjection } from '../domain/confirmationAssets'
 import { getProjectDisplayName } from '../domain/projectDisplay'
 
 type WriteMode = 'task_new' | 'subtask_update' | 'subtask_new'
@@ -53,32 +54,6 @@ function renderVal(v: unknown): string {
 
 const STATUS_DOT: Record<string, string> = {
   '进行中': '#3B82F6', '已完成': '#10B981', '延期': '#EF4444', '暂缓': '#F59E0B', '未开始': '#94A3B8',
-}
-
-const ISSUE_STYLE: Record<string, { bg: string; text: string }> = {
-  '风险':   { bg: '#FEE2E2', text: '#991B1B' },
-  '待协调': { bg: '#DBEAFE', text: '#1D4ED8' },
-  '需决策': { bg: '#EDE9FE', text: '#5B21B6' },
-  '问题':   { bg: '#FEF3C7', text: '#92400E' },
-}
-
-const ISSUE_PRIORITY: Record<string, number> = { '需决策': 4, '风险': 3, '待协调': 2, '问题': 1 }
-
-function deduplicateIssues(issues: Record<string, unknown>[]): Record<string, unknown>[] {
-  const seen = new Map<string, Record<string, unknown>>()
-  for (const issue of issues) {
-    const desc = String(issue.description || '').trim()
-    if (!desc) continue
-    const existing = seen.get(desc)
-    if (!existing) {
-      seen.set(desc, issue)
-    } else {
-      const ep = ISSUE_PRIORITY[String(existing.issue_type || '问题')] ?? 1
-      const np = ISSUE_PRIORITY[String(issue.issue_type || '问题')] ?? 1
-      if (np > ep) seen.set(desc, issue)
-    }
-  }
-  return Array.from(seen.values())
 }
 
 function SourceBadge({ type }: { type?: string }) {
@@ -604,7 +579,7 @@ export function ConfirmPage() {
           ? (base.completed_items as string[]).join('；')
           : (base.completed_items || ''))
       )
-      const patchedTaskReports = Array.isArray(base.task_reports)
+      let patchedTaskReports = Array.isArray(base.task_reports)
         ? (base.task_reports as Record<string, unknown>[]).map((r, i) => {
             if (r.result_type === 'suggest_new_subtask') {
               return { ...r, parent_task_id: suggestTaskSelections[i] ?? r.parent_task_id ?? null }
@@ -629,18 +604,22 @@ export function ConfirmPage() {
           target_subtask_id: targetSubtaskId,
           target_task_id: targetTaskId,
         },
-        achievements: ((base.achievements as unknown[]) || []).map((a) => ({
+        achievements: (hasTaskReports
+          ? assetProjection.submissionAchievements.map((achievement) => achievement.item)
+          : ((base.achievements as unknown[]) || [])
+        ).map((a) => ({
           ...(a as Record<string, unknown>),
           write_achievement: writeToAchievements,
         })),
-        issues: ((base.issues as unknown[]) || []).map((i) => ({
+        issues: (hasTaskReports ? [] : ((base.issues as unknown[]) || [])).map((i) => ({
           ...(i as Record<string, unknown>),
           write_issue: writeToIssues,
         })),
       }
-      // pending_items: reviewer classifies each item; transform back to confirmations.py format
+      // Review the deduplicated projection and route each issue back to its source scope.
       if (hasPendingItems) {
-        const classified = effectivePendingItems.map((item, idx) => {
+        const classified = effectivePendingItems.map((projected, idx) => {
+          const item = projected.item
           const type = pendingItemTypes[idx] !== undefined
             ? pendingItemTypes[idx]
             : String(item.issue_type || '问题')
@@ -657,11 +636,25 @@ export function ConfirmPage() {
           }
         })
         if (hasTaskReports) {
-          humanResult.key_task_issues = classified
-          humanResult.task_reports = (humanResult.task_reports as Record<string, unknown>[]).map(r => ({
-            ...r,
-            subtask_issues: [],
+          const reportIssues = new Map<number, Record<string, unknown>[]>()
+          const submissionIssues: Record<string, unknown>[] = []
+          effectivePendingItems.forEach((projected, idx) => {
+            if (projected.source === 'task_report' && projected.reportIndex !== undefined) {
+              const existing = reportIssues.get(projected.reportIndex) ?? []
+              existing.push(classified[idx])
+              reportIssues.set(projected.reportIndex, existing)
+            } else {
+              submissionIssues.push(classified[idx])
+            }
+          })
+          patchedTaskReports = (patchedTaskReports as Record<string, unknown>[]).map((report, reportIndex) => ({
+            ...report,
+            subtask_issues: reportIssues.get(reportIndex) ?? [],
           }))
+          humanResult.task_reports = patchedTaskReports
+          humanResult.key_task_issues = submissionIssues
+          humanResult.issues = []
+          humanResult.pending_items = classified
         } else {
           humanResult.issues = classified
           humanResult.key_task_issues = []
@@ -930,6 +923,8 @@ export function ConfirmPage() {
   const opLogs = items.filter((i) => SS.normalize(i.confirm_status) !== SS.S_NEW).slice(0, 5)
   const selectedResult = selected ? (getHumanResult(selected) || getAIResult(selected)) : null
   const hasTaskReports = Array.isArray(selectedResult?.task_reports) && (selectedResult!.task_reports as unknown[]).length > 0
+  const assetProjection = buildConfirmationAssetProjection(selectedResult)
+  const submissionAchievements = assetProjection.submissionAchievements
   const hasPendingSuggests = hasTaskReports && (selectedResult!.task_reports as Record<string, unknown>[]).some(
     (r, i) => r.result_type === 'suggest_new_subtask' && !suggestTaskSelections[i] && !r.parent_task_id
   )
@@ -982,33 +977,9 @@ export function ConfirmPage() {
     if (hasWriteIss) confirmedWrites.push('问题中心')
   }
 
-  const taskReports = hasTaskReports ? (selectedResult!.task_reports as Record<string, unknown>[]) : []
-  const globalIssues = Array.isArray(selectedResult?.issues)
-    ? (selectedResult!.issues as Record<string, unknown>[]) : []
-  const keyTaskIssues = Array.isArray(selectedResult?.key_task_issues)
-    ? (selectedResult!.key_task_issues as Record<string, unknown>[]) : []
-
-  // Collect subtask-level issues from task_reports so they flow to the issues block only
-  const subtaskIssuesList: Record<string, unknown>[] = []
-  if (hasTaskReports) {
-    for (const r of taskReports) {
-      const sis = r.subtask_issues
-      if (Array.isArray(sis)) {
-        for (const si of sis as unknown[]) {
-          if (typeof si === 'object' && si !== null) {
-            subtaskIssuesList.push(si as Record<string, unknown>)
-          } else if (typeof si === 'string' && (si as string).trim()) {
-            subtaskIssuesList.push({ description: si, issue_type: '问题' })
-          }
-        }
-      }
-    }
-  }
-  const dedupedIssues = deduplicateIssues([...globalIssues, ...keyTaskIssues, ...subtaskIssuesList])
-  const hasPendingItems = Array.isArray(selectedResult?.pending_items) && (selectedResult!.pending_items as unknown[]).length > 0
-  const effectivePendingItems: Record<string, unknown>[] = hasPendingItems
-    ? (selectedResult!.pending_items as Record<string, unknown>[])
-    : dedupedIssues
+  const effectivePendingItems = assetProjection.allIssues
+  const hasPendingItems = effectivePendingItems.length > 0
+  const canEditSubmissionIssues = viewMode === 'all' && canUseOwnerActions && Boolean(selected) && SS.OWNER_ACTIONABLE.has(selectedStatus)
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -1324,6 +1295,102 @@ export function ConfirmPage() {
                       <p className="text-sm font-bold text-violet-800">企业教练批示</p>
                       <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{selected.ceo_note}</p>
                       <p className="mt-2 text-xs text-violet-600/80">企业教练已完成决策，请项目负责人据此继续处理。</p>
+                    </section>
+                  )}
+
+                  {/* Submission-level achievements */}
+                  {submissionAchievements.length > 0 && (
+                    <section className="rounded-[22px] border border-violet-200 bg-violet-50/40 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-bold text-violet-900">提交级成果</p>
+                          <p className="mt-1 text-xs text-slate-500">以下成果由本次提交整体提取，尚未明确归属到具体关键任务。</p>
+                        </div>
+                        <span className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-bold text-violet-700">{submissionAchievements.length} 项</span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
+                        {submissionAchievements.map((achievement, index) => {
+                          const item = achievement.item
+                          const fileLink = String(item.file_link || item.file_url || '').trim()
+                          return (
+                            <article key={`submission-achievement-${index}`} className="rounded-2xl border border-violet-100 bg-white p-3">
+                              <p className="text-sm font-semibold text-slate-900">{String(item.name || '')}</p>
+                              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                                <span>成果类型：{String(item.achievement_type || item.type || '未标注')}</span>
+                                <span>版本：{String(item.version || '未标注')}</span>
+                              </div>
+                              {fileLink && (
+                                <a className="mt-2 inline-flex text-xs font-semibold text-blue-600 hover:underline" href={fileLink} target="_blank" rel="noreferrer">查看文件</a>
+                              )}
+                            </article>
+                          )
+                        })}
+                      </div>
+                    </section>
+                  )}
+
+                  {/* Unified issue review projection */}
+                  {hasPendingItems && (
+                    <section className="rounded-[22px] border border-amber-200 bg-amber-50/40 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-bold text-amber-900">待处理事项审核</p>
+                          <p className="mt-1 text-xs text-slate-500">相同阻塞已合并，关键任务来源优先保留原归属。</p>
+                        </div>
+                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700">{effectivePendingItems.length} 项</span>
+                      </div>
+                      <div className="mt-3 space-y-3">
+                        {effectivePendingItems.map((projected, index) => {
+                          const item = projected.item
+                          const helpers = Array.isArray(item.need_coordination) ? (item.need_coordination as string[]).join('、') : String(item.helper || '')
+                          return (
+                            <article key={`${projected.source}-${projected.reportIndex ?? 'submission'}-${index}`} className="rounded-2xl border border-amber-100 bg-white p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="text-sm leading-6 text-slate-800">{projected.description}</p>
+                                <span className={`flex-shrink-0 rounded-full px-2 py-1 text-[11px] font-bold ${projected.source === 'task_report' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
+                                  {projected.source === 'task_report' ? '来源：关键任务' : '来源：提交级'}
+                                </span>
+                              </div>
+                              {projected.source === 'task_report' && projected.matchedSubtaskTitle && (
+                                <p className="mt-1 text-xs text-blue-600">匹配关键任务：{projected.matchedSubtaskTitle}</p>
+                              )}
+                              {canEditSubmissionIssues && (
+                                <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+                                  <label className="text-xs text-slate-600">
+                                    问题类型
+                                    <select
+                                      value={pendingItemTypes[index] ?? String(item.issue_type || '问题')}
+                                      onChange={(event) => setPendingItemTypes((current) => ({ ...current, [index]: event.target.value }))}
+                                      disabled={submissionActionsLocked}
+                                      className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700"
+                                    >
+                                      {['问题', '风险', '待协调', '需决策'].map((type) => <option key={type} value={type}>{type}</option>)}
+                                    </select>
+                                  </label>
+                                  <label className="text-xs text-slate-600">
+                                    协助人
+                                    <input
+                                      value={pendingItemHelpers[index] ?? helpers}
+                                      onChange={(event) => setPendingItemHelpers((current) => ({ ...current, [index]: event.target.value }))}
+                                      disabled={submissionActionsLocked}
+                                      className="mt-1 h-9 w-full rounded-lg border border-slate-200 px-2 text-sm text-slate-700"
+                                    />
+                                  </label>
+                                  <label className="text-xs text-slate-600">
+                                    处理备注
+                                    <input
+                                      value={pendingItemNotes[index] ?? String(item.decision_note || '')}
+                                      onChange={(event) => setPendingItemNotes((current) => ({ ...current, [index]: event.target.value }))}
+                                      disabled={submissionActionsLocked}
+                                      className="mt-1 h-9 w-full rounded-lg border border-slate-200 px-2 text-sm text-slate-700"
+                                    />
+                                  </label>
+                                </div>
+                              )}
+                            </article>
+                          )
+                        })}
+                      </div>
                     </section>
                   )}
 

@@ -1,19 +1,19 @@
-import os
-from pathlib import Path
-
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-DEFAULT_SQLITE_URL = f"sqlite:///{BASE_DIR / 'bowei_ai_dashboard.db'}"
-
-SQLALCHEMY_DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    DEFAULT_SQLITE_URL,
+from .database_safety import (
+    ensure_application_target_allowed,
+    normalize_database_target,
+    require_database_url,
 )
 
-_is_sqlite = SQLALCHEMY_DATABASE_URL.startswith("sqlite")
+
+_raw_database_url = require_database_url()
+_database_target = normalize_database_target(_raw_database_url)
+ensure_application_target_allowed(_raw_database_url)
+SQLALCHEMY_DATABASE_URL = _database_target.engine_url
+
+_is_sqlite = _database_target.kind == "sqlite"
 
 connect_args = {}
 if _is_sqlite:

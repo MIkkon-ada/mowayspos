@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { exportTasksToExcel } from '../utils/exportTasksExcel'
+import { exportPlanTableToExcel } from '../utils/exportPlanTableExcel'
 import { createTask, deleteTask, fetchTaskLogs, fetchTaskUpdates, fetchTasks, updateTask, extractTasksFromOutline, batchCreateTasks, restoreTask } from '../api/tasks'
 import type { TaskLog, TaskPayload, TaskUpdate, TaskDraft } from '../api/tasks'
 import { fetchSubTasks, createSubTask, patchSubTaskStatus, isPendingConfirmation, updateSubTask, deleteSubTask, restoreSubTask, fetchSubtaskDetail } from '../api/subtasks'
@@ -244,7 +245,7 @@ export function TaskManagementPage() {
   const [viewProjectId, setViewProjectId] = useState<number | null>(null)
   const [autoSelectedTaskProjectId, setAutoSelectedTaskProjectId] = useState<number | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
-  const [viewMode, setViewMode] = useState<'execution' | 'plan'>('execution')
+  const [viewMode, setViewMode] = useState<'execution' | 'plan'>('plan')
   const [planTableLoading, setPlanTableLoading] = useState(false)
   const [progressOpen, setProgressOpen] = useState(false)
   const [progressText, setProgressText] = useState('')
@@ -252,7 +253,7 @@ export function TaskManagementPage() {
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null)
   // 专项下拉选项来自全部可见项目，而非已加载任务
   const availableTaskProjects = useMemo(
-    () => projects.filter((project) => isProjectActive(project)),
+    () => projects.filter((project) => isProjectActive(project) || isProjectArchived(project)),
     [projects],
   )
   const effectiveTaskProjectId = viewProjectId ?? currentProjectId ?? autoSelectedTaskProjectId
@@ -391,11 +392,9 @@ export function TaskManagementPage() {
     setViewProjectId(Number.isFinite(pid) ? pid : null)
   }
 
-  const filtered = tasks
+  const planBaseTasks = useMemo(() => tasks
     .filter((t) => {
       const taskProject = projectForTask(projects, t)
-      const projectName = taskProject?.name ?? getProjectDisplayName(projects, t)
-      if (search && !t.key_task?.includes(search) && !projectName.includes(search)) return false
       if (filterStatus) {
         const isDelayedFilter = norm(filterStatus) === '延期' || norm(filterStatus) === '已延期'
         if (isDelayedFilter) {
@@ -416,11 +415,18 @@ export function TaskManagementPage() {
       const at = a.created_at ?? ''
       const bt = b.created_at ?? ''
       return at.localeCompare(bt)
-    })
+    }), [filterOwner, filterStatus, projects, tasks, viewProjectId])
+
+  const filtered = useMemo(() => planBaseTasks.filter((task) => {
+    if (!search) return true
+    const taskProject = projectForTask(projects, task)
+    const projectName = taskProject?.name ?? getProjectDisplayName(projects, task)
+    return task.key_task?.includes(search) || projectName.includes(search)
+  }), [planBaseTasks, projects, search])
 
   function ensurePlanTableSubTasksLoaded() {
     if (planTableLoading) return
-    const missingTasks = filtered.filter((task) => !(task.id in taskSubMap))
+    const missingTasks = planBaseTasks.filter((task) => !(task.id in taskSubMap))
     if (missingTasks.length === 0) return
     setPlanTableLoading(true)
     Promise.all(
@@ -443,7 +449,9 @@ export function TaskManagementPage() {
   useEffect(() => {
     if (viewMode !== 'plan') return
     ensurePlanTableSubTasksLoaded()
-  }, [viewMode, filtered, taskSubMap])
+  }, [viewMode, planBaseTasks, planTableLoading, taskSubMap])
+
+  const planTableReady = !planTableLoading && planBaseTasks.every((task) => task.id in taskSubMap)
 
   function assignmentMembers(projectId: number | null | undefined) {
     if (!projectId) return []
@@ -742,6 +750,16 @@ export function TaskManagementPage() {
     exportTasksToExcel(filtered, title, projects)
   }
 
+  function handlePlanExport() {
+    if (!focusedProject || !planTableReady) return
+    void exportPlanTableToExcel({
+      project: focusedProject,
+      tasks: planBaseTasks,
+      taskSubMap,
+      searchText: search,
+    })
+  }
+
 function handleFormSave(payload: TaskPayload) {
     const pid = payload.project_id ?? viewProjectId ?? currentProjectId
     if (!pid) {
@@ -813,17 +831,21 @@ function handleFormSave(payload: TaskPayload) {
         <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
           <button
             type="button"
-            onClick={() => setViewMode('execution')}
-            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'execution' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            onClick={() => {
+              setViewMode('plan')
+              setSelectedTask(null)
+              setSelectedSubTask(null)
+            }}
+            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'plan' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
           >
-            执行视图
+            表格视图
           </button>
           <button
             type="button"
-            onClick={() => setViewMode('plan')}
-            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'plan' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            onClick={() => setViewMode('execution')}
+            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'execution' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
           >
-            计划表视图
+            执行详情
           </button>
         </div>
 
@@ -844,6 +866,21 @@ function handleFormSave(payload: TaskPayload) {
             </select>
           </div>
           <div className="flex items-center gap-1.5">
+            <span className="text-xs text-slate-500 font-medium">状态</span>
+            <select
+              value={filterStatus}
+              onChange={(event) => setFilterStatus(event.target.value)}
+              className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none"
+            >
+              <option value="">全部状态</option>
+              <option value="未开始">未开始</option>
+              <option value="进行中">进行中</option>
+              <option value="已完成">已完成</option>
+              <option value="延期">延期</option>
+              <option value="暂缓">暂缓</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-1.5">
             <span className="text-xs text-slate-500 font-medium">专项负责人</span>
             <select
               value={filterOwner}
@@ -856,7 +893,12 @@ function handleFormSave(payload: TaskPayload) {
           </div>
           <div className="relative">
             <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" style={{ width: 13, height: 13 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索重点工作…" className="pl-8 pr-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none w-40" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={viewMode === 'plan' ? '搜索重点工作、关键任务、责任人' : '搜索重点工作…'}
+              className="pl-8 pr-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none w-64"
+            />
           </div>
         </div>
 
@@ -953,14 +995,12 @@ function handleFormSave(payload: TaskPayload) {
       )}
 
       {/* Main */}
-      <div className="flex-1 flex overflow-hidden" style={{ background: '#F1F5F9' }}>
+      <div className="flex-1 min-w-0 min-h-0 flex overflow-hidden" style={{ background: viewMode === 'plan' ? '#F8FAFC' : '#F1F5F9' }}>
         <div
-          className="flex-1 overflow-y-auto"
-          style={{
-            background: '#F1F5F9',
-            padding: '16px 20px 20px',
-            paddingRight: 20,
-          }}
+          className={viewMode === 'plan' ? 'work-progress-plan-shell flex-1' : 'flex-1 overflow-y-auto'}
+          style={viewMode === 'plan'
+            ? { background: '#F8FAFC' }
+            : { background: '#F1F5F9', padding: '16px 20px 20px', paddingRight: 20 }}
         >
           {hasNoTaskProjects ? (
             <div className="h-40 flex items-center justify-center">
@@ -979,9 +1019,13 @@ function handleFormSave(payload: TaskPayload) {
           ) : viewMode === 'plan' ? (
             <PlanTableView
               project={focusedProject}
-              tasks={filtered}
+              tasks={planBaseTasks}
               taskSubMap={taskSubMap}
+              searchText={search}
               loading={planTableLoading}
+              exportDisabled={!planTableReady}
+              onExport={handlePlanExport}
+              onOpenSubTask={openSubDetail}
             />
           ) : loading ? (
             <div className="h-40 flex items-center justify-center text-slate-400 text-sm">加载中...</div>
@@ -1181,7 +1225,7 @@ function handleFormSave(payload: TaskPayload) {
           )}
         </div>
 
-        {viewMode === 'execution' && <aside
+        {(viewMode === 'execution' || selectedSubTask || subDetailLoading) && <aside
           data-testid="work-progress-detail-panel"
           className="w-[380px] flex-shrink-0 border-l bg-white flex flex-col overflow-hidden"
           style={{ borderColor: '#E2E8F0' }}

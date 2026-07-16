@@ -76,3 +76,45 @@ test('change scope remains frontend-only and does not alter routing', () => {
   assert.match(page, /getProjects\(true\)/); assert.match(page, /reloadProjects\(\)/)
   assert.match(page, /ProjectCloseFlowDrawer/)
 })
+
+test('drawer invalidates stale loads and clears all project-bound state before fetching', () => {
+  const source = read('src/features/settings/ProjectCloseFlowDrawer.tsx')
+  assert.match(source, /useRef/)
+  assert.match(source, /loadGenerationRef/)
+  assert.match(source, /const generation = \+\+loadGenerationRef\.current/)
+  assert.match(source, /const emptyForm = freshEmptyForm\(\)[\s\S]{0,180}setRequest\(null\)[\s\S]{0,120}setForm\(emptyForm\)[\s\S]{0,180}setReviewComment\(''\)/)
+  assert.match(source, /generation !== loadGenerationRef\.current/)
+  assert.match(source, /loadGenerationRef\.current \+= 1[\s\S]{0,180}onClose\(\)/)
+})
+
+test('failed deep-link loads cannot expose an active create form', () => {
+  const source = read('src/features/settings/ProjectCloseFlowDrawer.tsx')
+  assert.match(source, /const \[loadFailed, setLoadFailed\] = useState\(false\)/)
+  assert.match(source, /setLoadFailed\(true\)/)
+  assert.match(source, /canCreate && !loadFailed/)
+  assert.match(source, /!loading && \(\(canCreate && !loadFailed\) \|\| request\)/)
+})
+
+test('mutation success is retained when refresh fails and disables every write action', () => {
+  const source = read('src/features/settings/ProjectCloseFlowDrawer.tsx')
+  assert.match(source, /mutationCommittedButRefreshFailed/)
+  const mutationAwait = source.indexOf('result = await action()')
+  const mutationCatch = source.indexOf('} catch (error) {', mutationAwait)
+  const mutationReturn = source.indexOf('return', mutationCatch)
+  const successToast = source.indexOf('toast.success(success)', mutationReturn)
+  const refreshTry = source.indexOf('try {', successToast)
+  const refreshAwait = source.indexOf('await onChanged', refreshTry)
+  assert.ok(mutationAwait > 0 && mutationAwait < mutationCatch && mutationCatch < mutationReturn)
+  assert.ok(mutationReturn < successToast && successToast < refreshTry && refreshTry < refreshAwait)
+  assert.match(source, /操作已成功，但项目状态刷新失败，请刷新页面后继续。/)
+  assert.match(source, /操作已成功。当前页面状态未刷新，请刷新页面后继续，勿重复提交。/)
+  assert.match(source, /const writesDisabled = Boolean\(busyAction\) \|\| mutationCommittedButRefreshFailed/)
+  assert.ok((source.match(/disabled=\{writesDisabled\}/g) ?? []).length >= 6)
+})
+
+test('dirty state includes unsaved review comments and successful mutation resets its baseline', () => {
+  const source = read('src/features/settings/ProjectCloseFlowDrawer.tsx')
+  assert.match(source, /initialReviewComment/)
+  assert.match(source, /JSON\.stringify\(form\) !== initialForm \|\| reviewComment !== initialReviewComment/)
+  assert.match(source, /setReviewComment\(nextReviewComment\)[\s\S]{0,160}setInitialReviewComment\(nextReviewComment\)/)
+})

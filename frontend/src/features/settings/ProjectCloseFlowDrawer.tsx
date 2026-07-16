@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Project, ProjectCloseCheckItem, ProjectCloseRequest, ProjectCloseRequestCreatePayload, ProjectCloseResidualItem } from '../../types'
 import { ApiError } from '../../api/client'
 import {
@@ -26,6 +26,10 @@ const EMPTY_FORM: ProjectCloseRequestCreatePayload = {
   summary: '', objective_result: '', unfinished_items: [], remaining_risks: [], handover_plan: '', retrospective: '',
 }
 
+function freshEmptyForm(): ProjectCloseRequestCreatePayload {
+  return { ...EMPTY_FORM, unfinished_items: [], remaining_risks: [] }
+}
+
 export function extractProjectCloseBlockers(error: unknown): ProjectCloseCheckItem[] {
   if (!(error instanceof ApiError) || error.status !== 409 || !error.body || typeof error.body !== 'object') return []
   const detail = (error.body as { detail?: unknown }).detail
@@ -51,25 +55,41 @@ function validateForm(form: ProjectCloseRequestCreatePayload): string {
 
 export function ProjectCloseFlowDrawer({ open, project, currentPersonId, roles, initialRequestId, onClose, onChanged }: Props) {
   const [request, setRequest] = useState<ProjectCloseRequest | null>(null)
-  const [form, setForm] = useState<ProjectCloseRequestCreatePayload>(EMPTY_FORM)
-  const [initialForm, setInitialForm] = useState(JSON.stringify(EMPTY_FORM))
+  const [form, setForm] = useState<ProjectCloseRequestCreatePayload>(freshEmptyForm)
+  const [initialForm, setInitialForm] = useState(() => JSON.stringify(freshEmptyForm()))
   const [reviewComment, setReviewComment] = useState('')
+  const [initialReviewComment, setInitialReviewComment] = useState('')
   const [loading, setLoading] = useState(false)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [busyAction, setBusyAction] = useState('')
   const [errorText, setErrorText] = useState('')
   const [runtimeBlockers, setRuntimeBlockers] = useState<ProjectCloseCheckItem[]>([])
+  const [mutationCommittedButRefreshFailed, setMutationCommittedButRefreshFailed] = useState(false)
+  const loadGenerationRef = useRef(0)
 
   const status = getProjectPrimaryStatus(project)
   const canCreate = canCreateProjectCloseRequest(status, roles)
   const canEdit = request ? canEditProjectCloseRequest(status, request.requester_person_id, currentPersonId, roles) : false
   const canReview = canReviewProjectCloseRequest(status, roles)
-  const dirty = JSON.stringify(form) !== initialForm
+  const dirty = JSON.stringify(form) !== initialForm || reviewComment !== initialReviewComment
+  const writesDisabled = Boolean(busyAction) || mutationCommittedButRefreshFailed
   const blockers = runtimeBlockers.length > 0 ? runtimeBlockers : request?.blockers ?? []
   const warnings = request?.warnings ?? []
 
   async function loadRequest() {
     if (!project) return
-    setLoading(true); setErrorText(''); setRuntimeBlockers([])
+    const generation = ++loadGenerationRef.current
+    const emptyForm = freshEmptyForm()
+    setRequest(null)
+    setForm(emptyForm)
+    setInitialForm(JSON.stringify(emptyForm))
+    setReviewComment('')
+    setInitialReviewComment('')
+    setRuntimeBlockers([])
+    setErrorText('')
+    setLoadFailed(false)
+    setMutationCommittedButRefreshFailed(false)
+    setLoading(true)
     try {
       let row: ProjectCloseRequest | null = null
       if (initialRequestId != null) row = await getProjectCloseRequest(project.id, initialRequestId)
@@ -77,42 +97,71 @@ export function ProjectCloseFlowDrawer({ open, project, currentPersonId, roles, 
         const rows = await getProjectCloseRequests(project.id, status === 'pending_close' ? 'pending' : undefined)
         row = rows.find((item) => item.status === 'approved') ?? rows[0] ?? null
       }
+      if (generation !== loadGenerationRef.current) return
       setRequest(row)
-      const next = row ? formFromRequest(row) : { ...EMPTY_FORM, unfinished_items: [], remaining_risks: [] }
-      setForm(next); setInitialForm(JSON.stringify(next)); setReviewComment(row?.review_comment ?? '')
+      const next = row ? formFromRequest(row) : freshEmptyForm()
+      const nextReviewComment = row?.review_comment ?? ''
+      setForm(next)
+      setInitialForm(JSON.stringify(next))
+      setReviewComment(nextReviewComment)
+      setInitialReviewComment(nextReviewComment)
     } catch (error) {
-      setRequest(null)
+      if (generation !== loadGenerationRef.current) return
+      setLoadFailed(true)
       setErrorText(error instanceof Error ? error.message : '结束申请加载失败')
-    } finally { setLoading(false) }
+    } finally {
+      if (generation === loadGenerationRef.current) setLoading(false)
+    }
   }
 
-  useEffect(() => { if (open && project) void loadRequest() }, [open, project?.id, status, initialRequestId])
+  useEffect(() => {
+    if (open && project) void loadRequest()
+    else loadGenerationRef.current += 1
+    return () => { loadGenerationRef.current += 1 }
+  }, [open, project?.id, status, initialRequestId])
 
   function tryClose() {
     if (busyAction) return
     if (dirty && !window.confirm('结束材料尚未保存，确认离开吗？')) return
+    loadGenerationRef.current += 1
     onClose()
   }
 
   async function runAction(name: string, action: () => Promise<ProjectCloseRequest | { ok: boolean; status: string }>, success: string) {
-    if (!project || busyAction) return
+    if (!project || busyAction || mutationCommittedButRefreshFailed) return
+    setMutationCommittedButRefreshFailed(false)
     setBusyAction(name); setErrorText(''); setRuntimeBlockers([])
+    let result: ProjectCloseRequest | { ok: boolean; status: string }
     try {
-      const result = await action()
-      const requestId = 'id' in result ? result.id : request?.id
-      if ('id' in result) {
-        setRequest(result)
-        const nextForm = formFromRequest(result)
-        setForm(nextForm)
-        setInitialForm(JSON.stringify(nextForm))
-      }
-      toast.success(success)
-      await onChanged(project.id, requestId)
+      result = await action()
     } catch (error) {
       const parsed = extractProjectCloseBlockers(error)
       if (parsed.length) setRuntimeBlockers(parsed)
       else { const message = error instanceof Error ? error.message : '操作失败'; setErrorText(message); toast.error(message) }
-    } finally { setBusyAction('') }
+      setBusyAction('')
+      return
+    }
+
+    const requestId = 'id' in result ? result.id : request?.id
+    if ('id' in result) {
+      setRequest(result)
+      const nextForm = formFromRequest(result)
+      const nextReviewComment = result.review_comment ?? ''
+      setForm(nextForm)
+      setInitialForm(JSON.stringify(nextForm))
+      setReviewComment(nextReviewComment)
+      setInitialReviewComment(nextReviewComment)
+    }
+    toast.success(success)
+    try {
+      await onChanged(project.id, requestId)
+      setMutationCommittedButRefreshFailed(false)
+    } catch {
+      setMutationCommittedButRefreshFailed(true)
+      toast.warning('操作已成功，但项目状态刷新失败，请刷新页面后继续。')
+    } finally {
+      setBusyAction('')
+    }
   }
 
   function save(create: boolean) {
@@ -143,9 +192,10 @@ export function ProjectCloseFlowDrawer({ open, project, currentPersonId, roles, 
         <main className="flex-1 space-y-5 overflow-y-auto bg-slate-50 px-6 py-5">
           {loading && <div className="rounded-xl bg-white p-8 text-center text-sm text-slate-400">正在加载结束申请…</div>}
           {errorText && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{errorText}</div>}
+          {mutationCommittedButRefreshFailed && <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">操作已成功。当前页面状态未刷新，请刷新页面后继续，勿重复提交。</div>}
           <CheckItems title="暂不能结束" items={blockers} className="border-red-200 bg-red-50 text-red-800" />
           <CheckItems title="结束前提醒" items={warnings} className="border-orange-200 bg-orange-50 text-orange-800" />
-          {!loading && (canCreate || request) && (
+          {!loading && ((canCreate && !loadFailed) || request) && (
             <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-5">
               <h3 className="text-sm font-bold text-slate-800">结束材料</h3>
               <TextField label="项目总结" value={form.summary} readOnly={readOnly} onChange={(value) => setForm({ ...form, summary: value })} />
@@ -161,10 +211,10 @@ export function ProjectCloseFlowDrawer({ open, project, currentPersonId, roles, 
         </main>
         <footer className="flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-white px-6 py-4">
           <button type="button" onClick={tryClose} disabled={Boolean(busyAction)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm">关闭</button>
-          {canCreate && <button type="button" onClick={() => save(true)} disabled={Boolean(busyAction)} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busyAction === 'create' ? '提交中…' : roles.isSuperAdmin ? '提交结束申请（技术兜底）' : '提交结束申请'}</button>}
-          {canEdit && request?.status === 'pending' && <><button type="button" onClick={() => save(false)} disabled={Boolean(busyAction)} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">保存修改</button><button type="button" onClick={() => { if (window.confirm('确认取消本次结束申请？')) void runAction('cancel', () => cancelProjectCloseRequest(project.id, request.id), '结束申请已取消') }} disabled={Boolean(busyAction)} className="rounded-lg border border-orange-300 px-4 py-2 text-sm text-orange-700">取消申请</button></>}
-          {canReview && request?.status === 'pending' && <><button type="button" onClick={() => { if (!reviewComment.trim()) { setErrorText('退回修改必须填写审核意见。'); return } if (window.confirm('确认退回本次结束申请？')) void runAction('reject', () => rejectProjectCloseRequest(project.id, request.id, { review_comment: reviewComment.trim() }), '结束申请已退回') }} disabled={Boolean(busyAction)} className="rounded-lg border border-orange-300 px-4 py-2 text-sm text-orange-700">退回修改</button><button type="button" onClick={() => { if (window.confirm('确认批准项目结束？')) void runAction('approve', () => approveProjectCloseRequest(project.id, request.id, { review_comment: reviewComment.trim() }), '项目已批准结束') }} disabled={Boolean(busyAction)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">批准结束</button></>}
-          {status === 'ended' && roles.isSuperAdmin && <button type="button" onClick={() => { if (window.confirm('确认归档该项目？')) void runAction('archive', () => archiveProject(project.id), '项目已归档') }} disabled={Boolean(busyAction)} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white">归档项目</button>}
+          {canCreate && !loadFailed && <button type="button" onClick={() => save(true)} disabled={writesDisabled} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busyAction === 'create' ? '提交中…' : roles.isSuperAdmin ? '提交结束申请（技术兜底）' : '提交结束申请'}</button>}
+          {canEdit && request?.status === 'pending' && <><button type="button" onClick={() => save(false)} disabled={writesDisabled} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">保存修改</button><button type="button" onClick={() => { if (window.confirm('确认取消本次结束申请？')) void runAction('cancel', () => cancelProjectCloseRequest(project.id, request.id), '结束申请已取消') }} disabled={writesDisabled} className="rounded-lg border border-orange-300 px-4 py-2 text-sm text-orange-700 disabled:opacity-50">取消申请</button></>}
+          {canReview && request?.status === 'pending' && <><button type="button" onClick={() => { if (!reviewComment.trim()) { setErrorText('退回修改必须填写审核意见。'); return } if (window.confirm('确认退回本次结束申请？')) void runAction('reject', () => rejectProjectCloseRequest(project.id, request.id, { review_comment: reviewComment.trim() }), '结束申请已退回') }} disabled={writesDisabled} className="rounded-lg border border-orange-300 px-4 py-2 text-sm text-orange-700 disabled:opacity-50">退回修改</button><button type="button" onClick={() => { if (window.confirm('确认批准项目结束？')) void runAction('approve', () => approveProjectCloseRequest(project.id, request.id, { review_comment: reviewComment.trim() }), '项目已批准结束') }} disabled={writesDisabled} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">批准结束</button></>}
+          {status === 'ended' && roles.isSuperAdmin && <button type="button" onClick={() => { if (window.confirm('确认归档该项目？')) void runAction('archive', () => archiveProject(project.id), '项目已归档') }} disabled={writesDisabled} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">归档项目</button>}
         </footer>
       </aside>
     </div>

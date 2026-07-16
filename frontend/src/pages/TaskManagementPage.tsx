@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { exportTasksToExcel } from '../utils/exportTasksExcel'
+import { exportPlanTableToExcel } from '../utils/exportPlanTableExcel'
 import { createTask, deleteTask, fetchTaskLogs, fetchTaskUpdates, fetchTasks, updateTask, extractTasksFromOutline, batchCreateTasks, restoreTask } from '../api/tasks'
 import type { TaskLog, TaskPayload, TaskUpdate, TaskDraft } from '../api/tasks'
 import { fetchSubTasks, createSubTask, patchSubTaskStatus, isPendingConfirmation, updateSubTask, deleteSubTask, restoreSubTask, fetchSubtaskDetail } from '../api/subtasks'
 import type { SubTaskDetail, SubTaskPayload } from '../api/subtasks'
 import { createUpdate } from '../api/updates'
 import { ApiError, apiGet } from '../api/client'
-import { getProjectMembers } from '../api/projects'
+import { getProject, getProjectMembers } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } from '../domain/taskPermission'
 import type { TaskItem, SubTaskItem, Project, ProjectMember } from '../types'
@@ -244,26 +245,39 @@ export function TaskManagementPage() {
   const [viewProjectId, setViewProjectId] = useState<number | null>(null)
   const [autoSelectedTaskProjectId, setAutoSelectedTaskProjectId] = useState<number | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
-  const [viewMode, setViewMode] = useState<'execution' | 'plan'>('execution')
+  const [viewMode, setViewMode] = useState<'execution' | 'plan'>('plan')
   const [planTableLoading, setPlanTableLoading] = useState(false)
   const [progressOpen, setProgressOpen] = useState(false)
   const [progressText, setProgressText] = useState('')
   const [progressSubmitState, setProgressSubmitState] = useState<'idle' | 'submitting' | 'done'>('idle')
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null)
+  const [resolvedProjectDetail, setResolvedProjectDetail] = useState<Project | null>(null)
+  const effectiveTaskProjectId = viewProjectId ?? currentProjectId ?? autoSelectedTaskProjectId
+  const projectFromContext = useMemo(
+    () => projects.find((project) => project.id === effectiveTaskProjectId) ?? null,
+    [effectiveTaskProjectId, projects],
+  )
+  const resolvedProjectForContext = resolvedProjectDetail?.id === effectiveTaskProjectId
+    ? resolvedProjectDetail
+    : null
+  const resolvedTaskProjects = useMemo(() => {
+    const byId = new Map(projects.map((project) => [project.id, project]))
+    if (resolvedProjectForContext) byId.set(resolvedProjectForContext.id, resolvedProjectForContext)
+    return [...byId.values()]
+  }, [projects, resolvedProjectForContext])
   // 专项下拉选项来自全部可见项目，而非已加载任务
   const availableTaskProjects = useMemo(
-    () => projects.filter((project) => isProjectActive(project)),
-    [projects],
+    () => resolvedTaskProjects.filter((project) => isProjectActive(project) || isProjectArchived(project)),
+    [resolvedTaskProjects],
   )
-  const effectiveTaskProjectId = viewProjectId ?? currentProjectId ?? autoSelectedTaskProjectId
   const requiresProjectSelection = effectiveTaskProjectId == null && availableTaskProjects.length > 1
   const hasNoTaskProjects = effectiveTaskProjectId == null && availableTaskProjects.length === 0
-  const projectOptions = projects.map((p) => p.name)
-  const ownerNames = [...new Set(projects.flatMap((p) => p.owners ?? []))]
-  const focusedProject = projects.find((p) => p.id === effectiveTaskProjectId) ?? projects[0] ?? null
+  const projectOptions = resolvedTaskProjects.map((p) => p.name)
+  const ownerNames = [...new Set(resolvedTaskProjects.flatMap((p) => p.owners ?? []))]
+  const focusedProject = projectFromContext ?? resolvedProjectForContext ?? null
   const projectArchived = isProjectArchived(focusedProject)
-  const trashProject = projects.find((p) => p.id === effectiveTaskProjectId) ?? null
-  const canManageTrash = currentUser?.is_tech_admin || projects.some((p) =>
+  const trashProject = resolvedTaskProjects.find((p) => p.id === effectiveTaskProjectId) ?? null
+  const canManageTrash = currentUser?.is_tech_admin || resolvedTaskProjects.some((p) =>
     canManageProjectTrash({ isTechAdmin: false, projectRoles: p.user_roles ?? [] }),
   )
 
@@ -282,6 +296,24 @@ export function TaskManagementPage() {
     const pid = Number(rawProjectId)
     setViewProjectId(Number.isFinite(pid) ? pid : null)
   }, [searchParams])
+
+  useEffect(() => {
+    let cancelled = false
+    if (effectiveTaskProjectId == null || projectFromContext) {
+      setResolvedProjectDetail(null)
+      return () => { cancelled = true }
+    }
+
+    setResolvedProjectDetail(null)
+    getProject(effectiveTaskProjectId)
+      .then((project) => {
+        if (!cancelled && project.id === effectiveTaskProjectId) setResolvedProjectDetail(project)
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedProjectDetail(null)
+      })
+    return () => { cancelled = true }
+  }, [effectiveTaskProjectId, projectFromContext])
 
   useEffect(() => {
     if (viewProjectId != null || currentProjectId != null) {
@@ -391,11 +423,9 @@ export function TaskManagementPage() {
     setViewProjectId(Number.isFinite(pid) ? pid : null)
   }
 
-  const filtered = tasks
+  const planBaseTasks = useMemo(() => tasks
     .filter((t) => {
-      const taskProject = projectForTask(projects, t)
-      const projectName = taskProject?.name ?? getProjectDisplayName(projects, t)
-      if (search && !t.key_task?.includes(search) && !projectName.includes(search)) return false
+      const taskProject = projectForTask(resolvedTaskProjects, t)
       if (filterStatus) {
         const isDelayedFilter = norm(filterStatus) === '延期' || norm(filterStatus) === '已延期'
         if (isDelayedFilter) {
@@ -405,7 +435,7 @@ export function TaskManagementPage() {
         }
       }
       if (viewProjectId != null && taskProject?.id !== viewProjectId) return false
-      if (filterOwner && !(projectForTask(projects, t)?.owners ?? []).includes(filterOwner)) return false
+      if (filterOwner && !(projectForTask(resolvedTaskProjects, t)?.owners ?? []).includes(filterOwner)) return false
       return true
     })
     .sort((a, b) => {
@@ -416,11 +446,18 @@ export function TaskManagementPage() {
       const at = a.created_at ?? ''
       const bt = b.created_at ?? ''
       return at.localeCompare(bt)
-    })
+    }), [filterOwner, filterStatus, resolvedTaskProjects, tasks, viewProjectId])
+
+  const filtered = useMemo(() => planBaseTasks.filter((task) => {
+    if (!search) return true
+    const taskProject = projectForTask(resolvedTaskProjects, task)
+    const projectName = taskProject?.name ?? getProjectDisplayName(resolvedTaskProjects, task)
+    return task.key_task?.includes(search) || projectName.includes(search)
+  }), [planBaseTasks, resolvedTaskProjects, search])
 
   function ensurePlanTableSubTasksLoaded() {
     if (planTableLoading) return
-    const missingTasks = filtered.filter((task) => !(task.id in taskSubMap))
+    const missingTasks = planBaseTasks.filter((task) => !(task.id in taskSubMap))
     if (missingTasks.length === 0) return
     setPlanTableLoading(true)
     Promise.all(
@@ -443,7 +480,9 @@ export function TaskManagementPage() {
   useEffect(() => {
     if (viewMode !== 'plan') return
     ensurePlanTableSubTasksLoaded()
-  }, [viewMode, filtered, taskSubMap])
+  }, [viewMode, planBaseTasks, planTableLoading, taskSubMap])
+
+  const planTableReady = !planTableLoading && planBaseTasks.every((task) => task.id in taskSubMap)
 
   function assignmentMembers(projectId: number | null | undefined) {
     if (!projectId) return []
@@ -458,7 +497,7 @@ export function TaskManagementPage() {
   }
 
   function canAssignSubTasks(task: TaskItem | null | undefined) {
-    const taskProject = projectForTask(projects, task)
+    const taskProject = projectForTask(resolvedTaskProjects, task)
     return !!(
       task &&
       isProjectActive(taskProject) &&
@@ -467,7 +506,7 @@ export function TaskManagementPage() {
   }
 
   function openSubTaskAssignment(task: TaskItem, subTask?: SubTaskItem | SubTaskDetail | null) {
-    const taskProject = projectForTask(projects, task)
+    const taskProject = projectForTask(resolvedTaskProjects, task)
     if (!isProjectActive(taskProject)) {
       alert('项目尚未进入执行阶段，暂不能维护执行期关键任务。')
       return
@@ -654,7 +693,7 @@ export function TaskManagementPage() {
     const parentTask = tasks.find((t) => t.id === taskId)
     if (!parentTask || COMPLETED.has(norm(parentTask.status))) return
     if (!nextSubs.length || !nextSubs.every((s) => COMPLETED.has(norm(s.status)))) return
-    const taskProject = projectForTask(projects, parentTask)
+    const taskProject = projectForTask(resolvedTaskProjects, parentTask)
     const canClose = !!canManageProjectTrash({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: taskProject?.user_roles ?? [] })
     if (!canClose) {
       alert('该重点工作下的关键任务已全部完成，请项目负责人确认是否关闭重点工作。')
@@ -729,17 +768,27 @@ export function TaskManagementPage() {
     const order: string[] = []
     const map = new Map<string, { key: string; tasks: TaskItem[] }>()
     for (const t of filtered) {
-      const key = taskProjectKey(projects, t)
+      const key = taskProjectKey(resolvedTaskProjects, t)
       if (!map.has(key)) { map.set(key, { key, tasks: [] }); order.push(key) }
       map.get(key)!.tasks.push(t)
     }
     return order.map((key) => map.get(key)!)
-  }, [filtered])
+  }, [filtered, resolvedTaskProjects])
 
   function handleExport() {
-    const proj = projects.find((p) => p.id === (viewProjectId ?? currentProjectId))
+    const proj = resolvedTaskProjects.find((p) => p.id === (viewProjectId ?? currentProjectId))
     const title = proj ? `${proj.name} 工作推进表` : '工作推进表'
-    exportTasksToExcel(filtered, title, projects)
+    exportTasksToExcel(filtered, title, resolvedTaskProjects)
+  }
+
+  function handlePlanExport() {
+    if (!focusedProject || !planTableReady) return
+    void exportPlanTableToExcel({
+      project: focusedProject,
+      tasks: planBaseTasks,
+      taskSubMap,
+      searchText: search,
+    })
   }
 
 function handleFormSave(payload: TaskPayload) {
@@ -764,7 +813,7 @@ function handleFormSave(payload: TaskPayload) {
       {formOpen && (
         <TaskFormModal
           task={formTask}
-          projects={projects}
+          projects={resolvedTaskProjects}
           onSave={handleFormSave}
           onClose={() => { setFormOpen(false); setFormTask(null) }}
         />
@@ -772,7 +821,7 @@ function handleFormSave(payload: TaskPayload) {
       {importOpen && currentProjectId && (
         <OutlineImportModal
           defaultProjectId={currentProjectId}
-          projects={projects}
+          projects={resolvedTaskProjects}
           onCreated={(newTasks) => {
             setTasks((prev) => [...prev, ...newTasks])
             setImportOpen(false)
@@ -813,17 +862,21 @@ function handleFormSave(payload: TaskPayload) {
         <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
           <button
             type="button"
-            onClick={() => setViewMode('execution')}
-            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'execution' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            onClick={() => {
+              setViewMode('plan')
+              setSelectedTask(null)
+              setSelectedSubTask(null)
+            }}
+            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'plan' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
           >
-            执行视图
+            表格视图
           </button>
           <button
             type="button"
-            onClick={() => setViewMode('plan')}
-            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'plan' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            onClick={() => setViewMode('execution')}
+            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'execution' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
           >
-            计划表视图
+            执行详情
           </button>
         </div>
 
@@ -844,6 +897,21 @@ function handleFormSave(payload: TaskPayload) {
             </select>
           </div>
           <div className="flex items-center gap-1.5">
+            <span className="text-xs text-slate-500 font-medium">状态</span>
+            <select
+              value={filterStatus}
+              onChange={(event) => setFilterStatus(event.target.value)}
+              className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none"
+            >
+              <option value="">全部状态</option>
+              <option value="未开始">未开始</option>
+              <option value="进行中">进行中</option>
+              <option value="已完成">已完成</option>
+              <option value="延期">延期</option>
+              <option value="暂缓">暂缓</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-1.5">
             <span className="text-xs text-slate-500 font-medium">专项负责人</span>
             <select
               value={filterOwner}
@@ -856,7 +924,12 @@ function handleFormSave(payload: TaskPayload) {
           </div>
           <div className="relative">
             <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" style={{ width: 13, height: 13 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索重点工作…" className="pl-8 pr-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none w-40" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={viewMode === 'plan' ? '搜索重点工作、关键任务、责任人' : '搜索重点工作…'}
+              className="pl-8 pr-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none w-64"
+            />
           </div>
         </div>
 
@@ -953,14 +1026,12 @@ function handleFormSave(payload: TaskPayload) {
       )}
 
       {/* Main */}
-      <div className="flex-1 flex overflow-hidden" style={{ background: '#F1F5F9' }}>
+      <div className="flex-1 min-w-0 min-h-0 flex overflow-hidden" style={{ background: viewMode === 'plan' ? '#F8FAFC' : '#F1F5F9' }}>
         <div
-          className="flex-1 overflow-y-auto"
-          style={{
-            background: '#F1F5F9',
-            padding: '16px 20px 20px',
-            paddingRight: 20,
-          }}
+          className={viewMode === 'plan' ? 'work-progress-plan-shell flex-1' : 'flex-1 overflow-y-auto'}
+          style={viewMode === 'plan'
+            ? { background: '#F8FAFC' }
+            : { background: '#F1F5F9', padding: '16px 20px 20px', paddingRight: 20 }}
         >
           {hasNoTaskProjects ? (
             <div className="h-40 flex items-center justify-center">
@@ -979,9 +1050,13 @@ function handleFormSave(payload: TaskPayload) {
           ) : viewMode === 'plan' ? (
             <PlanTableView
               project={focusedProject}
-              tasks={filtered}
+              tasks={planBaseTasks}
               taskSubMap={taskSubMap}
+              searchText={search}
               loading={planTableLoading}
+              exportDisabled={!planTableReady}
+              onExport={handlePlanExport}
+              onOpenSubTask={openSubDetail}
             />
           ) : loading ? (
             <div className="h-40 flex items-center justify-center text-slate-400 text-sm">加载中...</div>
@@ -1007,9 +1082,9 @@ function handleFormSave(payload: TaskPayload) {
               </div>
 
               {groupedRows.map(({ key, tasks: groupTasks }) => {
-                const resolvedGroupName = groupProjectName(projects, key, groupTasks)
+                const resolvedGroupName = groupProjectName(resolvedTaskProjects, key, groupTasks)
                 const groupProject = key.startsWith('project:')
-                  ? projects.find((p) => p.id === Number(key.slice('project:'.length))) ?? null
+                  ? resolvedTaskProjects.find((p) => p.id === Number(key.slice('project:'.length))) ?? null
                   : focusedProject
                 const groupColor = projectColor(projectOptions, resolvedGroupName)
                 const groupDone = count(groupTasks, COMPLETED)
@@ -1054,7 +1129,7 @@ function handleFormSave(payload: TaskPayload) {
 
                     {/* 重点工作行 */}
                     {!collapsed && groupTasks.map((task, i) => {
-                      const taskProject = projectForTask(projects, task)
+                      const taskProject = projectForTask(resolvedTaskProjects, task)
                       const badge = getBadge(task.status)
                       const taskExpanded = expandedTasks.has(task.id)
                       const inlineSubs = showDeleted ? [] : (taskSubMap[task.id] ?? null)
@@ -1181,7 +1256,7 @@ function handleFormSave(payload: TaskPayload) {
           )}
         </div>
 
-        {viewMode === 'execution' && <aside
+        {(viewMode === 'execution' || selectedSubTask || subDetailLoading) && <aside
           data-testid="work-progress-detail-panel"
           className="w-[380px] flex-shrink-0 border-l bg-white flex flex-col overflow-hidden"
           style={{ borderColor: '#E2E8F0' }}
@@ -1190,20 +1265,20 @@ function handleFormSave(payload: TaskPayload) {
             const projectDetail = selectedProjectKey
               ? (
                   selectedProjectKey.startsWith('project:')
-                    ? projects.find((project) => project.id === Number(selectedProjectKey.slice('project:'.length))) ?? null
-                    : projects.find((project) => project.name === selectedProjectKey) ?? null
+                    ? resolvedTaskProjects.find((project) => project.id === Number(selectedProjectKey.slice('project:'.length))) ?? null
+                    : resolvedTaskProjects.find((project) => project.name === selectedProjectKey) ?? null
                 )
               : null
-            const selectedTaskProject = projectForTask(projects, selectedTask)
+            const selectedTaskProject = projectForTask(resolvedTaskProjects, selectedTask)
             const selectedTaskArchived = isProjectArchived(selectedTaskProject)
-            const selectedSubProject = projectForSubTask(projects, tasks, selectedSubTask)
+            const selectedSubProject = projectForSubTask(resolvedTaskProjects, tasks, selectedSubTask)
             const subParent = selectedSubTask
               ? tasks.find((task) => task.id === selectedSubTask.task_id) ?? null
               : null
 
             if (selectedSubTask || subDetailLoading) {
               const badge = getBadge(selectedSubTask?.status)
-              const subCanEdit = selectedSubTask && canEditSubTaskStatus({
+              const subCanEdit = selectedSubTask && !isProjectArchived(selectedSubProject) && canEditSubTaskStatus({
                 isTechAdmin: currentUser?.is_tech_admin,
                 projectRoles: selectedSubProject?.user_roles ?? [],
                 currentUserName: currentUser?.name,
@@ -1396,7 +1471,7 @@ function handleFormSave(payload: TaskPayload) {
                     {/* 基本信息 */}
                     <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#E9EFF6' }}>
                       {([
-                        { label: '所属项目', value: selectedTaskProject?.name ?? getProjectDisplayName(projects, selectedTask) },
+                        { label: '所属项目', value: selectedTaskProject?.name ?? getProjectDisplayName(resolvedTaskProjects, selectedTask) },
                         { label: '项目负责人', value: projectPeopleText(selectedTaskProject?.owners ?? selectedTask.owner) },
                         { label: '统筹人', value: projectPeopleText(selectedTaskProject?.coordinator ?? selectedTask.coordinator) },
                         { label: '协助人', value: projectPeopleText(selectedTask.collaborators) },
@@ -1492,7 +1567,7 @@ function handleFormSave(payload: TaskPayload) {
                   </div>
 
                   {/* 进展提交表单（progressOpen 控制） */}
-                  {progressOpen && (
+                  {progressOpen && !selectedTaskArchived && (
                     <div className="border-t px-4 py-3 space-y-3 flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
                       <p className="text-xs font-bold text-slate-500">更新工作进展</p>
                       <textarea
@@ -1530,17 +1605,19 @@ function handleFormSave(payload: TaskPayload) {
                   )}
 
                   {/* 操作栏 */}
-                  <div className="border-t px-4 py-3 flex gap-2 flex-wrap flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-                    <button onClick={() => { setFormTask(selectedTask); setFormOpen(true) }} disabled={selectedTaskArchived} title={selectedTaskArchived ? '项目已归档，不可写入。' : undefined} className="px-3 py-1.5 rounded-lg text-white text-xs font-bold disabled:opacity-50" style={{ background: '#0284C7' }}>编辑</button>
-                    <button onClick={() => setProgressOpen(true)} disabled={selectedTaskArchived} title={selectedTaskArchived ? '项目已归档，不可写入。' : undefined} className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 text-xs font-semibold disabled:opacity-50">更新进展</button>
-                    {canAssignSelectedTask && <button onClick={() => openSubTaskAssignment(selectedTask)} className="px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 text-xs font-semibold disabled:opacity-50">新增关键任务</button>}
-                    {canOwn && !selectedTaskActive && (
-                      <span className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-1.5">
-                        项目尚未进入执行阶段，暂不能维护执行期关键任务。
-                      </span>
-                    )}
-                    {canTrashTask && <button onClick={() => handleDelete(selectedTask)} disabled={selectedTaskArchived} title={selectedTaskArchived ? '项目已归档，不可写入。' : undefined} className="px-3 py-1.5 rounded-lg border border-red-200 text-red-500 text-xs font-semibold disabled:opacity-50">删除</button>}
-                  </div>
+                  {!selectedTaskArchived && (
+                    <div className="border-t px-4 py-3 flex gap-2 flex-wrap flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
+                      <button onClick={() => { setFormTask(selectedTask); setFormOpen(true) }} className="px-3 py-1.5 rounded-lg text-white text-xs font-bold" style={{ background: '#0284C7' }}>编辑</button>
+                      <button onClick={() => setProgressOpen(true)} className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 text-xs font-semibold">更新进展</button>
+                      {canAssignSelectedTask && <button onClick={() => openSubTaskAssignment(selectedTask)} className="px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 text-xs font-semibold disabled:opacity-50">新增关键任务</button>}
+                      {canOwn && !selectedTaskActive && (
+                        <span className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-1.5">
+                          项目尚未进入执行阶段，暂不能维护执行期关键任务。
+                        </span>
+                      )}
+                      {canTrashTask && <button onClick={() => handleDelete(selectedTask)} className="px-3 py-1.5 rounded-lg border border-red-200 text-red-500 text-xs font-semibold">删除</button>}
+                    </div>
+                  )}
                 </div>
               )
             }

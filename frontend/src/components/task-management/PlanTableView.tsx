@@ -1,166 +1,194 @@
+import { useMemo, useRef, useState } from 'react'
+import type { CSSProperties, KeyboardEvent } from 'react'
 import type { Project, SubTaskItem, TaskItem } from '../../types'
+import { PlanTableStatusBar } from './PlanTableStatusBar'
+import { PlanTableToolbar } from './PlanTableToolbar'
+import {
+  buildPlanRows,
+  EMPTY_PLAN_CELL,
+  PLAN_TABLE_BUSINESS_HEADERS,
+  PLAN_TABLE_COLUMN_WIDTHS,
+  PLAN_TABLE_ROW_NUMBER_WIDTH,
+  type PlanTableRow,
+} from './planTableViewModel'
+import { usePlanTableZoom } from './usePlanTableZoom'
+import './planTableExcel.css'
 
 type Props = {
   project: Project | null
   tasks: TaskItem[]
   taskSubMap: Record<number, SubTaskItem[]>
+  searchText?: string
   loading?: boolean
+  exportDisabled?: boolean
+  onExport?: () => void
+  onOpenSubTask?: (subtask: SubTaskItem) => void
 }
 
-type ParsedPlanTime = {
-  start: string
-  end: string
-}
-
-type PlanRow = {
-  task: TaskItem
-  subtask: SubTaskItem | null
-  taskRowSpan: number
-  showTaskCells: boolean
-}
-
-const EMPTY_TEXT = '—'
-const PLACEHOLDER_TEXTS = new Set(['未填写项目目标', '未填写评价标准', '暂无关键任务', EMPTY_TEXT])
-const TABLE_HEADERS = [
-  { label: '目标', width: 'w-[170px]' },
-  { label: '重点工作', width: 'w-[210px]' },
-  { label: '评价标准', width: 'w-[250px]' },
-  { label: '序号', width: 'w-[56px]' },
-  { label: '关键任务', width: 'w-[300px]' },
-  { label: '责任人', width: 'w-[110px]' },
-  { label: '计划开始时间', width: 'w-[120px]' },
-  { label: '计划结束时间', width: 'w-[120px]' },
-]
-
-export function parsePlanTimeRange(value?: string | null): ParsedPlanTime {
-  const raw = String(value ?? '').trim()
-  if (!raw) return { start: EMPTY_TEXT, end: EMPTY_TEXT }
-  if (raw === '持续') return { start: '持续', end: EMPTY_TEXT }
-
-  const fullDateRange = raw.match(/(\d{4}-\d{1,2}-\d{1,2})\s*(?:~|至|-)\s*(\d{4}-\d{1,2}-\d{1,2})/)
-  if (fullDateRange) return { start: fullDateRange[1], end: fullDateRange[2] }
-
-  const monthDayRange = raw.match(/(\d{1,2}月\d{1,2}日)\s*(?:~|至|-)\s*(\d{1,2}月\d{1,2}日)/)
-  if (monthDayRange) return { start: monthDayRange[1], end: monthDayRange[2] }
-
-  return { start: raw, end: EMPTY_TEXT }
-}
-
-function textOrFallback(value: string | undefined | null, fallback: string): string {
-  const text = String(value ?? '').trim()
-  return text || fallback
-}
-
-function renderPlanTableText(value: string) {
-  if (PLACEHOLDER_TEXTS.has(value)) {
-    return <span className="plan-table-placeholder text-[11px] text-slate-400">{value}</span>
+function displayText(value: string) {
+  if ([EMPTY_PLAN_CELL, '未填写项目目标', '未填写评价标准', '暂无关键任务'].includes(value)) {
+    return <span className="plan-table-placeholder">{value}</span>
   }
   return value
 }
 
-function buildPlanRows(tasks: TaskItem[], taskSubMap: Record<number, SubTaskItem[]>): PlanRow[] {
-  const rows: PlanRow[] = []
-  tasks.forEach((task) => {
-    const subtasks = taskSubMap[task.id] ?? []
-    if (subtasks.length === 0) {
-      rows.push({ task, subtask: null, taskRowSpan: 1, showTaskCells: true })
-      return
-    }
-    subtasks.forEach((subtask, index) => rows.push({
-      task,
-      subtask,
-      taskRowSpan: subtasks.length,
-      showTaskCells: index === 0,
-    }))
-  })
-  return rows
+function headerClass(index: number): string {
+  if (index === 0) return 'plan-table-column-header plan-table-sticky-objective'
+  if (index === 1) return 'plan-table-column-header plan-table-sticky-task'
+  return 'plan-table-column-header'
 }
 
-export function PlanTableView({ project, tasks, taskSubMap, loading = false }: Props) {
-  const rows = buildPlanRows(tasks, taskSubMap)
-  const objective = project
-    ? textOrFallback(project.objectives || project.description, '未填写项目目标')
-    : '未填写项目目标'
+export function PlanTableView({
+  project,
+  tasks,
+  taskSubMap,
+  searchText = '',
+  loading = false,
+  exportDisabled = false,
+  onExport,
+  onOpenSubTask,
+}: Props) {
+  const workspaceRef = useRef<HTMLDivElement>(null)
+  const [selectedSubTaskId, setSelectedSubTaskId] = useState<number | null>(null)
+  const rows = useMemo(
+    () => buildPlanRows({ project, tasks, taskSubMap, searchText }),
+    [project, searchText, taskSubMap, tasks],
+  )
+  const {
+    zoomPercent,
+    setZoomPercent,
+    zoomIn,
+    zoomOut,
+    fitWidth,
+    resetView,
+  } = usePlanTableZoom(workspaceRef)
+
+  const handleResetView = () => {
+    setSelectedSubTaskId(null)
+    resetView()
+  }
+
+  const openKeyTask = (row: PlanTableRow) => {
+    if (!row.subtask) return
+    setSelectedSubTaskId(row.subtask.id)
+    onOpenSubTask?.(row.subtask)
+  }
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLTableCellElement>, row: PlanTableRow) => {
+    if (!row.subtask || (event.key !== 'Enter' && event.key !== ' ')) return
+    event.preventDefault()
+    openKeyTask(row)
+  }
+
+  const keyTaskCount = rows.filter((row) => row.subtask !== null).length
+  const emptyTaskCount = rows.filter((row) => row.subtask === null).length
   const tableTitle = project?.name?.trim()
     ? `${project.name.trim()}目标与重点工作计划表`
     : '目标与重点工作计划表'
-
-  if (tasks.length === 0) {
-    return (
-      <div className="flex h-56 items-center justify-center border border-slate-300 bg-white">
-        <div className="text-center">
-          <div className="text-sm font-semibold text-slate-500">暂无工作推进表数据</div>
-          <div className="mt-1 text-xs text-slate-400">可先在项目立项阶段填写工作推进表雏形，或在执行视图中新建重点工作。</div>
-        </div>
-      </div>
-    )
-  }
+  const canvasStyle = {
+    '--plan-table-zoom': zoomPercent / 100,
+  } as CSSProperties
 
   return (
-    <div>
-      {loading && <div className="mb-1 px-1 text-right text-xs font-semibold text-amber-600">关键任务加载中…</div>}
+    <section className="plan-table-excel-view" aria-label="Excel 式工作推进表">
+      <PlanTableToolbar
+        zoomPercent={zoomPercent}
+        onZoomOut={zoomOut}
+        onZoomIn={zoomIn}
+        onFitWidth={fitWidth}
+        onResetView={handleResetView}
+        onExport={() => onExport?.()}
+        exportDisabled={exportDisabled || loading}
+        exportLabel={loading || exportDisabled ? '关键任务加载中…' : '导出 Excel'}
+      />
 
-      <div className="overflow-x-auto border border-slate-300 bg-white">
-        <table className="plan-table-excel min-w-[1336px] w-full border-collapse text-[11px] leading-tight">
-          <thead className="bg-slate-100">
-            <tr className="plan-table-title-row">
-              <th colSpan={TABLE_HEADERS.length} className="border border-slate-300 bg-white px-2 py-2 text-center text-base font-bold tracking-wide text-slate-900">
-                {tableTitle}
-              </th>
-            </tr>
-            <tr>
-              {TABLE_HEADERS.map((header) => (
-                <th key={header.label} className={`plan-table-cell h-7 border border-slate-300 px-2 py-1 text-left font-semibold text-slate-700 ${header.width}`}>
-                  {header.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => {
-              const { task, subtask } = row
-              const planSource = subtask ? subtask.plan_time || task.plan_time : task.plan_time
-              const planTime = parsePlanTimeRange(planSource)
-              const standard = textOrFallback(task.completion_standard || task.key_achievement, '未填写评价标准')
-              const owner = textOrFallback(subtask ? subtask.assignee || task.owner : task.owner, EMPTY_TEXT)
-              return (
-                <tr key={`${task.id}-${subtask?.id ?? 'empty'}-${index}`} className="h-7 align-top hover:bg-slate-50/70">
-                  {index === 0 && (
-                    <td rowSpan={rows.length} className="plan-table-cell w-[170px] whitespace-pre-wrap border border-slate-300 bg-slate-50 px-2 py-1 leading-snug text-slate-700">
-                      {renderPlanTableText(objective)}
-                    </td>
-                  )}
-                  {row.showTaskCells && (
-                    <>
-                      <td rowSpan={row.taskRowSpan} className="plan-table-cell w-[210px] whitespace-pre-wrap border border-slate-300 px-2 py-1 font-semibold leading-snug text-slate-800">
-                        {renderPlanTableText(textOrFallback(task.key_task, EMPTY_TEXT))}
-                      </td>
-                      <td rowSpan={row.taskRowSpan} className="plan-table-cell w-[250px] whitespace-pre-wrap border border-slate-300 px-2 py-1 leading-snug text-slate-600">
-                        {renderPlanTableText(standard)}
-                      </td>
-                    </>
-                  )}
-                  <td className="plan-table-cell w-[56px] border border-slate-300 px-2 py-1 text-center font-semibold text-slate-500">
-                    {index + 1}
-                  </td>
-                  <td className="plan-table-cell w-[300px] border border-slate-300 px-2 py-1 text-left text-slate-700">
-                    {renderPlanTableText(subtask ? subtask.title || '暂无关键任务' : '暂无关键任务')}
-                  </td>
-                  <td className="plan-table-cell w-[110px] border border-slate-300 px-2 py-1 text-slate-600">
-                    {renderPlanTableText(owner)}
-                  </td>
-                  <td className="plan-table-cell w-[120px] border border-slate-300 px-2 py-1 text-slate-500">
-                    {renderPlanTableText(planTime.start)}
-                  </td>
-                  <td className="plan-table-cell w-[120px] border border-slate-300 px-2 py-1 text-slate-500">
-                    {renderPlanTableText(planTime.end)}
-                  </td>
+      <div className="plan-table-sheet-title">{tableTitle}</div>
+
+      <div ref={workspaceRef} className="plan-table-workspace" data-testid="plan-table-workspace">
+        <div className="plan-table-canvas" style={canvasStyle} data-zoom-percent={zoomPercent}>
+          <table className="plan-table-excel-grid">
+            <colgroup>
+              <col style={{ width: PLAN_TABLE_ROW_NUMBER_WIDTH }} />
+              {PLAN_TABLE_COLUMN_WIDTHS.map((width, index) => <col key={`${PLAN_TABLE_BUSINESS_HEADERS[index]}-${width}`} style={{ width }} />)}
+            </colgroup>
+            <thead>
+              <tr>
+                <th className="plan-table-column-header plan-table-sticky-row-number" aria-label="行号">#</th>
+                {PLAN_TABLE_BUSINESS_HEADERS.map((header, index) => (
+                  <th key={header} className={headerClass(index)}>{header}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr className="plan-table-empty-row">
+                  <td colSpan={PLAN_TABLE_BUSINESS_HEADERS.length + 1}>当前筛选条件下没有匹配的关键任务</td>
                 </tr>
-              )
-            })}
-          </tbody>
-        </table>
+              ) : rows.map((row) => {
+                const selected = row.subtask?.id === selectedSubTaskId
+                return (
+                  <tr key={`${row.task.id}-${row.subtask?.id ?? 'empty'}-${row.sequence}`}>
+                    <td className="plan-table-row-number-cell plan-table-sticky-row-number">{row.sequence}</td>
+                    {row.showObjective && (
+                      <td rowSpan={row.objectiveRowSpan} className="plan-table-sticky-objective">
+                        {displayText(row.objective)}
+                      </td>
+                    )}
+                    {row.showTaskCells && (
+                      <>
+                        <td rowSpan={row.taskRowSpan} className="plan-table-task-name plan-table-sticky-task">
+                          {displayText(row.task.key_task || EMPTY_PLAN_CELL)}
+                        </td>
+                        <td rowSpan={row.taskRowSpan}>
+                          {displayText(row.task.completion_standard || row.task.key_achievement || '未填写评价标准')}
+                        </td>
+                      </>
+                    )}
+                    <td className="plan-table-row-number-cell">{row.sequence}</td>
+                    <td
+                      className={`plan-table-key-task-cell${selected ? ' plan-table-key-task-cell--selected' : ''}`}
+                      role={row.subtask ? 'button' : undefined}
+                      tabIndex={row.subtask ? 0 : undefined}
+                      onClick={() => openKeyTask(row)}
+                      onKeyDown={(event) => handleKeyDown(event, row)}
+                    >
+                      {displayText(row.keyTask)}
+                    </td>
+                    <td>{displayText(row.responsible)}</td>
+                    <td>{displayText(row.planStart)}</td>
+                    <td>{displayText(row.planEnd)}</td>
+                    <td>{displayText(row.assistingPerson)}</td>
+                    <td>
+                      <div className="plan-table-completion">
+                        <span className={`plan-table-status plan-table-status--${row.statusTone}`}>{row.status}</span>
+                        {row.completionNote && <span className="plan-table-completion__note">{row.completionNote}</span>}
+                      </div>
+                    </td>
+                    <td>{displayText(row.remarks)}</td>
+                    {row.showTaskCells && (
+                      <>
+                        <td rowSpan={row.taskRowSpan}>{displayText(row.projectManager)}</td>
+                        <td rowSpan={row.taskRowSpan}>{displayText(row.taskPlanStart)}</td>
+                        <td rowSpan={row.taskRowSpan}>{displayText(row.taskPlanEnd)}</td>
+                      </>
+                    )}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
+
+      <PlanTableStatusBar
+        keyTaskCount={keyTaskCount}
+        emptyTaskCount={emptyTaskCount}
+        zoomPercent={zoomPercent}
+        onZoomChange={setZoomPercent}
+        onZoomOut={zoomOut}
+        onZoomIn={zoomIn}
+        onResetView={handleResetView}
+      />
+    </section>
   )
 }

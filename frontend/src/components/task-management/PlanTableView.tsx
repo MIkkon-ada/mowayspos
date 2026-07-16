@@ -102,6 +102,8 @@ export function PlanTableView({
         exportLabel={loading || exportDisabled ? '关键任务加载中…' : '导出 Excel'}
       />
 
+      <div className="plan-table-sheet-title">{tableTitle}</div>
+
       <div ref={workspaceRef} className="plan-table-workspace" data-testid="plan-table-workspace">
         <div className="plan-table-canvas" style={canvasStyle} data-zoom-percent={zoomPercent}>
           <table className="plan-table-excel-grid">
@@ -110,11 +112,6 @@ export function PlanTableView({
               {PLAN_TABLE_COLUMN_WIDTHS.map((width, index) => <col key={`${PLAN_TABLE_BUSINESS_HEADERS[index]}-${width}`} style={{ width }} />)}
             </colgroup>
             <thead>
-              <tr>
-                <th colSpan={PLAN_TABLE_BUSINESS_HEADERS.length + 1} className="plan-table-title-cell">
-                  {tableTitle}
-                </th>
-              </tr>
               <tr>
                 <th className="plan-table-column-header plan-table-sticky-row-number" aria-label="行号">#</th>
                 {PLAN_TABLE_BUSINESS_HEADERS.map((header, index) => (

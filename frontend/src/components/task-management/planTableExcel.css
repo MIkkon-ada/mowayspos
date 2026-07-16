@@ -75,6 +75,22 @@
 }
 .plan-table-toolbar .plan-table-toolbar__export:hover { background: #15803d; }
 
+.plan-table-sheet-title {
+  display: flex;
+  flex: 0 0 44px;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 44px;
+  padding: 0 16px;
+  border-bottom: 1px solid #d8dee8;
+  background: #fff;
+  color: #0f172a;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 750;
+}
+
 .plan-table-workspace {
   position: relative;
   flex: 1 1 auto;
@@ -119,22 +135,10 @@
 }
 
 .plan-table-excel-grid tr > :first-child { border-left: 1px solid #cbd5e1; }
-.plan-table-title-cell {
-  position: sticky;
-  top: 0;
-  z-index: 30;
-  height: 46px;
-  border-top: 1px solid #cbd5e1;
-  background: #fff !important;
-  color: #0f172a;
-  text-align: center;
-  font-size: 16px;
-  font-weight: 750;
-}
 
 .plan-table-column-header {
   position: sticky;
-  top: 46px;
+  top: 0;
   z-index: 20;
   height: 36px;
   background: #f3f6fa !important;

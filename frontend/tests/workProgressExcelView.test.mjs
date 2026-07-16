@@ -246,3 +246,42 @@ test('archived plan rendering remains read-only and other global layouts stay ou
   assert.equal(exists('src/components/Sidebar.tsx'), true)
   assert.equal(exists('src/layouts/ProjectLayout.tsx'), true)
 })
+
+test('sheet title stays outside the zoom canvas and horizontal workspace', () => {
+  const view = read(VIEW_FILE)
+  const css = read(CSS_FILE)
+  const titleIndex = view.indexOf('className="plan-table-sheet-title"')
+  const workspaceIndex = view.indexOf('className="plan-table-workspace"')
+  const canvasIndex = view.indexOf('className="plan-table-canvas"')
+
+  assert.ok(titleIndex > -1, 'independent sheet title must be rendered')
+  assert.ok(titleIndex < workspaceIndex, 'sheet title must precede the scrolling workspace')
+  assert.ok(workspaceIndex < canvasIndex, 'zoom canvas must remain inside the workspace')
+  assert.doesNotMatch(view, /plan-table-title-cell/)
+  assert.doesNotMatch(css, /\.plan-table-title-cell/)
+  assert.match(css, /\.plan-table-sheet-title\s*{[^}]*height:\s*4[2-6]px/s)
+  assert.match(css, /\.plan-table-column-header\s*{[^}]*top:\s*0/s)
+  assert.equal((view.match(/\{tableTitle\}/g) ?? []).length, 1)
+})
+
+test('page resolves an archived project detail without falling back to another project', () => {
+  const page = read(PAGE_FILE)
+
+  assert.match(page, /import\s*{[^}]*\bgetProject\b[^}]*}\s*from\s*'\.\.\/api\/projects'/s)
+  assert.match(page, /resolvedProjectDetail,\s*setResolvedProjectDetail/)
+  assert.match(page, /getProject\(effectiveTaskProjectId\)/)
+  assert.match(page, /resolvedTaskProjects/)
+  assert.match(page, /availableTaskProjects\s*=\s*useMemo\([\s\S]*resolvedTaskProjects/)
+  assert.match(page, /resolvedProjectDetail\?\.id\s*===\s*effectiveTaskProjectId/)
+  assert.match(page, /focusedProject\s*=\s*projectFromContext\s*\?\?\s*resolvedProjectForContext\s*\?\?\s*null/)
+  assert.doesNotMatch(page, /focusedProject\s*=.*projects\[0\]/)
+  assert.match(page, /projectForTask\(resolvedTaskProjects,/)
+  assert.match(page, /isProjectArchived\(focusedProject\)/)
+})
+
+test('archived project details suppress task and subtask write controls', () => {
+  const page = read(PAGE_FILE)
+
+  assert.match(page, /subCanEdit\s*=\s*selectedSubTask\s*&&\s*!isProjectArchived\(selectedSubProject\)/)
+  assert.match(page, /!selectedTaskArchived\s*&&\s*\(\s*<div className="border-t px-4 py-3 flex gap-2/s)
+})

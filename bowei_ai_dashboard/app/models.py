@@ -186,6 +186,25 @@ class Project(Base, TimestampMixin):
     is_active = Column(Boolean, default=False)
 
 
+class ProjectCloseRequest(Base, TimestampMixin):
+    __tablename__ = "project_close_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    requester_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    summary = Column(Text, nullable=False)
+    objective_result = Column(Text, nullable=False)
+    unfinished_items_json = Column(Text, nullable=False, default="[]")
+    remaining_risks_json = Column(Text, nullable=False, default="[]")
+    handover_plan = Column(Text, nullable=False)
+    retrospective = Column(Text, nullable=False)
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    reviewer_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    review_comment = Column(Text, default="")
+    reviewed_at = Column(DateTime, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+
+
 class Person(Base, TimestampMixin):
     __tablename__ = "people"
 

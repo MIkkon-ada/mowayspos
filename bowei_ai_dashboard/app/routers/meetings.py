@@ -26,7 +26,7 @@ from ..permissions import (
     require_project_role,
 )
 from ..services.project_resolution import resolve_project_context
-from ..archived_guard import require_project_not_archived
+from ..services.project_close import require_project_business_writable
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
 
@@ -130,7 +130,7 @@ def create_meeting(
         ],
         db,
     )
-    require_project_not_archived(payload.project_id, db)
+    require_project_business_writable(payload.project_id, db)
 
     project_name = resolve_project_context(
         db,
@@ -252,7 +252,7 @@ def update_meeting(
             db,
         )
 
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
     before = crud.to_dict(row)
     update_data = {
         k: v
@@ -291,7 +291,7 @@ def patch_meeting_status(
             db,
         )
 
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
     allowed = {"draft", "published", "returned"}
     if payload.publish_status not in allowed:
         raise HTTPException(422, f"publish_status must be one of {allowed}")
@@ -361,7 +361,7 @@ def delete_meeting(
     if project_id is not None:
         require_project_role(current_user, project_id, [PROJECT_ROLE_OWNER_KEY], db)
 
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
     before = crud.to_dict(row)
     crud.log(db, current_user, "meeting_delete", "meeting", row_id, before, {})
     db.delete(row)

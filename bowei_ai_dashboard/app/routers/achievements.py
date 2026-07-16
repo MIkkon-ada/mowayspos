@@ -13,7 +13,7 @@ from ..permissions import (
 )
 from ..services.notify import person_id_for_name as _pid_for_name
 from ..services.project_resolution import resolve_project_context
-from ..archived_guard import require_project_not_archived
+from ..services.project_close import require_project_business_writable
 
 router = APIRouter(prefix="/api/achievements", tags=["achievements"])
 
@@ -97,7 +97,7 @@ def create_achievement(
         raise HTTPException(422, "project_id is required")
 
     require_project_owner_or_admin(current_user, project_id, db)
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
 
     crud.validate_subtask_link(db, project_id, payload.related_task_id, payload.related_subtask_id)
 
@@ -159,7 +159,7 @@ def update_achievement(
     else:
         require_project_owner_or_admin(current_user, project_id, db)
 
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
 
     crud.validate_subtask_link(db, project_id, payload.related_task_id if payload.related_task_id is not None else row.related_task_id, payload.related_subtask_id)
 
@@ -204,7 +204,7 @@ def delete_achievement(
     else:
         require_project_owner_or_admin(current_user, project_id, db)
 
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
     before = crud.to_dict(row)
     crud.log(db, current_user, "achievement_delete", "achievement", row_id, before, {})
     db.delete(row)

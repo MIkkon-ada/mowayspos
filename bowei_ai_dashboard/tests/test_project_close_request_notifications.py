@@ -70,10 +70,21 @@ def _assert_log(row: models.OperationLog, action: str, request_id: int):
 def test_create_update_cancel_emit_exact_coach_notifications_and_logs():
     db = _seed()
     request = create_project_close_request(1, _payload(), current_user="owner", db=db)
+    unfinished_item = {
+        "description": "Remaining handover",
+        "reason": "External dependency",
+        "owner": "Owner",
+        "handover_to": "Member",
+        "follow_up_plan": "Complete next week",
+        "expected_resolution": "2026-08-01",
+    }
     update_project_close_request(
         1,
         request["id"],
-        schemas.ProjectCloseRequestUpdatePayload(summary="Updated"),
+        schemas.ProjectCloseRequestUpdatePayload(
+            summary="Updated",
+            unfinished_items=[unfinished_item],
+        ),
         current_user="owner",
         db=db,
     )
@@ -104,6 +115,18 @@ def test_create_update_cancel_emit_exact_coach_notifications_and_logs():
         "project_close_request_cancel",
     ]):
         _assert_log(row, action, request["id"])
+
+    update_log = next(row for row in logs if row.action == "project_close_request_update")
+    before = json.loads(update_log.before_json)
+    after = json.loads(update_log.after_json)
+    assert before["summary"] == "Done"
+    assert after["summary"] == "Updated"
+    assert before["unfinished_items"] == []
+    assert after["unfinished_items"] == [unfinished_item]
+    assert before["materials_valid"] is True
+    assert after["materials_valid"] is True
+    assert before["request_status"] == after["request_status"] == "pending"
+    assert before["project_status"] == after["project_status"] == "pending_close"
 
 
 def test_approve_notifies_all_unique_members_except_operator_and_logs_transition():

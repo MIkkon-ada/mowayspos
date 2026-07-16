@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import sessionmaker
 
 from app import models, schemas
@@ -10,6 +11,7 @@ from app.database import Base
 from app.domain import submission_status as SS
 from app.domain import issue_flow as IF
 from app.domain import task_status as TS
+from app.routers import projects as projects_router
 from app.routers.projects import (
     approve_project_close_request,
     cancel_project_close_request,
@@ -56,6 +58,117 @@ def _payload(summary: str = "Complete") -> schemas.ProjectCloseRequestCreatePayl
         handover_plan="Handover complete",
         retrospective="Retrospective complete",
     )
+
+
+def _file_sessions(tmp_path):
+    engine = create_engine(
+        f"sqlite:///{(tmp_path / 'close-flow.db').as_posix()}",
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(engine)
+    seed = sessionmaker(bind=engine)()
+    seed.add_all(
+        [
+            models.Person(id=1, name="Owner", system_role="normal_member", is_active=True),
+            models.Person(id=2, name="Coach", system_role="normal_member", is_active=True),
+            models.Account(username="owner", password_hash="x", person_id=1, status="active"),
+            models.Account(username="coach", password_hash="x", person_id=2, status="active"),
+            models.Project(id=1, name="Project A", status="active", is_active=True),
+            models.ProjectMember(
+                project_id=1,
+                person_id=1,
+                person_name_snapshot="Owner",
+                role="owner",
+            ),
+            models.ProjectMember(
+                project_id=1,
+                person_id=2,
+                person_name_snapshot="Coach",
+                role="project_ceo",
+            ),
+        ]
+    )
+    seed.commit()
+    seed.close()
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    return engine, factory(), factory()
+
+
+def test_project_close_lock_statements_compile_to_postgresql_for_update():
+    project_sql = str(
+        projects_router._project_close_project_lock_statement(7).compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+    request_sql = str(
+        projects_router._project_close_request_lock_statement(7, 11).compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+
+    assert "FOR UPDATE" in project_sql
+    assert "projects.id = 7" in project_sql
+    assert "FOR UPDATE" in request_sql
+    assert "project_close_requests.id = 11" in request_sql
+    assert "project_close_requests.project_id = 7" in request_sql
+
+
+def test_stale_session_cannot_overwrite_approved_close_request(tmp_path):
+    engine, session_a, session_b = _file_sessions(tmp_path)
+    request = create_project_close_request(1, _payload(), current_user="owner", db=session_a)
+    request_id = request["id"]
+
+    cached_project = session_b.get(models.Project, 1)
+    cached_request = session_b.get(models.ProjectCloseRequest, request_id)
+    assert cached_project.status == "pending_close"
+    assert cached_request.status == "pending"
+    session_b.commit()
+
+    approve_project_close_request(
+        1,
+        request_id,
+        schemas.ProjectCloseReviewPayload(review_comment="Approved"),
+        current_user="coach",
+        db=session_a,
+    )
+    log_count = session_a.query(models.OperationLog).count()
+    notification_count = session_a.query(models.Notification).count()
+
+    with pytest.raises(HTTPException) as exc:
+        reject_project_close_request(
+            1,
+            request_id,
+            schemas.ProjectCloseReviewPayload(review_comment="Stale reject"),
+            current_user="coach",
+            db=session_b,
+        )
+    assert exc.value.status_code == 409
+    session_b.rollback()
+
+    verify = sessionmaker(bind=engine)()
+    assert verify.get(models.ProjectCloseRequest, request_id).status == "approved"
+    assert verify.get(models.Project, 1).status == "ended"
+    assert verify.query(models.OperationLog).count() == log_count
+    assert verify.query(models.Notification).count() == notification_count
+    assert verify.query(models.OperationLog).filter_by(action="project_close_request_reject").count() == 0
+    assert verify.query(models.Notification).filter_by(type="project_close_rejected").count() == 0
+
+
+def test_stale_active_project_cannot_create_duplicate_pending_request(tmp_path):
+    _engine, session_a, session_b = _file_sessions(tmp_path)
+    cached_project = session_b.get(models.Project, 1)
+    assert cached_project.status == "active"
+    session_b.commit()
+
+    create_project_close_request(1, _payload("First"), current_user="owner", db=session_a)
+
+    with pytest.raises(HTTPException) as exc:
+        create_project_close_request(1, _payload("Duplicate"), current_user="owner", db=session_b)
+    assert exc.value.status_code == 409
+    session_b.rollback()
+    assert session_a.query(models.ProjectCloseRequest).filter_by(status="pending").count() == 1
 
 
 def test_complete_create_edit_cancel_reject_and_approve_history_flow():

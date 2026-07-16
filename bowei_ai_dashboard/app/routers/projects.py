@@ -3,7 +3,7 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
@@ -1429,6 +1429,44 @@ def update_project(
 _CLOSE_REQUEST_STATUSES = {"pending", "approved", "rejected", "cancelled"}
 
 
+def _project_close_project_lock_statement(project_id: int):
+    return (
+        select(models.Project)
+        .where(models.Project.id == project_id)
+        .with_for_update()
+    )
+
+
+def _project_close_request_lock_statement(project_id: int, request_id: int):
+    return (
+        select(models.ProjectCloseRequest)
+        .where(
+            models.ProjectCloseRequest.id == request_id,
+            models.ProjectCloseRequest.project_id == project_id,
+        )
+        .with_for_update()
+    )
+
+
+def _lock_project_for_close(project_id: int, db: Session) -> models.Project | None:
+    statement = _project_close_project_lock_statement(project_id).execution_options(
+        populate_existing=True
+    )
+    return db.execute(statement).scalar_one_or_none()
+
+
+def _lock_close_request(
+    project_id: int,
+    request_id: int,
+    db: Session,
+) -> models.ProjectCloseRequest | None:
+    statement = _project_close_request_lock_statement(
+        project_id,
+        request_id,
+    ).execution_options(populate_existing=True)
+    return db.execute(statement).scalar_one_or_none()
+
+
 def _close_request_for_project(
     project_id: int,
     request_id: int,
@@ -1480,11 +1518,19 @@ def _require_close_request_view(current_user: str, project: models.Project, db: 
 
 
 def _close_state(request: models.ProjectCloseRequest, project: models.Project) -> dict:
+    values, materials_valid = material_values(request)
     return {
         "request_status": request.status,
         "project_status": project.status,
         "reviewer_person_id": request.reviewer_person_id,
         "review_comment": request.review_comment or "",
+        "summary": values["summary"],
+        "objective_result": values["objective_result"],
+        "unfinished_items": values["unfinished_items"],
+        "remaining_risks": values["remaining_risks"],
+        "handover_plan": values["handover_plan"],
+        "retrospective": values["retrospective"],
+        "materials_valid": materials_valid,
     }
 
 
@@ -1580,6 +1626,9 @@ def create_project_close_request(
     if not project:
         raise HTTPException(404, "project not found")
     context = _require_close_request_owner(current_user, project_id, db)
+    project = _lock_project_for_close(project_id, db)
+    if not project:
+        raise HTTPException(404, "project not found")
     if PL.normalize(project.status) != PL.S_ACTIVE:
         raise HTTPException(409, "仅进行中的项目可申请结束")
     if db.query(models.ProjectCloseRequest).filter_by(project_id=project_id, status="pending").first():
@@ -1676,10 +1725,12 @@ def update_project_close_request(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    project = db.get(models.Project, project_id)
+    project = _lock_project_for_close(project_id, db)
     if not project:
         raise HTTPException(404, "project not found")
-    request = _close_request_for_project(project_id, request_id, db)
+    request = _lock_close_request(project_id, request_id, db)
+    if not request:
+        raise HTTPException(404, "project close request not found")
     context = _require_original_close_requester(current_user, request, db)
     _ensure_pending_close_pair(project, request)
 
@@ -1730,10 +1781,12 @@ def cancel_project_close_request(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    project = db.get(models.Project, project_id)
+    project = _lock_project_for_close(project_id, db)
     if not project:
         raise HTTPException(404, "project not found")
-    request = _close_request_for_project(project_id, request_id, db)
+    request = _lock_close_request(project_id, request_id, db)
+    if not request:
+        raise HTTPException(404, "project close request not found")
     context = _require_original_close_requester(current_user, request, db)
     _ensure_pending_close_pair(project, request)
     before = _close_state(request, project)
@@ -1776,8 +1829,13 @@ def approve_project_close_request(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    request = _close_request_for_project(project_id, request_id, db)
     _require_project_coach_or_tech_admin(current_user, project_id, db)
+    project = _lock_project_for_close(project_id, db)
+    if not project:
+        raise HTTPException(404, "project not found")
+    request = _lock_close_request(project_id, request_id, db)
+    if not request:
+        raise HTTPException(404, "project close request not found")
     context = _close_context(current_user, db)
     _ensure_pending_close_pair(project, request)
     blockers, _warnings = evaluate_project_close(db, project_id, request)
@@ -1826,8 +1884,13 @@ def reject_project_close_request(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    request = _close_request_for_project(project_id, request_id, db)
     _require_project_coach_or_tech_admin(current_user, project_id, db)
+    project = _lock_project_for_close(project_id, db)
+    if not project:
+        raise HTTPException(404, "project not found")
+    request = _lock_close_request(project_id, request_id, db)
+    if not request:
+        raise HTTPException(404, "project close request not found")
     context = _close_context(current_user, db)
     _ensure_pending_close_pair(project, request)
     if not payload.review_comment:
@@ -1876,8 +1939,11 @@ def archive_project(
     if not project:
         raise HTTPException(404, "project not found")
     _require_archive_via_approval(current_user, db)
+    project = _lock_project_for_close(project_id, db)
+    if not project:
+        raise HTTPException(404, "project not found")
 
-    lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
+    lifecycle = PL.normalize(project.status)
     if lifecycle != PL.S_ENDED:
         raise HTTPException(409, "仅已结束项目可以归档")
 

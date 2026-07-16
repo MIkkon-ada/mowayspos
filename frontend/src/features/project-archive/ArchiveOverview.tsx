@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Project, ProjectCloseRequest, ProjectMember } from '../../types'
 import type { ArchiveMetric } from './projectArchiveViewModel'
-import { formatArchiveDate } from './projectArchiveViewModel'
+import { formatArchiveDate, getArchiveObjectiveStatus } from './projectArchiveViewModel'
 import { getProjectRoleLabel } from '../../domain/roleLabels'
 
 function DisplayLines({ value, empty, limit }: { value?: string | null; empty: string; limit?: number }) {
@@ -34,7 +34,12 @@ export function ArchiveOverview({
   const [expanded, setExpanded] = useState(false)
   const visibleMembers = expanded ? members : members.slice(0, 4)
   const projectGoals = project.objectives || project.expected_outcomes
-  const objectiveStatus = closeRequest?.objective_result?.includes('部分完成') ? '部分完成' : '已完成'
+  const objectiveStatus = getArchiveObjectiveStatus(closeRequest?.objective_result)
+  const objectiveStatusClass = objectiveStatus === '未记录'
+    ? 'is-unrecorded'
+    : objectiveStatus === '部分完成'
+      ? 'is-partial'
+      : 'is-complete'
 
   return (
     <>
@@ -71,7 +76,7 @@ export function ArchiveOverview({
           <article className="archive-card archive-goal-card">
             <div className="archive-card-heading archive-card-heading--compact">
               <div><span className="archive-card-kicker">OBJECTIVES</span><h3>最终目标完成情况</h3></div>
-              <span className={`archive-status-chip ${objectiveStatus === '部分完成' ? 'is-partial' : 'is-complete'}`}>{objectiveStatus}</span>
+              <span className={`archive-status-chip ${objectiveStatusClass}`}>{objectiveStatus}</span>
             </div>
             <div className="archive-goal-content">
               {projectGoals?.trim() ? (

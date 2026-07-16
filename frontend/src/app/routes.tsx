@@ -153,11 +153,7 @@ export function AppRoutes() {
           />
           <Route
             path="projects/:projectId/archive"
-            element={
-              <RequireCapability mode="project_view">
-                <ProjectArchivePage />
-              </RequireCapability>
-            }
+            element={<ProjectArchivePage />}
           />
         </Route>
         <Route

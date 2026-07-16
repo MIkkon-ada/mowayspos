@@ -109,6 +109,7 @@
 .archive-two-column--balanced { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .archive-goal-card, .archive-members-card { min-width: 0; max-width: 100%; min-height: 180px; padding: 10px 12px; }
 .archive-status-chip { padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 750; }
+.archive-status-chip.is-unrecorded { background: #f1f5f9; color: #64748b; }
 .archive-status-chip.is-complete { background: #dcfce7; color: #15803d; }
 .archive-status-chip.is-partial { background: #fef3c7; color: #b45309; }
 .archive-goal-content { padding-top: 8px; display: grid; gap: 8px; }

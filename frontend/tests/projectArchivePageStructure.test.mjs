@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import ts from 'typescript'
 
 const root = path.resolve(import.meta.dirname, '..')
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
@@ -28,10 +29,20 @@ function readArchiveSources() {
   return archiveFiles.map(read).join('\n')
 }
 
-test('archive detail route is lazy, nested under ProjectLayout and protected by project_view', () => {
+async function loadArchiveViewModel() {
+  const source = read('src/features/project-archive/projectArchiveViewModel.ts')
+  const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText
+  return import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)
+}
+
+test('archive detail route inherits RequireAuth without the global project_view capability gate', () => {
   const source = read('src/app/routes.tsx')
   assert.match(source, /const ProjectArchivePage = lazy\(/)
-  assert.match(source, /path="projects\/:projectId\/archive"[\s\S]{0,240}<RequireCapability mode="project_view">[\s\S]{0,160}<ProjectArchivePage/)
+  assert.match(source, /path="\/home"[\s\S]{0,160}<RequireAuth>[\s\S]{0,100}<ProjectLayout/)
+  assert.match(source, /path="projects"[\s\S]{0,160}<RequireCapability mode="project_view">[\s\S]{0,120}<ProjectManagementPage/)
+  assert.match(source, /path="projects\/:projectId\/archive"\s+element=\{<ProjectArchivePage \/>\}/)
+  const archiveRoute = source.match(/<Route\s+path="projects\/:projectId\/archive"[\s\S]*?<ProjectArchivePage \/>[\s\S]*?\/>/)?.[0] ?? ''
+  assert.doesNotMatch(archiveRoute, /RequireCapability|mode="project_view"/)
 })
 
 test('archived projects enter the archive route while ended projects retain the close drawer', () => {
@@ -167,4 +178,46 @@ test('archive overview keeps the first four members and uses the compact goal em
   assert.match(source, /members\.length\s*>\s*4/)
   assert.match(source, /empty="项目目标未记录"/)
   assert.doesNotMatch(source, /members\.slice\(0,\s*6\)/)
+})
+
+test('archive objective status helper distinguishes missing, partial and complete results', async () => {
+  const { getArchiveObjectiveStatus } = await loadArchiveViewModel()
+  assert.equal(getArchiveObjectiveStatus(null), '未记录')
+  assert.equal(getArchiveObjectiveStatus(''), '未记录')
+  assert.equal(getArchiveObjectiveStatus('   '), '未记录')
+  assert.equal(getArchiveObjectiveStatus('部分完成，后续继续推进'), '部分完成')
+  assert.equal(getArchiveObjectiveStatus('核心目标已完成'), '已完成')
+})
+
+test('archive operation helper maps real backend action keys', async () => {
+  const { getArchiveOperationTitle } = await loadArchiveViewModel()
+  const expected = {
+    archive_project: '项目归档',
+    project_close_request_create: '提交结束申请',
+    project_close_request_update: '更新结束材料',
+    project_close_request_cancel: '取消结束申请',
+    project_close_request_approve: '批准项目结束',
+    project_close_request_reject: '退回结束申请',
+    create_project: '创建项目',
+    dispatch_project: '项目下发',
+    kickoff_project: '项目启动',
+    update_project: '更新项目资料',
+  }
+  for (const [action, title] of Object.entries(expected)) assert.equal(getArchiveOperationTitle(action), title)
+  assert.equal(getArchiveOperationTitle('future_action'), 'future_action')
+})
+
+test('one archive_project log produces one localized archive timeline event', async () => {
+  const { buildArchiveTimeline } = await loadArchiveViewModel()
+  const timeline = buildArchiveTimeline({
+    project: { id: 4, name: '归档项目', status: 'archived' },
+    updates: [],
+    meetings: [],
+    closeRequests: [],
+    logs: [{ id: 9, action: 'archive_project', operator: '管理员', created_at: '2026-07-16T08:00:00Z' }],
+  })
+  const archiveEvents = timeline.filter((event) => event.title.includes('归档'))
+  assert.equal(archiveEvents.length, 1)
+  assert.equal(archiveEvents[0].title, '项目归档')
+  assert.equal(timeline.some((event) => event.title.includes('archive_project')), false)
 })

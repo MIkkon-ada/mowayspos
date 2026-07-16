@@ -13,7 +13,7 @@ export function ArchiveSectionNav({ activeId, onSelect }: { activeId: string; on
   return (
     <nav className="archive-section-nav" aria-label="项目档案导航">
       <div className="archive-section-nav__title">项目档案导航</div>
-      <div className="archive-section-nav__list">
+      <div className="archive-section-nav__list archive-section-nav-scroll">
         {ARCHIVE_SECTIONS.map((section, index) => (
           <button
             key={section.id}

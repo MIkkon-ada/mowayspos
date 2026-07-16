@@ -4,12 +4,18 @@ import type { ArchiveMetric } from './projectArchiveViewModel'
 import { formatArchiveDate } from './projectArchiveViewModel'
 import { getProjectRoleLabel } from '../../domain/roleLabels'
 
-function DisplayLines({ value, empty }: { value?: string | null; empty: string }) {
+function DisplayLines({ value, empty, limit }: { value?: string | null; empty: string; limit?: number }) {
   const text = value?.trim()
   if (!text) return <p className="archive-muted-copy">{empty}</p>
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
   if (lines.length <= 1) return <p className="archive-body-copy">{text}</p>
-  return <ul className="archive-simple-list">{lines.map((line, index) => <li key={`${index}-${line}`}>{line}</li>)}</ul>
+  const visibleLines = limit ? lines.slice(0, limit) : lines
+  return (
+    <>
+      <ul className="archive-simple-list">{visibleLines.map((line, index) => <li key={`${index}-${line}`}>{line}</li>)}</ul>
+      {limit && lines.length > limit ? <p className="archive-truncated-note">其余 {lines.length - limit} 项已收录于项目材料</p> : null}
+    </>
+  )
 }
 
 export function ArchiveOverview({
@@ -26,7 +32,8 @@ export function ArchiveOverview({
   memberError?: string
 }) {
   const [expanded, setExpanded] = useState(false)
-  const visibleMembers = expanded ? members : members.slice(0, 6)
+  const visibleMembers = expanded ? members : members.slice(0, 4)
+  const projectGoals = project.objectives || project.expected_outcomes
   const objectiveStatus = closeRequest?.objective_result?.includes('部分完成') ? '部分完成' : '已完成'
 
   return (
@@ -66,12 +73,14 @@ export function ArchiveOverview({
               <div><span className="archive-card-kicker">OBJECTIVES</span><h3>最终目标完成情况</h3></div>
               <span className={`archive-status-chip ${objectiveStatus === '部分完成' ? 'is-partial' : 'is-complete'}`}>{objectiveStatus}</span>
             </div>
-            <div className="archive-goal-columns">
-              <div>
-                <h4>项目目标</h4>
-                <DisplayLines value={project.objectives || project.expected_outcomes} empty="未记录项目目标" />
-              </div>
-              <div>
+            <div className="archive-goal-content">
+              {projectGoals?.trim() ? (
+                <div className="archive-goal-list">
+                  <h4>项目目标</h4>
+                  <DisplayLines value={projectGoals} empty="项目目标未记录" limit={4} />
+                </div>
+              ) : <p className="archive-goal-empty">项目目标未记录</p>}
+              <div className="archive-goal-result">
                 <h4>结束时完成情况</h4>
                 <DisplayLines value={closeRequest?.objective_result} empty="未记录目标完成情况" />
               </div>
@@ -102,7 +111,7 @@ export function ArchiveOverview({
                 </table>
               </div>
             )}
-            {members.length > 6 && (
+            {members.length > 4 && (
               <button type="button" className="archive-text-link archive-print-hidden" onClick={() => setExpanded((value) => !value)}>
                 {expanded ? '收起成员' : `查看全部（共 ${members.length} 人）`} <span>{expanded ? '⌃' : '⌄'}</span>
               </button>

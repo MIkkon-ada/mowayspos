@@ -120,3 +120,51 @@ test('archive feature exposes no project write operation', () => {
     assert.doesNotMatch(source, new RegExp(`>\\s*${action}\\s*<`))
   }
 })
+
+test('responsive archive layout switches from three to two to one columns at exact breakpoints', () => {
+  const css = read('src/features/project-archive/projectArchive.css')
+  assert.match(css, /@media \(min-width:\s*1440px\)[\s\S]*?grid-template-columns:\s*160px minmax\(0,\s*1fr\) 260px/)
+  assert.match(css, /@media \(max-width:\s*1439px\)[\s\S]*?grid-template-columns:\s*150px minmax\(0,\s*1fr\)/)
+  assert.match(css, /@media \(max-width:\s*1439px\)[\s\S]*?\.archive-timeline-column[\s\S]*?display:\s*none/)
+  assert.match(css, /@media \(max-width:\s*767px\)[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)/)
+})
+
+test('archive layout contains width guards and only approved local horizontal scrollers', () => {
+  const css = read('src/features/project-archive/projectArchive.css')
+  assert.match(css, /\.project-archive-page\s*\{[^}]*min-width:\s*0[^}]*max-width:\s*100%[^}]*overflow-x:\s*hidden/)
+  for (const selector of [
+    '.archive-toolbar',
+    '.archive-main-grid',
+    '.archive-nav-column',
+    '.archive-content-column',
+    '.archive-timeline-column',
+    '.archive-project-header',
+    '.archive-metric-grid',
+    '.archive-two-column',
+    '.archive-members-card',
+    '.archive-progress-card',
+    '.archive-card',
+  ]) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    assert.match(css, new RegExp(`${escaped}\\s*\\{[^}]*min-width:\\s*0[^}]*max-width:\\s*100%`), `${selector} must constrain its width`)
+  }
+  const horizontalScrollRules = [...css.matchAll(/([^{}]+)\{[^{}]*overflow-x:\s*auto/g)].map((match) => match[1].trim())
+  assert.ok(horizontalScrollRules.length >= 2)
+  assert.ok(horizontalScrollRules.every((selector) => selector.includes('.archive-section-nav-scroll') || selector.includes('.archive-table-scroll')))
+})
+
+test('archive page removes visible English design kickers', () => {
+  const css = read('src/features/project-archive/projectArchive.css')
+  const componentSource = archiveFiles.filter((file) => file.endsWith('.tsx')).map(read).join('\n')
+  assert.match(css, /\.archive-section-eyebrow,\s*\.archive-card-kicker\s*\{[^}]*display:\s*none/)
+  const englishLabelTags = [...componentSource.matchAll(/<(?:span|p)[^>]*>\s*[A-Z][A-Z &]+\s*<\/(?:span|p)>/g)].map((match) => match[0])
+  assert.ok(englishLabelTags.every((tag) => /className="[^"]*(?:archive-section-eyebrow|archive-card-kicker)/.test(tag)))
+})
+
+test('archive overview keeps the first four members and uses the compact goal empty state', () => {
+  const source = read('src/features/project-archive/ArchiveOverview.tsx')
+  assert.match(source, /members\.slice\(0,\s*4\)/)
+  assert.match(source, /members\.length\s*>\s*4/)
+  assert.match(source, /empty="项目目标未记录"/)
+  assert.doesNotMatch(source, /members\.slice\(0,\s*6\)/)
+})

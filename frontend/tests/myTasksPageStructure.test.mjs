@@ -205,3 +205,58 @@ test('responsive CSS constrains body overflow and drawer widths', () => {
   assert.match(css, /@media \(max-width:\s*1279px\)[\s\S]*?\.my-task-drawer\s*\{[^}]*width:\s*380px/s)
   assert.match(css, /@media \(max-width:\s*899px\)[\s\S]*?\.my-task-drawer\s*\{[^}]*width:\s*100%/s)
 })
+
+test('each task row exposes a dedicated detail action beside the overflow menu', () => {
+  const table = read('src/features/my-tasks/MyTasksTable.tsx')
+  assert.match(table, /className="my-task-row-actions"/)
+  assert.match(table, /className="my-task-detail-button"[\s\S]*?>\s*查看详情\s*<\/button>/)
+  assert.match(table, /my-task-detail-button[\s\S]*?event\.stopPropagation\(\)[\s\S]*?onOpenDetail\(row\)/)
+  assert.match(table, /className="my-task-actions"[\s\S]*?查看工作推进[\s\S]*?提交工作汇报/)
+  const menu = table.match(/<div className="my-task-actions-menu">([\s\S]*?)<\/div>/)?.[1] ?? ''
+  assert.doesNotMatch(menu, /查看详情/)
+})
+
+test('drawer renders complete plan dates and clamps the accessible task title to two lines', () => {
+  const drawer = read('src/features/my-tasks/MyTaskDetailDrawer.tsx')
+  const css = read('src/features/my-tasks/myTasks.css')
+  assert.match(drawer, /className="my-task-detail-plan"/)
+  assert.match(drawer, /<span>\{row\.planStart\}<\/span>\s*<span>～<\/span>\s*<span>\{row\.planEnd\}<\/span>/)
+  assert.match(drawer, /id="my-task-detail-title"[\s\S]*?title=\{row\.title\}/)
+  assert.match(css, /\.my-task-detail-plan\s*\{[^}]*white-space:\s*normal[^}]*overflow-wrap:\s*anywhere/s)
+  assert.doesNotMatch(css, /\.my-task-detail-plan\s*\{[^}]*text-overflow:\s*ellipsis/s)
+  assert.doesNotMatch(css, /\.my-task-detail-plan\s*\{[^}]*white-space:\s*nowrap/s)
+  assert.match(css, /\.my-task-drawer-header h2\s*\{[^}]*-webkit-line-clamp:\s*2/s)
+})
+
+test('bottom support area contains three compact panels with the exact help copy', () => {
+  const page = read('src/pages/MyTasksPage.tsx')
+  const panel = read('src/features/my-tasks/MyTasksHelpPanel.tsx')
+  const css = read('src/features/my-tasks/myTasks.css')
+  assert.match(page, /<MyTasksHelpPanel\s*\/>/)
+  assert.match(panel, />使用说明</)
+  for (const copy of [
+    '仅展示本人作为责任人的关键任务',
+    '协助任务将在后续结构化版本中支持',
+    '点击“查看详情”查看任务完整信息',
+    '工作汇报请使用“工作汇报”入口',
+  ]) assert.match(panel, new RegExp(copy))
+  assert.match(css, /\.my-task-bottom-grid\s*\{[^}]*grid-template-columns:\s*1fr 1fr 1fr/s)
+  assert.match(css, /@media \(max-width:\s*1279px\)[\s\S]*?\.my-task-bottom-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s)
+  assert.match(css, /@media \(max-width:\s*899px\)[\s\S]*?\.my-task-bottom-grid\s*\{[^}]*grid-template-columns:\s*1fr/s)
+})
+
+test('personal task center uses Chinese feature labels only', () => {
+  const page = read('src/pages/MyTasksPage.tsx')
+  assert.doesNotMatch(page, /PERSONAL WORKSPACE|QUICK ACTIONS/)
+  assert.match(page, />个人工作</)
+  assert.match(page, />快捷入口</)
+})
+
+test('legacy inline write workflow stays removed from the page and feature modules', () => {
+  const featureFiles = fs.readdirSync(path.join(root, 'src/features/my-tasks'))
+    .filter((name) => /\.(?:ts|tsx)$/.test(name))
+    .map((name) => read(`src/features/my-tasks/${name}`))
+  const source = [read('src/pages/MyTasksPage.tsx'), ...featureFiles].join('\n')
+  assert.doesNotMatch(source, /createUpdate|patchSubTaskStatus|isPendingConfirmation|fetchMyUpdates|TaskUpdateModal/)
+  assert.doesNotMatch(source, /<form\b|<textarea\b|更新进展|提交完成|上报问题/)
+})

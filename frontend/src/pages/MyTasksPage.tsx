@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { MyTaskDetailDrawer } from '../features/my-tasks/MyTaskDetailDrawer'
 import { MyTasksStatusSummary } from '../features/my-tasks/MyTasksStatusSummary'
 import { MyTasksTable } from '../features/my-tasks/MyTasksTable'
+import { MyTasksHelpPanel } from '../features/my-tasks/MyTasksHelpPanel'
 import { useMyTasks } from '../features/my-tasks/useMyTasks'
 import {
   countMyTaskStatuses,
@@ -69,7 +70,7 @@ export function MyTasksPage() {
     <div className="my-tasks-page">
       <header className="my-tasks-header">
         <div>
-          <p className="my-task-eyebrow">PERSONAL WORKSPACE</p>
+          <p className="my-task-eyebrow">个人工作</p>
           <h1>我的任务</h1>
           <p>汇总你在所有进行中项目里的关键任务，快速掌握优先级与当前进展。</p>
         </div>
@@ -132,12 +133,13 @@ export function MyTasksPage() {
           <div className="my-task-bottom-grid">
             <MyTasksStatusSummary counts={counts} />
             <section className="my-task-quick-actions">
-              <div><p className="my-task-eyebrow">QUICK ACTIONS</p><h2>快速操作</h2><p>{onlyProject ? `当前筛选：${onlyProject.name}` : '选择任务后可进入对应项目继续推进'}</p></div>
+              <div><p className="my-task-eyebrow">快捷入口</p><h2>快速操作</h2><p>{onlyProject ? `当前筛选：${onlyProject.name}` : '选择任务后可进入对应项目继续推进'}</p></div>
               <div className="my-task-action-buttons">
                 <button type="button" disabled={!onlyProject} onClick={() => onlyProject && navigate(`/work/tasks?projectId=${onlyProject.id}`)}><b aria-hidden="true">▦</b><span>查看工作推进<small>{onlyProject ? onlyProject.name : '请先筛选单个项目'}</small></span></button>
                 <button type="button" disabled={!onlyProject} onClick={() => onlyProject && navigate(`/work/submit?projectId=${onlyProject.id}`)}><b aria-hidden="true">↗</b><span>提交工作汇报<small>{onlyProject ? '带入当前项目上下文' : '也可从任务操作菜单进入'}</small></span></button>
               </div>
             </section>
+            <MyTasksHelpPanel />
           </div>
         )}
       </main>

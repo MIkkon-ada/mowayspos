@@ -43,7 +43,7 @@ export function MyTaskDetailDrawer({ row, onClose, onOpenProject, onOpenSubmit }
     }}>
       <aside className="my-task-drawer" role="dialog" aria-modal="true" aria-labelledby="my-task-detail-title">
         <header className="my-task-drawer-header">
-          <div><p>任务详情</p><h2 id="my-task-detail-title">{row.title}</h2></div>
+          <div><p>任务详情</p><h2 id="my-task-detail-title" aria-label={row.title} title={row.title}>{row.title}</h2></div>
           <button type="button" aria-label="关闭任务详情" onClick={onClose}><span aria-hidden="true">×</span></button>
         </header>
 
@@ -52,7 +52,16 @@ export function MyTaskDetailDrawer({ row, onClose, onOpenProject, onOpenSubmit }
             <div><span>所属项目</span><strong>{row.projectName}</strong></div>
             <div><span>重点工作</span><strong>{row.workstreamName}</strong></div>
             <div><span>当前状态</span><strong className={`my-task-status my-task-status--${row.statusTone}`}>{row.status}</strong></div>
-            <div><span>计划时间</span><strong>{row.planTime || '未填写'}</strong></div>
+            <div>
+              <span>计划时间</span>
+              <strong className="my-task-detail-plan">
+                {row.planStart && row.planEnd ? <>
+                  <span>{row.planStart}</span>
+                  <span>～</span>
+                  <span>{row.planEnd}</span>
+                </> : <span>{row.planTime || '未填写'}</span>}
+              </strong>
+            </div>
           </section>
 
           <section className="my-task-detail-section">

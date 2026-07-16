@@ -62,13 +62,19 @@ export function MyTasksTable({
                 <td><span className={`my-task-status my-task-status--${row.statusTone}`}>{row.status}</span></td>
                 <td><p className="my-task-progress">{row.progressText}</p></td>
                 <td>
-                  <details className="my-task-actions" onClick={(event) => event.stopPropagation()}>
-                    <summary aria-label={`打开 ${row.title} 操作菜单`}><span aria-hidden="true">•••</span></summary>
-                    <div className="my-task-actions-menu">
-                      <button type="button" onClick={() => onOpenProject(row)}><span aria-hidden="true">↗</span>查看工作推进</button>
-                      <button type="button" onClick={() => onOpenSubmit(row)}><span aria-hidden="true">▤</span>提交工作汇报</button>
-                    </div>
-                  </details>
+                  <div className="my-task-row-actions">
+                    <button type="button" className="my-task-detail-button" onClick={(event) => {
+                      event.stopPropagation()
+                      onOpenDetail(row)
+                    }}>查看详情</button>
+                    <details className="my-task-actions" onClick={(event) => event.stopPropagation()}>
+                      <summary aria-label={`打开 ${row.title} 操作菜单`}><span aria-hidden="true">•••</span></summary>
+                      <div className="my-task-actions-menu">
+                        <button type="button" onClick={() => onOpenProject(row)}><span aria-hidden="true">↗</span>查看工作推进</button>
+                        <button type="button" onClick={() => onOpenSubmit(row)}><span aria-hidden="true">▤</span>提交工作汇报</button>
+                      </div>
+                    </details>
+                  </div>
                 </td>
               </tr>
             ))}

@@ -28,7 +28,7 @@ from ..time_utils import utc_now
 
 from ..services.notify import person_id_for_name as _pid_for_name
 from ..services.project_resolution import resolve_project_context
-from ..archived_guard import require_project_not_archived
+from ..services.project_close import require_project_business_writable
 
 router = APIRouter(prefix="/api/issues", tags=["issues"])
 _CLOSED_STATUSES = {"已关闭", "已决策", "已解决", "关闭"}
@@ -241,7 +241,7 @@ def create_issue(
     if project_id is None:
         raise HTTPException(422, "project_id is required")
     require_project_access(current_user, project_id, db)
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
 
     normalized_type = IT.normalize(payload.issue_type)
     if normalized_type == IT.TYPE_DECISION and not can_view_issue_decisions(context):
@@ -359,7 +359,7 @@ def update_issue(
     elif not context.get("is_tech_admin") and row.reporter != current_user:
         raise HTTPException(403, "permission denied")
 
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
 
     crud.validate_subtask_link(db, project_id, payload.related_task_id if payload.related_task_id is not None else row.related_task_id, payload.related_subtask_id)
 
@@ -395,7 +395,7 @@ def delete_issue(
     if project_id is not None:
         require_project_owner_or_admin(current_user, project_id, db)
 
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
     before = crud.to_dict(row)
     crud.log(db, current_user, "issue_delete", "issue", row_id, before, {})
     db.delete(row)
@@ -424,7 +424,7 @@ def patch_status(
             [PROJECT_ROLE_OWNER_KEY],
             db,
         )
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
 
     before_status = row.status
     row.status = IF.normalize_status(payload.status)
@@ -458,7 +458,7 @@ def resolve_issue(
             [PROJECT_ROLE_OWNER_KEY],
             db,
         )
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
     before = crud.to_dict(row)
     row.status = IF.STATUS_RESOLVED
     if payload.resolution:
@@ -497,7 +497,7 @@ def close_issue(
     project_id = _issue_write_project_id(row, context, db)
     if project_id is not None:
         require_project_owner_or_admin(current_user, project_id, db)
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
     before = crud.to_dict(row)
     row.status = IF.STATUS_CLOSED
     if payload.reason:
@@ -542,7 +542,7 @@ def assign_helper(
             [PROJECT_ROLE_OWNER_KEY],
             db,
         )
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
     before = crud.to_dict(row)
     row.helper = payload.helper
     # N4-P2-M: 指定协助人后自动进入“待协调”
@@ -576,7 +576,7 @@ def request_ceo(
             [PROJECT_ROLE_OWNER_KEY, PROJECT_ROLE_COORD_KEY],
             db,
         )
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
     before = crud.to_dict(row)
     row.issue_type = _storage_issue_type(IT.TYPE_DECISION)
     row.status = IF.STATUS_PENDING_DECISION

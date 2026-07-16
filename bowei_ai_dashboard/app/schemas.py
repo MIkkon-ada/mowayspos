@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class UserSubtaskContext(BaseModel):
@@ -254,6 +254,68 @@ class ProjectPatchPayload(BaseModel):
     objectives: str | None = None
     expected_outcomes: str | None = None
     lifecycle_status: str | None = None
+
+
+class ProjectCloseResidualItem(BaseModel):
+    description: str
+    reason: str
+    owner: str
+    handover_to: str
+    follow_up_plan: str
+    expected_resolution: str
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def trim_required_fields(cls, value: object) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("field must not be blank")
+        return normalized
+
+
+class ProjectCloseRequestCreatePayload(BaseModel):
+    summary: str
+    objective_result: str
+    unfinished_items: list[ProjectCloseResidualItem]
+    remaining_risks: list[ProjectCloseResidualItem]
+    handover_plan: str
+    retrospective: str
+
+    @field_validator("summary", "objective_result", "handover_plan", "retrospective", mode="before")
+    @classmethod
+    def trim_required_text(cls, value: object) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("field must not be blank")
+        return normalized
+
+
+class ProjectCloseRequestUpdatePayload(BaseModel):
+    summary: str | None = None
+    objective_result: str | None = None
+    unfinished_items: list[ProjectCloseResidualItem] | None = None
+    remaining_risks: list[ProjectCloseResidualItem] | None = None
+    handover_plan: str | None = None
+    retrospective: str | None = None
+
+    @field_validator("summary", "objective_result", "handover_plan", "retrospective", mode="before")
+    @classmethod
+    def trim_optional_text(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        if not normalized:
+            raise ValueError("field must not be blank")
+        return normalized
+
+
+class ProjectCloseReviewPayload(BaseModel):
+    review_comment: str = ""
+
+    @field_validator("review_comment", mode="before")
+    @classmethod
+    def trim_comment(cls, value: object) -> str:
+        return str(value or "").strip()
 
 
 class ProjectWorkProgressSubTaskDraft(BaseModel):

@@ -13,6 +13,7 @@ from ..permissions import (
 )
 from ..time_utils import utc_now
 from ..services.project_resolution import resolve_project_context
+from ..services.project_close import require_project_business_writable
 
 router = APIRouter(prefix="/api/achievement-submissions", tags=["achievement-submissions"])
 
@@ -52,6 +53,7 @@ def create_submission(
     proj_name = resolve_project_context(db, project_id=payload.project_id)["project_name"]
     if not proj_name:
         raise HTTPException(422, "project_id 无效，找不到对应项目")
+    require_project_business_writable(payload.project_id, db)
 
     person_id = context.get("person_id")
     if not context.get("is_tech_admin"):
@@ -123,6 +125,7 @@ def confirm_submission(
     row = db.get(models.AchievementSubmission, sub_id)
     if not row:
         raise HTTPException(404, "submission not found")
+    require_project_business_writable(row.project_id, db)
     _require_owner_or_admin(context, row, db)
 
     if row.status != _STATUS_PENDING:
@@ -181,6 +184,7 @@ def reject_submission(
     row = db.get(models.AchievementSubmission, sub_id)
     if not row:
         raise HTTPException(404, "submission not found")
+    require_project_business_writable(row.project_id, db)
     _require_owner_or_admin(context, row, db)
 
     if row.status != _STATUS_PENDING:
@@ -216,6 +220,7 @@ def withdraw_submission(
     row = db.get(models.AchievementSubmission, sub_id)
     if not row:
         raise HTTPException(404, "submission not found")
+    require_project_business_writable(row.project_id, db)
     if row.submitter != current_user:
         raise HTTPException(403, "只有提交人本人可以撤回")
     if row.status != _STATUS_PENDING:

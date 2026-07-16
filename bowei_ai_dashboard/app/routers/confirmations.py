@@ -24,7 +24,7 @@ from ..permissions import (
 )
 from ..time_utils import utc_now
 from ..services.project_resolution import resolve_project_context
-from ..archived_guard import require_project_not_archived
+from ..services.project_close import require_project_business_writable
 from ..services import policy as P
 from ..services import workflow as W
 
@@ -487,7 +487,7 @@ def _require_submission_writable(
 ) -> int | None:
     """AI 确认中心写操作专用：先做项目访问校验，再拦截归档项目写入。"""
     project_id = _require_submission_project_access(row, context, db)
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
     return project_id
 
 

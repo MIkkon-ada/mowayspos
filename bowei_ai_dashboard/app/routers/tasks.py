@@ -21,7 +21,7 @@ from ..time_utils import utc_now
 from ..services.extractor import extract_tasks as _extract_tasks
 from ..services.notify import person_id_for_name as _pid_for_name
 from ..services.project_resolution import resolve_project_context
-from ..archived_guard import require_project_not_archived
+from ..services.project_close import require_project_business_writable
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])  # endpoint 不变；业务语义：Workstream/重点工作 CRUD
 
@@ -268,7 +268,7 @@ def create_task(
 
     proj_name = crud.get_project_name_by_id(effective_project_id, db) or ""
     _check_write(context, effective_project_id, proj_name, db)
-    require_project_not_archived(effective_project_id, db)
+    require_project_business_writable(effective_project_id, db)
 
     data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
     row = models.Task(**data)
@@ -330,7 +330,7 @@ def update_task(
     if project_id is None and not context.get("is_tech_admin"):
         raise HTTPException(403, "permission denied")
     _check_write(context, project_id, project_name, db)
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
 
     incoming_resolution = resolve_project_context(
         db,
@@ -389,7 +389,7 @@ def delete_task(
     if project_id is None and not context.get("is_tech_admin"):
         raise HTTPException(403, "permission denied")
     _check_trash_access(context, project_id, crud.get_project_name_by_id(project_id, db) if project_id is not None else "", db)
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
 
     before = crud.to_dict(row)
     batch_id = _soft_delete_task(row, current_user, reason)
@@ -429,7 +429,7 @@ def patch_status(
     if project_id is None and not context.get("is_tech_admin"):
         raise HTTPException(403, "permission denied")
     _check_write(context, project_id, project_name, db)
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
 
     closing = TS.normalize(payload.status) == TS.S_COMPLETED
     if closing:
@@ -463,7 +463,7 @@ def restore_task(
     if project_id is None and not context.get("is_tech_admin"):
         raise HTTPException(403, "permission denied")
     _check_trash_access(context, project_id, crud.get_project_name_by_id(project_id, db) if project_id is not None else "", db)
-    require_project_not_archived(project_id, db)
+    require_project_business_writable(project_id, db)
 
     before = crud.to_dict(row)
     batch_id = row.delete_batch_id or ""
@@ -592,7 +592,7 @@ def batch_create(
     context = get_user_context_from_db(current_user, db)
     canonical_project_name = crud.get_project_name_by_id(payload.project_id, db) or ""
     _check_batch_write(context, payload.project_id, canonical_project_name, db)
-    require_project_not_archived(payload.project_id, db)
+    require_project_business_writable(payload.project_id, db)
 
     created = []
     for draft in payload.tasks:

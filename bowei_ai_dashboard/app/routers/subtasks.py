@@ -20,7 +20,7 @@ from ..permissions import (
 )
 from ..time_utils import utc_now
 from ..services.project_resolution import resolve_project_context
-from ..archived_guard import require_project_not_archived
+from ..services.project_close import require_project_business_writable
 
 router = APIRouter(tags=["subtasks"])  # endpoint 不变；业务语义：KeyTask/关键任务 CRUD
 _TRASH_ROLES = {"owner"}
@@ -412,7 +412,7 @@ def create_subtask(
     if bool(getattr(task, "is_deleted", False)):
         raise HTTPException(409, "task is deleted")
     _check_subtask_struct_write(context, task, db)
-    require_project_not_archived(_get_task_project_id(task, db), db)
+    require_project_business_writable(_get_task_project_id(task, db), db)
 
     data = payload.model_dump()
     if (data.get("assignee") or "").strip() and TS.normalize(data.get("status", "")) == TS.S_NOT_STARTED:
@@ -488,7 +488,7 @@ def update_subtask(
         raise HTTPException(409, "parent task is deleted")
 
     _check_subtask_struct_write(context, task, db)
-    require_project_not_archived(_get_task_project_id(task, db), db)
+    require_project_business_writable(_get_task_project_id(task, db), db)
 
     before = crud.to_dict(row)
     before_assignee = (row.assignee or "").strip()
@@ -526,7 +526,7 @@ def patch_subtask_status(
         raise HTTPException(409, "parent task is deleted")
 
     _check_subtask_struct_write(context, task, db)
-    require_project_not_archived(_get_task_project_id(task, db), db)
+    require_project_business_writable(_get_task_project_id(task, db), db)
 
     before_status = row.status or ""
     row.status = payload.status
@@ -575,7 +575,7 @@ def delete_subtask(
     if not task:
         raise HTTPException(404, "parent task not found")
     _check_subtask_delete_access(context, task, db)
-    require_project_not_archived(_get_task_project_id(task, db), db)
+    require_project_business_writable(_get_task_project_id(task, db), db)
     if bool(getattr(row, "is_deleted", False)):
         raise HTTPException(409, "subtask already deleted")
     before = crud.to_dict(row)
@@ -612,7 +612,7 @@ def restore_subtask(
     if not task:
         raise HTTPException(404, "parent task not found")
     _check_subtask_restore_access(context, task, db)
-    require_project_not_archived(_get_task_project_id(task, db), db)
+    require_project_business_writable(_get_task_project_id(task, db), db)
     if not bool(getattr(row, "is_deleted", False)):
         raise HTTPException(409, "subtask is not deleted")
     if bool(getattr(task, "is_deleted", False)):

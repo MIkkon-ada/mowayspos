@@ -7,16 +7,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP_REVISION = "7f3a2c9d8e41"
 BASELINE_REVISION = "614f43813210"
 PERSON_ID_REVISION = "d14986ccb2dd"
-HEAD_REVISION = "4bf512ac2391"
 MARKER_TABLE = "_moways_migration_bootstrap"
 MARKER_TOKEN = "POST_D149_PRE_4BF_BOOTSTRAP_V1"
 DEV_CREATE_ALL_AUTHORIZATION = "I_UNDERSTAND_THIS_IS_DEV_ONLY"
-BUSINESS_TABLES = {
+D149_BUSINESS_TABLES = {
     "accounts",
     "achievement_submissions",
     "achievements",
@@ -53,6 +55,17 @@ SAFETY_ENV_KEYS = (
 
 def _sqlite_url(path: Path) -> str:
     return f"sqlite:///{path.resolve().as_posix()}"
+
+
+def _current_head_revision() -> str:
+    config = Config(str(BACKEND_ROOT / "alembic.ini"))
+    config.set_main_option(
+        "script_location",
+        str(BACKEND_ROOT / "migrations"),
+    )
+    heads = ScriptDirectory.from_config(config).get_heads()
+    assert len(heads) == 1
+    return heads[0]
 
 
 def _protected_path() -> Path:
@@ -258,6 +271,11 @@ for table_name, constraint_name in constraint_names.items():
     assert result.returncode == 0, _output(result)
 
 
+def _current_orm_business_tables(database: Path) -> set[str]:
+    _create_current_orm_database(database)
+    return _table_names(database) - {"alembic_version"}
+
+
 def _assert_related_subtask_fields(database: Path, *, present: bool) -> None:
     for table, index_name in RELATED_SUBTASK_TABLES.items():
         assert ("related_subtask_id" in _columns(database, table)) is present
@@ -288,7 +306,7 @@ def test_t1_empty_database_upgrades_to_d149(tmp_path: Path):
     result = _run_alembic(database, "upgrade", PERSON_ID_REVISION)
 
     assert result.returncode == 0, _output(result)
-    assert _table_names(database) - {"alembic_version"} == BUSINESS_TABLES
+    assert _table_names(database) - {"alembic_version"} == D149_BUSINESS_TABLES
     assert MARKER_TABLE not in _table_names(database)
     assert _revision(database) == PERSON_ID_REVISION
     _assert_related_subtask_fields(database, present=False)
@@ -296,13 +314,16 @@ def test_t1_empty_database_upgrades_to_d149(tmp_path: Path):
 
 def test_t2_empty_database_upgrades_to_head(tmp_path: Path):
     database = tmp_path / "upgrade-head.db"
+    orm = tmp_path / "current-orm-reference.db"
+    current_head = _current_head_revision()
+    expected_tables = _current_orm_business_tables(orm)
 
     result = _run_alembic(database, "upgrade", "head")
 
     assert result.returncode == 0, _output(result)
-    assert _table_names(database) - {"alembic_version"} == BUSINESS_TABLES
+    assert _table_names(database) - {"alembic_version"} == expected_tables
     assert MARKER_TABLE not in _table_names(database)
-    assert _revision(database) == HEAD_REVISION
+    assert _revision(database) == current_head
     _assert_related_subtask_fields(database, present=True)
 
 
@@ -313,6 +334,7 @@ def test_t3_head_schema_matches_current_orm(tmp_path: Path):
     assert result.returncode == 0, _output(result)
     _create_current_orm_database(orm)
 
+    assert _revision(migrated) == _current_head_revision()
     assert _schema_snapshot(migrated) == _schema_snapshot(orm)
 
 
@@ -325,7 +347,7 @@ def test_t4_d149_schema_matches_current_orm_downgraded_from_head(tmp_path: Path)
         orm,
         name_related_subtask_constraints=True,
     )
-    result = _run_alembic(orm, "stamp", HEAD_REVISION)
+    result = _run_alembic(orm, "stamp", _current_head_revision())
     assert result.returncode == 0, _output(result)
     result = _run_alembic(orm, "downgrade", PERSON_ID_REVISION)
     assert result.returncode == 0, _output(result)
@@ -376,8 +398,9 @@ def test_t7_current_head_database_upgrade_is_a_data_preserving_noop(
     tmp_path: Path,
 ):
     database = tmp_path / "current-head.db"
+    current_head = _current_head_revision()
     _create_current_orm_database(database)
-    result = _run_alembic(database, "stamp", HEAD_REVISION)
+    result = _run_alembic(database, "stamp", current_head)
     assert result.returncode == 0, _output(result)
     with sqlite3.connect(database) as connection:
         connection.execute(
@@ -390,7 +413,7 @@ def test_t7_current_head_database_upgrade_is_a_data_preserving_noop(
     result = _run_alembic(database, "upgrade", "head")
 
     assert result.returncode == 0, _output(result)
-    assert _revision(database) == HEAD_REVISION
+    assert _revision(database) == current_head
     assert database.read_bytes() == before
 
 
@@ -435,7 +458,11 @@ main._startup()
 
     assert result.returncode == 0, _output(result)
     assert _schema_snapshot(database) == before
-    assert _revision(database) == HEAD_REVISION
+    assert _revision(database) == _current_head_revision()
+
+
+def test_migration_graph_has_one_current_head():
+    assert _current_head_revision()
 
 
 def test_marker_validation_uses_dialect_portable_primary_key_inspection(

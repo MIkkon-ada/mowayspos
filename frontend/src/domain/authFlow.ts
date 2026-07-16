@@ -63,7 +63,7 @@ export function getPostLoginDestination(
   if (currentUser?.is_tech_admin || currentUser?.is_ceo || currentUser?.can_view_all) return '/home/dashboard'
 
   const preferred = preferredProjectId ?? null
-  return '/member/projects'
+  return '/member/tasks'
 }
 
 export function getProjectsLandingDestination(projects: ProjectRef[]): string {
@@ -136,7 +136,7 @@ export function getProjectScopedNavigationDestination(
     notifications: '/home/notifications',
     settings: '/home/settings',
     'projects-mgmt': '/home/projects',
-    mytasks: '/member/projects',
+    mytasks: '/member/tasks',
   }
 
   const workspaceDestination = workspacePages[page]

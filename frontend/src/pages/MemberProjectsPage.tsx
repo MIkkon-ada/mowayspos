@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useProject } from '../context/ProjectContext'
 import { getProjectStatusBadge } from '../domain/projectLifecycleStatus'
+import { getProjectRoleLabel } from '../domain/roles'
 import type { Project } from '../types'
 
 export function MemberProjectsPage() {
@@ -66,7 +67,7 @@ function ProjectCard({ project, onEnter }: { project: Project; onEnter: () => vo
       {project.user_roles && project.user_roles.length > 0 && (
         <div className="mt-4 flex flex-wrap gap-2">
           {project.user_roles.map((role) => (
-            <span key={role} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">{role}</span>
+            <span key={role} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">{getProjectRoleLabel(role)}</span>
           ))}
         </div>
       )}

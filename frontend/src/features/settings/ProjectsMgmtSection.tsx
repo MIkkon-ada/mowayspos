@@ -1,13 +1,12 @@
 import { createPortal } from 'react-dom'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useProject } from '../../context/ProjectContext'
 import {
   getProjects,
   getProjectMembers,
   createProject,
   patchProject,
-  archiveProject,
   approveProject,
   dispatchProject,
   returnProject,
@@ -27,12 +26,13 @@ import { canManageProjects } from '../../domain/permissions'
 import {
   getProjectPrimaryStatus,
   getProjectStatusBadge,
-  isProjectArchived,
 } from '../../domain/projectLifecycleStatus'
 import { getProjectRoleLabel } from '../../domain/roleLabels'
 import { NewProjectForm, ProjectInitModal, type TeamMap } from './ProjectInitModal'
 import { OwnerSubmitModal } from './OwnerSubmitModal'
 import { getPickerPosition } from './projectPickerPosition.js'
+import { ProjectCloseFlowDrawer } from './ProjectCloseFlowDrawer'
+import { getProjectCloseMainAction } from '../../domain/projectCloseUi'
 
 // ── 常量 ──────────────────────────────────────────────────────
 
@@ -56,6 +56,8 @@ const STATUS_TABS: { key: string; label: string; queueLabel?: string }[] = [
   { key: 'pending_review', label: '待审核', queueLabel: '待企业教练审核' },
   { key: 'returned', label: '已退回', queueLabel: '待负责人修改' },
   { key: 'active', label: '进行中', queueLabel: '执行中' },
+  { key: 'pending_close', label: '结束审核中', queueLabel: '待企业教练审核' },
+  { key: 'ended', label: '已结束', queueLabel: '待归档' },
   { key: 'archived', label: '已归档', queueLabel: '归档档案' },
 ]
 
@@ -65,6 +67,8 @@ const STAGE_DESCRIPTIONS: Record<string, string> = {
   pending_review: '负责人已提交，等待企业教练审核立项和推进表草案。',
   returned: '企业教练已退回，请负责人修改后重新提交。',
   active: '项目已进入执行阶段，可进入工作推进表查看推进情况。',
+  pending_close: '项目结束申请已提交，等待企业教练审核。',
+  ended: '项目已结束，可查看结束档案并等待技术归档。',
   archived: '项目已归档，可查看归档资料和复盘结果。',
 }
 
@@ -74,6 +78,8 @@ const ACTION_REMINDERS: Record<string, string> = {
   pending_review: '负责人已提交立项信息和工作推进表雏形，请企业教练审核项目完成准则、重点工作和关键任务安排。',
   returned: '项目已被企业教练退回，请负责人根据意见修改后重新提交。',
   active: '项目已进入执行阶段，可进入工作推进表查看重点工作、关键任务和进展记录。',
+  pending_close: '项目结束申请正在审核中，可查看材料；申请人可修改或取消，企业教练可审核。',
+  ended: '项目结束申请已批准，可查看结束档案。',
   archived: '项目已归档，可查看项目档案和历史记录。',
 }
 
@@ -81,6 +87,8 @@ function getReminderToneClass(status: string): string {
   if (status === 'pending_review') return 'border-amber-200 bg-amber-50 text-amber-900'
   if (status === 'returned') return 'border-orange-200 bg-orange-50 text-orange-900'
   if (status === 'active') return 'border-emerald-200 bg-emerald-50 text-emerald-900'
+  if (status === 'pending_close') return 'border-orange-200 bg-orange-50 text-orange-900'
+  if (status === 'ended') return 'border-indigo-200 bg-indigo-50 text-indigo-900'
   if (status === 'archived') return 'border-slate-200 bg-slate-50 text-slate-700'
   return 'border-sky-200 bg-sky-50 text-sky-900'
 }
@@ -215,7 +223,7 @@ function buildDraftRows(tasks: TaskItem[], subtasks: SubTaskWithParent[], projec
   return rows
 }
 
-type MainAction = { label: string; type: 'edit' | 'dispatch' | 'ownerSubmit' | 'approvalMaterials' | 'workProgress' | 'viewDetail' }
+type MainAction = { label: string; type: 'edit' | 'dispatch' | 'ownerSubmit' | 'approvalMaterials' | 'workProgress' | 'viewDetail' | 'closeRequest' | 'closeReview' | 'closeArchiveView' }
 
 function getMainAction(
   status: string,
@@ -224,6 +232,8 @@ function getMainAction(
   isRealProjectCeo: boolean,
   isRealOwner: boolean,
 ): MainAction {
+  const closeAction = getProjectCloseMainAction(status, { isSuperAdmin, isCompanyCeo, isRealProjectCeo, isRealOwner })
+  if (closeAction && status !== 'active') return closeAction
   switch (status) {
     case 'draft':
       return (isSuperAdmin || isCompanyCeo)
@@ -253,6 +263,7 @@ function getMainAction(
 export function ProjectsMgmtSection() {
   const { reloadProjects, currentUser, globalUserRoles } = useProject()
   const navigate = useNavigate()
+  const location = useLocation()
   const [projects, setProjects] = useState<Project[]>([])
   const [people, setPeople] = useState<Person[]>([])
   const [loading, setLoading] = useState(true)
@@ -264,6 +275,8 @@ export function ProjectsMgmtSection() {
 
   // 右侧详情面板
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
+  const [closeFlowProjectId, setCloseFlowProjectId] = useState<number | null>(null)
+  const [closeFlowRequestId, setCloseFlowRequestId] = useState<number | null>(null)
 
   // 推进表雏形数据
   const [projectTasksMap, setProjectTasksMap] = useState<Record<number, TaskItem[]>>({})
@@ -408,6 +421,17 @@ export function ProjectsMgmtSection() {
   const selectedProject = selectedProjectId != null
     ? projects.find((p) => p.id === selectedProjectId) ?? null
     : null
+
+  useEffect(() => {
+    if (loading || projects.length === 0) return
+    const params = new URLSearchParams(location.search)
+    const projectId = Number(params.get('projectId'))
+    const requestId = Number(params.get('closeRequestId'))
+    if (Number.isInteger(projectId) && projects.some((project) => project.id === projectId)) {
+      setSelectedProjectId(projectId)
+      if (Number.isInteger(requestId) && requestId > 0) { setCloseFlowProjectId(projectId); setCloseFlowRequestId(requestId) }
+    }
+  }, [loading, projects, location.search])
 
   // ── Handlers ──
 
@@ -584,17 +608,23 @@ export function ProjectsMgmtSection() {
     }
   }
 
-  async function handleArchive(pid: number, name: string) {
-    if (!window.confirm(`确认归档"${name}"？归档后将不再显示在常规列表中。`)) return
-    await archiveProject(pid)
-    setProjects((prev) => prev.map((p) => (p.id === pid ? { ...p, is_active: false } : p)))
-    reloadProjects()
+  function openCloseFlow(project: Project, requestId?: number | null) {
+    setSelectedProjectId(project.id)
+    setCloseFlowProjectId(project.id)
+    setCloseFlowRequestId(requestId ?? null)
   }
 
-  async function handleUnarchive(pid: number, name: string) {
-    if (!window.confirm(`确认恢复"${name}"？`)) return
-    const updated = await patchProject(pid, { status: 'active' })
-    setProjects((prev) => prev.map((p) => (p.id === pid ? { ...p, ...updated, is_active: true } : p)))
+  function closeCloseFlow() {
+    setCloseFlowProjectId(null); setCloseFlowRequestId(null)
+    const params = new URLSearchParams(location.search)
+    params.delete('closeRequestId')
+    navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '' }, { replace: true })
+  }
+
+  async function refreshProjectCloseState(projectId: number) {
+    const rows = await getProjects(true)
+    setProjects(rows)
+    setSelectedProjectId(rows.some((project) => project.id === projectId) ? projectId : null)
     reloadProjects()
   }
 
@@ -719,8 +749,6 @@ export function ProjectsMgmtSection() {
               const status = getProjectPrimaryStatus(project)
               const roles = getProjectRoles(project.id)
               const mainAction = getMainAction(status, roles.isSuperAdmin, roles.isCompanyCeo, roles.isRealProjectCeo, roles.isRealOwner)
-              const tasks = projectTasksMap[project.id] ?? []
-              const subtasks = projectSubtasksMap[project.id] ?? []
               const pm = members[project.id] ?? []
               const teamLine = summarizeProjectRoleLine(pm, project)
               const isSelected = selectedProjectId === project.id
@@ -730,12 +758,6 @@ export function ProjectsMgmtSection() {
               const moreItems: { label: string; tone?: 'danger'; onClick: () => void }[] = []
               if (roles.isSuperAdmin || (roles.isCompanyCeo && status === 'draft')) {
                 moreItems.push({ label: '编辑项目', onClick: () => { setMenuState(null); void openProjectEditor(project) } })
-              }
-              if (roles.isSuperAdmin && status === 'active') {
-                moreItems.push({ label: '归档', tone: 'danger', onClick: () => { setMenuState(null); void handleArchive(project.id, project.name) } })
-              }
-              if (roles.isSuperAdmin && status === 'archived') {
-                moreItems.push({ label: '恢复', onClick: () => { setMenuState(null); void handleUnarchive(project.id, project.name) } })
               }
 
               return (
@@ -756,6 +778,7 @@ export function ProjectsMgmtSection() {
                     else if (mainAction.type === 'ownerSubmit') setOwnerFillProject(project)
                     else if (mainAction.type === 'approvalMaterials') { setSelectedProjectId(project.id); setApprovalMaterialsProject(project) }
                     else if (mainAction.type === 'workProgress') navigate(`/work/tasks?projectId=${project.id}`)
+                    else if (mainAction.type === 'closeRequest' || mainAction.type === 'closeReview' || mainAction.type === 'closeArchiveView') openCloseFlow(project)
                     else setSelectedProjectId(project.id)
                   }}
                   onReturn={() => void handleReturn(project.id, project.name)}
@@ -786,6 +809,7 @@ export function ProjectsMgmtSection() {
               onOpenApprovalMaterials={() => setApprovalMaterialsProject(selectedProject)}
               onReturn={() => void handleReturn(selectedProject.id, selectedProject.name)}
               onWorkProgress={() => navigate(`/work/tasks?projectId=${selectedProject.id}`)}
+              onOpenCloseFlow={() => openCloseFlow(selectedProject)}
             />
           ) : filteredProjects.length === 0 ? (
             // 只有筛选结果为空时显示项目空状态
@@ -875,6 +899,16 @@ export function ProjectsMgmtSection() {
         />
       )}
 
+      <ProjectCloseFlowDrawer
+        open={closeFlowProjectId !== null}
+        project={closeFlowProjectId !== null ? projects.find((project) => project.id === closeFlowProjectId) ?? null : null}
+        currentPersonId={myPersonId ?? null}
+        roles={closeFlowProjectId !== null ? getProjectRoles(closeFlowProjectId) : { isSuperAdmin: false, isCompanyCeo: false, isRealProjectCeo: false, isRealOwner: false }}
+        initialRequestId={closeFlowRequestId}
+        onClose={closeCloseFlow}
+        onChanged={refreshProjectCloseState}
+      />
+
       {/* 更多菜单 */}
       {menuProject && menuState && (
         <LifecycleMoreMenu
@@ -887,12 +921,6 @@ export function ProjectsMgmtSection() {
               const items: { label: string; tone?: 'danger'; onClick: () => void }[] = []
               if (roles.isSuperAdmin || (roles.isCompanyCeo && status === 'draft')) {
                 items.push({ label: '编辑项目', onClick: () => { setMenuState(null); void openProjectEditor(menuProject) } })
-              }
-              if (roles.isSuperAdmin && status === 'active') {
-                items.push({ label: '归档', tone: 'danger', onClick: () => { setMenuState(null); void handleArchive(menuProject.id, menuProject.name) } })
-              }
-              if (roles.isSuperAdmin && status === 'archived') {
-                items.push({ label: '恢复', onClick: () => { setMenuState(null); void handleUnarchive(menuProject.id, menuProject.name) } })
               }
               return items
             })()
@@ -1056,7 +1084,7 @@ function LifecycleMoreMenu({
 
 function DetailPanel({
   project, projectMembers, tasks, subtasks, roles, onClose,
-  onEdit, onDispatch, onOwnerSubmit, onOpenApprovalMaterials, onReturn, onWorkProgress,
+  onEdit, onDispatch, onOwnerSubmit, onOpenApprovalMaterials, onReturn, onWorkProgress, onOpenCloseFlow,
 }: {
   project: Project
   projectMembers: ProjectMember[]
@@ -1070,6 +1098,7 @@ function DetailPanel({
   onOpenApprovalMaterials: () => void
   onReturn: () => void
   onWorkProgress: () => void
+  onOpenCloseFlow: () => void
 }) {
   const status = getProjectPrimaryStatus(project)
   const statusBadge = getProjectStatusBadge(project)
@@ -1083,15 +1112,6 @@ function DetailPanel({
   const draftReady = summary.taskCount > 0 && summary.subtaskCount > 0
   const projectType = project.project_type?.trim() || '未填写'
   const clientName = project.client_name?.trim() || '内部项目 / 未填写'
-  const [showArchiveFeedback, setShowArchiveFeedback] = useState(false)
-
-  useEffect(() => {
-    setShowArchiveFeedback(false)
-  }, [project.id])
-
-  function onShowArchiveFeedback() {
-    setShowArchiveFeedback(true)
-  }
 
   const infoBlock = (label: string, value?: string) => (
     <div className="min-w-0">
@@ -1149,22 +1169,16 @@ function DetailPanel({
           {status === 'active' && (
             <>
               <button type="button" onClick={onWorkProgress} className="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">进入工作推进表</button>
-              <button type="button" className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">查看项目档案</button>
+              {(roles.isRealOwner || roles.isSuperAdmin) && <button type="button" onClick={onOpenCloseFlow} className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">申请项目结束</button>}
             </>
           )}
-          {status === 'archived' && (
-            <button type="button" onClick={onShowArchiveFeedback} className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">查看归档档案</button>
-          )}
+          {status === 'pending_close' && <button type="button" onClick={onOpenCloseFlow} className="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">{roles.isRealProjectCeo || roles.isSuperAdmin ? '审核结束申请' : '查看结束申请'}</button>}
+          {status === 'ended' && <button type="button" onClick={onOpenCloseFlow} className="w-full rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700">查看结束档案</button>}
+          {status === 'archived' && <button type="button" onClick={onOpenCloseFlow} className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">查看归档档案</button>}
         </div>
       </section>
 
       <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
-        {showArchiveFeedback && (
-          <section className="projects-lifecycle-panel-section projects-lifecycle-archive-feedback rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            当前没有单独的归档详情页。归档项目的核心信息、项目角色和立项资料完备度已在本处理面板中展示。
-          </section>
-        )}
-
         <section className="projects-lifecycle-panel-section projects-lifecycle-panel-core-info">
           <p className="mb-2 text-xs font-bold text-slate-500">项目核心信息</p>
           <div className="grid grid-cols-2 gap-x-5 gap-y-3 rounded-lg border border-slate-100 bg-white px-4 py-3">

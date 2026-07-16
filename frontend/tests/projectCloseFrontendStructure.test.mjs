@@ -14,6 +14,12 @@ async function loadPureUi() {
   return import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)
 }
 
+async function loadPermissions() {
+  const source = read('src/domain/permissions.ts')
+  const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText
+  return import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)
+}
+
 test('lifecycle declares pending_close and ended without string escape hatch', () => {
   const source = read('src/domain/projectLifecycleStatus.ts')
   assert.match(source, /\| 'pending_close'/); assert.match(source, /\| 'ended'/)
@@ -36,6 +42,26 @@ test('role action mapping is executable and exact', async () => {
   assert.equal(canReviewProjectCloseRequest('pending_close', admin), true)
   assert.equal(getProjectCloseMainAction('ended', admin).label, '查看结束档案')
   assert.equal(getProjectCloseMainAction('archived', member).label, '查看归档档案')
+})
+
+test('project lifecycle page admits participants without granting project management', async () => {
+  const { canManageProjects, canViewProjectManagement } = await loadPermissions()
+  const normalUser = { is_tech_admin: false, is_ceo: false }
+  const companyCeoUser = { is_tech_admin: false, is_ceo: true }
+  const superAdminUser = { is_tech_admin: true, is_ceo: false }
+
+  assert.equal(canViewProjectManagement(normalUser, []), false)
+  assert.equal(canViewProjectManagement(normalUser, ['member']), true)
+  assert.equal(canViewProjectManagement(normalUser, ['coordinator']), true)
+  assert.equal(canViewProjectManagement(normalUser, ['owner']), true)
+  assert.equal(canViewProjectManagement(normalUser, ['project_ceo']), true)
+  assert.equal(canViewProjectManagement(companyCeoUser, []), true)
+  assert.equal(canViewProjectManagement(superAdminUser, []), true)
+
+  assert.equal(canManageProjects(normalUser, ['member']), false)
+  assert.equal(canManageProjects(normalUser, ['coordinator']), false)
+  assert.equal(canManageProjects(normalUser, ['owner']), false)
+  assert.equal(canManageProjects(normalUser, ['project_ceo']), true)
 })
 
 test('project page exposes new tabs, deep link and safe close entries', () => {

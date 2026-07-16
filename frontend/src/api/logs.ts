@@ -36,3 +36,8 @@ export function fetchGlobalLogs(params: {
   if (params.page_size)   qs.set('page_size', String(params.page_size))
   return apiGet<GlobalLogsResult>(`/api/logs/global?${qs.toString()}`)
 }
+
+export function fetchTargetLogs(targetType: string, targetId: number): Promise<OperationLogItem[]> {
+  const qs = new URLSearchParams({ target_type: targetType, target_id: String(targetId) })
+  return apiGet<OperationLogItem[]>(`/api/logs?${qs.toString()}`)
+}

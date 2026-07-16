@@ -22,7 +22,13 @@ from .auth import (
     validate_password_policy,
     verify_password,
 )
-from .database import Base, SessionLocal, engine
+from .database import Base, SQLALCHEMY_DATABASE_URL, SessionLocal, engine
+from .database_safety import (
+    authorize_dev_create_all,
+    authorize_dev_seed,
+    dev_create_all_requested,
+    print_database_target,
+)
 from .excel_importer import read_project_assignments
 from .llm_config import PROVIDERS, load_configs
 from .permissions import get_all_project_roles, get_user_context_from_db, system_role_label
@@ -61,14 +67,29 @@ logger = logging.getLogger("bowei")
 
 
 def _startup():
-    Base.metadata.create_all(bind=engine)
-    _ensure_phase1_schema()
+    print_database_target(SQLALCHEMY_DATABASE_URL, mode="startup")
+
+    dev_seed_requested = os.getenv("BOWEI_DEV_MODE", "").lower() == "true"
+    if dev_seed_requested:
+        authorize_dev_seed(SQLALCHEMY_DATABASE_URL)
+
+    if dev_create_all_requested():
+        authorize_dev_create_all(SQLALCHEMY_DATABASE_URL)
+        Base.metadata.create_all(bind=engine)
+
+    inspector = inspect(engine)
+    required_tables = {"accounts", "auth_sessions", "people", "projects"}
+    if not required_tables.issubset(set(inspector.get_table_names())):
+        raise RuntimeError(
+            "Database schema is not ready. Run the approved migration procedure."
+        )
+
     with SessionLocal() as db:
         db.query(models.AuthSession).filter(models.AuthSession.expires_at <= utc_now()).delete(synchronize_session=False)
         db.query(models.AuthSession).filter(models.AuthSession.session_token_hash == None).delete(synchronize_session=False)
         db.commit()
 
-    if os.getenv("BOWEI_DEV_MODE", "").lower() == "true":
+    if dev_seed_requested:
         db = SessionLocal()
         try:
             seed(db)
@@ -230,17 +251,6 @@ def _auth_me_payload(username: str) -> dict | None:
             "default_route": _default_route(account, context),
             "projects": projects,
         }
-
-
-def _ensure_phase1_schema() -> None:
-    inspector = inspect(engine)
-    if inspector.has_table("auth_sessions"):
-        columns = {col["name"] for col in inspector.get_columns("auth_sessions")}
-        with engine.begin() as conn:
-            if "session_token_hash" not in columns:
-                conn.execute(text("ALTER TABLE auth_sessions ADD COLUMN session_token_hash VARCHAR(64)"))
-            if "revoked_at" not in columns:
-                conn.execute(text("ALTER TABLE auth_sessions ADD COLUMN revoked_at DATETIME"))
 
 
 @app.exception_handler(Exception)

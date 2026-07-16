@@ -80,12 +80,12 @@ export function canManageProjects(user: CurrentUserLike, roles?: readonly string
 }
 
 /**
- * 是否可进入「项目管理」页面（角色化视图入口）。
- * 管理员 / CEO / 企业教练 / 负责人 均可进入，但可见范围与操作权限在页面内进一步区分。
- * 注意：这只是「进入页面」的门槛，不等于拥有完整管理权限。
+ * 是否可进入项目生命周期页面的查看入口。
+ * 真实项目参与人可进入并查看自己可见的项目及结束档案，但这不代表拥有项目管理写权限。
+ * 新建、编辑、结束申请、审核和归档仍由页面操作及后端接口分别校验。
  */
 export function canViewProjectManagement(user: CurrentUserLike, roles?: readonly string[] | null): boolean {
-  return canManageProjects(user, roles) || hasProjectRole(roles, 'owner')
+  return canManageProjects(user, roles) || hasAnyProjectRole(roles)
 }
 
 export function canManageProjectMembers(user: CurrentUserLike): boolean {

@@ -89,7 +89,7 @@ export type Project = {
   name: string
   code: string
   description: string
-  status: string
+  status: ProjectLifecycleStatus
   is_active: boolean
   start_date?: string
   end_date?: string
@@ -104,11 +104,46 @@ export type Project = {
   background?: string
   objectives?: string
   expected_outcomes?: string
-  lifecycle_status?: string
+  lifecycle_status?: ProjectLifecycleStatus
   kickoff_date?: string
   kickoff_by?: string
   initiated_by?: string
 }
+
+export type ProjectCloseResidualItem = {
+  description: string
+  reason: string
+  owner: string
+  handover_to: string
+  follow_up_plan: string
+  expected_resolution: string
+}
+
+export type ProjectCloseCheckItem = { code: string; count: number; message: string }
+
+export type ProjectCloseRequest = {
+  id: number; project_id: number; project_name: string; project_status: string
+  requester_person_id: number | null; requester_name: string
+  summary: string; objective_result: string
+  unfinished_items: ProjectCloseResidualItem[]; remaining_risks: ProjectCloseResidualItem[]
+  handover_plan: string; retrospective: string
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled' | string
+  reviewer_person_id: number | null; reviewer_name: string; review_comment: string
+  created_at: string | null; updated_at: string | null; reviewed_at: string | null; cancelled_at: string | null
+  blockers: ProjectCloseCheckItem[]; warnings: ProjectCloseCheckItem[]
+}
+
+export type ProjectCloseRequestCreatePayload = {
+  summary: string
+  objective_result: string
+  unfinished_items: ProjectCloseResidualItem[]
+  remaining_risks: ProjectCloseResidualItem[]
+  handover_plan: string
+  retrospective: string
+}
+
+export type ProjectCloseRequestUpdatePayload = Partial<ProjectCloseRequestCreatePayload>
+export type ProjectCloseReviewPayload = { review_comment: string }
 
 // GET /api/projects/{id}/capabilities
 export type ProjectCapabilities = {
@@ -348,3 +383,4 @@ export type ConfirmationItem = {
   pending_coordinator_card_indices?: number[]
   [key: string]: unknown
 }
+import type { ProjectLifecycleStatus } from './domain/projectLifecycleStatus'

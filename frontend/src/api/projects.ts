@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiPatch, apiDelete } from './client'
-import type { Project, ProjectCapabilities, ProjectMember, MemberChangeRequest } from '../types'
+import type { Project, ProjectCapabilities, ProjectMember, MemberChangeRequest, ProjectCloseRequest, ProjectCloseRequestCreatePayload, ProjectCloseRequestUpdatePayload, ProjectCloseReviewPayload } from '../types'
 
 // 当前用户可见项目：GET /api/projects[?include_archived=true]
 export function getProjects(includeArchived = false): Promise<Project[]> {
@@ -69,6 +69,29 @@ export function patchProject(projectId: number, payload: ProjectPatchPayload): P
 
 export function archiveProject(projectId: number): Promise<{ ok: boolean; status: string }> {
   return apiPost(`/api/projects/${projectId}/archive`)
+}
+
+export function createProjectCloseRequest(projectId: number, payload: ProjectCloseRequestCreatePayload): Promise<ProjectCloseRequest> {
+  return apiPost<ProjectCloseRequest>(`/api/projects/${projectId}/close-requests`, payload)
+}
+export function getProjectCloseRequests(projectId: number, status?: string): Promise<ProjectCloseRequest[]> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : ''
+  return apiGet<ProjectCloseRequest[]>(`/api/projects/${projectId}/close-requests${query}`)
+}
+export function getProjectCloseRequest(projectId: number, requestId: number): Promise<ProjectCloseRequest> {
+  return apiGet<ProjectCloseRequest>(`/api/projects/${projectId}/close-requests/${requestId}`)
+}
+export function updateProjectCloseRequest(projectId: number, requestId: number, payload: ProjectCloseRequestUpdatePayload): Promise<ProjectCloseRequest> {
+  return apiPatch<ProjectCloseRequest>(`/api/projects/${projectId}/close-requests/${requestId}`, payload)
+}
+export function cancelProjectCloseRequest(projectId: number, requestId: number): Promise<ProjectCloseRequest> {
+  return apiPost<ProjectCloseRequest>(`/api/projects/${projectId}/close-requests/${requestId}/cancel`, {})
+}
+export function approveProjectCloseRequest(projectId: number, requestId: number, payload: ProjectCloseReviewPayload): Promise<ProjectCloseRequest> {
+  return apiPost<ProjectCloseRequest>(`/api/projects/${projectId}/close-requests/${requestId}/approve`, payload)
+}
+export function rejectProjectCloseRequest(projectId: number, requestId: number, payload: ProjectCloseReviewPayload): Promise<ProjectCloseRequest> {
+  return apiPost<ProjectCloseRequest>(`/api/projects/${projectId}/close-requests/${requestId}/reject`, payload)
 }
 
 export function kickoffProject(projectId: number, kickoffDate?: string): Promise<Project> {

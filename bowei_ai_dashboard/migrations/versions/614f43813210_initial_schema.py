@@ -1,14 +1,13 @@
-"""initial_schema — baseline
+"""Legacy initial-schema marker.
 
-这是 Alembic 接入时的基准版本，不执行任何 DDL。
-现有数据库（SQLite）已有完整 schema，通过 `alembic stamp head` 标记为此版本即可。
-新数据库（如 PostgreSQL）由 main.py 的 Base.metadata.create_all() 建表，
-然后同样 `alembic stamp head` 标记基准。
+This revision is no longer the migration root. Empty databases are created
+by the preceding static bootstrap revision. Databases already stamped at
+614f43813210 or a later revision do not execute that predecessor again.
 
-后续每次 schema 变更生成新的 revision，走正常 upgrade 流程。
+This revision intentionally remains free of DDL.
 
 Revision ID: 614f43813210
-Revises:
+Revises: 7f3a2c9d8e41
 Create Date: 2026-06-23 11:10:45.034784
 
 """
@@ -17,7 +16,7 @@ from typing import Sequence, Union
 
 # revision identifiers, used by Alembic.
 revision: str = '614f43813210'
-down_revision: Union[str, Sequence[str], None] = None
+down_revision: Union[str, Sequence[str], None] = '7f3a2c9d8e41'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

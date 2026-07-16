@@ -41,7 +41,9 @@ test('role action mapping is executable and exact', async () => {
   assert.equal(getProjectCloseMainAction('pending_close', member).label, '查看结束申请')
   assert.equal(canReviewProjectCloseRequest('pending_close', admin), true)
   assert.equal(getProjectCloseMainAction('ended', admin).label, '查看结束档案')
-  assert.equal(getProjectCloseMainAction('archived', member).label, '查看归档档案')
+  const archivedAction = getProjectCloseMainAction('archived', member)
+  assert.equal(archivedAction.type, 'projectArchive')
+  assert.equal(archivedAction.label, '查看项目档案')
 })
 
 test('project lifecycle page admits participants without granting project management', async () => {

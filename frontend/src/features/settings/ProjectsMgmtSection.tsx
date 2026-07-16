@@ -223,7 +223,7 @@ function buildDraftRows(tasks: TaskItem[], subtasks: SubTaskWithParent[], projec
   return rows
 }
 
-type MainAction = { label: string; type: 'edit' | 'dispatch' | 'ownerSubmit' | 'approvalMaterials' | 'workProgress' | 'viewDetail' | 'closeRequest' | 'closeReview' | 'closeArchiveView' }
+type MainAction = { label: string; type: 'edit' | 'dispatch' | 'ownerSubmit' | 'approvalMaterials' | 'workProgress' | 'viewDetail' | 'closeRequest' | 'closeReview' | 'closeArchiveView' | 'projectArchive' }
 
 function getMainAction(
   status: string,
@@ -252,7 +252,7 @@ function getMainAction(
     case 'active':
       return { label: '进入工作推进表', type: 'workProgress' }
     case 'archived':
-      return { label: '查看归档档案', type: 'viewDetail' }
+      return { label: '查看项目档案', type: 'projectArchive' }
     default:
       return { label: '查看详情', type: 'viewDetail' }
   }
@@ -778,6 +778,7 @@ export function ProjectsMgmtSection() {
                     else if (mainAction.type === 'ownerSubmit') setOwnerFillProject(project)
                     else if (mainAction.type === 'approvalMaterials') { setSelectedProjectId(project.id); setApprovalMaterialsProject(project) }
                     else if (mainAction.type === 'workProgress') navigate(`/work/tasks?projectId=${project.id}`)
+                    else if (mainAction.type === 'projectArchive') navigate(`/home/projects/${project.id}/archive`)
                     else if (mainAction.type === 'closeRequest' || mainAction.type === 'closeReview' || mainAction.type === 'closeArchiveView') openCloseFlow(project)
                     else setSelectedProjectId(project.id)
                   }}
@@ -810,6 +811,7 @@ export function ProjectsMgmtSection() {
               onReturn={() => void handleReturn(selectedProject.id, selectedProject.name)}
               onWorkProgress={() => navigate(`/work/tasks?projectId=${selectedProject.id}`)}
               onOpenCloseFlow={() => openCloseFlow(selectedProject)}
+              onOpenArchive={() => navigate(`/home/projects/${selectedProject.id}/archive`)}
             />
           ) : filteredProjects.length === 0 ? (
             // 只有筛选结果为空时显示项目空状态
@@ -1084,7 +1086,7 @@ function LifecycleMoreMenu({
 
 function DetailPanel({
   project, projectMembers, tasks, subtasks, roles, onClose,
-  onEdit, onDispatch, onOwnerSubmit, onOpenApprovalMaterials, onReturn, onWorkProgress, onOpenCloseFlow,
+  onEdit, onDispatch, onOwnerSubmit, onOpenApprovalMaterials, onReturn, onWorkProgress, onOpenCloseFlow, onOpenArchive,
 }: {
   project: Project
   projectMembers: ProjectMember[]
@@ -1099,6 +1101,7 @@ function DetailPanel({
   onReturn: () => void
   onWorkProgress: () => void
   onOpenCloseFlow: () => void
+  onOpenArchive: () => void
 }) {
   const status = getProjectPrimaryStatus(project)
   const statusBadge = getProjectStatusBadge(project)
@@ -1174,7 +1177,7 @@ function DetailPanel({
           )}
           {status === 'pending_close' && <button type="button" onClick={onOpenCloseFlow} className="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">{roles.isRealProjectCeo || roles.isSuperAdmin ? '审核结束申请' : '查看结束申请'}</button>}
           {status === 'ended' && <button type="button" onClick={onOpenCloseFlow} className="w-full rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700">查看结束档案</button>}
-          {status === 'archived' && <button type="button" onClick={onOpenCloseFlow} className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">查看归档档案</button>}
+          {status === 'archived' && <button type="button" onClick={onOpenArchive} className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">查看项目档案</button>}
         </div>
       </section>
 

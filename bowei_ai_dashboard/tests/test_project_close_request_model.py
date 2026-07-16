@@ -173,4 +173,3 @@ def test_update_payload_is_partial_and_review_payload_trims_comment():
     assert update.summary == "新总结"
     assert update.objective_result is None
     assert review.review_comment == "审核意见"
-

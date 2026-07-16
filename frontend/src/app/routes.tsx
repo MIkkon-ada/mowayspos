@@ -33,6 +33,7 @@ const NoAccessPage = lazy(() => import('../pages/NoAccessPage').then((m) => ({ d
 const ClientPortalPlaceholderPage = lazy(() => import('../pages/ClientPortalPlaceholderPage').then((m) => ({ default: m.ClientPortalPlaceholderPage })))
 const MemberProjectsPage = lazy(() => import('../pages/MemberProjectsPage').then((m) => ({ default: m.MemberProjectsPage })))
 const MemberProjectTasksPage = lazy(() => import('../pages/MemberProjectTasksPage').then((m) => ({ default: m.MemberProjectTasksPage })))
+const MyTasksPage = lazy(() => import('../pages/MyTasksPage').then((m) => ({ default: m.MyTasksPage })))
 
 function HomeIndex() {
   const { currentUser, globalUserRoles } = useProject()
@@ -42,18 +43,13 @@ function HomeIndex() {
     currentUser?.can_view_all ||
     globalUserRoles.some((role) => ['owner', 'coordinator', 'project_ceo'].includes(role))
   )
-  return <Navigate to={isPrivileged ? '/home/dashboard' : '/member/projects'} replace />
+  return <Navigate to={isPrivileged ? '/home/dashboard' : '/member/tasks'} replace />
 }
 
 function LegacyProjectRedirect({ to, includeProjectId = false }: { to: string; includeProjectId?: boolean }) {
   const { projectId } = useParams()
   const target = includeProjectId && projectId ? `${to}?projectId=${projectId}` : to
   return <Navigate to={target} replace />
-}
-
-function LegacyMemberProjectRedirect() {
-  const { projectId } = useParams()
-  return <Navigate to={projectId ? `/member/projects/${projectId}` : '/member/projects'} replace />
 }
 
 function LegacyCoachDecisionRedirect() {
@@ -183,7 +179,8 @@ export function AppRoutes() {
             </RequireAuth>
           }
         >
-          <Route index element={<Navigate to="/member/projects" replace />} />
+          <Route index element={<Navigate to="/member/tasks" replace />} />
+          <Route path="tasks" element={<MyTasksPage />} />
           <Route path="projects" element={<MemberProjectsPage />} />
           <Route path="projects/:projectId" element={<MemberProjectTasksPage />} />
         </Route>
@@ -208,7 +205,7 @@ export function AppRoutes() {
           <Route index element={<LegacyProjectRedirect to="/home/dashboard" />} />
           <Route path="dashboard" element={<LegacyProjectRedirect to="/home/dashboard" />} />
           <Route path="tasks" element={<LegacyProjectRedirect to="/work/tasks" includeProjectId />} />
-          <Route path="mytasks" element={<LegacyMemberProjectRedirect />} />
+          <Route path="mytasks" element={<LegacyProjectRedirect to="/member/tasks" includeProjectId />} />
           <Route path="achievements" element={<LegacyProjectRedirect to="/work/achievements" includeProjectId />} />
           <Route path="issues" element={<LegacyProjectRedirect to="/work/issues" includeProjectId />} />
           <Route path="confirm" element={<LegacyProjectRedirect to="/work/confirmations" includeProjectId />} />

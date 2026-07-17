@@ -35,6 +35,34 @@ async function loadFlowModel() {
   return import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)
 }
 
+async function loadHistoryStatusModel() {
+  const source = read(HISTORY)
+  const start = source.indexOf('const HISTORY_SYMBOLIC_STATUS')
+  const end = source.indexOf('export function VoiceUpdateHistoryDrawer')
+  assert.ok(start >= 0 && end > start, 'history status helper must be defined before the drawer component')
+  const helperSource = source.slice(start, end)
+  const ssStub = `
+    const SS = {
+      S_NEW: '待确认', S_PENDING_OWNER: '待负责人审核', S_RETURNED: '已打回提交人',
+      S_WITHDRAWN: '已撤回', S_PERMANENTLY_REJECTED: '不入库', S_WAITING_COORDINATOR: '已转交统筹人',
+      S_COORDINATOR_GIVEN: '统筹人已反馈', S_WAITING_CEO: '待CEO决策', S_CEO_DECIDED: 'CEO已批示',
+      S_CONFIRMED: '已入库', S_NEEDS_REVISION: '需修改',
+      normalize: (status) => status || '待确认',
+      DISPLAY_LABEL: {
+        '待确认': '待确认', '待负责人审核': '待审核', '已打回提交人': '已退回', '已撤回': '已撤回',
+        '不入库': '不入库', '已转交统筹人': '已转交统筹', '统筹人已反馈': '统筹已反馈',
+        '待CEO决策': '待企业教练决策', 'CEO已批示': '企业教练已批示', '已入库': '已入库', '需修改': '需修改',
+      },
+      STATUS_BADGE_CLASS: { '待负责人审核': 'pending', '已入库': 'confirmed', '已打回提交人': 'returned' },
+      RETURNED_TO_SUBMITTER: new Set(['已打回提交人']),
+    }
+  `
+  const js = ts.transpileModule(`${ssStub}\n${helperSource}`, {
+    compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
+  }).outputText
+  return import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)
+}
+
 const selectedTask = {
   id: 108,
   title: '门店基础资料标准化',
@@ -290,4 +318,54 @@ test('flow CSS owns internal scrolling responsive columns and body overflow safe
 test('scope leaves Sidebar ConfirmPage and backend untouched by page imports', () => {
   const source = read(PAGE)
   assert.doesNotMatch(source, /Sidebar|ConfirmPage|patchSubTaskStatus/)
+})
+
+test('URL project detail resolves an archived project outside the context list without fallback', () => {
+  const source = read(PAGE)
+  assert.match(source, /import\s*\{\s*getProject\s*\}\s*from\s*'\.\.\/api\/projects'/)
+  assert.match(source, /getProject\(requestedProjectId\)/)
+  assert.match(source, /resolvedProjectDetail/)
+  assert.match(source, /pageProjects/)
+  assert.doesNotMatch(source, /requestedProjectId[\s\S]{0,240}projects\[0\]/)
+})
+
+test('page project collection deduplicates the resolved project and drives all project display state', () => {
+  const source = read(PAGE)
+  assert.match(source, /new Map[\s\S]{0,260}resolvedProjectDetail/)
+  assert.match(source, /pageProjects\.filter\(isProjectActive\)/)
+  assert.match(source, /pageProjects\.find\(\(project\) => project\.id === selectedProjectId\)/)
+  assert.match(source, /projects:\s*pageProjects/)
+})
+
+test('non-active project disables task context loading and shows a lifecycle-specific task option', () => {
+  const hook = read(BINDING)
+  const page = read(PAGE)
+  const bar = read(BINDING_BAR)
+  assert.match(hook, /enabled:\s*boolean/)
+  assert.match(hook, /if\s*\(!selectedProjectId\s*\|\|\s*!enabled\)/)
+  assert.match(hook, /taskError[\s\S]{0,120}null/)
+  assert.match(page, /enabled:\s*selectedProjectIsActive/)
+  assert.match(bar, /非执行项目不可提交汇报/)
+  assert.match(bar, /disabled=\{controlsLocked\s*\|\|\s*!selectedProjectIsActive/)
+})
+
+test('active project context remains project-scoped and is requested only from the enabled branch', () => {
+  const source = read(BINDING)
+  assert.equal((source.match(/fetchVoiceContext\(selectedProjectId\)/g) ?? []).length, 1)
+  assert.match(source, /if\s*\(!selectedProjectId\s*\|\|\s*!enabled\)[\s\S]*return[\s\S]*fetchVoiceContext\(selectedProjectId\)/)
+})
+
+test('history symbolic statuses map to canonical labels and unknown symbolic values fail safely', async () => {
+  const { normalizeHistoryStatus } = await loadHistoryStatusModel()
+  assert.deepEqual(normalizeHistoryStatus('S_PENDING_OWNER'), { status: '待负责人审核', label: '待审核', badgeClass: 'pending' })
+  assert.deepEqual(normalizeHistoryStatus('S_CONFIRMED'), { status: '已入库', label: '已入库', badgeClass: 'confirmed' })
+  assert.deepEqual(normalizeHistoryStatus('S_RETURNED'), { status: '已打回提交人', label: '已退回', badgeClass: 'returned' })
+  assert.equal(normalizeHistoryStatus('S_FUTURE_UNKNOWN').label, '状态未识别')
+})
+
+test('history UI uses normalized display state and never renders symbolic status as its fallback', () => {
+  const source = read(HISTORY)
+  assert.match(source, /normalizeHistoryStatus\(item\.confirm_status\)/)
+  assert.doesNotMatch(source, /DISPLAY_LABEL\[status\]\s*\?\?\s*item\.confirm_status/)
+  assert.doesNotMatch(source, />\{item\.confirm_status\}<\/em>/)
 })

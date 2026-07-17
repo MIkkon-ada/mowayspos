@@ -30,12 +30,14 @@ export function readVoiceDraftState(raw: string | null): VoiceDraftState {
 
 type UseVoiceTaskBindingArgs = {
   selectedProjectId: number | null
+  enabled: boolean
   requestedSubtaskId: number | null
   restoredSubtaskId: number | null
 }
 
 export function useVoiceTaskBinding({
   selectedProjectId,
+  enabled,
   requestedSubtaskId,
   restoredSubtaskId,
 }: UseVoiceTaskBindingArgs) {
@@ -55,9 +57,10 @@ export function useVoiceTaskBinding({
     setTaskDetailOpen(false)
     setTaskError(null)
 
-    if (!selectedProjectId) {
+    if (!selectedProjectId || !enabled) {
       setTaskOptions([])
       setTaskLoading(false)
+      setTaskError(null)
       return
     }
 
@@ -79,7 +82,7 @@ export function useVoiceTaskBinding({
       .finally(() => {
         if (requestId === requestIdRef.current) setTaskLoading(false)
       })
-  }, [requestedSubtaskId, restoredSubtaskId, selectedProjectId])
+  }, [enabled, requestedSubtaskId, restoredSubtaskId, selectedProjectId])
 
   const selectedTaskContext = useMemo(
     () => taskOptions.find((task) => task.id === selectedSubtaskId) ?? null,

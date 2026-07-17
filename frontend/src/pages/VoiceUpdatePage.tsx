@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { apiGet } from '../api/client'
+import { getProject } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { VoiceUpdateDetailDrawer } from '../features/voice-update/VoiceUpdateDetailDrawer'
 import { VoiceUpdateFlowStepper } from '../features/voice-update/VoiceUpdateFlowStepper'
@@ -20,6 +21,7 @@ import { useVoiceUpload } from '../features/voice-update/useVoiceUpload'
 import { canExtractVoiceUpdate } from '../features/voice-update/voiceUpdateResultTypes'
 import { formatTime } from '../features/voice-update/voiceUpdateHelpers'
 import { getProjectStatusLabel, isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
+import type { Project } from '../types'
 import '../features/voice-update/voiceUpdateFlow.css'
 
 type AvailableProvider = { provider: string; display_name: string; model: string }
@@ -43,12 +45,18 @@ export function VoiceUpdatePage() {
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
   const [providers, setProviders] = useState<AvailableProvider[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [resolvedProjectDetail, setResolvedProjectDetail] = useState<Project | null>(null)
   const projectSelectionInitialized = useRef(false)
 
-  const activeProjects = useMemo(() => projects.filter(isProjectActive), [projects])
+  const pageProjects = useMemo(() => {
+    const projectsById = new Map(projects.map((project) => [project.id, project]))
+    if (resolvedProjectDetail) projectsById.set(resolvedProjectDetail.id, resolvedProjectDetail)
+    return Array.from(projectsById.values())
+  }, [projects, resolvedProjectDetail])
+  const activeProjects = useMemo(() => pageProjects.filter(isProjectActive), [pageProjects])
   const selectedProject = useMemo(
-    () => projects.find((project) => project.id === selectedProjectId) ?? null,
-    [projects, selectedProjectId],
+    () => pageProjects.find((project) => project.id === selectedProjectId) ?? null,
+    [pageProjects, selectedProjectId],
   )
   const selectedProjectIsActive = selectedProject ? isProjectActive(selectedProject) : false
   const projectArchived = isProjectArchived(selectedProject)
@@ -69,9 +77,24 @@ export function VoiceUpdatePage() {
   }, [])
 
   useEffect(() => {
-    if (projects.length === 0 || projectSelectionInitialized.current) return
+    let cancelled = false
+    projectSelectionInitialized.current = false
+    setResolvedProjectDetail(null)
+    if (!requestedProjectId || projects.some((project) => project.id === requestedProjectId)) return
+
+    setSelectedProjectId(null)
+    getProject(requestedProjectId)
+      .then((project) => { if (!cancelled) setResolvedProjectDetail(project) })
+      .catch(() => { if (!cancelled) setResolvedProjectDetail(null) })
+    return () => { cancelled = true }
+  }, [projects, requestedProjectId])
+
+  useEffect(() => {
+    if (projectSelectionInitialized.current) return
     if (searchParams.get('projectId')) {
-      setSelectedProjectId(projects.some((project) => project.id === requestedProjectId) ? requestedProjectId : null)
+      const requestedProject = pageProjects.find((project) => project.id === requestedProjectId)
+      if (!requestedProject) return
+      setSelectedProjectId(requestedProject.id)
       projectSelectionInitialized.current = true
       return
     }
@@ -79,10 +102,11 @@ export function VoiceUpdatePage() {
     const draftProject = draftState.projectId ? activeProjects.find((project) => project.id === draftState.projectId) : null
     setSelectedProjectId(contextProject?.id ?? draftProject?.id ?? (activeProjects.length === 1 ? activeProjects[0].id : null))
     projectSelectionInitialized.current = true
-  }, [activeProjects, currentProjectId, draftState.projectId, projects, requestedProjectId, searchParams])
+  }, [activeProjects, currentProjectId, draftState.projectId, pageProjects, requestedProjectId, searchParams])
 
   const taskBinding = useVoiceTaskBinding({
     selectedProjectId,
+    enabled: selectedProjectIsActive,
     requestedSubtaskId: selectedProjectId === requestedProjectId ? requestedSubtaskId : null,
     restoredSubtaskId: !requestedSubtaskId && selectedProjectId === draftState.projectId ? draftState.subtaskId ?? null : null,
   })
@@ -138,7 +162,7 @@ export function VoiceUpdatePage() {
     cardEdits,
     proposedSubtasks,
     projectTasksForSuggest,
-    projects,
+    projects: pageProjects,
     setPhase,
     setError: setExtractionError,
     refreshHistory: historyState.refreshHistory,
@@ -209,6 +233,7 @@ export function VoiceUpdatePage() {
             taskLoading={taskBinding.taskLoading}
             taskError={taskBinding.taskError}
             controlsLocked={controlsLocked}
+            selectedProjectIsActive={selectedProjectIsActive}
             onProjectChange={handleProjectChange}
             onTaskChange={handleTaskChange}
             onOpenTaskDetail={taskBinding.openTaskDetail}
@@ -281,7 +306,7 @@ export function VoiceUpdatePage() {
             onClear={() => resetExtractionState({ clearText: true })}
             onSubmitFinal={handleSubmitFinal}
             onGoToConfirmations={() => navigate(`/work/confirmations?projectId=${selectedProjectId}`)}
-            projectArchived={projectArchived}
+            projectArchived={projectArchived || Boolean(selectedProject && !selectedProjectIsActive)}
             projectSubmitBlockedReason={projectSubmitBlockedReason}
           />
         </>

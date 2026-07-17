@@ -14,6 +14,39 @@ type VoiceUpdateHistoryDrawerProps = {
   onSelectUpdate: (id: number) => void
 }
 
+const HISTORY_SYMBOLIC_STATUS: Record<string, string> = {
+  S_NEW: SS.S_NEW,
+  S_PENDING_OWNER: SS.S_PENDING_OWNER,
+  S_RETURNED: SS.S_RETURNED,
+  S_WITHDRAWN: SS.S_WITHDRAWN,
+  S_PERMANENTLY_REJECTED: SS.S_PERMANENTLY_REJECTED,
+  S_WAITING_COORDINATOR: SS.S_WAITING_COORDINATOR,
+  S_COORDINATOR_GIVEN: SS.S_COORDINATOR_GIVEN,
+  S_WAITING_CEO: SS.S_WAITING_CEO,
+  S_CEO_DECIDED: SS.S_CEO_DECIDED,
+  S_CONFIRMED: SS.S_CONFIRMED,
+  S_NEEDS_REVISION: SS.S_NEEDS_REVISION,
+}
+
+export function normalizeHistoryStatus(status: string | null | undefined): {
+  status: string
+  label: string
+  badgeClass: string
+} {
+  const rawStatus = status?.trim() ?? ''
+  if (rawStatus === '草稿') {
+    return { status: rawStatus, label: rawStatus, badgeClass: 'bg-slate-100 text-slate-600' }
+  }
+  const symbolicStatus = HISTORY_SYMBOLIC_STATUS[rawStatus]
+  const normalizedStatus = SS.normalize(symbolicStatus ?? rawStatus)
+  const unknownSymbolicStatus = /^S_[A-Z_]+$/.test(rawStatus) && !symbolicStatus
+  return {
+    status: normalizedStatus,
+    label: unknownSymbolicStatus ? '状态未识别' : SS.DISPLAY_LABEL[normalizedStatus] ?? (normalizedStatus || '状态未识别'),
+    badgeClass: SS.STATUS_BADGE_CLASS[normalizedStatus] ?? 'bg-slate-100 text-slate-600',
+  }
+}
+
 function historySummary(item: UpdateHistoryItem): string {
   try {
     const parsed = JSON.parse(item.ai_result_json || '{}') as { summary?: string }
@@ -25,7 +58,7 @@ function historySummary(item: UpdateHistoryItem): string {
 
 function matchesHistoryFilter(item: UpdateHistoryItem, filter: HistoryFilter): boolean {
   if (filter === '全部') return true
-  const status = SS.normalize(item.confirm_status)
+  const { status } = normalizeHistoryStatus(item.confirm_status)
   if (filter === '草稿') return item.confirm_status === '草稿'
   if (filter === '已退回') return SS.RETURNED_TO_SUBMITTER.has(status)
   return item.confirm_status !== '草稿' && !SS.RETURNED_TO_SUBMITTER.has(status)
@@ -73,8 +106,7 @@ export function VoiceUpdateHistoryDrawer({
             </div>
             <div className="voice-update-history-list">
               {rows.length === 0 ? <p className="voice-update-history-empty">暂无符合条件的汇报</p> : rows.map((item) => {
-                const status = SS.normalize(item.confirm_status)
-                const label = item.confirm_status === '草稿' ? '草稿' : SS.DISPLAY_LABEL[status] ?? item.confirm_status
+                const statusView = normalizeHistoryStatus(item.confirm_status)
                 return (
                   <button
                     type="button"
@@ -84,7 +116,7 @@ export function VoiceUpdateHistoryDrawer({
                   >
                     <span className="voice-update-history-summary">{historySummary(item)}</span>
                     <span>{fmtShort(item.created_at)} · {item.source_type}</span>
-                    <em className={SS.STATUS_BADGE_CLASS[status] ?? 'bg-slate-100 text-slate-600'}>{label}</em>
+                    <em className={statusView.badgeClass}>{statusView.label}</em>
                   </button>
                 )
               })}

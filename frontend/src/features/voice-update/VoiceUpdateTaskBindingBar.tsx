@@ -11,6 +11,7 @@ type VoiceUpdateTaskBindingBarProps = {
   taskLoading: boolean
   taskError: string | null
   controlsLocked: boolean
+  selectedProjectIsActive: boolean
   onProjectChange: (projectId: number | null) => void
   onTaskChange: (subtaskId: number | null) => void
   onOpenTaskDetail: () => void
@@ -26,6 +27,7 @@ export function VoiceUpdateTaskBindingBar({
   taskLoading,
   taskError,
   controlsLocked,
+  selectedProjectIsActive,
   onProjectChange,
   onTaskChange,
   onOpenTaskDetail,
@@ -51,10 +53,10 @@ export function VoiceUpdateTaskBindingBar({
         <span>关键任务 <span aria-hidden="true">*</span></span>
         <select
           value={selectedSubtaskId ?? ''}
-          disabled={controlsLocked || !selectedProjectId || taskLoading}
+          disabled={controlsLocked || !selectedProjectIsActive || !selectedProjectId || taskLoading}
           onChange={(event) => onTaskChange(event.target.value ? Number(event.target.value) : null)}
         >
-          <option value="">{taskLoading ? '正在加载关键任务…' : '请选择关键任务'}</option>
+          <option value="">{!selectedProjectIsActive && selectedProjectId ? '非执行项目不可提交汇报' : taskLoading ? '正在加载关键任务…' : '请选择关键任务'}</option>
           {taskOptions.map((task) => (
             <option key={task.id} value={task.id}>{task.title} — {task.parent_key_task || '未标注重点工作'}</option>
           ))}
@@ -75,7 +77,7 @@ export function VoiceUpdateTaskBindingBar({
         查看任务详情
       </button>
 
-      {selectedProjectId && !taskLoading && taskOptions.length === 0 && !taskError && (
+      {selectedProjectId && selectedProjectIsActive && !taskLoading && taskOptions.length === 0 && !taskError && (
         <div className="voice-update-binding-message">
           <strong>当前项目暂无可汇报的关键任务</strong>
           <span>请联系项目负责人确认任务派发和责任人配置。</span>

@@ -116,26 +116,35 @@ export function VoiceUpdateTaskReportsSection({
 
     return (
       <article key={index} className={`voice-update-report-card${primary ? ' is-primary' : ''}`}>
-        <header>
+        {!primary && <header>
           <div>
             <span>{progress ? (primary ? '本次汇报任务' : '其他进展') : report.type === 'suggest_new_subtask' ? '建议新增关键任务' : '新建关键任务'}</span>
             <h3>{title}</h3>
           </div>
           {progress?.status_update && <em>{progress.status_update}</em>}
-        </header>
-        {renderOwnership(report, index)}
+        </header>}
+        {!primary && renderOwnership(report, index)}
         <div className="voice-update-progress-editor">
           <div className="voice-update-progress-field">
-            <label>本次完成</label>
-            <textarea value={completed} disabled={phase === 'submitted'} onChange={(event) => updateReport(index, { completed: event.target.value })} placeholder="本次具体完成了哪些工作？" />
+            <label className="voice-update-field-label"><span className="is-complete">✓</span>本次完成</label>
+            <div className="voice-update-field-control">
+              <textarea value={completed} disabled={phase === 'submitted'} onChange={(event) => updateReport(index, { completed: event.target.value })} placeholder="本次具体完成了哪些工作？" />
+              <span>{completed.length}/1000</span>
+            </div>
           </div>
           <div className="voice-update-progress-field">
-            <label>下一步计划</label>
-            <textarea value={(report.next_steps ?? []).join('\n')} disabled={phase === 'submitted'} onChange={(event) => updateReport(index, { next_steps: lines(event.target.value) })} placeholder="每行填写一项下一步计划" />
+            <label className="voice-update-field-label"><span className="is-next">→</span>下一步计划</label>
+            <div className="voice-update-field-control">
+              <textarea value={(report.next_steps ?? []).join('\n')} disabled={phase === 'submitted'} onChange={(event) => updateReport(index, { next_steps: lines(event.target.value) })} placeholder="每行填写一项下一步计划" />
+              <span>{(report.next_steps ?? []).join('\n').length}/1000</span>
+            </div>
           </div>
           <div className="voice-update-progress-field">
-            <label>问题与风险</label>
-            <textarea value={(report.subtask_issues ?? []).map((item) => typeof item === 'string' ? item : String((item as unknown as Record<string, unknown>).description ?? '')).join('\n')} disabled={phase === 'submitted'} onChange={(event) => updateReport(index, { subtask_issues: lines(event.target.value) })} placeholder="每行填写一个问题或风险，没有可留空" />
+            <label className="voice-update-field-label"><span className="is-risk">!</span>问题与风险</label>
+            <div className="voice-update-field-control">
+              <textarea value={(report.subtask_issues ?? []).map((item) => typeof item === 'string' ? item : String((item as unknown as Record<string, unknown>).description ?? '')).join('\n')} disabled={phase === 'submitted'} onChange={(event) => updateReport(index, { subtask_issues: lines(event.target.value) })} placeholder="每行填写一个问题或风险，没有可留空" />
+              <span>{(report.subtask_issues ?? []).map((item) => typeof item === 'string' ? item : String((item as unknown as Record<string, unknown>).description ?? '')).join('\n').length}/1000</span>
+            </div>
           </div>
           {matchingKeyIssues.map(({ issue, issueIndex }) => (
             <div className="voice-update-progress-field" key={`key-issue-${issueIndex}`}>
@@ -148,35 +157,92 @@ export function VoiceUpdateTaskReportsSection({
             </div>
           ))}
           <div className="voice-update-progress-field">
-            <label>取得的成果</label>
-            <textarea value={(report.achievements ?? []).map((item) => item.name).join('\n')} disabled={phase === 'submitted'} onChange={(event) => updateAchievements(index, event.target.value)} placeholder="每行填写一项成果" />
-            {(report.achievements ?? []).map((achievement, achievementIndex) => (
-              <input
-                key={`${achievement.name}-${achievementIndex}`}
-                value={achievement.file_link ?? ''}
-                disabled={phase === 'submitted'}
-                onChange={(event) => setTaskReports((previous) => previous.map((item, currentIndex) => currentIndex === index ? {
-                  ...item,
-                  achievements: item.achievements.map((entry, currentAchievementIndex) => currentAchievementIndex === achievementIndex ? { ...entry, file_link: event.target.value } : entry),
-                } as TaskReport : item))}
-                placeholder={`${achievement.name}的存储地址（可选）`}
-              />
-            ))}
+            <label className="voice-update-field-label"><span className="is-achievement">★</span>取得的成果</label>
+            <div className="voice-update-field-control">
+              <textarea value={(report.achievements ?? []).map((item) => item.name).join('\n')} disabled={phase === 'submitted'} onChange={(event) => updateAchievements(index, event.target.value)} placeholder="每行填写一项成果" />
+              <span>{(report.achievements ?? []).map((item) => item.name).join('\n').length}/1000</span>
+            </div>
           </div>
           {progress && (
             <div className="voice-update-progress-field">
-              <label>任务状态建议</label>
-              <select value={progress.status_update || '进行中'} disabled={phase === 'submitted'} onChange={(event) => updateReport(index, { status_update: event.target.value })}>
-                {STATUS_OPTIONS.map((status) => <option key={status} value={status}>{status}</option>)}
-              </select>
+              <label className="voice-update-field-label"><span className="is-status">⚑</span>任务状态建议</label>
+              <div className="voice-update-status-options" role="radiogroup" aria-label="任务状态建议">
+                {STATUS_OPTIONS.map((status) => (
+                  <label key={status}>
+                    <input
+                      type="radio"
+                      name={primary ? 'voice-update-status' : `voice-update-status-${index}`}
+                      value={status}
+                      checked={(progress.status_update || '进行中') === status}
+                      disabled={phase === 'submitted'}
+                      onChange={(event) => updateReport(index, { status_update: event.target.value })}
+                    />
+                    <span>{status}</span>
+                  </label>
+                ))}
+              </div>
             </div>
           )}
         </div>
+        {primary && (
+          <details className="voice-update-ownership-details">
+            <summary>调整任务归属及成果链接</summary>
+            {renderOwnership(report, index)}
+            {(report.achievements ?? []).map((achievement, achievementIndex) => (
+              <label className="voice-update-achievement-link" key={`${achievement.name}-${achievementIndex}`}>
+                <span>{achievement.name}的存储地址</span>
+                <input
+                  value={achievement.file_link ?? ''}
+                  disabled={phase === 'submitted'}
+                  onChange={(event) => setTaskReports((previous) => previous.map((item, currentIndex) => currentIndex === index ? {
+                    ...item,
+                    achievements: item.achievements.map((entry, currentAchievementIndex) => currentAchievementIndex === achievementIndex ? { ...entry, file_link: event.target.value } : entry),
+                  } as TaskReport : item))}
+                  placeholder="可选"
+                />
+              </label>
+            ))}
+          </details>
+        )}
       </article>
     )
   }
 
-  if (taskReports.length === 0) return null
+  if (taskReports.length === 0) {
+    return (
+      <div className="voice-update-task-reports voice-update-structured-empty" aria-label="待提取的结构化汇报字段">
+        <article className="voice-update-report-card is-primary">
+          <div className="voice-update-progress-editor">
+            {[
+              ['本次完成', 'AI 提取后将在此展示本次完成的工作', 'is-complete', '✓'],
+              ['下一步计划', 'AI 提取后将在此展示下一步计划', 'is-next', '→'],
+              ['问题与风险', 'AI 提取后将在此展示问题与风险', 'is-risk', '!'],
+              ['取得的成果', 'AI 提取后将在此展示取得的成果', 'is-achievement', '★'],
+            ].map(([label, placeholder, tone, icon]) => (
+              <div className="voice-update-progress-field" key={label}>
+                <label className="voice-update-field-label"><span className={tone}>{icon}</span>{label}</label>
+                <div className="voice-update-field-control">
+                  <textarea value="" disabled placeholder={placeholder} readOnly />
+                  <span>0/1000</span>
+                </div>
+              </div>
+            ))}
+            <div className="voice-update-progress-field">
+              <label className="voice-update-field-label"><span className="is-status">⚑</span>任务状态建议</label>
+              <div className="voice-update-status-options" role="radiogroup" aria-label="任务状态建议">
+                {STATUS_OPTIONS.map((status) => (
+                  <label key={status}>
+                    <input type="radio" name="voice-update-status" value={status} disabled />
+                    <span>{status}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        </article>
+      </div>
+    )
+  }
 
   return (
     <div className="voice-update-task-reports">

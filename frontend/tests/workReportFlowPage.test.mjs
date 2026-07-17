@@ -225,11 +225,12 @@ test('input panel owns model selection and the AI extraction action', () => {
   assert.match(source, /onClick=\{onExtract\}/)
 })
 
-test('raw report textarea is stable at 260px minimum with a 5000 character count', () => {
+test('raw report textarea matches the 225px target height with a 5000 character count', () => {
   const source = `${read(INPUT)}\n${read(CSS)}`
   assert.match(source, /maxLength=\{5000\}/)
   assert.match(source, /\{text\.length\}\/5000/)
-  assert.match(source, /min-height:\s*260px/)
+  assert.match(source, /height:\s*225px/)
+  assert.match(source, /min-height:\s*225px/)
 })
 
 test('input guidance is compressed to the exact two useful hints', () => {
@@ -310,9 +311,59 @@ test('page state locks binding and input controls while extracting or submitting
 test('flow CSS owns internal scrolling responsive columns and body overflow safety', () => {
   const source = read(CSS)
   assert.match(source, /\.voice-update-page\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column[^}]*min-height:\s*0[^}]*overflow:\s*hidden/s)
-  assert.match(source, /grid-template-columns:\s*minmax\(0,\s*38fr\)\s+minmax\(0,\s*62fr\)/)
+  assert.match(source, /grid-template-columns:\s*minmax\(0,\s*32fr\)\s+minmax\(0,\s*68fr\)/)
   assert.match(source, /@media \(max-width:\s*899px\)[\s\S]*grid-template-columns:\s*1fr/s)
   assert.match(source, /overflow-x:\s*hidden/)
+})
+
+test('target visual replica locks the measured desktop vertical rhythm and controls', () => {
+  const source = read(CSS)
+  assert.match(source, /\.voice-update-header\s*\{[^}]*height:\s*86px/s)
+  assert.match(source, /\.voice-update-stepper\s*\{[^}]*height:\s*83px/s)
+  assert.match(source, /\.voice-update-binding\s*\{[^}]*height:\s*94px/s)
+  assert.match(source, /\.voice-update-workspace\s*\{[^}]*gap:\s*12px/s)
+  assert.match(source, /\.voice-update-mode-tabs button\s*\{[^}]*height:\s*44px/s)
+  assert.match(source, /\.voice-update-history-drawer\s*\{[^}]*width:\s*292px/s)
+})
+
+test('input and result panels expose the target numbered headings and re-extract action', () => {
+  const input = read(INPUT)
+  const result = read(RESULT)
+  assert.match(input, /voice-update-panel-step[^>]*>2</)
+  assert.match(input, /<h2>输入内容<\/h2>/)
+  assert.match(input, /支持文本、录音、音频文件三种方式/)
+  assert.match(result, /voice-update-panel-step[^>]*>3</)
+  assert.match(result, /AI 提取结果（预览）/)
+  assert.match(result, /重新提取/)
+})
+
+test('AI result keeps all five structured fields mounted before extraction', () => {
+  const result = read(RESULT)
+  const reports = read(REPORTS)
+  assert.match(result, /<VoiceUpdateTaskReportsSection/)
+  assert.doesNotMatch(result, /\{result\s*&&\s*\([\s\S]*?<VoiceUpdateTaskReportsSection/)
+  for (const label of ['本次完成', '下一步计划', '问题与风险', '取得的成果', '任务状态建议']) {
+    assert.match(reports, new RegExp(label))
+  }
+  assert.match(reports, /voice-update-structured-empty/)
+  assert.doesNotMatch(result, /voice-update-result-empty[^>]*><strong>\{emptyMessage\}/)
+})
+
+test('task status suggestion uses the five target radio options', () => {
+  const source = read(REPORTS)
+  assert.match(source, /type="radio"/)
+  assert.match(source, /primary\s*\?\s*'voice-update-status'/)
+  for (const status of ['未开始', '进行中', '延期', '已完成', '暂缓']) assert.match(source, new RegExp(status))
+})
+
+test('footer owns a fixed action bar and the target confirmation note', () => {
+  const submit = read(SUBMIT)
+  const css = read(CSS)
+  assert.match(submit, /voice-update-footer-bar/)
+  assert.match(submit, /voice-update-footer-note/)
+  assert.match(submit, /提交后将进入 AI 确认中心/)
+  assert.match(css, /\.voice-update-footer-bar\s*\{[^}]*height:\s*77px/s)
+  assert.match(css, /\.voice-update-footer-note\s*\{[^}]*height:\s*39px/s)
 })
 
 test('scope leaves Sidebar ConfirmPage and backend untouched by page imports', () => {

@@ -57,6 +57,16 @@ export function VoiceUpdateInputPanel({
 }: VoiceUpdateInputPanelProps) {
   return (
     <section className="voice-update-input-panel" aria-label="输入汇报内容">
+      <header className="voice-update-panel-header voice-update-input-panel-header">
+        <div className="voice-update-panel-heading">
+          <span className="voice-update-panel-step">2</span>
+          <div>
+            <h2>输入内容</h2>
+            <p>支持文本、录音、音频文件三种方式</p>
+          </div>
+        </div>
+      </header>
+
       <div className="voice-update-mode-tabs" role="tablist" aria-label="输入方式">
         {MODE_OPTIONS.map(({ key, label, path }) => (
           <button
@@ -75,7 +85,7 @@ export function VoiceUpdateInputPanel({
       </div>
 
       <div className="voice-update-input-heading">
-        <h2>原始汇报内容</h2>
+        <h2>原始汇报内容 <em aria-hidden="true">*</em></h2>
         <span>提交前可继续修改</span>
       </div>
 

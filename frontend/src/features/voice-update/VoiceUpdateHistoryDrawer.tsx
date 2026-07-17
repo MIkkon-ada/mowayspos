@@ -88,7 +88,7 @@ export function VoiceUpdateHistoryDrawer({
     <div className="voice-update-drawer-backdrop" onClick={onClose}>
       <aside className="voice-update-drawer voice-update-history-drawer" onClick={(event) => event.stopPropagation()} aria-label="历史汇报">
         <header className="voice-update-drawer-header">
-          <div><p>项目记录</p><h2>历史汇报</h2></div>
+          <h2>历史汇报</h2>
           <button type="button" onClick={onClose} aria-label="关闭历史汇报">×</button>
         </header>
         {!selectedProjectId ? (

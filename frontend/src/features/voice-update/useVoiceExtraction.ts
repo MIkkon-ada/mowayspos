@@ -1,29 +1,30 @@
 import { useEffect, useRef, useState } from 'react'
-import { extractOnly, fetchVoiceContext } from '../../api/updates'
+import { extractOnly } from '../../api/updates'
 import { fetchTasks } from '../../api/tasks'
-import type { Project, SubTaskItem, TaskItem } from '../../types'
+import type { SubTaskItem, TaskItem } from '../../types'
 import type { KeyTaskIssue, TaskReport, UserSubtaskContext } from '../../api/updates'
 import type { ProposedSubTask } from '../../api/subtaskDrafts'
-import { type CardEdit, type Phase } from './voiceUpdateResultTypes'
+import { bindProgressReportsToTask, type CardEdit, type Phase } from './voiceUpdateResultTypes'
 
 type UseVoiceExtractionArgs = {
-  currentProjectId: number | null
   selectedProjectId: number | null
+  selectedTaskContext: UserSubtaskContext | null
+  selectedProjectIsActive: boolean
   currentUser: { name?: string } | null
   text: string
   mode: 'voice' | 'upload' | 'text'
   selectedProvider: string
-  projects: Project[]
   setText: (value: string) => void
 }
 
 export function useVoiceExtraction({
   selectedProjectId,
+  selectedTaskContext,
+  selectedProjectIsActive,
   currentUser,
   text,
   mode,
   selectedProvider,
-  projects: _projects,
   setText,
 }: UseVoiceExtractionArgs) {
   const [phase, setPhase] = useState<Phase>('input')
@@ -95,15 +96,25 @@ export function useVoiceExtraction({
   async function handleExtract() {
     if (submitLock.current) return
     submitLock.current = true
+    if (!selectedProjectId) {
+      submitLock.current = false
+      setError('请先选择所属项目，再进行 AI 提取。')
+      return
+    }
+    if (!selectedTaskContext) {
+      submitLock.current = false
+      setError('请先选择本次汇报对应的关键任务。')
+      return
+    }
     const content = text.trim()
     if (!content) {
       submitLock.current = false
       setError('请先输入或录制内容')
       return
     }
-    if (!selectedProjectId) {
+    if (!selectedProjectIsActive) {
       submitLock.current = false
-      setError('请先选择所属项目，再进行 AI 提取。')
+      setError('项目尚未进入执行阶段，暂不能进行 AI 提取。')
       return
     }
 
@@ -112,19 +123,7 @@ export function useVoiceExtraction({
     setError(null)
     setResult(null)
 
-    let userSubtasks: UserSubtaskContext[] = []
-    // 无论是否选了项目，都拉用户可汇报的子任务上下文
-    // 没选项目时后端返回所有项目的子任务（跨项目汇报）
-    try {
-      const contextSubs = await fetchVoiceContext(projectId)
-      const mentioned = contextSubs.filter((s) => content.includes(s.title))
-      const rest = contextSubs.filter((s) => !content.includes(s.title))
-      userSubtasks = [...mentioned, ...rest].slice(0, 60)
-      setVoiceSubtasksContext(userSubtasks)
-    } catch {
-      // context is optional
-      setVoiceSubtasksContext([])
-    }
+    setVoiceSubtasksContext([selectedTaskContext])
 
     try {
       const res = await extractOnly({
@@ -133,7 +132,7 @@ export function useVoiceExtraction({
         transcript_text: content,
         submitter: currentUser?.name,
         llm_provider: selectedProvider,
-        user_subtasks: userSubtasks,
+        user_subtasks: [selectedTaskContext],
       })
       const suggestion = res.suggestion ?? {}
       setResult(suggestion)
@@ -141,14 +140,16 @@ export function useVoiceExtraction({
       setEditingField(null)
       const rawProposed = (suggestion.proposed_subtasks as ProposedSubTask[] | undefined) ?? []
       setProposedSubtasks(rawProposed.filter((s) => s.title?.trim()))
-      const nextTaskReports = (suggestion.task_reports as TaskReport[] | undefined) ?? []
+      const nextTaskReports = bindProgressReportsToTask(
+        (suggestion.task_reports as TaskReport[] | undefined) ?? [],
+        selectedTaskContext,
+      )
       setTaskReports(nextTaskReports)
       const initEdits: Record<number, CardEdit> = {}
       nextTaskReports.forEach((r, idx) => {
         if (r.type === 'progress' && r.matched_subtask_id) {
-          const sub = userSubtasks.find((s) => s.id === r.matched_subtask_id)
           initEdits[idx] = {
-            taskId: sub?.parent_task_id ?? null,
+            taskId: selectedTaskContext.parent_task_id ?? null,
             subtaskId: r.matched_subtask_id,
             subtasks: [],
             editorOpen: false,
@@ -159,8 +160,8 @@ export function useVoiceExtraction({
       setCardEdits(initEdits)
       setKeyTaskIssues((suggestion.key_task_issues as KeyTaskIssue[] | undefined) ?? [])
       setPhase('extracted')
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'AI提取失败，请重试')
+    } catch {
+      setError('AI 提取失败，请重新尝试。')
       setPhase('input')
     } finally {
       submitLock.current = false

@@ -2,15 +2,16 @@ import { useRef, useState } from 'react'
 import { createUpdate } from '../../api/updates'
 import { createDrafts } from '../../api/subtaskDrafts'
 import type { Project } from '../../types'
-import type { KeyTaskIssue, TaskReport } from '../../api/updates'
+import type { KeyTaskIssue, TaskReport, UserSubtaskContext } from '../../api/updates'
 import type { ProposedSubTask } from '../../api/subtaskDrafts'
-import type { CardEdit, Phase } from './voiceUpdateResultTypes'
+import { bindProgressReportsToTask, type CardEdit, type Phase } from './voiceUpdateResultTypes'
 import { buildVoiceUpdateHumanResult } from '../../domain/voiceUpdateFlow'
 import { DRAFT_KEY } from './useVoiceDraft'
 
 type UseVoiceSubmissionArgs = {
-  currentProjectId: number | null
   selectedProjectId: number | null
+  selectedSubtaskId: number | null
+  selectedTaskContext: UserSubtaskContext | null
   currentUser: { name?: string } | null
   text: string
   mode: 'voice' | 'upload' | 'text'
@@ -29,6 +30,8 @@ type UseVoiceSubmissionArgs = {
 
 export function useVoiceSubmission({
   selectedProjectId,
+  selectedSubtaskId,
+  selectedTaskContext,
   currentUser,
   text,
   mode,
@@ -53,7 +56,12 @@ export function useVoiceSubmission({
     const projectId = selectedProjectId
     if (!projectId) {
       submitLock.current = false
-      setError('请先选择所属项目，再提交给负责人。')
+      setError('请先选择所属项目，再提交至 AI 确认中心。')
+      return
+    }
+    if (!selectedSubtaskId || !selectedTaskContext) {
+      submitLock.current = false
+      setError('请先选择本次汇报对应的关键任务。')
       return
     }
     if (!currentUser) {
@@ -83,7 +91,8 @@ export function useVoiceSubmission({
       return
     }
 
-    const patchedTaskReports = taskReports.map((r, i) => {
+    const defaultBoundTaskReports = bindProgressReportsToTask(taskReports, selectedTaskContext)
+    const patchedTaskReports = defaultBoundTaskReports.map((r, i) => {
       const e = cardEdits[i]
       if (!e?.modified) return r
       if (r.type === 'progress') {

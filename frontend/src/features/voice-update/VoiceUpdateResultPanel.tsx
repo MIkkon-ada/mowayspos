@@ -1,15 +1,10 @@
 import { VoiceUpdateResultCard } from './VoiceUpdateResultCard'
-import { VoiceUpdateSubmitPanel } from './VoiceUpdateSubmitPanel'
-import type { VoiceUpdateResultCardProps, VoiceUpdateSubmitPanelProps } from './voiceUpdateResultTypes'
+import type { VoiceUpdateResultCardProps } from './voiceUpdateResultTypes'
 
-type VoiceUpdateResultPanelProps = VoiceUpdateResultCardProps & VoiceUpdateSubmitPanelProps
+type VoiceUpdateResultPanelProps = VoiceUpdateResultCardProps
 
 export function VoiceUpdateResultPanel(props: VoiceUpdateResultPanelProps) {
-  const { selectedProjectName: _selectedProjectName, isProjectSelected: _isProjectSelected, ...cardProps } = props
   return (
-    <div className="flex flex-col gap-4 min-w-0">
-      <VoiceUpdateResultCard {...cardProps} />
-      <VoiceUpdateSubmitPanel {...props} />
-    </div>
+    <VoiceUpdateResultCard {...props} />
   )
 }

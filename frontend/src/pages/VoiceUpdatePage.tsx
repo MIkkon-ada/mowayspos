@@ -1,45 +1,74 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { apiGet } from '../api/client'
-import { fetchVoiceContext } from '../api/updates'
+import { getProject } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { VoiceUpdateDetailDrawer } from '../features/voice-update/VoiceUpdateDetailDrawer'
-import { VoiceUpdateHistoryPanel } from '../features/voice-update/VoiceUpdateHistoryPanel'
-import { VoiceUpdateInputPanel } from '../features/voice-update/VoiceUpdateInputPanel'
+import { VoiceUpdateFlowStepper } from '../features/voice-update/VoiceUpdateFlowStepper'
+import { VoiceUpdateHistoryDrawer } from '../features/voice-update/VoiceUpdateHistoryDrawer'
+import { VoiceUpdateInputPanel, type VoiceInputMode } from '../features/voice-update/VoiceUpdateInputPanel'
 import { VoiceUpdateResultPanel } from '../features/voice-update/VoiceUpdateResultPanel'
-import { useVoiceDraft } from '../features/voice-update/useVoiceDraft'
+import { VoiceUpdateSubmitPanel } from '../features/voice-update/VoiceUpdateSubmitPanel'
+import { VoiceUpdateTaskBindingBar } from '../features/voice-update/VoiceUpdateTaskBindingBar'
+import { VoiceUpdateTaskContextDrawer } from '../features/voice-update/VoiceUpdateTaskContextDrawer'
+import { DRAFT_KEY, useVoiceDraft } from '../features/voice-update/useVoiceDraft'
 import { useVoiceExtraction } from '../features/voice-update/useVoiceExtraction'
 import { useVoiceHistory } from '../features/voice-update/useVoiceHistory'
 import { useVoiceRecorder } from '../features/voice-update/useVoiceRecorder'
 import { useVoiceSubmission } from '../features/voice-update/useVoiceSubmission'
+import { readVoiceDraftState, useVoiceTaskBinding } from '../features/voice-update/useVoiceTaskBinding'
 import { useVoiceUpload } from '../features/voice-update/useVoiceUpload'
+import { canExtractVoiceUpdate } from '../features/voice-update/voiceUpdateResultTypes'
 import { formatTime } from '../features/voice-update/voiceUpdateHelpers'
 import { getProjectStatusLabel, isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
+import type { Project } from '../types'
+import '../features/voice-update/voiceUpdateFlow.css'
 
 type AvailableProvider = { provider: string; display_name: string; model: string }
-type InputMode = 'voice' | 'upload' | 'text'
+
+function parseId(value: string | null): number | null {
+  if (!value) return null
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
 
 export function VoiceUpdatePage() {
+  const navigate = useNavigate()
   const { currentProjectId, currentUser, projects } = useProject()
   const [searchParams] = useSearchParams()
-  const [mode, setMode] = useState<InputMode>('text')
+  const draftState = useMemo(() => readVoiceDraftState(localStorage.getItem(DRAFT_KEY)), [])
+  const requestedProjectId = parseId(searchParams.get('projectId'))
+  const requestedSubtaskId = parseId(searchParams.get('subtaskId'))
+  const [mode, setMode] = useState<VoiceInputMode>(draftState.mode ?? 'text')
   const [text, setText] = useState('')
   const [selectedProvider, setSelectedProvider] = useState('deepseek')
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [providers, setProviders] = useState<AvailableProvider[]>([])
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [resolvedProjectDetail, setResolvedProjectDetail] = useState<Project | null>(null)
   const projectSelectionInitialized = useRef(false)
-  const [hasSubtasks, setHasSubtasks] = useState<boolean | null>(null)
-  const projectInactiveMessage = '项目尚未进入执行阶段，暂不能提交正式工作汇报，请完成立项审核后再提交。'
-  const missingProjectSubmitMessage = '请先选择所属项目，再提交给负责人。'
-  const missingProjectExtractMessage = '请先选择所属项目，再进行 AI 提取。'
 
-  // 进入页面时检查用户是否有可汇报的关键任务
-  useEffect(() => {
-    fetchVoiceContext()
-      .then((subs) => setHasSubtasks(subs.length > 0))
-      .catch(() => setHasSubtasks(false))
-  }, [])
+  const pageProjects = useMemo(() => {
+    const projectsById = new Map(projects.map((project) => [project.id, project]))
+    if (resolvedProjectDetail) projectsById.set(resolvedProjectDetail.id, resolvedProjectDetail)
+    return Array.from(projectsById.values())
+  }, [projects, resolvedProjectDetail])
+  const activeProjects = useMemo(() => pageProjects.filter(isProjectActive), [pageProjects])
+  const selectedProject = useMemo(
+    () => pageProjects.find((project) => project.id === selectedProjectId) ?? null,
+    [pageProjects, selectedProjectId],
+  )
+  const selectedProjectIsActive = selectedProject ? isProjectActive(selectedProject) : false
+  const projectArchived = isProjectArchived(selectedProject)
+  const selectedProjectStatusLabel = selectedProject ? getProjectStatusLabel(selectedProject) : ''
+  const projectInactiveMessage = selectedProject
+    ? `当前项目处于“${selectedProjectStatusLabel || '非执行阶段'}”，只能查看历史汇报，不能提取或提交新汇报。`
+    : null
+  const projectSubmitBlockedReason = !selectedProject
+    ? '请先选择所属项目。'
+    : selectedProjectIsActive
+      ? null
+      : projectInactiveMessage
 
   useEffect(() => {
     apiGet<AvailableProvider[]>('/api/llm-config/available')
@@ -47,64 +76,46 @@ export function VoiceUpdatePage() {
       .catch(() => setProviders([]))
   }, [])
 
-  const activeProjects = useMemo(
-    () => projects.filter((project) => isProjectActive(project)),
-    [projects],
-  )
+  useEffect(() => {
+    let cancelled = false
+    projectSelectionInitialized.current = false
+    setResolvedProjectDetail(null)
+    if (!requestedProjectId || projects.some((project) => project.id === requestedProjectId)) return
+
+    setSelectedProjectId(null)
+    getProject(requestedProjectId)
+      .then((project) => { if (!cancelled) setResolvedProjectDetail(project) })
+      .catch(() => { if (!cancelled) setResolvedProjectDetail(null) })
+    return () => { cancelled = true }
+  }, [projects, requestedProjectId])
 
   useEffect(() => {
-    if (projects.length === 0) return
-    const rawProjectId = searchParams.get('projectId')
-    const parsedProjectId = rawProjectId ? Number(rawProjectId) : null
-
-    if (parsedProjectId && projects.some((project) => project.id === parsedProjectId)) {
-      setSelectedProjectId(parsedProjectId)
-      projectSelectionInitialized.current = true
-      return
-    }
-
     if (projectSelectionInitialized.current) return
-
-    const contextProject = currentProjectId != null
-      ? projects.find((project) => project.id === currentProjectId)
-      : null
-    if (!rawProjectId && contextProject) {
-      setSelectedProjectId(contextProject.id)
+    if (searchParams.get('projectId')) {
+      const requestedProject = pageProjects.find((project) => project.id === requestedProjectId)
+      if (!requestedProject) return
+      setSelectedProjectId(requestedProject.id)
       projectSelectionInitialized.current = true
       return
     }
-
-    if (!rawProjectId && activeProjects.length === 1) {
-      setSelectedProjectId(activeProjects[0].id)
-      projectSelectionInitialized.current = true
-      return
-    }
-
+    const contextProject = currentProjectId ? activeProjects.find((project) => project.id === currentProjectId) : null
+    const draftProject = draftState.projectId ? activeProjects.find((project) => project.id === draftState.projectId) : null
+    setSelectedProjectId(contextProject?.id ?? draftProject?.id ?? (activeProjects.length === 1 ? activeProjects[0].id : null))
     projectSelectionInitialized.current = true
-  }, [activeProjects, currentProjectId, projects, searchParams])
+  }, [activeProjects, currentProjectId, draftState.projectId, pageProjects, requestedProjectId, searchParams])
 
-  const selectedProject = useMemo(
-    () => projects.find((project) => project.id === selectedProjectId) ?? null,
-    [projects, selectedProjectId],
-  )
-  const projectArchived = isProjectArchived(selectedProject)
-  const selectedProjectIsActive = selectedProject ? isProjectActive(selectedProject) : false
-  const selectedProjectStatusLabel = selectedProject ? getProjectStatusLabel(selectedProject) : ''
-  const projectSubmitBlockedReason = !selectedProject
-    ? missingProjectSubmitMessage
-    : selectedProjectIsActive
-      ? null
-      : projectInactiveMessage
-  const projectExtractBlockedReason = !selectedProject
-    ? missingProjectExtractMessage
-    : selectedProjectIsActive
-      ? null
-      : projectInactiveMessage
+  const taskBinding = useVoiceTaskBinding({
+    selectedProjectId,
+    enabled: selectedProjectIsActive,
+    requestedSubtaskId: selectedProjectId === requestedProjectId ? requestedSubtaskId : null,
+    restoredSubtaskId: !requestedSubtaskId && selectedProjectId === draftState.projectId ? draftState.subtaskId ?? null : null,
+  })
 
   const {
     phase,
     setPhase,
     result,
+    error: extractionError,
     editValues,
     setEditValues,
     editingField,
@@ -114,6 +125,7 @@ export function VoiceUpdatePage() {
     taskReports,
     setTaskReports,
     keyTaskIssues,
+    setKeyTaskIssues,
     cardEdits,
     updateCardEdit,
     projectTasksForSuggest,
@@ -122,48 +134,24 @@ export function VoiceUpdatePage() {
     handleExtract,
     setError: setExtractionError,
   } = useVoiceExtraction({
-    currentProjectId,
     selectedProjectId,
+    selectedTaskContext: taskBinding.selectedTaskContext,
+    selectedProjectIsActive,
     currentUser,
     text,
     mode,
     selectedProvider,
-    projects,
     setText,
   })
 
-  const { recording, transcribing, timer, startRecording, stopRecording } = useVoiceRecorder({
-    setText,
-    setError: setExtractionError,
-  })
-
-  const { uploading, uploadFileName, uploadInputRef, handleUploadFile } = useVoiceUpload({
-    setText,
-    setError: setExtractionError,
-  })
-
-  const {
-    history,
-    detailItem,
-    detailLoading,
-    showTranscript,
-    setShowTranscript,
-    setDetailItem,
-    setDetailLoading,
-    refreshHistory,
-    handleSelectUpdate,
-  } = useVoiceHistory({ activeProjectId: selectedProjectId })
-
-  const { draftSaved, saveDraft } = useVoiceDraft({
-    text,
-    selectedProvider,
-    setText,
-    setSelectedProvider,
-  })
-
+  const { recording, transcribing, timer, startRecording, stopRecording } = useVoiceRecorder({ setText, setError: setExtractionError })
+  const { uploading, uploadFileName, uploadInputRef, handleUploadFile } = useVoiceUpload({ setText, setError: setExtractionError })
+  const historyState = useVoiceHistory({ activeProjectId: selectedProjectId })
+  const { draftSaved, saveDraft } = useVoiceDraft({ text, selectedProvider, setText, setSelectedProvider })
   const { submittedAt, handleSubmitFinal } = useVoiceSubmission({
-    currentProjectId,
     selectedProjectId,
+    selectedSubtaskId: taskBinding.selectedSubtaskId,
+    selectedTaskContext: taskBinding.selectedTaskContext,
     currentUser,
     text,
     mode,
@@ -174,168 +162,185 @@ export function VoiceUpdatePage() {
     cardEdits,
     proposedSubtasks,
     projectTasksForSuggest,
-    projects,
+    projects: pageProjects,
     setPhase,
     setError: setExtractionError,
-    refreshHistory,
+    refreshHistory: historyState.refreshHistory,
   })
 
-  function handleBoundProjectExtract() {
-    if (projectExtractBlockedReason) {
-      setExtractionError(projectExtractBlockedReason)
-      return
-    }
-    handleExtract()
+  const controlsLocked = phase === 'extracting' || phase === 'submitting'
+  const extractDisabled = !canExtractVoiceUpdate({
+    projectId: selectedProjectId,
+    selectedTaskContext: taskBinding.selectedTaskContext,
+    text,
+    projectActive: selectedProjectIsActive,
+    recording,
+    transcribing,
+    uploading,
+    phase,
+  })
+
+  function handleProjectChange(projectId: number | null) {
+    if (controlsLocked) return
+    resetExtractionState()
+    setSelectedProjectId(projectId)
   }
 
+  function handleTaskChange(subtaskId: number | null) {
+    if (controlsLocked) return
+    resetExtractionState()
+    taskBinding.selectTask(subtaskId)
+  }
+
+  function handleSaveDraft() {
+    saveDraft()
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({
+        text,
+        provider: selectedProvider,
+        mode,
+        projectId: selectedProjectId,
+        subtaskId: taskBinding.selectedSubtaskId,
+      }))
+    } catch {
+      // Existing draft behavior intentionally ignores storage failures.
+    }
+  }
+
+  const noActiveProjects = activeProjects.length === 0 && !selectedProject
+
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      {hasSubtasks === false && (
-        <div className="flex-1 flex items-center justify-center" style={{ background: '#F1F5F9' }}>
-          <div className="text-center max-w-md">
-            <div className="mx-auto mb-4 w-16 h-16 rounded-full flex items-center justify-center" style={{ background: '#F1F5F9' }}>
-              <svg style={{ width: 32, height: 32 }} fill="none" stroke="#94A3B8" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-            </div>
-            <h2 className="text-lg font-bold text-slate-700 mb-2">暂无可汇报的关键任务</h2>
-            <p className="text-sm text-slate-400 leading-relaxed">您当前没有被分配任何关键任务。请联系项目负责人为您分配任务后再进行工作汇报。</p>
-          </div>
-        </div>
-      )}
-      {hasSubtasks === null && (
-        <div className="flex-1 flex items-center justify-center" style={{ background: '#F1F5F9' }}>
-          <p className="text-sm text-slate-400">加载中…</p>
-        </div>
-      )}
-      {hasSubtasks === true && (
-        <>
-      <header className="h-16 flex items-center px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
-        <div className="flex-1">
-          <h1 className="text-base font-bold text-slate-800">工作汇报</h1>
-          <p className="text-xs text-slate-400 mt-0.5">通过录音、上传音频或粘贴文本，快速生成项目进展更新</p>
-        </div>
+    <div className="voice-update-page">
+      <header className="voice-update-header">
+        <div><h1>工作汇报</h1><p>汇报工作进展，AI 提取结构化内容并提交确认</p></div>
+        <button type="button" className="voice-update-history-button" onClick={() => setHistoryOpen(true)}>查看历史汇报</button>
       </header>
 
-      <div className="px-6 py-3 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3 flex-wrap">
-            <label className="text-xs font-semibold text-slate-500" htmlFor="voice-update-project-select">所属项目</label>
-            <select
-              id="voice-update-project-select"
-              value={selectedProjectId ?? ''}
-              onChange={(event) => setSelectedProjectId(event.target.value ? Number(event.target.value) : null)}
-              className="h-9 min-w-[220px] rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 outline-none focus:border-sky-400"
-            >
-              <option value="">所属项目：请选择项目</option>
-              {selectedProject && !selectedProjectIsActive && (
-                <option value={selectedProject.id}>
-                  {selectedProject.name}（{selectedProjectStatusLabel || '非执行阶段'}）
-                </option>
-              )}
-              {activeProjects.map((project) => (
-                <option key={project.id} value={project.id}>{project.name}</option>
-              ))}
-            </select>
-            {selectedProject && (
-              <span className={`rounded-full px-2 py-1 text-xs font-semibold ${selectedProjectIsActive ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                {selectedProjectIsActive ? '进行中' : selectedProjectStatusLabel || '非执行阶段'}
-              </span>
-            )}
-          </div>
-          <div className="text-xs text-slate-400">
-            AI 负责提取内容，项目归属以你选择的项目为准。
-            {selectedProjectIsActive && <span className="ml-1">AI 可辅助识别关键任务，但所属项目以当前选择为准。</span>}
-          </div>
-          {projectSubmitBlockedReason && (
-            <div className="basis-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
-              {projectSubmitBlockedReason}
-            </div>
-          )}
+      {noActiveProjects ? (
+        <div className="voice-update-empty-page">
+          <div><h2>暂无可提交汇报的执行中项目</h2><p>项目进入执行阶段后，可在这里提交工作进展。</p></div>
         </div>
-      </div>
-
-      <main className="flex-1 overflow-y-auto p-5" style={{ background: '#F1F5F9' }}>
-        <div className="grid gap-5 min-h-full" style={{ gridTemplateColumns: '360px minmax(0, 1fr)' }}>
-          <VoiceUpdateInputPanel
-            mode={mode}
-            onModeChange={setMode}
-            providers={providers}
-            selectedProvider={selectedProvider}
-            onSelectedProviderChange={setSelectedProvider}
-            phase={phase}
-            transcribing={transcribing}
-            recording={recording}
-            timerLabel={formatTime(timer)}
-            text={text}
-            onTextChange={setText}
-            uploading={uploading}
-            uploadFileName={uploadFileName}
-            uploadInputRef={uploadInputRef}
-            onUploadFile={handleUploadFile}
-            onStartRecording={startRecording}
-            onStopRecording={stopRecording}
-            onClearText={() => setText('')}
+      ) : (
+        <>
+          <VoiceUpdateFlowStepper phase={phase} selectedProjectId={selectedProjectId} selectedSubtaskId={taskBinding.selectedSubtaskId} />
+          <VoiceUpdateTaskBindingBar
+            activeProjects={activeProjects}
+            selectedProject={selectedProject}
+            selectedProjectId={selectedProjectId}
+            selectedSubtaskId={taskBinding.selectedSubtaskId}
+            selectedTaskContext={taskBinding.selectedTaskContext}
+            taskOptions={taskBinding.taskOptions}
+            taskLoading={taskBinding.taskLoading}
+            taskError={taskBinding.taskError}
+            controlsLocked={controlsLocked}
+            selectedProjectIsActive={selectedProjectIsActive}
+            onProjectChange={handleProjectChange}
+            onTaskChange={handleTaskChange}
+            onOpenTaskDetail={taskBinding.openTaskDetail}
           />
 
-          <div className="flex flex-col gap-4 min-w-0">
-            <VoiceUpdateResultPanel
-              result={result}
-              error={error}
-              phase={phase}
-              text={text}
-              editValues={editValues}
-              editingField={editingField}
-              setEditingField={setEditingField}
-              setEditValues={setEditValues}
-              taskReports={taskReports}
-              setTaskReports={setTaskReports}
-              keyTaskIssues={keyTaskIssues}
-              proposedSubtasks={proposedSubtasks}
-              setProposedSubtasks={setProposedSubtasks}
-              cardEdits={cardEdits}
-              updateCardEdit={updateCardEdit}
-              projectTasksForSuggest={projectTasksForSuggest}
-              voiceSubtasksContext={voiceSubtasksContext}
-              currentUserName={currentUser?.name}
-              selectedProjectName={selectedProject?.name ?? null}
-              isProjectSelected={selectedProjectId !== null}
-              submittedAt={submittedAt}
-              draftSaved={draftSaved}
-              onSaveDraft={saveDraft}
-              onExtract={handleBoundProjectExtract}
-              onResetExtractionState={resetExtractionState}
-              onSubmitFinal={handleSubmitFinal}
-              projectArchived={projectArchived}
-              projectSubmitBlockedReason={projectSubmitBlockedReason}
-            />
+          <main className="voice-update-main-scroll">
+            <div className="voice-update-workspace">
+              <VoiceUpdateInputPanel
+                mode={mode}
+                onModeChange={setMode}
+                providers={providers}
+                selectedProvider={selectedProvider}
+                onSelectedProviderChange={setSelectedProvider}
+                phase={phase}
+                controlsLocked={controlsLocked}
+                extractDisabled={extractDisabled}
+                transcribing={transcribing}
+                recording={recording}
+                timerLabel={formatTime(timer)}
+                text={text}
+                onTextChange={setText}
+                uploading={uploading}
+                uploadFileName={uploadFileName}
+                uploadInputRef={uploadInputRef}
+                onUploadFile={handleUploadFile}
+                onStartRecording={startRecording}
+                onStopRecording={stopRecording}
+                onExtract={handleExtract}
+              />
+              <VoiceUpdateResultPanel
+                result={result}
+                error={extractionError}
+                phase={phase}
+                editValues={editValues}
+                editingField={editingField}
+                setEditingField={setEditingField}
+                setEditValues={setEditValues}
+                taskReports={taskReports}
+                setTaskReports={setTaskReports}
+                keyTaskIssues={keyTaskIssues}
+                setKeyTaskIssues={setKeyTaskIssues}
+                selectedSubtaskId={taskBinding.selectedSubtaskId}
+                proposedSubtasks={proposedSubtasks}
+                setProposedSubtasks={setProposedSubtasks}
+                cardEdits={cardEdits}
+                updateCardEdit={updateCardEdit}
+                projectTasksForSuggest={projectTasksForSuggest}
+                voiceSubtasksContext={voiceSubtasksContext}
+                currentUserName={currentUser?.name}
+                onExtract={handleExtract}
+                hasSelectedTask={Boolean(taskBinding.selectedSubtaskId)}
+                hasText={Boolean(text.trim())}
+              />
+            </div>
+          </main>
 
-            <VoiceUpdateHistoryPanel
-              history={history}
-              currentUserName={currentUser?.name}
-              onSelectUpdate={handleSelectUpdate}
-            />
-
-            <VoiceUpdateDetailDrawer
-              detailItem={detailItem}
-              detailLoading={detailLoading}
-              showTranscript={showTranscript}
-              onClose={() => {
-                setDetailItem(null)
-                setDetailLoading(false)
-                setShowTranscript(false)
-              }}
-              onToggleTranscript={() => setShowTranscript((v) => !v)}
-              onRestartFromTranscript={(transcript) => {
-                setText(transcript)
-                setPhase('input')
-                setDetailItem(null)
-                setShowTranscript(false)
-              }}
-            />
-          </div>
-        </div>
-      </main>
+          <VoiceUpdateSubmitPanel
+            phase={phase}
+            taskReports={taskReports}
+            cardEdits={cardEdits}
+            currentUserName={currentUser?.name}
+            selectedProjectName={selectedProject?.name ?? null}
+            isProjectSelected={selectedProjectId !== null}
+            selectedSubtaskId={taskBinding.selectedSubtaskId}
+            text={text}
+            submittedAt={submittedAt}
+            draftSaved={draftSaved}
+            onSaveDraft={handleSaveDraft}
+            onResetExtractionState={resetExtractionState}
+            onClear={() => resetExtractionState({ clearText: true })}
+            onSubmitFinal={handleSubmitFinal}
+            onGoToConfirmations={() => navigate(`/work/confirmations?projectId=${selectedProjectId}`)}
+            projectArchived={projectArchived || Boolean(selectedProject && !selectedProjectIsActive)}
+            projectSubmitBlockedReason={projectSubmitBlockedReason}
+          />
         </>
       )}
+
+      <VoiceUpdateHistoryDrawer
+        open={historyOpen}
+        selectedProjectId={selectedProjectId}
+        history={historyState.history}
+        currentUserName={currentUser?.name}
+        onClose={() => setHistoryOpen(false)}
+        onSelectUpdate={historyState.handleSelectUpdate}
+      />
+      <VoiceUpdateTaskContextDrawer
+        open={taskBinding.taskDetailOpen}
+        loading={taskBinding.taskDetailLoading}
+        detail={taskBinding.taskDetail}
+        taskContext={taskBinding.selectedTaskContext}
+        projectName={selectedProject?.name ?? ''}
+        onClose={taskBinding.closeTaskDetail}
+      />
+      <VoiceUpdateDetailDrawer
+        detailItem={historyState.detailItem}
+        detailLoading={historyState.detailLoading}
+        showTranscript={historyState.showTranscript}
+        onClose={() => { historyState.setDetailItem(null); historyState.setDetailLoading(false); historyState.setShowTranscript(false) }}
+        onToggleTranscript={() => historyState.setShowTranscript((value) => !value)}
+        onRestartFromTranscript={(transcript) => {
+          resetExtractionState()
+          setText(transcript)
+          historyState.setDetailItem(null)
+          historyState.setShowTranscript(false)
+        }}
+      />
     </div>
   )
 }

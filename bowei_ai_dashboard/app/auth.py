@@ -8,7 +8,7 @@ are accepted and transparently upgraded to bcrypt on next successful login.
 """
 import hashlib
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import bcrypt
 

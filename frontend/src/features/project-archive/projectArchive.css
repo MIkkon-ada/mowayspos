@@ -261,7 +261,7 @@
 }
 
 @media (max-width: 767px) {
-  body:has(.project-archive-page) aside.w-56 { display: none; }
+  body:has(.project-archive-page) aside.w-44 { display: none; }
   .project-archive-page { font-size: 12px; }
   .archive-toolbar { position: relative; padding: 10px 12px; }
   .archive-breadcrumbs strong { max-width: 150px; }

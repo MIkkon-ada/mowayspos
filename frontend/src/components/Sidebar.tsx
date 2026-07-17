@@ -7,7 +7,7 @@ import { getConfirmationCounts } from '../api/confirmations'
 import { isProjectActive } from '../domain/projectLifecycleStatus'
 import { getProjectRoleLabel } from '../domain/roleLabels'
 import { systemRoleLabel } from '../domain/roles'
-import { SYSTEM_NAME_CN, AI_CONFIRM_CENTER_LABEL } from '../domain/displayNames'
+import { AI_CONFIRM_CENTER_LABEL } from '../domain/displayNames'
 
 type SidebarProps = {
   activePage: AppPage
@@ -32,7 +32,7 @@ type SectionSeparator = {
 
 type NavEntry = NavItem | SectionSeparator
 
-export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, onLogout, logoUrl, platformName }: SidebarProps) {
+export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, onLogout, logoUrl }: SidebarProps) {
   const navigate = useNavigate()
   const { projects } = useProject()
   const userName = currentUser?.name ?? ''
@@ -133,13 +133,13 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
   }
 
   return (
-    <aside className="w-56 flex-shrink-0 flex flex-col overflow-hidden" style={{ background: '#0F172A' }}>
+    <aside className="w-44 flex-shrink-0 flex flex-col overflow-hidden" style={{ background: '#0F172A' }}>
       <div
-        className="flex items-center gap-3 px-5 h-16 flex-shrink-0"
+        className="flex items-center justify-between px-3 h-14 flex-shrink-0"
         style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
       >
         {logoUrl
-          ? <img src={logoUrl} alt="logo" style={{ height: 36, maxWidth: 80, objectFit: 'contain', flexShrink: 0 }} />
+          ? <img src={logoUrl} alt="logo" style={{ height: 32, maxWidth: 90, objectFit: 'contain', flexShrink: 0 }} />
           : <div
               className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
               style={{ background: 'linear-gradient(135deg,var(--brand-accent,#0EA5E9),var(--brand-primary,#0369A1))' }}
@@ -149,17 +149,13 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
               </svg>
             </div>
         }
-        <div className="flex-1 min-w-0">
-          <div className="text-white text-sm font-bold tracking-tight leading-none">{platformName }</div>
-          <div className="text-slate-500 text-xs mt-0.5">{SYSTEM_NAME_CN}</div>
-        </div>
         <NotificationBell />
       </div>
 
-      <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+      <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
         {navEntries.map((entry, idx) => {
           if ('kind' in entry) {
-            return <div key={idx} className="pt-4" />
+            return <div key={idx} className="pt-3" />
           }
 
           const isActive = activePage === entry.page
@@ -171,11 +167,11 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: 10,
-                padding: '9px 14px',
+                gap: 8,
+                padding: '8px 10px',
                 borderRadius: 8,
                 color: isActive ? '#38BDF8' : '#94A3B8',
-                fontSize: 13.5,
+                fontSize: 13,
                 fontWeight: 500,
                 cursor: 'pointer',
                 transition: 'all 0.18s',
@@ -201,7 +197,7 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
               }}
             >
               <span style={{ width: 16, height: 16, flexShrink: 0 }}>{entry.icon}</span>
-              <span style={{ flex: 1 }}>{entry.label}</span>
+              <span style={{ flex: 1, minWidth: 0 }}>{entry.label}</span>
               {entry.badge ? (
                 <span
                   style={{
@@ -226,11 +222,11 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
       </nav>
 
       <div
-        className="px-4 py-3 flex items-center gap-3 flex-shrink-0"
+        className="px-3 py-2.5 flex items-center gap-2 flex-shrink-0"
         style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}
       >
         <div
-          className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
+          className="w-7 h-7 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
           style={{ background: 'linear-gradient(135deg,#3B82F6,var(--brand-primary,#0369A1))' }}
         >
           {avatarChar}

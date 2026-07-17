@@ -35,6 +35,7 @@ llm_configs.json
 *.log
 *.err
 *.txt
+!bowei_ai_dashboard/requirements.txt
 server.err.log
 server.out.log
 uvicorn_err.txt

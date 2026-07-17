@@ -53,7 +53,7 @@ export function MyTasksPage() {
     if (row.projectId !== null) navigate(`/work/tasks?projectId=${row.projectId}`)
   }
   const openSubmit = (row: MyTaskRow) => {
-    if (row.projectId !== null) navigate(`/work/submit?projectId=${row.projectId}`)
+    if (row.projectId !== null) navigate(`/work/submit?projectId=${row.projectId}&subtaskId=${row.id}`)
   }
   const clearFilters = () => {
     setStatus('全部')

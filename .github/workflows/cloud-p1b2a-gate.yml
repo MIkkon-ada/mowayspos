@@ -291,12 +291,16 @@ jobs:
           set -euo pipefail
           dc=(docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$MOWAYS_ENV_FILE" -f docker-compose.prod.yml)
 
-          "${dc[@]}" up -d backend frontend
-          for container in mowayspos-backend mowayspos-frontend; do
+          wait_for_health() {
+            local container="$1"
             for attempt in $(seq 1 60); do
-              status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$container")
+              status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")
               if [[ "$status" == healthy ]]; then
-                break
+                return 0
+              fi
+              if [[ "$status" == exited || "$status" == dead ]]; then
+                docker logs "$container"
+                exit 1
               fi
               if [[ "$attempt" == 60 ]]; then
                 docker logs "$container"
@@ -304,7 +308,12 @@ jobs:
               fi
               sleep 2
             done
-          done
+          }
+
+          "${dc[@]}" up -d backend
+          wait_for_health mowayspos-backend
+          "${dc[@]}" up -d frontend
+          wait_for_health mowayspos-frontend
 
           curl --fail --silent --show-error http://127.0.0.1:18100/ >/dev/null
           curl --fail --silent --show-error http://127.0.0.1:18100/api/health > "$RUNNER_TEMP/moways-health.json"
@@ -422,7 +431,7 @@ jobs:
               "mowayspos-frontend:$MOWAYS_IMAGE_TAG" || true
 
             case "$MOWAYS_DATA_ROOT" in
-              "$RUNNER_TEMP"/*) rm -rf "$MOWAYS_DATA_ROOT" ;;
+              "$RUNNER_TEMP"/*) sudo rm -rf -- "$MOWAYS_DATA_ROOT" ;;
               *) echo "Refusing to remove path outside RUNNER_TEMP: $MOWAYS_DATA_ROOT" >&2; exit 1 ;;
             esac
             rm -f "$RUNNER_TEMP/moways-p1b2a-owned" "$RUNNER_TEMP/moways-health.json"

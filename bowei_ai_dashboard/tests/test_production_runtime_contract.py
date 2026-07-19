@@ -119,6 +119,10 @@ def test_github_actions_gate_runs_the_complete_isolated_runtime_contract():
     assert 'runtime_root="$RUNNER_TEMP/moways-p1b2a-runtime"' in workflow
     assert 'echo "MOWAYS_DATA_ROOT=$runtime_root" >> "$GITHUB_ENV"' in workflow
     assert 'echo "MOWAYS_ENV_FILE=$env_file" >> "$GITHUB_ENV"' in workflow
+    assert '"${dc[@]}" up -d backend\n' in workflow
+    assert '"${dc[@]}" up -d frontend\n' in workflow
+    assert '"${dc[@]}" up -d backend frontend' not in workflow
+    assert 'sudo rm -rf -- "$MOWAYS_DATA_ROOT"' in workflow
 
     for expected in (
         "workflow_dispatch:",

@@ -140,6 +140,181 @@ jobs:
             "$POSTGRES_LOCAL"
           echo "postgres_linux_amd64_pull=ok"
 
+      - name: Set up pinned Go toolchain for binary analysis
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.26.5'
+          cache: false
+
+      - name: Verify PostgreSQL gosu binary identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          gosu_binary="$RUNNER_TEMP/postgres-gosu"
+          gosu_container=$(docker create --platform linux/amd64 "$POSTGRES_LOCAL")
+          trap 'docker rm -f "$gosu_container" >/dev/null 2>&1 || true' EXIT
+          docker cp "$gosu_container:/usr/local/bin/gosu" "$gosu_binary"
+          docker rm -f "$gosu_container" >/dev/null
+          trap - EXIT
+
+          test -f "$gosu_binary"
+          test -x "$gosu_binary"
+          gosu_sha256=$(sha256sum "$gosu_binary" | awk '{print $1}')
+          expected_sha256=52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0
+          if [[ "$gosu_sha256" != "$expected_sha256" ]]; then
+            echo "PostgreSQL gosu binary SHA256 did not match the reviewed image." >&2
+            exit 1
+          fi
+
+          gosu_version_output=$("$gosu_binary" --version)
+          read -r gosu_version gosu_go_token _ gosu_platform_token _ <<< "$gosu_version_output"
+          gosu_go_version=${gosu_go_token#(}
+          gosu_platform=${gosu_platform_token%;}
+          build_info=$(go version -m "$gosu_binary")
+          build_go_version=$(awk 'NR == 1 {print $2}' <<< "$build_info")
+          build_goos=$(awk '$1 == "build" && $2 ~ /^GOOS=/ {sub(/^GOOS=/, "", $2); print $2}' <<< "$build_info")
+          build_goarch=$(awk '$1 == "build" && $2 ~ /^GOARCH=/ {sub(/^GOARCH=/, "", $2); print $2}' <<< "$build_info")
+          build_platform="$build_goos/$build_goarch"
+
+          [[ "$gosu_version" == "1.19" ]]
+          [[ "$gosu_go_version" == "go1.24.6" ]]
+          [[ "$gosu_platform" == "linux/amd64" ]]
+          [[ "$build_go_version" == "$gosu_go_version" ]]
+          [[ "$build_platform" == "$gosu_platform" ]]
+
+          echo "gosu_version=$gosu_version"
+          echo "gosu_go_version=$gosu_go_version"
+          echo "gosu_platform=$gosu_platform"
+          echo "gosu_sha256=$gosu_sha256"
+          echo "gosu_identity=verified"
+
+      - name: Verify PostgreSQL gosu binary vulnerability reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+          gosu_binary="$RUNNER_TEMP/postgres-gosu"
+          govulncheck_root="$RUNNER_TEMP/postgres-govulncheck-bin"
+          govulncheck_report="$RUNNER_TEMP/postgres-gosu-govulncheck.json"
+          govulncheck_error="$RUNNER_TEMP/postgres-gosu-govulncheck-error"
+          mkdir -p "$govulncheck_root"
+          GOBIN="$govulncheck_root" \
+            go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          if ! "$govulncheck_root/govulncheck" -mode binary -json "$gosu_binary" \
+            > "$govulncheck_report" 2> "$govulncheck_error"; then
+            echo "gosu_govulncheck=failed" >&2
+            exit 1
+          fi
+
+          python - "$govulncheck_report" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          expected_cves = {
+              "CVE-2025-68121",
+              "CVE-2025-61726",
+              "CVE-2025-61729",
+              "CVE-2026-25679",
+              "CVE-2026-27145",
+              "CVE-2026-32280",
+              "CVE-2026-32281",
+              "CVE-2026-32283",
+              "CVE-2026-33811",
+              "CVE-2026-33814",
+              "CVE-2026-39820",
+              "CVE-2026-39822",
+              "CVE-2026-39836",
+              "CVE-2026-42499",
+              "CVE-2026-42504",
+          }
+          aliases_by_osv: dict[str, set[str]] = {}
+          findings: list[dict[str, object]] = []
+
+          report = Path(sys.argv[1])
+          try:
+              with report.open(encoding="utf-8") as stream:
+                  for line in stream:
+                      if not line.strip():
+                          continue
+                      message = json.loads(line)
+                      osv = message.get("osv") or {}
+                      if osv:
+                          osv_id = str(osv.get("id") or "").strip()
+                          if osv_id:
+                              aliases_by_osv[osv_id] = {
+                                  str(alias).strip()
+                                  for alias in osv.get("aliases") or []
+                                  if str(alias).strip()
+                              }
+                      finding = message.get("finding")
+                      if finding:
+                          findings.append(finding)
+          except (OSError, json.JSONDecodeError, TypeError, ValueError):
+              print("gosu_govulncheck_report=invalid", file=sys.stderr)
+              raise SystemExit(1)
+
+          observed_cves = {
+              alias
+              for aliases in aliases_by_osv.values()
+              for alias in aliases
+              if alias.startswith("CVE-")
+          }
+          missing_cves = sorted(expected_cves - observed_cves)
+          if missing_cves:
+              print(
+                  "gosu_vulndb_missing=" + ",".join(missing_cves),
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+          print("gosu_vulndb_coverage=15/15")
+
+          def sanitized(value: object) -> str:
+              text = str(value or "unknown")
+              return "".join(
+                  character
+                  if character.isprintable() and not character.isspace()
+                  else "_"
+                  for character in text
+              )
+
+          records = set()
+          for finding in findings:
+              trace = finding.get("trace") or []
+              if not trace:
+                  continue
+              symbol = str((trace[0] or {}).get("function") or "").strip()
+              if not symbol:
+                  continue
+              osv_id = str(finding.get("osv") or "unknown").strip()
+              aliases = ",".join(
+                  sorted(
+                      alias
+                      for alias in aliases_by_osv.get(osv_id, set())
+                      if alias.startswith("CVE-")
+                  )
+              ) or "none"
+              fixed = str(finding.get("fixed_version") or "none").strip()
+              records.add(
+                  (
+                      sanitized(osv_id),
+                      sanitized(aliases),
+                      sanitized(symbol),
+                      sanitized(fixed),
+                  )
+              )
+
+          print(f"gosu_reachable_vulnerability_count={len(records)}")
+          for record in sorted(records):
+              osv_id, aliases, symbol, fixed = record
+              print(
+                  f"gosu_reachable_vulnerability id={osv_id} "
+                  f"aliases={aliases} symbol={symbol} fixed={fixed}"
+              )
+          if records:
+              raise SystemExit(1)
+          print("gosu_binary_reachability=clear")
+          PY
+
       - name: Scan backend image for secrets
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
@@ -507,7 +682,11 @@ jobs:
             "$RUNNER_TEMP/frontend-vulnerability.json" \
             "$RUNNER_TEMP/postgres-vulnerability.json" \
             "$RUNNER_TEMP/postgres-upstream-index.json" \
+            "$RUNNER_TEMP/postgres-gosu" \
+            "$RUNNER_TEMP/postgres-gosu-govulncheck.json" \
+            "$RUNNER_TEMP/postgres-gosu-govulncheck-error" \
             "$RUNNER_TEMP/manifest-inspect-error"
+          rm -rf -- "$RUNNER_TEMP/postgres-govulncheck-bin"
           refs=("$BACKEND_LOCAL" "$FRONTEND_LOCAL" "$POSTGRES_LOCAL")
           if [[ -n "${POSTGRES_AMD64_DIGEST:-}" ]]; then
             refs+=("$POSTGRES_UPSTREAM_REPOSITORY@$POSTGRES_AMD64_DIGEST")

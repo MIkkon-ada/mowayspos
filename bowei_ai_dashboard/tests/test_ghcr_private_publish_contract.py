@@ -8,6 +8,26 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PUBLISH_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/cloud-p1b2b-a-ghcr-private-publish.yml"
 P1B2A_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/cloud-p1b2a-gate.yml"
 PUBLISH_DOCUMENTATION = REPOSITORY_ROOT / "docs/ghcr-private-image-publish.md"
+BACKEND_REQUIREMENTS = REPOSITORY_ROOT / "bowei_ai_dashboard/requirements.txt"
+BACKEND_DOCKERFILE = REPOSITORY_ROOT / "Dockerfile.backend"
+
+POSTGRES_GO_CVES = (
+    "CVE-2025-68121",
+    "CVE-2025-61726",
+    "CVE-2025-61729",
+    "CVE-2026-25679",
+    "CVE-2026-27145",
+    "CVE-2026-32280",
+    "CVE-2026-32281",
+    "CVE-2026-32283",
+    "CVE-2026-33811",
+    "CVE-2026-33814",
+    "CVE-2026-39820",
+    "CVE-2026-39822",
+    "CVE-2026-39836",
+    "CVE-2026-42499",
+    "CVE-2026-42504",
+)
 
 
 def _publish_workflow() -> str:
@@ -526,3 +546,156 @@ def test_p1b2a_gate_keeps_existing_runtime_business_steps():
         "Cleanup isolated runtime",
     ):
         assert f"- name: {step}" in workflow
+
+
+def test_backend_pins_the_only_python_multipart_definition_to_fixed_version():
+    requirements = BACKEND_REQUIREMENTS.read_text(encoding="utf-8")
+    multipart_lines = [
+        line.strip()
+        for line in requirements.splitlines()
+        if line.strip().lower().startswith("python-multipart")
+    ]
+
+    assert multipart_lines == ["python-multipart==0.0.30"]
+    assert "python-multipart==0.0.29" not in requirements
+
+
+def test_backend_image_installs_the_locked_requirements_without_multipart_override():
+    dockerfile = BACKEND_DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "COPY bowei_ai_dashboard/requirements.txt ." in dockerfile
+    assert "pip install --no-cache-dir -r requirements.txt" in dockerfile
+    assert "python-multipart" not in dockerfile.lower()
+
+
+def test_publish_workflow_uses_pinned_setup_go_and_exact_govulncheck_versions():
+    workflow = _publish_workflow()
+
+    assert "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16" in workflow
+    assert "go-version: '1.26.5'" in workflow
+    assert re.search(r"^\s+cache:\s+false\s*$", workflow, re.MULTILINE)
+    assert "golang.org/x/vuln/cmd/govulncheck@v1.6.0" in workflow
+
+
+def test_postgres_gosu_is_extracted_from_the_pulled_image_and_verified_exactly():
+    workflow = _publish_workflow()
+    identity = _step_block(workflow, "Verify PostgreSQL gosu binary identity")
+
+    assert 'docker create --platform linux/amd64 "$POSTGRES_LOCAL"' in identity
+    assert 'docker cp "$gosu_container:/usr/local/bin/gosu" "$gosu_binary"' in identity
+    assert 'test -f "$gosu_binary"' in identity
+    assert 'test -x "$gosu_binary"' in identity
+    assert "52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0" in identity
+    assert '[[ "$gosu_version" == "1.19" ]]' in identity
+    assert '[[ "$gosu_go_version" == "go1.24.6" ]]' in identity
+    assert '[[ "$gosu_platform" == "linux/amd64" ]]' in identity
+    for safe_line in (
+        "gosu_version=",
+        "gosu_go_version=",
+        "gosu_platform=",
+        "gosu_sha256=",
+        "gosu_identity=verified",
+    ):
+        assert safe_line in identity
+    for forbidden in ("curl ", "wget ", "go install", "docker pull"):
+        assert forbidden not in identity
+
+
+def test_gosu_reachability_scans_the_extracted_binary_and_requires_full_db_coverage():
+    workflow = _publish_workflow()
+    reachability = _step_block(
+        workflow, "Verify PostgreSQL gosu binary vulnerability reachability"
+    )
+
+    assert 'govulncheck" -mode binary -json "$gosu_binary"' in reachability
+    assert '"$RUNNER_TEMP/postgres-gosu"' in reachability
+    assert '"$RUNNER_TEMP/postgres-gosu-govulncheck.json"' in reachability
+    assert "gosu_vulndb_coverage=15/15" in reachability
+    for cve in POSTGRES_GO_CVES:
+        assert cve in reachability
+
+
+def test_gosu_reachability_uses_first_trace_symbol_deduplicates_and_fails_closed():
+    reachability = _step_block(
+        _publish_workflow(),
+        "Verify PostgreSQL gosu binary vulnerability reachability",
+    )
+
+    assert 'trace = finding.get("trace") or []' in reachability
+    assert 'symbol = str((trace[0] or {}).get("function") or "").strip()' in reachability
+    assert "records = set()" in reachability
+    assert "records.add(" in reachability
+    assert "for record in sorted(records):" in reachability
+    assert "gosu_reachable_vulnerability_count=" in reachability
+    assert "gosu_reachable_vulnerability id=" in reachability
+    assert "gosu_binary_reachability=clear" in reachability
+    assert "raise SystemExit(1)" in reachability
+
+
+def test_gosu_diagnostics_never_emit_raw_reports_or_weaken_trivy_enforcement():
+    workflow = _publish_workflow()
+    reachability = _step_block(
+        workflow, "Verify PostgreSQL gosu binary vulnerability reachability"
+    )
+
+    for forbidden in (
+        "print(message",
+        "print(data",
+        "print(osv",
+        "Description",
+        "References",
+        "actions/upload-artifact",
+        "allowlist",
+        "vex",
+    ):
+        assert forbidden.lower() not in reachability.lower()
+    assert 'for image in ("backend", "frontend", "postgres"):' in workflow
+    assert "if fixable_vulnerabilities:" in workflow
+    assert "Fixable HIGH/CRITICAL vulnerabilities found" in workflow
+
+
+def test_gosu_evidence_runs_before_existing_image_security_gates_and_login():
+    workflow = _publish_workflow()
+    identity = _step_index(workflow, "Verify PostgreSQL gosu binary identity")
+    reachability = _step_index(
+        workflow, "Verify PostgreSQL gosu binary vulnerability reachability"
+    )
+    secret_scan = _step_index(workflow, "Scan backend image for secrets")
+    trivy_scan = _step_index(
+        workflow, "Scan backend image for fixable vulnerabilities"
+    )
+    login = _step_index(workflow, "Log in to GHCR after all gates pass")
+
+    assert _step_index(workflow, "Pull immutable PostgreSQL linux/amd64 image") < identity
+    assert identity < reachability < secret_scan < trivy_scan < login
+
+
+def test_gosu_temporary_binary_and_json_are_removed_by_always_cleanup():
+    cleanup = _step_block(
+        _publish_workflow(), "Cleanup publish credentials and temporary images"
+    )
+
+    assert "if: always()" in cleanup
+    assert '"$RUNNER_TEMP/postgres-gosu"' in cleanup
+    assert '"$RUNNER_TEMP/postgres-gosu-govulncheck.json"' in cleanup
+
+
+def test_documentation_records_multipart_patch_and_gosu_evidence_boundaries():
+    documentation = PUBLISH_DOCUMENTATION.read_text(encoding="utf-8")
+
+    for expected in (
+        "python-multipart 0.0.29",
+        "python-multipart 0.0.30",
+        "CVE-2026-53539",
+        "gosu 1.19",
+        "go1.24.6",
+        "linux/amd64",
+        "15/15",
+        "govulncheck v1.6.0",
+        "binary",
+        "Trivy",
+        "does not authorize publishing",
+        "no VEX",
+        "no allowlist",
+    ):
+        assert expected in documentation

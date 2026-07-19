@@ -30,8 +30,6 @@ jobs:
     env:
       COMPOSE_PROJECT_NAME: mowayspos-p1b2a-gate
       MOWAYS_IMAGE_TAG: ci-${{ github.sha }}
-      MOWAYS_DATA_ROOT: ${{ runner.temp }}/moways-p1b2a-runtime
-      MOWAYS_ENV_FILE: ${{ runner.temp }}/moways-p1b2a-runtime/env/production.env
       POSTGRES_DB: mowayspos_gate
       POSTGRES_USER: mowayspos_gate
       DB_PASSWORD: p1b2a_ci_url_safe_password
@@ -71,6 +69,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          runtime_root="$RUNNER_TEMP/moways-p1b2a-runtime"
+          env_file="$runtime_root/env/production.env"
+          echo "MOWAYS_DATA_ROOT=$runtime_root" >> "$GITHUB_ENV"
+          echo "MOWAYS_ENV_FILE=$env_file" >> "$GITHUB_ENV"
+          MOWAYS_DATA_ROOT="$runtime_root"
+          MOWAYS_ENV_FILE="$env_file"
 
           if ss -ltnH 'sport = :18100' | grep -q .; then
             echo 'Port 18100 is already occupied.' >&2

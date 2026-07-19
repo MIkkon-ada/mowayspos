@@ -114,6 +114,12 @@ def test_frontend_dockerfile_uses_tracked_lockfile_with_npm_ci():
 def test_github_actions_gate_runs_the_complete_isolated_runtime_contract():
     workflow = _read(".github/workflows/cloud-p1b2a-gate.yml")
 
+    assert "MOWAYS_DATA_ROOT: ${{ runner.temp }}" not in workflow
+    assert "MOWAYS_ENV_FILE: ${{ runner.temp }}" not in workflow
+    assert 'runtime_root="$RUNNER_TEMP/moways-p1b2a-runtime"' in workflow
+    assert 'echo "MOWAYS_DATA_ROOT=$runtime_root" >> "$GITHUB_ENV"' in workflow
+    assert 'echo "MOWAYS_ENV_FILE=$env_file" >> "$GITHUB_ENV"' in workflow
+
     for expected in (
         "workflow_dispatch:",
         "cloud-p1b2a-cvm-production-runtime-config",

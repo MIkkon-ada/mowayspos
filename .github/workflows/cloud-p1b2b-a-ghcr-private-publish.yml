@@ -1,0 +1,396 @@
+name: CLOUD P1B2B-A private GHCR image publish
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  private-image-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      BACKEND_REPOSITORY: ghcr.io/mikkon-ada/mowayspos-backend
+      FRONTEND_REPOSITORY: ghcr.io/mikkon-ada/mowayspos-frontend
+      POSTGRES_REPOSITORY: ghcr.io/mikkon-ada/mowayspos-postgres
+      BACKEND_LOCAL: mowayspos-publish-backend:${{ github.sha }}
+      FRONTEND_LOCAL: mowayspos-publish-frontend:${{ github.sha }}
+      POSTGRES_LOCAL: postgres:16-alpine
+
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Validate main branch and full commit SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Manual publishing is restricted to refs/heads/main." >&2
+            exit 1
+          fi
+          if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "A full 40-character commit SHA is required." >&2
+            exit 1
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "Checked-out revision does not match the workflow revision." >&2
+            exit 1
+          fi
+          echo "publish_sha=$GITHUB_SHA"
+
+      - name: Build local backend and frontend images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull --no-cache -f Dockerfile.backend -t "$BACKEND_LOCAL" .
+          docker build --pull --no-cache -f Dockerfile.frontend -t "$FRONTEND_LOCAL" .
+          echo "local_builds=ok"
+
+      - name: Pull PostgreSQL and resolve immutable upstream digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "$POSTGRES_LOCAL" >/dev/null
+          repo_digest=$(docker image inspect "$POSTGRES_LOCAL" \
+            --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+            | awk '/^postgres@sha256:[0-9a-f]{64}$/ {print $1; exit}')
+          POSTGRES_DIGEST=${repo_digest#*@}
+          if [[ ! "$POSTGRES_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Unable to resolve the PostgreSQL upstream digest." >&2
+            exit 1
+          fi
+          POSTGRES_TAG="sha256-${POSTGRES_DIGEST#sha256:}"
+          POSTGRES_TARGET="$POSTGRES_REPOSITORY:$POSTGRES_TAG"
+          echo "POSTGRES_DIGEST=$POSTGRES_DIGEST" >> "$GITHUB_ENV"
+          echo "POSTGRES_TAG=$POSTGRES_TAG" >> "$GITHUB_ENV"
+          echo "POSTGRES_TARGET=$POSTGRES_TARGET" >> "$GITHUB_ENV"
+          echo "postgres_upstream_digest=$POSTGRES_DIGEST"
+          echo "postgres_target=$POSTGRES_TARGET"
+
+      - name: Scan backend image for secrets
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: ${{ env.BACKEND_LOCAL }}
+          scanners: secret
+          format: json
+          output: ${{ runner.temp }}/backend-secret.json
+          exit-code: '0'
+
+      - name: Scan frontend image for secrets
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: ${{ env.FRONTEND_LOCAL }}
+          scanners: secret
+          format: json
+          output: ${{ runner.temp }}/frontend-secret.json
+          exit-code: '0'
+
+      - name: Scan PostgreSQL image for secrets
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: ${{ env.POSTGRES_LOCAL }}
+          scanners: secret
+          format: json
+          output: ${{ runner.temp }}/postgres-secret.json
+          exit-code: '0'
+
+      - name: Scan backend image for fixable vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: ${{ env.BACKEND_LOCAL }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: json
+          output: ${{ runner.temp }}/backend-vulnerability.json
+          exit-code: '0'
+
+      - name: Scan frontend image for fixable vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: ${{ env.FRONTEND_LOCAL }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: json
+          output: ${{ runner.temp }}/frontend-vulnerability.json
+          exit-code: '0'
+
+      - name: Scan PostgreSQL image for fixable vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: ${{ env.POSTGRES_LOCAL }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: json
+          output: ${{ runner.temp }}/postgres-vulnerability.json
+          exit-code: '0'
+
+      - name: Enforce sanitized scan results
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$RUNNER_TEMP" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          failed = False
+          for image in ("backend", "frontend", "postgres"):
+              secret_file = root / f"{image}-secret.json"
+              vulnerability_file = root / f"{image}-vulnerability.json"
+              for results_file in (secret_file, vulnerability_file):
+                  if not results_file.is_file():
+                      print(f"{image}_scan_result=missing", file=sys.stderr)
+                      failed = True
+
+              if not secret_file.is_file() or not vulnerability_file.is_file():
+                  continue
+
+              secret_data = json.loads(secret_file.read_text(encoding="utf-8"))
+              vulnerability_data = json.loads(
+                  vulnerability_file.read_text(encoding="utf-8")
+              )
+              secret_findings = sum(
+                  len(result.get("Secrets") or [])
+                  for result in secret_data.get("Results") or []
+              )
+              fixable_vulnerabilities = sum(
+                  1
+                  for result in vulnerability_data.get("Results") or []
+                  for item in result.get("Vulnerabilities") or []
+                  if item.get("Severity") in {"HIGH", "CRITICAL"}
+                  and bool((item.get("FixedVersion") or "").strip())
+              )
+              print(f"{image}_secret_findings={secret_findings}")
+              print(
+                  f"{image}_fixable_high_critical="
+                  f"{fixable_vulnerabilities}"
+              )
+              if secret_findings:
+                  print(f"Secret scan failed for {image}.", file=sys.stderr)
+                  failed = True
+              if fixable_vulnerabilities:
+                  print(
+                      "Fixable HIGH/CRITICAL vulnerabilities found "
+                      f"in {image}.",
+                      file=sys.stderr,
+                  )
+                  failed = True
+
+          if failed:
+              raise SystemExit(1)
+          PY
+
+      - name: Inspect image contents and Docker history
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! docker run --rm --entrypoint sh "$BACKEND_LOCAL" -c '
+            set -eu
+            test ! -e /app/.env
+            test ! -e /app/.git
+            test ! -e /app/.docker/config.json
+            ! find /app -type d \( -name uploads -o -name backups -o -name logs \) -print -quit | grep -q .
+            ! find /app -type f \( -name production.env -o -path "*/.docker/config.json" \) -print -quit | grep -q .
+            ! find /app -type f \( -name "*.db" -o -name "*.sqlite" -o -name "*.sqlite3" \) -print -quit | grep -q .
+            ! find /app -type f \( -name "*.pem" -o -name "*.key" -o -name "id_rsa" -o -name "id_ed25519" \) -print -quit | grep -q .
+          '; then
+            echo "backend image content check failed: forbidden local data, Docker configuration, database, or private key." >&2
+            exit 1
+          fi
+
+          if ! docker run --rm --entrypoint sh "$FRONTEND_LOCAL" -c '
+            set -eu
+            test ! -e /usr/share/nginx/html/frontend/src
+            test ! -e /usr/share/nginx/html/src
+            test ! -e /usr/share/nginx/html/node_modules
+            test ! -e /usr/share/nginx/html/.env
+            test ! -e /usr/share/nginx/html/.git
+            test ! -e /usr/share/nginx/html/.docker/config.json
+            ! find /usr/share/nginx/html -type f \( -name "*.pem" -o -name "*.key" -o -name "id_rsa" -o -name "id_ed25519" \) -print -quit | grep -q .
+          '; then
+            echo "frontend image content check failed: source, dependency, Docker configuration, token material, or private key." >&2
+            exit 1
+          fi
+
+          if ! docker run --rm --entrypoint sh "$POSTGRES_LOCAL" -c '
+            set -eu
+            test ! -e /app
+            test ! -e /workspace
+            test ! -e /mowayspos
+            test ! -e /root/.docker/config.json
+            ! find / -xdev -type f \( -name "production.env" -o -name "*.pem" -o -name "id_rsa" -o -name "id_ed25519" \) -print -quit 2>/dev/null | grep -q .
+          '; then
+            echo "postgres image content check failed: project code, production secret, Docker configuration, or private key." >&2
+            exit 1
+          fi
+
+          for image in "$BACKEND_LOCAL" "$FRONTEND_LOCAL" "$POSTGRES_LOCAL"; do
+            labels=$(docker image inspect "$image" --format '{{json .Config.Labels}}')
+            if grep -Fqi 'org.opencontainers.image.source' <<<"$labels"; then
+              echo "Image source association label is forbidden." >&2
+              exit 1
+            fi
+            if docker history --no-trunc --format '{{.CreatedBy}}' "$image" \
+              | grep -Eqi '(ghcr_publish_token|github_token|authorization|api[_-]?key|password|passwd|token|llm|tencent|secret|--build-arg[^|]*(token|password|secret|key))'; then
+              echo "Docker history check failed: possible token, password, LLM/cloud credential, authorization value, or non-empty secret build argument." >&2
+              exit 1
+            fi
+          done
+          echo "image_content_and_history=ok"
+
+      - name: Log in to GHCR after all gates pass
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_PUBLISH_TOKEN }}
+
+      - name: Check immutable tags before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest_error="$RUNNER_TEMP/manifest-inspect-error"
+
+          require_absent() {
+            local ref="$1"
+            if docker buildx imagetools inspect "$ref" >/dev/null 2>"$manifest_error"; then
+              echo "Refusing to overwrite existing immutable tag: $ref" >&2
+              exit 1
+            fi
+            if ! grep -Eqi '(not found|manifest unknown|name unknown)' "$manifest_error"; then
+              echo "Unable to verify immutable tag absence for $ref." >&2
+              exit 1
+            fi
+            rm -f "$manifest_error"
+          }
+
+          BACKEND_TARGET="$BACKEND_REPOSITORY:$GITHUB_SHA"
+          FRONTEND_TARGET="$FRONTEND_REPOSITORY:$GITHUB_SHA"
+          echo "BACKEND_TARGET=$BACKEND_TARGET" >> "$GITHUB_ENV"
+          echo "FRONTEND_TARGET=$FRONTEND_TARGET" >> "$GITHUB_ENV"
+          require_absent "$BACKEND_TARGET"
+          require_absent "$FRONTEND_TARGET"
+
+          if remote_digest=$(docker buildx imagetools inspect "$POSTGRES_TARGET" \
+            --format '{{.Manifest.Digest}}' 2>"$manifest_error"); then
+            if [[ "$remote_digest" != "$POSTGRES_DIGEST" ]]; then
+              echo "Existing PostgreSQL immutable tag has a mismatched digest." >&2
+              exit 1
+            fi
+            echo "POSTGRES_SHOULD_PUSH=false" >> "$GITHUB_ENV"
+            echo "postgres_existing_digest=$remote_digest"
+          elif grep -Eqi '(not found|manifest unknown|name unknown)' "$manifest_error"; then
+            echo "POSTGRES_SHOULD_PUSH=true" >> "$GITHUB_ENV"
+            echo "postgres_immutable_tag=absent"
+          else
+            echo "Unable to verify the PostgreSQL immutable tag." >&2
+            exit 1
+          fi
+          rm -f "$manifest_error"
+
+      - name: Retag validated images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker tag "$BACKEND_LOCAL" "$BACKEND_TARGET"
+          docker tag "$FRONTEND_LOCAL" "$FRONTEND_TARGET"
+          if [[ "$POSTGRES_SHOULD_PUSH" == "true" ]]; then
+            docker tag "$POSTGRES_LOCAL" "$POSTGRES_TARGET"
+          fi
+          echo "immutable_retag=ok"
+
+      - name: Push immutable images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push --quiet "$BACKEND_TARGET" >/dev/null
+          docker push --quiet "$FRONTEND_TARGET" >/dev/null
+          if [[ "$POSTGRES_SHOULD_PUSH" == "true" ]]; then
+            docker push --quiet "$POSTGRES_TARGET" >/dev/null
+          fi
+          echo "immutable_pushes=ok"
+
+      - name: Verify remote image digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_pushed_digest() {
+            local ref="$1"
+            local expected
+            local remote
+            expected=$(docker image inspect "$ref" \
+              --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+              | awk -F@ -v repo="${ref%:*}" '$1 == repo {print $2; exit}')
+            remote=$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')
+            if [[ ! "$remote" =~ ^sha256:[0-9a-f]{64}$ || "$remote" != "$expected" ]]; then
+              echo "Remote digest verification failed for ${ref%:*}." >&2
+              exit 1
+            fi
+            echo "verified_image=${ref%:*} digest=$remote"
+          }
+
+          verify_pushed_digest "$BACKEND_TARGET"
+          verify_pushed_digest "$FRONTEND_TARGET"
+          postgres_remote=$(docker buildx imagetools inspect "$POSTGRES_TARGET" --format '{{.Manifest.Digest}}')
+          if [[ "$postgres_remote" != "$POSTGRES_DIGEST" ]]; then
+            echo "Remote PostgreSQL digest verification failed." >&2
+            exit 1
+          fi
+          echo "verified_image=$POSTGRES_REPOSITORY digest=$postgres_remote"
+
+      - name: Verify GHCR packages are private
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
+        run: |
+          set -euo pipefail
+          owner=mikkon-ada
+          for package in mowayspos-backend mowayspos-frontend mowayspos-postgres; do
+            visibility=$(gh api "/users/$owner/packages/container/$package" --jq '.visibility')
+            test "$visibility" = "private"
+            echo "package=$package visibility=private"
+          done
+
+      - name: Cleanup publish credentials and temporary images
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          rm -f -- \
+            "$RUNNER_TEMP/backend-secret.json" \
+            "$RUNNER_TEMP/frontend-secret.json" \
+            "$RUNNER_TEMP/postgres-secret.json" \
+            "$RUNNER_TEMP/backend-vulnerability.json" \
+            "$RUNNER_TEMP/frontend-vulnerability.json" \
+            "$RUNNER_TEMP/postgres-vulnerability.json" \
+            "$RUNNER_TEMP/manifest-inspect-error"
+          refs=("$BACKEND_LOCAL" "$FRONTEND_LOCAL" "$POSTGRES_LOCAL")
+          for candidate in \
+            "${BACKEND_TARGET:-}" \
+            "${FRONTEND_TARGET:-}" \
+            "${POSTGRES_TARGET:-}"; do
+            if [[ -n "$candidate" ]]; then
+              refs+=("$candidate")
+            fi
+          done
+          docker image rm "${refs[@]}" >/dev/null 2>&1 || true
+          echo "publish_cleanup=ok"

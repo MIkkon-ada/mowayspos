@@ -19,6 +19,9 @@ on:
       - bowei_ai_dashboard/tests/test_production_runtime_contract.py
       - bowei_ai_dashboard/tests/test_production_runtime_security.py
       - docs/production-runtime-contract.md
+      - .github/workflows/cloud-p1b2b-a-ghcr-private-publish.yml
+      - bowei_ai_dashboard/tests/test_ghcr_private_publish_contract.py
+      - docs/ghcr-private-image-publish.md
 
 permissions:
   contents: read

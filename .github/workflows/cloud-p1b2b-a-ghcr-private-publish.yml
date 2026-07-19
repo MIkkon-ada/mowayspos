@@ -232,23 +232,36 @@ jobs:
 
           report = Path(sys.argv[1])
           try:
-              with report.open(encoding="utf-8") as stream:
-                  for line in stream:
-                      if not line.strip():
-                          continue
-                      message = json.loads(line)
-                      osv = message.get("osv") or {}
-                      if osv:
-                          osv_id = str(osv.get("id") or "").strip()
-                          if osv_id:
-                              aliases_by_osv[osv_id] = {
-                                  str(alias).strip()
-                                  for alias in osv.get("aliases") or []
-                                  if str(alias).strip()
-                              }
-                      finding = message.get("finding")
-                      if finding:
-                          findings.append(finding)
+              text = report.read_text(encoding="utf-8")
+              decoder = json.JSONDecoder()
+              position = 0
+              message_count = 0
+              while True:
+                  while position < len(text) and text[position].isspace():
+                      position += 1
+                  if position >= len(text):
+                      break
+
+                  message, position = decoder.raw_decode(text, position)
+                  if not isinstance(message, dict):
+                      raise TypeError("govulncheck message must be an object")
+                  message_count += 1
+
+                  osv = message.get("osv") or {}
+                  if osv:
+                      osv_id = str(osv.get("id") or "").strip()
+                      if osv_id:
+                          aliases_by_osv[osv_id] = {
+                              str(alias).strip()
+                              for alias in osv.get("aliases") or []
+                              if str(alias).strip()
+                          }
+                  finding = message.get("finding")
+                  if finding:
+                      findings.append(finding)
+
+              if message_count == 0:
+                  raise ValueError("empty govulncheck report")
           except (OSError, json.JSONDecodeError, TypeError, ValueError):
               print("gosu_govulncheck_report=invalid", file=sys.stderr)
               raise SystemExit(1)

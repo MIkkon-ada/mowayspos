@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 import re
+import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -49,6 +52,40 @@ def _step_block(workflow: str, step_name: str) -> str:
     assert marker in workflow
     remainder = workflow.split(marker, 1)[1]
     return remainder.split("\n      - name:", 1)[0]
+
+
+def _embedded_gosu_report_parser() -> str:
+    reachability = _step_block(
+        _publish_workflow(),
+        "Verify PostgreSQL gosu binary vulnerability reachability",
+    )
+    python_source = reachability.split(
+        "python - \"$govulncheck_report\" <<'PY'\n", 1
+    )[1].split("\n          PY", 1)[0]
+    python_source = textwrap.dedent(python_source)
+    start = python_source.index("report = Path(sys.argv[1])")
+    end = python_source.index("\n\nobserved_cves =", start)
+    return python_source[start:end]
+
+
+def _run_embedded_gosu_report_parser(
+    report_text: str,
+    report_path: Path,
+) -> tuple[dict[str, object], str, int]:
+    report_path.write_text(report_text, encoding="utf-8")
+    stderr = io.StringIO()
+    namespace: dict[str, object] = {
+        "aliases_by_osv": {},
+        "findings": [],
+        "json": __import__("json"),
+        "Path": Path,
+        "sys": SimpleNamespace(argv=["parser", str(report_path)], stderr=stderr),
+    }
+    try:
+        exec(_embedded_gosu_report_parser(), namespace)
+    except SystemExit as exc:
+        return namespace, stderr.getvalue(), int(exc.code or 0)
+    return namespace, stderr.getvalue(), 0
 
 
 def test_publish_workflow_is_manual_only():
@@ -699,3 +736,88 @@ def test_documentation_records_multipart_patch_and_gosu_evidence_boundaries():
         "no allowlist",
     ):
         assert expected in documentation
+
+
+def test_govulncheck_stream_parser_uses_raw_decode_and_remains_fail_closed():
+    reachability = _step_block(
+        _publish_workflow(),
+        "Verify PostgreSQL gosu binary vulnerability reachability",
+    )
+
+    assert "json.loads(line)" not in reachability
+    assert "text = report.read_text(encoding=\"utf-8\")" in reachability
+    assert "decoder = json.JSONDecoder()" in reachability
+    assert "decoder.raw_decode(text, position)" in reachability
+    assert "message, position = decoder.raw_decode(text, position)" in reachability
+    assert "while position < len(text) and text[position].isspace():" in reachability
+    assert "position += 1" in reachability
+    assert "if not isinstance(message, dict):" in reachability
+    assert "message_count += 1" in reachability
+    assert "if message_count == 0:" in reachability
+    assert "json.JSONDecodeError" in reachability
+    assert 'print("gosu_govulncheck_report=invalid", file=sys.stderr)' in reachability
+    for forbidden in ("print(text", "print(report", "print(message"):
+        assert forbidden not in reachability
+
+
+def test_govulncheck_stream_parser_accepts_three_multiline_messages(tmp_path: Path):
+    sample = """{
+  \"config\": {
+    \"protocol_version\": \"v1.0.0\"
+  }
+}
+{
+  \"osv\": {
+    \"id\": \"GO-TEST-0001\",
+    \"aliases\": [
+      \"CVE-TEST-0001\"
+    ]
+  }
+}
+{
+  \"finding\": {
+    \"osv\": \"GO-TEST-0001\",
+    \"trace\": [
+      {
+        \"function\": \"example.Symbol\"
+      }
+    ]
+  }
+}
+
+"""
+    namespace, stderr, exit_code = _run_embedded_gosu_report_parser(
+        sample,
+        tmp_path / "valid-stream.json",
+    )
+
+    assert exit_code == 0
+    assert stderr == ""
+    assert namespace["message_count"] == 3
+    assert namespace["aliases_by_osv"] == {
+        "GO-TEST-0001": {"CVE-TEST-0001"}
+    }
+    assert namespace["findings"] == [
+        {
+            "osv": "GO-TEST-0001",
+            "trace": [{"function": "example.Symbol"}],
+        }
+    ]
+
+
+def test_govulncheck_stream_parser_rejects_empty_non_object_and_trailing_garbage(
+    tmp_path: Path,
+):
+    samples = {
+        "empty": " \n\t",
+        "non-object": "[]",
+        "trailing-garbage": '{\"config\": {}}\nnot-json',
+    }
+
+    for name, sample in samples.items():
+        _, stderr, exit_code = _run_embedded_gosu_report_parser(
+            sample,
+            tmp_path / f"{name}.json",
+        )
+        assert exit_code == 1
+        assert stderr == "gosu_govulncheck_report=invalid\n"

@@ -2,6 +2,15 @@ name: CLOUD P1B2B-A private GHCR image publish
 
 on:
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Run a local-only audit or the complete private publish flow
+        required: true
+        type: choice
+        options:
+          - audit
+          - publish
+        default: audit
 
 permissions:
   contents: read
@@ -47,6 +56,21 @@ jobs:
             exit 1
           fi
           echo "publish_sha=$GITHUB_SHA"
+
+      - name: Validate operation mode
+        shell: bash
+        env:
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          case "$OPERATION" in
+            "audit"|"publish") ;;
+            *)
+              echo "Unsupported operation. Expected audit or publish." >&2
+              exit 1
+              ;;
+          esac
+          echo "operation=$OPERATION"
 
       - name: Build local backend and frontend images
         shell: bash
@@ -185,63 +209,6 @@ jobs:
           output: ${{ runner.temp }}/postgres-vulnerability.json
           exit-code: '0'
 
-      - name: Enforce sanitized scan results
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - "$RUNNER_TEMP" <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          root = Path(sys.argv[1])
-          failed = False
-          for image in ("backend", "frontend", "postgres"):
-              secret_file = root / f"{image}-secret.json"
-              vulnerability_file = root / f"{image}-vulnerability.json"
-              for results_file in (secret_file, vulnerability_file):
-                  if not results_file.is_file():
-                      print(f"{image}_scan_result=missing", file=sys.stderr)
-                      failed = True
-
-              if not secret_file.is_file() or not vulnerability_file.is_file():
-                  continue
-
-              secret_data = json.loads(secret_file.read_text(encoding="utf-8"))
-              vulnerability_data = json.loads(
-                  vulnerability_file.read_text(encoding="utf-8")
-              )
-              secret_findings = sum(
-                  len(result.get("Secrets") or [])
-                  for result in secret_data.get("Results") or []
-              )
-              fixable_vulnerabilities = sum(
-                  1
-                  for result in vulnerability_data.get("Results") or []
-                  for item in result.get("Vulnerabilities") or []
-                  if item.get("Severity") in {"HIGH", "CRITICAL"}
-                  and bool((item.get("FixedVersion") or "").strip())
-              )
-              print(f"{image}_secret_findings={secret_findings}")
-              print(
-                  f"{image}_fixable_high_critical="
-                  f"{fixable_vulnerabilities}"
-              )
-              if secret_findings:
-                  print(f"Secret scan failed for {image}.", file=sys.stderr)
-                  failed = True
-              if fixable_vulnerabilities:
-                  print(
-                      "Fixable HIGH/CRITICAL vulnerabilities found "
-                      f"in {image}.",
-                      file=sys.stderr,
-                  )
-                  failed = True
-
-          if failed:
-              raise SystemExit(1)
-          PY
-
       - name: Inspect image contents and Docker history
         shell: bash
         run: |
@@ -301,7 +268,113 @@ jobs:
           done
           echo "image_content_and_history=ok"
 
+      - name: Enforce sanitized scan results
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$RUNNER_TEMP" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          failed = False
+          for image in ("backend", "frontend", "postgres"):
+              secret_file = root / f"{image}-secret.json"
+              vulnerability_file = root / f"{image}-vulnerability.json"
+              for results_file in (secret_file, vulnerability_file):
+                  if not results_file.is_file():
+                      print(f"{image}_scan_result=missing", file=sys.stderr)
+                      failed = True
+
+              if not secret_file.is_file() or not vulnerability_file.is_file():
+                  continue
+
+              secret_data = json.loads(secret_file.read_text(encoding="utf-8"))
+              vulnerability_data = json.loads(
+                  vulnerability_file.read_text(encoding="utf-8")
+              )
+              secret_findings = sum(
+                  len(result.get("Secrets") or [])
+                  for result in secret_data.get("Results") or []
+              )
+
+              def sanitized(value: object) -> str:
+                  text = str(value or "unknown")
+                  return "".join(
+                      character
+                      if character.isprintable() and not character.isspace()
+                      else "_"
+                      for character in text
+                  )
+
+              records = set()
+              for result in vulnerability_data.get("Results") or []:
+                  for item in result.get("Vulnerabilities") or []:
+                      if item.get("Severity") in {"HIGH", "CRITICAL"} and bool(
+                          (item.get("FixedVersion") or "").strip()
+                      ):
+                          records.add(
+                              (
+                                  image,
+                                  sanitized(item.get("Severity")),
+                                  sanitized(item.get("VulnerabilityID")),
+                                  sanitized(item.get("PkgName")),
+                                  sanitized(item.get("InstalledVersion")),
+                                  sanitized(item.get("FixedVersion")),
+                              )
+                          )
+
+              for record in sorted(records):
+                  (
+                      image,
+                      severity,
+                      vulnerability_id,
+                      package_name,
+                      installed_version,
+                      fixed_version,
+                  ) = record
+                  print(
+                      "vulnerability "
+                      f"image={image} "
+                      f"severity={severity} "
+                      f"id={vulnerability_id} "
+                      f"package={package_name} "
+                      f"installed={installed_version} "
+                      f"fixed={fixed_version}"
+                  )
+
+              fixable_vulnerabilities = len(records)
+              print(f"{image}_secret_findings={secret_findings}")
+              print(
+                  f"{image}_fixable_high_critical="
+                  f"{fixable_vulnerabilities}"
+              )
+              if secret_findings:
+                  print(f"Secret scan failed for {image}.", file=sys.stderr)
+                  failed = True
+              if fixable_vulnerabilities:
+                  print(
+                      "Fixable HIGH/CRITICAL vulnerabilities found "
+                      f"in {image}.",
+                      file=sys.stderr,
+                  )
+                  failed = True
+
+          if failed:
+              raise SystemExit(1)
+          PY
+
+      - name: Report audit-only success
+        if: ${{ inputs.operation == 'audit' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "audit_only=ok"
+          echo "publish_attempted=false"
+
       - name: Log in to GHCR after all gates pass
+        if: ${{ inputs.operation == 'publish' }}
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772
         with:
           registry: ghcr.io
@@ -309,6 +382,7 @@ jobs:
           password: ${{ secrets.GHCR_PUBLISH_TOKEN }}
 
       - name: Check immutable tags before publishing
+        if: ${{ inputs.operation == 'publish' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -352,6 +426,7 @@ jobs:
           rm -f "$manifest_error"
 
       - name: Retag validated images
+        if: ${{ inputs.operation == 'publish' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -363,6 +438,7 @@ jobs:
           echo "immutable_retag=ok"
 
       - name: Push immutable images
+        if: ${{ inputs.operation == 'publish' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -374,6 +450,7 @@ jobs:
           echo "immutable_pushes=ok"
 
       - name: Verify remote image digests
+        if: ${{ inputs.operation == 'publish' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -403,6 +480,7 @@ jobs:
           echo "verified_image=$POSTGRES_REPOSITORY digest=$postgres_remote"
 
       - name: Verify GHCR packages are private
+        if: ${{ inputs.operation == 'publish' }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}

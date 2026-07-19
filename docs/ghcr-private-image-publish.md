@@ -8,6 +8,16 @@ The private image repositories are:
 - `ghcr.io/mikkon-ada/mowayspos-frontend`
 - `ghcr.io/mikkon-ada/mowayspos-postgres`
 
+## Manual operation modes
+
+`audit` is the default workflow-dispatch operation. It builds or pulls the three local images, runs all secret and fixable HIGH/CRITICAL vulnerability scans, inspects image contents and Docker history, and cleans up its temporary files and images. Audit mode never logs in to GHCR, checks remote tags, retags images for GHCR, pushes images, calls package visibility APIs, or creates a package.
+
+`publish` must be selected explicitly. It performs the same complete local audit first and retains the existing fail-closed publishing sequence: only a clean audit may proceed to GHCR login, immutable-tag checks, retagging, pushing, remote digest verification, and private-package visibility verification.
+
+When fixable HIGH/CRITICAL findings block either mode, the log emits only the vulnerability ID, package name, installed version, fixed version, and severity, together with the image name, for each sorted, de-duplicated record. It does not print vulnerability descriptions, references, or secret contents, and secret scanning remains count-only. There is no vulnerability allowlist and any fixable HIGH or CRITICAL finding still fails the workflow.
+
+The first publish run, `29679562418`, stopped before GHCR login and image pushing because it found one backend and 15 PostgreSQL fixable HIGH/CRITICAL vulnerabilities. The frontend count was zero, all three secret counts were zero, and no GHCR package was created. The next permitted diagnostic action is a separately reviewed audit run to obtain the sanitized list. A publish operation is allowed only after a remediation is designed independently and a later audit succeeds; these counts are historical observations, not a permanent baseline.
+
 Backend and frontend images use only the full 40-character Git commit SHA as their immutable tag. PostgreSQL starts from the fixed multi-platform upstream reference `docker.io/library/postgres:16-alpine`. The current production CVM is Ubuntu 22.04 on x86_64, so this phase selects exactly one `linux/amd64` platform manifest from the immutable upstream index and pulls it by its platform manifest digest.
 
 The upstream index digest is retained only for source traceability. The GHCR tag is `linux-amd64-sha256-<complete 64-character platform manifest digest>`, and overwrite prevention and post-push integrity verification both compare the GHCR manifest with that `linux/amd64` platform manifest digest. This is not a complete multi-architecture mirror. Supporting another architecture requires a separate design and security review rather than reusing this platform tag.

@@ -24,10 +24,17 @@ def _step_index(workflow: str, step_name: str) -> int:
     return workflow.index(marker)
 
 
+def _step_block(workflow: str, step_name: str) -> str:
+    marker = f"      - name: {step_name}"
+    assert marker in workflow
+    remainder = workflow.split(marker, 1)[1]
+    return remainder.split("\n      - name:", 1)[0]
+
+
 def test_publish_workflow_is_manual_only():
     triggers = _trigger_block(_publish_workflow())
 
-    assert re.fullmatch(r"\s+workflow_dispatch:\s*", triggers)
+    assert re.search(r"^\s+workflow_dispatch:\s*$", triggers, re.MULTILINE)
     for forbidden in (
         "push:",
         "pull_request:",
@@ -36,6 +43,165 @@ def test_publish_workflow_is_manual_only():
         "repository_dispatch:",
     ):
         assert forbidden not in triggers
+
+
+def test_dispatch_requires_audit_or_publish_operation_defaulting_to_audit():
+    triggers = _trigger_block(_publish_workflow())
+
+    assert re.search(r"^\s+operation:\s*$", triggers, re.MULTILINE)
+    assert re.search(r"^\s+required:\s+true\s*$", triggers, re.MULTILINE)
+    assert re.search(r"^\s+type:\s+choice\s*$", triggers, re.MULTILINE)
+    assert re.search(
+        r"options:\s*\n\s+- audit\s*\n\s+- publish\s*$",
+        triggers,
+        re.MULTILINE,
+    )
+    assert re.search(r"^\s+default:\s+audit\s*$", triggers, re.MULTILINE)
+
+
+def test_operation_mode_validation_is_fail_closed_after_sha_validation():
+    workflow = _publish_workflow()
+    validation = _step_block(workflow, "Validate operation mode")
+
+    assert _step_index(workflow, "Validate main branch and full commit SHA") < _step_index(
+        workflow, "Validate operation mode"
+    )
+    assert "${{ inputs.operation }}" in validation
+    assert '"audit"|"publish"' in validation
+    assert "Unsupported operation" in validation
+    assert 'echo "operation=$OPERATION"' in validation
+
+
+def test_audit_explicitly_skips_every_ghcr_publish_side_effect():
+    workflow = _publish_workflow()
+    publish_only_steps = (
+        "Log in to GHCR after all gates pass",
+        "Check immutable tags before publishing",
+        "Retag validated images",
+        "Push immutable images",
+        "Verify remote image digests",
+        "Verify GHCR packages are private",
+    )
+
+    for step_name in publish_only_steps:
+        block = _step_block(workflow, step_name)
+        assert "if: ${{ inputs.operation == 'publish' }}" in block
+
+
+def test_publish_mode_keeps_the_complete_fail_closed_publish_sequence():
+    workflow = _publish_workflow()
+    steps = (
+        "Inspect image contents and Docker history",
+        "Enforce sanitized scan results",
+        "Log in to GHCR after all gates pass",
+        "Check immutable tags before publishing",
+        "Retag validated images",
+        "Push immutable images",
+        "Verify remote image digests",
+        "Verify GHCR packages are private",
+        "Cleanup publish credentials and temporary images",
+    )
+
+    assert [_step_index(workflow, name) for name in steps] == sorted(
+        _step_index(workflow, name) for name in steps
+    )
+
+
+def test_audit_success_is_reported_only_after_all_local_security_checks():
+    workflow = _publish_workflow()
+    audit = _step_block(workflow, "Report audit-only success")
+
+    assert "if: ${{ inputs.operation == 'audit' }}" in audit
+    assert "audit_only=ok" in audit
+    assert "publish_attempted=false" in audit
+    assert _step_index(workflow, "Inspect image contents and Docker history") < _step_index(
+        workflow, "Enforce sanitized scan results"
+    )
+    assert _step_index(workflow, "Enforce sanitized scan results") < _step_index(
+        workflow, "Report audit-only success"
+    )
+    assert _step_index(workflow, "Report audit-only success") < _step_index(
+        workflow, "Log in to GHCR after all gates pass"
+    )
+
+
+def test_vulnerability_diagnostics_emit_only_six_sanitized_fields():
+    workflow = _publish_workflow()
+    enforcement = _step_block(workflow, "Enforce sanitized scan results")
+
+    assert re.search(
+        r'print\(\s*"vulnerability "\s*'
+        r'f"image=\{image\} "\s*'
+        r'f"severity=\{severity\} "\s*'
+        r'f"id=\{vulnerability_id\} "\s*'
+        r'f"package=\{package_name\} "\s*'
+        r'f"installed=\{installed_version\} "\s*'
+        r'f"fixed=\{fixed_version\}"\s*\)',
+        enforcement,
+    )
+    for key in (
+        'item.get("Severity")',
+        'item.get("VulnerabilityID")',
+        'item.get("PkgName")',
+        'item.get("InstalledVersion")',
+        'item.get("FixedVersion")',
+    ):
+        assert key in enforcement
+
+
+def test_vulnerability_diagnostics_exclude_verbose_and_sensitive_fields():
+    enforcement = _step_block(
+        _publish_workflow(), "Enforce sanitized scan results"
+    )
+
+    for forbidden in (
+        'item.get("Title")',
+        'item.get("Description")',
+        'item.get("PrimaryURL")',
+        'item.get("References")',
+        'item.get("PkgPath")',
+        'item.get("Layer")',
+        "json.dumps(secret_data",
+        "print(secret_data",
+        "print(vulnerability_data",
+    ):
+        assert forbidden not in enforcement
+
+
+def test_vulnerability_diagnostics_are_sorted_and_deduplicated():
+    enforcement = _step_block(
+        _publish_workflow(), "Enforce sanitized scan results"
+    )
+
+    assert "records = set()" in enforcement
+    assert "records.add(" in enforcement
+    assert "for record in sorted(records):" in enforcement
+    assert "fixable_vulnerabilities = len(records)" in enforcement
+
+
+def test_diagnostic_mode_does_not_allowlist_or_weaken_vulnerability_gate():
+    workflow = _publish_workflow()
+    enforcement = _step_block(workflow, "Enforce sanitized scan results")
+
+    assert "severity: HIGH,CRITICAL" in workflow
+    assert 'item.get("Severity") in {"HIGH", "CRITICAL"}' in enforcement
+    assert "if fixable_vulnerabilities:" in enforcement
+    assert "failed = True" in enforcement
+    assert "raise SystemExit(1)" in enforcement
+    for forbidden in ("allowlist", "whitelist", "ignore-cve", "CRITICAL-only"):
+        assert forbidden.lower() not in workflow.lower()
+
+
+def test_secret_diagnostics_remain_counts_only():
+    enforcement = _step_block(
+        _publish_workflow(), "Enforce sanitized scan results"
+    )
+
+    assert 'print(f"{image}_secret_findings={secret_findings}")' in enforcement
+    assert "Secret scan failed" in enforcement
+    assert "for secret in" not in enforcement
+    assert "SecretID" not in enforcement
+    assert "Match" not in enforcement
 
 
 def test_publish_workflow_has_top_level_serial_concurrency_lock():
@@ -187,6 +353,22 @@ def test_postgres_documentation_states_single_platform_scope():
         "upstream index digest",
         "platform manifest digest",
         "not a complete multi-architecture mirror",
+    ):
+        assert expected in documentation
+
+
+def test_documentation_explains_audit_default_and_first_failure_boundary():
+    documentation = PUBLISH_DOCUMENTATION.read_text(encoding="utf-8")
+
+    for expected in (
+        "`audit` is the default",
+        "never logs in to GHCR",
+        "`publish` must be selected explicitly",
+        "29679562418",
+        "one backend and 15 PostgreSQL",
+        "no GHCR package was created",
+        "vulnerability ID, package name, installed version, fixed version, and severity",
+        "does not print vulnerability descriptions, references, or secret contents",
     ):
         assert expected in documentation
 

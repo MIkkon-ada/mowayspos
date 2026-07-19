@@ -2,7 +2,7 @@ name: mowayspos
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: ${MOWAYS_POSTGRES_IMAGE:-postgres:16-alpine}
     container_name: mowayspos-postgres
     restart: unless-stopped
     environment:
@@ -28,7 +28,7 @@ services:
         max-file: "5"
 
   backend:
-    image: mowayspos-backend:${MOWAYS_IMAGE_TAG:?MOWAYS_IMAGE_TAG is required}
+    image: ${MOWAYS_BACKEND_REPOSITORY:-mowayspos-backend}:${MOWAYS_IMAGE_TAG:?MOWAYS_IMAGE_TAG is required}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -74,7 +74,7 @@ services:
         max-file: "5"
 
   frontend:
-    image: mowayspos-frontend:${MOWAYS_IMAGE_TAG:?MOWAYS_IMAGE_TAG is required}
+    image: ${MOWAYS_FRONTEND_REPOSITORY:-mowayspos-frontend}:${MOWAYS_IMAGE_TAG:?MOWAYS_IMAGE_TAG is required}
     build:
       context: .
       dockerfile: Dockerfile.frontend

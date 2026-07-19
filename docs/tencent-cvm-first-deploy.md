@@ -24,15 +24,54 @@ Create the application directory without changing existing KAP, WeKnora, or
 OnlyOffice directories, containers, networks, or configuration:
 
 ```bash
-sudo install -d -m 0750 /opt/mowayspos
-sudo install -m 0644 docker-compose.prod.yml /opt/mowayspos/docker-compose.prod.yml
+sudo install -d \
+  -m 0750 \
+  -o "$(id -un)" \
+  -g "$(id -gn)" \
+  /opt/mowayspos
+
+install -m 0644 \
+  docker-compose.prod.yml \
+  /opt/mowayspos/docker-compose.prod.yml
+
 cd /opt/mowayspos
 ```
 
-Create `/opt/mowayspos/production.env` with mode `0600`. The following values
-pin the validated release; replace only the explicit non-secret placeholders on
-the server. `DB_PASSWORD` must be URL-safe and must match the password embedded
-in `DATABASE_URL` inside the same file.
+Create the data directories with the same current-user ownership before any
+Compose command, then initialize the bind-mounted LLM configuration as a
+private regular file containing an empty JSON object:
+
+```bash
+sudo install -d \
+  -m 0750 \
+  -o "$(id -un)" \
+  -g "$(id -gn)" \
+  /data/mowayspos \
+  /data/mowayspos/postgres \
+  /data/mowayspos/env
+
+install -m 0600 /dev/null \
+  /data/mowayspos/env/llm_configs.json
+
+printf '{}\n' > \
+  /data/mowayspos/env/llm_configs.json
+
+test -f /data/mowayspos/env/llm_configs.json
+test ! -d /data/mowayspos/env/llm_configs.json
+```
+
+Create the deployment environment file with private permissions before editing
+its real server values:
+
+```bash
+install -m 0600 /dev/null \
+  /opt/mowayspos/production.env
+```
+
+The following template pins the validated release. Replace only the explicit
+non-secret placeholders on the server. `DB_PASSWORD` must be a URL-safe,
+random strong server password because Compose inserts DB_PASSWORD into the
+backend DATABASE_URL.
 
 ```dotenv
 RELEASE_SHA=4182c9746e498aebbbd9371fe7488d7dd71ae02f
@@ -43,7 +82,6 @@ MOWAYS_IMAGE_TAG=4182c9746e498aebbbd9371fe7488d7dd71ae02f
 POSTGRES_DB=mowayspos
 POSTGRES_USER=mowayspos
 DB_PASSWORD=replace_with_url_safe_server_secret
-DATABASE_URL=postgresql+psycopg://mowayspos:replace_with_same_url_safe_server_secret@postgres:5432/mowayspos
 MOWAYS_ENV_FILE=/opt/mowayspos/production.env
 MOWAYS_DATA_ROOT=/data/mowayspos
 SESSION_COOKIE_NAME=moways_session
@@ -62,13 +100,37 @@ docker compose --env-file /opt/mowayspos/production.env -f docker-compose.prod.y
 docker compose --env-file /opt/mowayspos/production.env -f docker-compose.prod.yml pull
 ```
 
-Verify that all three pulled images expose registry digests. The PostgreSQL
-mirror must also resolve to the reviewed upstream content digest:
+Verify the exact GHCR remote manifest digest for every pulled image. The
+PostgreSQL source manifest digest
+`sha256:7a396fd264a2067788b6551122b50f162bf6136312c7fc9d74381cb92c648382`
+is used only in the immutable tag and for source tracing. The expected GHCR
+remote manifest is different and is checked explicitly below:
 
 ```bash
-test -n "$(docker image inspect --format '{{join .RepoDigests ""}}' ghcr.io/mikkon-ada/mowayspos-backend:4182c9746e498aebbbd9371fe7488d7dd71ae02f)"
-test -n "$(docker image inspect --format '{{join .RepoDigests ""}}' ghcr.io/mikkon-ada/mowayspos-frontend:4182c9746e498aebbbd9371fe7488d7dd71ae02f)"
-docker image inspect --format '{{join .RepoDigests "\n"}}' ghcr.io/mikkon-ada/mowayspos-postgres:linux-amd64-sha256-7a396fd264a2067788b6551122b50f162bf6136312c7fc9d74381cb92c648382 | grep -F '@sha256:7a396fd264a2067788b6551122b50f162bf6136312c7fc9d74381cb92c648382'
+require_repo_digest() {
+  image_ref="$1"
+  expected_digest="$2"
+
+  docker image inspect \
+    --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+    "$image_ref" |
+    awk -F@ -v expected="$expected_digest" '
+      $2 == expected { found = 1 }
+      END { exit(found ? 0 : 1) }
+    '
+}
+
+require_repo_digest \
+  ghcr.io/mikkon-ada/mowayspos-backend:4182c9746e498aebbbd9371fe7488d7dd71ae02f \
+  sha256:7fa06bd6579c98b21cfbf949f773daede9df508edd177823ed70c77630e65aa5
+
+require_repo_digest \
+  ghcr.io/mikkon-ada/mowayspos-frontend:4182c9746e498aebbbd9371fe7488d7dd71ae02f \
+  sha256:49b46fd61da49e047ee3427cd762ce101eb752241018b7ddf36cce446e87a76a
+
+require_repo_digest \
+  ghcr.io/mikkon-ada/mowayspos-postgres:linux-amd64-sha256-7a396fd264a2067788b6551122b50f162bf6136312c7fc9d74381cb92c648382 \
+  sha256:428f48e250303765f62fdfcf2df623cb4f5bb27fafda6b26e9cb17e53bf8019b
 ```
 
 Do not continue if any check fails.

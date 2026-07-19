@@ -10,12 +10,15 @@ DEPLOYMENT_DOC_PATH = REPOSITORY_ROOT / "docs/tencent-cvm-first-deploy.md"
 P1B2A_WORKFLOW_PATH = REPOSITORY_ROOT / ".github/workflows/cloud-p1b2a-gate.yml"
 
 RELEASE_SHA = "4182c9746e498aebbbd9371fe7488d7dd71ae02f"
-POSTGRES_DIGEST = "7a396fd264a2067788b6551122b50f162bf6136312c7fc9d74381cb92c648382"
+POSTGRES_SOURCE_DIGEST = "7a396fd264a2067788b6551122b50f162bf6136312c7fc9d74381cb92c648382"
+BACKEND_REMOTE_DIGEST = "7fa06bd6579c98b21cfbf949f773daede9df508edd177823ed70c77630e65aa5"
+FRONTEND_REMOTE_DIGEST = "49b46fd61da49e047ee3427cd762ce101eb752241018b7ddf36cce446e87a76a"
+POSTGRES_REMOTE_DIGEST = "428f48e250303765f62fdfcf2df623cb4f5bb27fafda6b26e9cb17e53bf8019b"
 BACKEND_REPOSITORY = "ghcr.io/mikkon-ada/mowayspos-backend"
 FRONTEND_REPOSITORY = "ghcr.io/mikkon-ada/mowayspos-frontend"
 POSTGRES_IMAGE = (
     "ghcr.io/mikkon-ada/mowayspos-postgres:"
-    f"linux-amd64-sha256-{POSTGRES_DIGEST}"
+    f"linux-amd64-sha256-{POSTGRES_SOURCE_DIGEST}"
 )
 
 
@@ -165,11 +168,81 @@ def test_deployment_doc_does_not_use_mutable_image_tags():
 
 def test_deployment_doc_verifies_all_three_pulled_images():
     doc = _read(DEPLOYMENT_DOC_PATH)
-    assert doc.count("docker image inspect") >= 3
+    assert "docker image inspect" in doc
+    assert doc.count("require_repo_digest \\") == 3
     assert BACKEND_REPOSITORY in doc
     assert FRONTEND_REPOSITORY in doc
     assert POSTGRES_IMAGE in doc
-    assert f"sha256:{POSTGRES_DIGEST}" in doc
+    assert f"sha256:{POSTGRES_SOURCE_DIGEST}" in doc
+
+
+def test_deployment_doc_checks_exact_backend_remote_digest():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    assert f"sha256:{BACKEND_REMOTE_DIGEST}" in doc
+
+
+def test_deployment_doc_checks_exact_frontend_remote_digest():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    assert f"sha256:{FRONTEND_REMOTE_DIGEST}" in doc
+
+
+def test_deployment_doc_checks_postgres_ghcr_remote_digest():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    assert f"sha256:{POSTGRES_REMOTE_DIGEST}" in doc
+
+
+def test_postgres_source_digest_is_not_treated_as_the_ghcr_repo_digest():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    assert f"grep -F '@sha256:{POSTGRES_SOURCE_DIGEST}'" not in doc
+    assert f"expected_digest=sha256:{POSTGRES_SOURCE_DIGEST}" not in doc
+    assert "source manifest" in doc
+    assert "GHCR remote manifest" in doc
+
+
+def test_all_three_images_use_the_exact_repo_digest_comparison():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    assert "require_repo_digest()" in doc
+    assert "$2 == expected { found = 1 }" in doc
+    assert "END { exit(found ? 0 : 1) }" in doc
+    assert doc.count("require_repo_digest \\") == 3
+    assert 'test -n "$(docker image inspect' not in doc
+
+
+def test_deployment_directory_is_owned_by_the_current_docker_user():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    assert '-o "$(id -un)"' in doc
+    assert '-g "$(id -gn)"' in doc
+    assert "/opt/mowayspos" in doc
+    assert "0777" not in doc
+
+
+def test_deployment_doc_prepares_postgres_and_environment_directories():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    assert "/data/mowayspos/postgres" in doc
+    assert "/data/mowayspos/env" in doc
+    assert doc.index("/data/mowayspos/postgres") < doc.index("docker compose")
+
+
+def test_deployment_doc_initializes_llm_config_as_a_private_regular_file():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    assert "install -m 0600 /dev/null \\\n  /data/mowayspos/env/llm_configs.json" in doc
+    assert "printf '{}\\n' > \\\n  /data/mowayspos/env/llm_configs.json" in doc
+    assert "test -f /data/mowayspos/env/llm_configs.json" in doc
+    assert "test ! -d /data/mowayspos/env/llm_configs.json" in doc
+
+
+def test_deployment_doc_creates_production_env_with_private_permissions():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    assert "install -m 0600 /dev/null \\\n  /opt/mowayspos/production.env" in doc
+
+
+def test_production_env_template_does_not_duplicate_database_url():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    assert not re.search(r"^DATABASE_URL=", doc, flags=re.MULTILINE)
+    assert re.search(
+        r"Compose inserts DB_PASSWORD into the\s+backend DATABASE_URL",
+        doc,
+    )
 
 
 def test_deployment_doc_limits_runtime_to_loopback_and_health_checks():

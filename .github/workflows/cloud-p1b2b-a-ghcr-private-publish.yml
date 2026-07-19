@@ -625,6 +625,109 @@ jobs:
           echo "audit_only=ok"
           echo "publish_attempted=false"
 
+      - name: Prepare PostgreSQL manifest content verifier
+        if: ${{ inputs.operation == 'publish' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          POSTGRES_MANIFEST_VERIFIER="$RUNNER_TEMP/verify-postgres-manifest-content.sh"
+          cat > "$POSTGRES_MANIFEST_VERIFIER" <<'BASH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          source_ref="${1:?source ref is required}"
+          remote_ref="${2:?remote ref is required}"
+          source_digest="${3:?source digest is required}"
+          source_manifest="$RUNNER_TEMP/postgres-source-manifest.json"
+          remote_manifest="$RUNNER_TEMP/postgres-remote-manifest.json"
+          trap 'rm -f "$source_manifest" "$remote_manifest"' EXIT
+
+          remote_digest=$(docker buildx imagetools inspect "$remote_ref" \
+            --format '{{.Manifest.Digest}}')
+          if [[ ! "$remote_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "postgres_content_equivalence=invalid_manifest" >&2
+            exit 1
+          fi
+
+          docker buildx imagetools inspect --raw "$source_ref" > "$source_manifest"
+          docker buildx imagetools inspect --raw "$remote_ref" > "$remote_manifest"
+          python - "$source_manifest" "$remote_manifest" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          digest_pattern = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+          def fail(reason):
+              print(f"postgres_content_equivalence={reason}", file=sys.stderr)
+              raise SystemExit(1)
+
+
+          def load_manifest(path):
+              try:
+                  document = json.loads(Path(path).read_text(encoding="utf-8"))
+              except (OSError, UnicodeError, json.JSONDecodeError):
+                  fail("invalid_manifest")
+              if not isinstance(document, dict):
+                  fail("invalid_manifest")
+              if document.get("schemaVersion") != 2 or "manifests" in document:
+                  fail("invalid_manifest")
+              config = document.get("config")
+              layers = document.get("layers")
+              if not isinstance(config, dict):
+                  fail("invalid_manifest")
+              if not isinstance(layers, list) or not layers:
+                  fail("invalid_manifest")
+              config_digest = config.get("digest")
+              config_size = config.get("size")
+              if not isinstance(config_digest, str) or not digest_pattern.fullmatch(
+                  config_digest
+              ):
+                  fail("invalid_manifest")
+              if (
+                  not isinstance(config_size, int)
+                  or isinstance(config_size, bool)
+                  or config_size < 0
+              ):
+                  fail("invalid_manifest")
+              descriptors = []
+              for layer in layers:
+                  if not isinstance(layer, dict):
+                      fail("invalid_manifest")
+                  layer_digest = layer.get("digest")
+                  layer_size = layer.get("size")
+                  if not isinstance(layer_digest, str) or not digest_pattern.fullmatch(
+                      layer_digest
+                  ):
+                      fail("invalid_manifest")
+                  if (
+                      not isinstance(layer_size, int)
+                      or isinstance(layer_size, bool)
+                      or layer_size < 0
+                  ):
+                      fail("invalid_manifest")
+                  descriptors.append((layer_digest, layer_size))
+              return config_digest, config_size, descriptors
+
+
+          source = load_manifest(sys.argv[1])
+          remote = load_manifest(sys.argv[2])
+          if source[:2] != remote[:2]:
+              fail("config_mismatch")
+          if source[2] != remote[2]:
+              fail("layer_mismatch")
+          print(f"postgres_config_digest={source[0]}")
+          print(f"postgres_layer_count={len(source[2])}")
+          print("postgres_content_equivalence=verified")
+          PY
+          echo "postgres_source_manifest_digest=$source_digest"
+          echo "postgres_remote_manifest_digest=$remote_digest"
+          BASH
+          chmod 700 "$POSTGRES_MANIFEST_VERIFIER"
+          echo "POSTGRES_MANIFEST_VERIFIER=$POSTGRES_MANIFEST_VERIFIER" >> "$GITHUB_ENV"
+
       - name: Log in to GHCR after all gates pass
         if: ${{ inputs.operation == 'publish' }}
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772
@@ -660,14 +763,14 @@ jobs:
           require_absent "$BACKEND_TARGET"
           require_absent "$FRONTEND_TARGET"
 
-          if remote_digest=$(docker buildx imagetools inspect "$POSTGRES_TARGET" \
-            --format '{{.Manifest.Digest}}' 2>"$manifest_error"); then
-            if [[ "$remote_digest" != "$POSTGRES_AMD64_DIGEST" ]]; then
-              echo "Existing PostgreSQL immutable tag has a mismatched digest." >&2
-              exit 1
-            fi
+          if docker buildx imagetools inspect "$POSTGRES_TARGET" \
+            --format '{{.Manifest.Digest}}' >/dev/null 2>"$manifest_error"; then
+            "$POSTGRES_MANIFEST_VERIFIER" \
+              "$POSTGRES_UPSTREAM_REPOSITORY@$POSTGRES_AMD64_DIGEST" \
+              "$POSTGRES_TARGET" \
+              "$POSTGRES_AMD64_DIGEST"
             echo "POSTGRES_SHOULD_PUSH=false" >> "$GITHUB_ENV"
-            echo "postgres_remote_digest=$remote_digest"
+            echo "postgres_immutable_tag=existing_equivalent"
           elif grep -Eqi '(not found|manifest unknown|name unknown)' "$manifest_error"; then
             echo "POSTGRES_SHOULD_PUSH=true" >> "$GITHUB_ENV"
             echo "postgres_immutable_tag=absent"
@@ -723,13 +826,11 @@ jobs:
 
           verify_pushed_digest "$BACKEND_TARGET"
           verify_pushed_digest "$FRONTEND_TARGET"
-          postgres_remote=$(docker buildx imagetools inspect "$POSTGRES_TARGET" --format '{{.Manifest.Digest}}')
-          if [[ "$postgres_remote" != "$POSTGRES_AMD64_DIGEST" ]]; then
-            echo "Remote PostgreSQL digest verification failed." >&2
-            exit 1
-          fi
-          echo "postgres_remote_digest=$postgres_remote"
-          echo "verified_image=$POSTGRES_REPOSITORY digest=$postgres_remote"
+          "$POSTGRES_MANIFEST_VERIFIER" \
+            "$POSTGRES_UPSTREAM_REPOSITORY@$POSTGRES_AMD64_DIGEST" \
+            "$POSTGRES_TARGET" \
+            "$POSTGRES_AMD64_DIGEST"
+          echo "verified_image=$POSTGRES_REPOSITORY"
 
       - name: Verify GHCR packages are private
         if: ${{ inputs.operation == 'publish' }}
@@ -738,11 +839,43 @@ jobs:
           GH_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}
         run: |
           set -euo pipefail
-          owner=mikkon-ada
           for package in mowayspos-backend mowayspos-frontend mowayspos-postgres; do
-            visibility=$(gh api "/users/$owner/packages/container/$package" --jq '.visibility')
-            test "$visibility" = "private"
-            echo "package=$package visibility=private"
+            metadata="$RUNNER_TEMP/ghcr-package-$package.json"
+            tags="$RUNNER_TEMP/ghcr-package-$package-tags.txt"
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/user/packages/container/$package" > "$metadata"
+            if ! jq -e --arg expected "$package" '
+              .name == $expected
+              and .package_type == "container"
+              and (.owner.login | ascii_downcase) == "mikkon-ada"
+              and .visibility == "private"
+            ' "$metadata" >/dev/null; then
+              echo "Package metadata verification failed for $package." >&2
+              exit 1
+            fi
+
+            gh api --paginate \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/user/packages/container/$package/versions?per_page=100" \
+              --jq '.[].metadata.container.tags[]?' > "$tags"
+            if grep -Fxq -e latest -e main -e production "$tags"; then
+              echo "Forbidden mutable package tag found for $package." >&2
+              exit 1
+            fi
+            case "$package" in
+              mowayspos-backend|mowayspos-frontend) expected_tag="$GITHUB_SHA" ;;
+              mowayspos-postgres) expected_tag="$POSTGRES_TAG" ;;
+              *) echo "Unexpected package name." >&2; exit 1 ;;
+            esac
+            if ! grep -Fxq -- "$expected_tag" "$tags"; then
+              echo "Expected immutable package tag missing for $package." >&2
+              exit 1
+            fi
+            rm -f "$metadata" "$tags"
+            echo "package=$package visibility=private immutable_tag=verified"
           done
 
       - name: Cleanup publish credentials and temporary images
@@ -762,7 +895,14 @@ jobs:
             "$RUNNER_TEMP/postgres-gosu" \
             "$RUNNER_TEMP/postgres-gosu-govulncheck.json" \
             "$RUNNER_TEMP/postgres-gosu-govulncheck-error" \
-            "$RUNNER_TEMP/manifest-inspect-error"
+            "$RUNNER_TEMP/manifest-inspect-error" \
+            "$RUNNER_TEMP/postgres-source-manifest.json" \
+            "$RUNNER_TEMP/postgres-remote-manifest.json" \
+            "$RUNNER_TEMP"/ghcr-package-*.json \
+            "$RUNNER_TEMP"/ghcr-package-*-tags.txt
+          if [[ -n "${POSTGRES_MANIFEST_VERIFIER:-}" ]]; then
+            rm -f -- "$POSTGRES_MANIFEST_VERIFIER"
+          fi
           rm -rf -- "$RUNNER_TEMP/postgres-govulncheck-bin"
           refs=("$BACKEND_LOCAL" "$FRONTEND_LOCAL" "$POSTGRES_LOCAL")
           if [[ -n "${POSTGRES_AMD64_DIGEST:-}" ]]; then

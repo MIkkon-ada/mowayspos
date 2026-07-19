@@ -91,6 +91,74 @@ def _run_embedded_gosu_report_parser(
     return namespace, stderr.getvalue(), 0
 
 
+def _embedded_postgres_manifest_comparator() -> str:
+    verifier = _step_block(
+        _publish_workflow(),
+        "Prepare PostgreSQL manifest content verifier",
+    )
+    python_source = verifier.split(
+        'python - "$source_manifest" "$remote_manifest" <<\'PY\'\n', 1
+    )[1].split("\n          PY", 1)[0]
+    return textwrap.dedent(python_source)
+
+
+def _postgres_manifest(
+    *,
+    media_type: str = "application/vnd.docker.distribution.manifest.v2+json",
+) -> dict[str, object]:
+    return {
+        "schemaVersion": 2,
+        "mediaType": media_type,
+        "config": {
+            "mediaType": "application/vnd.oci.image.config.v1+json",
+            "digest": "sha256:" + "1" * 64,
+            "size": 1234,
+        },
+        "layers": [
+            {
+                "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "digest": "sha256:" + "2" * 64,
+                "size": 2345,
+            },
+            {
+                "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+                "digest": "sha256:" + "3" * 64,
+                "size": 3456,
+            },
+        ],
+    }
+
+
+def _run_embedded_postgres_manifest_comparator(
+    tmp_path: Path,
+    source: dict[str, object] | str,
+    remote: dict[str, object] | str,
+) -> subprocess.CompletedProcess[str]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    source_path = tmp_path / "source-manifest.json"
+    remote_path = tmp_path / "remote-manifest.json"
+    source_path.write_text(
+        source if isinstance(source, str) else json.dumps(source),
+        encoding="utf-8",
+    )
+    remote_path.write_text(
+        remote if isinstance(remote, str) else json.dumps(remote),
+        encoding="utf-8",
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _embedded_postgres_manifest_comparator(),
+            str(source_path),
+            str(remote_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def _embedded_scan_enforcement() -> str:
     enforcement = _step_block(
         _publish_workflow(),
@@ -459,16 +527,168 @@ def test_postgres_pull_uses_linux_amd64_and_the_immutable_platform_digest():
     assert 'docker pull "$POSTGRES_LOCAL"' not in workflow
 
 
-def test_postgres_overwrite_and_remote_checks_use_amd64_not_index_digest():
+def test_postgres_remote_checks_compare_content_not_registry_manifest_digest():
     workflow = _publish_workflow()
+    immutable_check = _step_block(workflow, "Check immutable tags before publishing")
+    remote_check = _step_block(workflow, "Verify remote image digests")
 
-    assert '"$remote_digest" != "$POSTGRES_AMD64_DIGEST"' in workflow
-    assert '"$postgres_remote" != "$POSTGRES_AMD64_DIGEST"' in workflow
-    assert '"$remote_digest" != "$POSTGRES_UPSTREAM_INDEX_DIGEST"' not in workflow
-    assert '"$postgres_remote" != "$POSTGRES_UPSTREAM_INDEX_DIGEST"' not in workflow
+    assert '"$remote_digest" != "$POSTGRES_AMD64_DIGEST"' not in immutable_check
+    assert '"$postgres_remote" != "$POSTGRES_AMD64_DIGEST"' not in remote_check
+    assert "POSTGRES_MANIFEST_VERIFIER" in immutable_check
+    assert "POSTGRES_MANIFEST_VERIFIER" in remote_check
     assert "postgres_upstream_index_digest=" in workflow
     assert "postgres_linux_amd64_digest=" in workflow
-    assert "postgres_remote_digest=" in workflow
+    assert "postgres_source_manifest_digest=" in workflow
+    assert "postgres_remote_manifest_digest=" in workflow
+
+
+def test_postgres_manifest_comparator_accepts_equal_content_with_different_media_type(
+    tmp_path: Path,
+):
+    source = _postgres_manifest()
+    remote = _postgres_manifest(
+        media_type="application/vnd.oci.image.manifest.v1+json"
+    )
+    remote["annotations"] = {"org.example.registry": "rewrapped"}
+
+    result = _run_embedded_postgres_manifest_comparator(tmp_path, source, remote)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert "postgres_config_digest=sha256:" + "1" * 64 in result.stdout
+    assert "postgres_layer_count=2" in result.stdout
+    assert "postgres_content_equivalence=verified" in result.stdout
+
+
+def test_postgres_manifest_comparator_rejects_config_digest_or_size_changes(
+    tmp_path: Path,
+):
+    for field, value in (("digest", "sha256:" + "9" * 64), ("size", 9999)):
+        source = _postgres_manifest()
+        remote = json.loads(json.dumps(source))
+        remote["config"][field] = value
+
+        result = _run_embedded_postgres_manifest_comparator(
+            tmp_path / field,
+            source,
+            remote,
+        )
+
+        assert result.returncode == 1, field
+        assert result.stdout == ""
+        assert result.stderr == "postgres_content_equivalence=config_mismatch\n"
+
+
+def test_postgres_manifest_comparator_rejects_every_layer_shape_change(
+    tmp_path: Path,
+):
+    source = _postgres_manifest()
+    cases: dict[str, dict[str, object]] = {}
+    for name in ("digest", "size"):
+        changed = json.loads(json.dumps(source))
+        changed["layers"][0][name] = (
+            "sha256:" + "8" * 64 if name == "digest" else 8888
+        )
+        cases[f"layer-{name}"] = changed
+    reordered = json.loads(json.dumps(source))
+    reordered["layers"].reverse()
+    cases["layer-order"] = reordered
+    missing = json.loads(json.dumps(source))
+    missing["layers"].pop()
+    cases["layer-missing"] = missing
+    added = json.loads(json.dumps(source))
+    added["layers"].append(
+        {"digest": "sha256:" + "4" * 64, "size": 4567}
+    )
+    cases["layer-added"] = added
+
+    for name, remote in cases.items():
+        result = _run_embedded_postgres_manifest_comparator(
+            tmp_path / name,
+            source,
+            remote,
+        )
+        assert result.returncode == 1, name
+        assert result.stdout == ""
+        assert result.stderr == "postgres_content_equivalence=layer_mismatch\n"
+
+
+def test_postgres_manifest_comparator_rejects_index_and_invalid_json(
+    tmp_path: Path,
+):
+    source = _postgres_manifest()
+    index = {
+        "schemaVersion": 2,
+        "manifests": [
+            {
+                "digest": "sha256:" + "5" * 64,
+                "size": 5678,
+                "platform": {"os": "linux", "architecture": "amd64"},
+            }
+        ],
+    }
+    for name, remote in (("index", index), ("invalid-json", "{not-json")):
+        result = _run_embedded_postgres_manifest_comparator(
+            tmp_path / name,
+            source,
+            remote,
+        )
+        assert result.returncode == 1, name
+        assert result.stdout == ""
+        assert result.stderr == "postgres_content_equivalence=invalid_manifest\n"
+
+
+def test_existing_postgres_tag_is_reused_only_after_content_equivalence():
+    workflow = _publish_workflow()
+    immutable_check = _step_block(workflow, "Check immutable tags before publishing")
+
+    assert 'echo "POSTGRES_SHOULD_PUSH=false"' in immutable_check
+    assert 'echo "postgres_immutable_tag=existing_equivalent"' in immutable_check
+    assert 'echo "POSTGRES_SHOULD_PUSH=true"' in immutable_check
+    assert "POSTGRES_MANIFEST_VERIFIER" in immutable_check
+    assert immutable_check.index("POSTGRES_MANIFEST_VERIFIER") < immutable_check.index(
+        'echo "POSTGRES_SHOULD_PUSH=false"'
+    )
+    assert "docker push" not in immutable_check
+
+
+def test_postgres_manifest_verifier_keeps_raw_manifests_out_of_logs():
+    workflow = _publish_workflow()
+    verifier = _step_block(
+        workflow,
+        "Prepare PostgreSQL manifest content verifier",
+    )
+
+    assert '--raw "$source_ref" > "$source_manifest"' in verifier
+    assert '--raw "$remote_ref" > "$remote_manifest"' in verifier
+    assert '^sha256:[0-9a-f]{64}$' in verifier
+    for forbidden in (
+        'cat "$source_manifest"',
+        'cat "$remote_manifest"',
+        "print(document)",
+        "print(source)",
+        "print(remote)",
+    ):
+        assert forbidden not in verifier
+
+
+def test_package_verification_uses_authenticated_user_metadata_and_versions():
+    workflow = _publish_workflow()
+    package_check = _step_block(workflow, "Verify GHCR packages are private")
+
+    assert 'GH_TOKEN: ${{ secrets.GHCR_PUBLISH_TOKEN }}' in package_check
+    assert '"/user/packages/container/$package"' in package_check
+    assert '"/user/packages/container/$package/versions?per_page=100"' in package_check
+    assert "application/vnd.github+json" in package_check
+    assert "X-GitHub-Api-Version: 2022-11-28" in package_check
+    for field in (".name", ".package_type", ".owner.login", ".visibility"):
+        assert field in package_check
+    for forbidden_tag in ("latest", "main", "production"):
+        assert forbidden_tag in package_check
+    assert "GITHUB_SHA" in package_check
+    assert "POSTGRES_TAG" in package_check
+    assert "/users/mikkon-ada/packages/container/" not in package_check
+    assert "DELETE" not in package_check
 
 
 def test_postgres_documentation_states_single_platform_scope():
@@ -554,8 +774,8 @@ def test_publish_verifies_remote_digests_and_private_visibility():
 
     assert "Verify remote image digests" in workflow
     assert "Verify GHCR packages are private" in workflow
-    assert 'test "$visibility" = "private"' in workflow
-    assert "packages/container" in workflow
+    assert '.visibility == "private"' in workflow
+    assert '"/user/packages/container/$package"' in workflow
 
 
 def test_publish_does_not_add_source_association_label():

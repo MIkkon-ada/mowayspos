@@ -46,8 +46,8 @@ services:
       ALLOW_FILE_SECRET_FALLBACK: "false"
       ALLOW_LEGACY_PASSWORD_LOGIN: "false"
       BOWEI_DEV_MODE: "false"
-      ALLOW_DEV_SCHEMA_CREATE_ALL: "false"
-      ALLOW_PROTECTED_DATABASE_MIGRATION: "false"
+      ALLOW_DEV_SCHEMA_CREATE_ALL: ""
+      ALLOW_PROTECTED_DATABASE_MIGRATION: ""
     expose:
       - "8008"
     volumes:

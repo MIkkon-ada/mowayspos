@@ -54,8 +54,8 @@ def test_compose_forces_production_security_values_after_env_file():
         "ALLOW_FILE_SECRET_FALLBACK: \"false\"",
         "ALLOW_LEGACY_PASSWORD_LOGIN: \"false\"",
         "BOWEI_DEV_MODE: \"false\"",
-        "ALLOW_DEV_SCHEMA_CREATE_ALL: \"false\"",
-        "ALLOW_PROTECTED_DATABASE_MIGRATION: \"false\"",
+        "ALLOW_DEV_SCHEMA_CREATE_ALL: \"\"",
+        "ALLOW_PROTECTED_DATABASE_MIGRATION: \"\"",
     ):
         assert expected in compose
 
@@ -77,8 +77,8 @@ def test_production_environment_example_is_secret_free_and_complete():
         assert expected in example
 
     assert "ALLOW_FILE_SECRET_FALLBACK=false" in example
-    assert "ALLOW_DEV_SCHEMA_CREATE_ALL=false" in example
-    assert "ALLOW_PROTECTED_DATABASE_MIGRATION=false" in example
+    assert "ALLOW_DEV_SCHEMA_CREATE_ALL=\n" in example
+    assert "ALLOW_PROTECTED_DATABASE_MIGRATION=\n" in example
 
 
 def test_inner_nginx_has_api_websocket_upload_and_forwarded_proto_contract():
@@ -123,6 +123,10 @@ def test_github_actions_gate_runs_the_complete_isolated_runtime_contract():
     assert '"${dc[@]}" up -d frontend\n' in workflow
     assert '"${dc[@]}" up -d backend frontend' not in workflow
     assert 'sudo rm -rf -- "$MOWAYS_DATA_ROOT"' in workflow
+    assert "ALLOW_DEV_SCHEMA_CREATE_ALL=false" not in workflow
+    assert "ALLOW_PROTECTED_DATABASE_MIGRATION=false" not in workflow
+    assert "ALLOW_DEV_SCHEMA_CREATE_ALL=\n" in workflow
+    assert "ALLOW_PROTECTED_DATABASE_MIGRATION=\n" in workflow
 
     for expected in (
         "workflow_dispatch:",

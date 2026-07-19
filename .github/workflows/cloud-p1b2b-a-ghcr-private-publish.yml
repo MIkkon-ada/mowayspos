@@ -6,6 +6,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: cloud-p1b2b-a-ghcr-private-image-publish
+  cancel-in-progress: false
+
 jobs:
   private-image-publish:
     runs-on: ubuntu-latest

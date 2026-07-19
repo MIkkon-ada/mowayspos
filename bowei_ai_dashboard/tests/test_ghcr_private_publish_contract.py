@@ -38,6 +38,41 @@ def test_publish_workflow_is_manual_only():
         assert forbidden not in triggers
 
 
+def test_publish_workflow_has_top_level_serial_concurrency_lock():
+    workflow = _publish_workflow()
+
+    concurrency_index = workflow.index("\nconcurrency:\n")
+    jobs_index = workflow.index("\njobs:\n")
+    assert concurrency_index < jobs_index
+    concurrency = workflow[concurrency_index:jobs_index]
+    assert "group: cloud-p1b2b-a-ghcr-private-image-publish" in concurrency
+    assert "cancel-in-progress: false" in concurrency
+
+
+def test_publish_concurrency_group_is_fixed_across_commits_and_runs():
+    workflow = _publish_workflow()
+    concurrency = workflow.split("concurrency:\n", 1)[1].split("\njobs:\n", 1)[0]
+
+    assert concurrency.count("group:") == 1
+    for forbidden in (
+        "github.sha",
+        "github.ref",
+        "github.run_id",
+        "branch",
+        "tag",
+        "${{",
+    ):
+        assert forbidden not in concurrency
+
+
+def test_publish_concurrency_does_not_cancel_the_active_publish():
+    workflow = _publish_workflow()
+    concurrency = workflow.split("concurrency:\n", 1)[1].split("\njobs:\n", 1)[0]
+
+    assert re.search(r"^\s+cancel-in-progress:\s+false\s*$", concurrency, re.MULTILINE)
+    assert "cancel-in-progress: true" not in concurrency
+
+
 def test_publish_workflow_fails_closed_to_main_and_full_sha():
     workflow = _publish_workflow()
 
@@ -49,7 +84,7 @@ def test_publish_workflow_fails_closed_to_main_and_full_sha():
 def test_publish_workflow_has_read_only_repository_permissions():
     workflow = _publish_workflow()
 
-    permissions = workflow.split("permissions:\n", 1)[1].split("\njobs:", 1)[0]
+    permissions = workflow.split("permissions:\n", 1)[1].split("\nconcurrency:", 1)[0]
     assert permissions.strip() == "contents: read"
     for forbidden in (
         "packages: write",

@@ -37,6 +37,14 @@ def _service_block(compose: str, service: str, next_service: str | None) -> str:
     return match.group("body")
 
 
+def _bash_blocks(markdown: str) -> str:
+    return "\n".join(re.findall(r"```bash\n(.*?)```", markdown, flags=re.DOTALL))
+
+
+def _squash_whitespace(value: str) -> str:
+    return re.sub(r"\s+", " ", value.replace("\\", " ")).strip()
+
+
 def test_compose_parameterizes_backend_repository_and_requires_tag():
     compose = _read(COMPOSE_PATH)
     assert (
@@ -144,16 +152,19 @@ def test_deployment_doc_uses_explicit_env_file_for_every_compose_command():
     doc = _read(DEPLOYMENT_DOC_PATH)
     commands = [line.strip() for line in doc.splitlines() if line.strip().startswith("docker compose")]
     assert commands
+    direct_commands = [command for command in commands if command != "docker compose"]
     assert all(
         "--env-file /opt/mowayspos/production.env -f docker-compose.prod.yml" in command
-        for command in commands
+        for command in direct_commands
     )
+    assert "dc=(" in doc
+    assert "docker compose\n  --env-file /opt/mowayspos/production.env\n  -f docker-compose.prod.yml" in doc
 
 
 def test_deployment_doc_pulls_before_starting_without_building():
     doc = _read(DEPLOYMENT_DOC_PATH)
     pull = "docker compose --env-file /opt/mowayspos/production.env -f docker-compose.prod.yml pull"
-    up = "docker compose --env-file /opt/mowayspos/production.env -f docker-compose.prod.yml up -d --no-build"
+    up = '"${dc[@]}" up -d --no-build backend frontend'
     assert pull in doc and up in doc
     assert doc.index(pull) < doc.index(up)
     assert "up -d --build" not in doc
@@ -296,3 +307,114 @@ def test_p1b2a_workflow_keeps_local_build_and_runtime_gate_behavior():
         "docker login ghcr.io",
     ):
         assert unexpected not in workflow
+
+
+def test_migration_gate_starts_only_postgres_before_application_services():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    postgres_up = '"${dc[@]}" up -d --no-build postgres'
+    migration = "alembic upgrade head"
+    app_up = '"${dc[@]}" up -d --no-build backend frontend'
+    assert postgres_up in doc
+    assert app_up in doc
+    assert doc.index(postgres_up) < doc.index(migration) < doc.index(app_up)
+
+
+def test_migration_gate_waits_for_postgres_health_and_stops_on_failure():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    for expected in (
+        "for attempt in $(seq 1 60)",
+        "mowayspos-postgres",
+        '[[ "$status" == "healthy" ]]',
+        '[[ "$status" == "exited" || "$status" == "dead" ]]',
+        "docker logs --tail 100 mowayspos-postgres",
+        '[[ "$attempt" == "60" ]]',
+        "sleep 2",
+    ):
+        assert expected in doc
+
+
+def test_migration_gate_reads_and_validates_one_alembic_head():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    assert "alembic heads" in doc
+    assert "test -n \"$expected\"" in doc
+    assert "head_count" in doc
+    assert 'test "$head_count" = "1"' in doc
+    assert "^[A-Za-z0-9_]+$" in doc
+
+
+def test_migration_run_is_ephemeral_offline_and_dependency_free():
+    commands = _squash_whitespace(_bash_blocks(_read(DEPLOYMENT_DOC_PATH)))
+    assert '"${dc[@]}" run --rm --no-deps --pull never backend alembic upgrade head' in commands
+
+
+def test_compose_run_does_not_invent_a_no_build_option():
+    bash = _bash_blocks(_read(DEPLOYMENT_DOC_PATH))
+    assert not re.search(r"\brun\s+(?:\\\s*)?--no-build\b", bash)
+
+
+def test_actual_revision_comes_from_postgres_container_environment():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    commands = _squash_whitespace(_bash_blocks(doc))
+    assert '"${dc[@]}" exec -T postgres sh -ec' in commands
+    assert '-U "$POSTGRES_USER"' in doc
+    assert '-d "$POSTGRES_DB"' in doc
+    assert "select version_num from alembic_version" in doc
+
+
+def test_expected_and_actual_alembic_revisions_must_match_exactly():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    assert 'test -n "$actual"' in doc
+    assert 'test "$actual" = "$expected"' in doc
+    assert 'echo "alembic_revision=$actual"' in doc
+
+
+def test_migration_gate_checks_every_required_core_table():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    for table in (
+        "accounts",
+        "auth_sessions",
+        "people",
+        "projects",
+        "project_close_requests",
+    ):
+        assert f"\\$\\${table}\\$\\$" in doc
+    assert "to_regclass(\\$\\$public.\\$\\$ || name) IS NULL" in doc
+    assert 'test "$missing" = "0"' in doc
+    assert 'echo "required_database_tables=verified"' in doc
+
+
+def test_migration_failure_is_fail_closed_before_application_start():
+    doc = _read(DEPLOYMENT_DOC_PATH)
+    gate = doc[doc.index("## 4. Initialize PostgreSQL schema") :]
+    assert "set -euo pipefail" in gate
+    assert "Do not start backend or frontend if any migration gate command fails." in gate
+    assert gate.index("alembic upgrade head") < gate.index(
+        '"${dc[@]}" up -d --no-build backend frontend'
+    )
+
+
+def test_migration_guidance_is_idempotent_and_preserves_data_on_failure():
+    doc = _squash_whitespace(_read(DEPLOYMENT_DOC_PATH))
+    for expected in (
+        "first deployment and later releases",
+        "already at head",
+        "preserve the PostgreSQL data and logs",
+        "Do not use `create_all`",
+        "Do not delete the database",
+        "Do not run `alembic downgrade`",
+        "Do not empty the PostgreSQL data directory",
+    ):
+        assert expected.casefold() in doc.casefold()
+
+
+def test_migration_bash_does_not_delete_or_downgrade_database_state():
+    bash = _bash_blocks(_read(DEPLOYMENT_DOC_PATH))
+    for forbidden in (
+        "create_all",
+        "alembic downgrade",
+        "rm -rf",
+        "docker volume rm",
+        "DROP DATABASE",
+        "drop database",
+    ):
+        assert forbidden not in bash

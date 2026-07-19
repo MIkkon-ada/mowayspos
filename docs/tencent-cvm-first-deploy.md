@@ -135,14 +135,128 @@ require_repo_digest \
 
 Do not continue if any check fails.
 
-## 4. Start without building
+## 4. Initialize PostgreSQL schema
 
-Start the pinned images exactly once, with Compose builds disabled:
+Use the already-pulled images to initialize or advance the PostgreSQL schema
+before starting either application service. Keep the following commands in the
+same shell. Strict shell mode makes any failed health, migration, revision, or
+table check stop before the final application start command:
 
 ```bash
-docker compose --env-file /opt/mowayspos/production.env -f docker-compose.prod.yml up -d --no-build
-docker compose --env-file /opt/mowayspos/production.env -f docker-compose.prod.yml ps
+set -euo pipefail
+
+dc=(
+  docker compose
+  --env-file /opt/mowayspos/production.env
+  -f docker-compose.prod.yml
+)
+
+"${dc[@]}" up -d --no-build postgres
+
+for attempt in $(seq 1 60); do
+  status=$(
+    docker inspect \
+      --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+      mowayspos-postgres
+  )
+
+  if [[ "$status" == "healthy" ]]; then
+    break
+  fi
+
+  if [[ "$status" == "exited" || "$status" == "dead" ]]; then
+    docker logs --tail 100 mowayspos-postgres
+    exit 1
+  fi
+
+  if [[ "$attempt" == "60" ]]; then
+    docker logs --tail 100 mowayspos-postgres
+    exit 1
+  fi
+
+  sleep 2
+done
+
+heads_output=$(
+  "${dc[@]}" run \
+    --rm \
+    --no-deps \
+    --pull never \
+    backend \
+    alembic heads
+)
+
+head_count=$(
+  printf '%s\n' "$heads_output" |
+    awk 'NF { count++ } END { print count + 0 }'
+)
+test "$head_count" = "1"
+
+expected=$(
+  printf '%s\n' "$heads_output" |
+    awk 'NF { print $1; exit }'
+)
+test -n "$expected"
+printf '%s\n' "$expected" | grep -Eq '^[A-Za-z0-9_]+$'
+
+"${dc[@]}" run \
+  --rm \
+  --no-deps \
+  --pull never \
+  backend \
+  alembic upgrade head
+
+actual=$(
+  "${dc[@]}" exec -T postgres \
+    sh -ec '
+      psql \
+        -U "$POSTGRES_USER" \
+        -d "$POSTGRES_DB" \
+        -Atc "select version_num from alembic_version"
+    '
+)
+
+test -n "$actual"
+test "$actual" = "$expected"
+echo "alembic_revision=$actual"
+
+missing=$(
+  "${dc[@]}" exec -T postgres \
+    sh -ec '
+      psql \
+        -U "$POSTGRES_USER" \
+        -d "$POSTGRES_DB" \
+        -Atc "
+          SELECT count(*)
+          FROM (
+            VALUES
+              (\$\$accounts\$\$),
+              (\$\$auth_sessions\$\$),
+              (\$\$people\$\$),
+              (\$\$projects\$\$),
+              (\$\$project_close_requests\$\$)
+          ) AS required(name)
+          WHERE to_regclass(\$\$public.\$\$ || name) IS NULL;
+        "
+    '
+)
+
+test "$missing" = "0"
+echo "required_database_tables=verified"
+
+"${dc[@]}" up -d --no-build backend frontend
+"${dc[@]}" ps
 ```
+
+Do not start backend or frontend if any migration gate command fails. Preserve
+the PostgreSQL data and logs, inspect the failure, and stop the deployment.
+
+`alembic upgrade head` is safe to run during the first deployment and later
+releases. A database already at head does not recreate its existing schema. Do
+not use `create_all`. Do not delete the database. Do not run
+`alembic downgrade`. Do not empty the PostgreSQL data directory.
+
+## 5. Verify running services
 
 Wait until `mowayspos-postgres`, `mowayspos-backend`, and
 `mowayspos-frontend` all report `healthy`. The backend and PostgreSQL services
@@ -153,7 +267,7 @@ limited to `127.0.0.1:18100`:
 docker inspect --format '{{.Name}} {{if .State.Health}}{{.State.Health.Status}}{{end}} {{json .HostConfig.PortBindings}}' mowayspos-postgres mowayspos-backend mowayspos-frontend
 ```
 
-## 5. Verify the loopback application
+## 6. Verify the loopback application
 
 Verify the login page, the proxied health API, and the unauthenticated auth API
 boundary from the host only:

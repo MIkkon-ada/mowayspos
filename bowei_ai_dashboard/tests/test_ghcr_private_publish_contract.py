@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import io
+import json
 import re
+import subprocess
+import sys
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
@@ -86,6 +89,74 @@ def _run_embedded_gosu_report_parser(
     except SystemExit as exc:
         return namespace, stderr.getvalue(), int(exc.code or 0)
     return namespace, stderr.getvalue(), 0
+
+
+def _embedded_scan_enforcement() -> str:
+    enforcement = _step_block(
+        _publish_workflow(),
+        "Enforce sanitized scan results",
+    )
+    python_source = enforcement.split(
+        'python - "$RUNNER_TEMP" <<\'PY\'\n', 1
+    )[1].split("\n          PY", 1)[0]
+    return textwrap.dedent(python_source)
+
+
+def _postgres_reviewed_findings() -> list[dict[str, str]]:
+    return [
+        {
+            "Severity": "CRITICAL" if cve == "CVE-2025-68121" else "HIGH",
+            "VulnerabilityID": cve,
+            "PkgName": "stdlib",
+            "InstalledVersion": "v1.24.6",
+            "FixedVersion": "reviewed-fixed-version",
+        }
+        for cve in POSTGRES_GO_CVES
+    ]
+
+
+def _run_embedded_scan_enforcement(
+    root: Path,
+    *,
+    vulnerabilities: dict[str, list[dict[str, str]]] | None = None,
+    secret_counts: dict[str, int] | None = None,
+    missing_files: set[str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    vulnerabilities = vulnerabilities or {}
+    secret_counts = secret_counts or {}
+    missing_files = missing_files or set()
+    root.mkdir(parents=True, exist_ok=True)
+
+    for image in ("backend", "frontend", "postgres"):
+        secret_name = f"{image}-secret.json"
+        vulnerability_name = f"{image}-vulnerability.json"
+        if secret_name not in missing_files:
+            secrets = [
+                {"RuleID": f"test-secret-{index}"}
+                for index in range(secret_counts.get(image, 0))
+            ]
+            (root / secret_name).write_text(
+                json.dumps({"Results": [{"Secrets": secrets}]}),
+                encoding="utf-8",
+            )
+        if vulnerability_name not in missing_files:
+            (root / vulnerability_name).write_text(
+                json.dumps(
+                    {
+                        "Results": [
+                            {"Vulnerabilities": vulnerabilities.get(image, [])}
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+    return subprocess.run(
+        [sys.executable, "-c", _embedded_scan_enforcement(), str(root)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_publish_workflow_is_manual_only():
@@ -821,3 +892,172 @@ def test_govulncheck_stream_parser_rejects_empty_non_object_and_trailing_garbage
         )
         assert exit_code == 1
         assert stderr == "gosu_govulncheck_report=invalid\n"
+
+
+def test_gosu_security_evidence_is_a_strict_prerequisite_for_enforcement():
+    workflow = _publish_workflow()
+    identity_name = "Verify PostgreSQL gosu binary identity"
+    reachability_name = "Verify PostgreSQL gosu binary vulnerability reachability"
+    content_name = "Inspect image contents and Docker history"
+    enforcement_name = "Enforce sanitized scan results"
+
+    assert _step_index(workflow, identity_name) < _step_index(
+        workflow, reachability_name
+    ) < _step_index(workflow, content_name) < _step_index(workflow, enforcement_name)
+    for step_name in (identity_name, reachability_name, content_name):
+        step = _step_block(workflow, step_name)
+        assert "continue-on-error" not in step
+        assert "\n        if:" not in step
+    enforcement = _step_block(workflow, enforcement_name)
+    assert "continue-on-error" not in enforcement
+    assert "\n        if:" not in enforcement
+
+
+def test_reviewed_gosu_exception_executes_only_for_exact_15_findings(
+    tmp_path: Path,
+):
+    result = _run_embedded_scan_enforcement(
+        tmp_path / "exact",
+        vulnerabilities={"postgres": _postgres_reviewed_findings()},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert result.stdout.count("vulnerability image=postgres ") == 15
+    assert "postgres_secret_findings=0" in result.stdout
+    assert "postgres_fixable_high_critical=15" in result.stdout
+    assert "postgres_reviewed_gosu_findings=15" in result.stdout
+    assert "postgres_unreviewed_fixable_high_critical=0" in result.stdout
+    assert "postgres_gosu_reviewed_exception=true" in result.stdout
+    for cve in POSTGRES_GO_CVES:
+        assert f"id={cve} " in result.stdout
+
+
+def test_reviewed_gosu_exception_fails_for_missing_extra_or_changed_findings(
+    tmp_path: Path,
+):
+    exact = _postgres_reviewed_findings()
+    cases = {
+        "missing": exact[:-1],
+        "extra": exact
+        + [
+            {
+                "Severity": "HIGH",
+                "VulnerabilityID": "CVE-2099-00001",
+                "PkgName": "stdlib",
+                "InstalledVersion": "v1.24.6",
+                "FixedVersion": "future-fix",
+            }
+        ],
+        "package-changed": [
+            {**exact[0], "PkgName": "not-stdlib"},
+            *exact[1:],
+        ],
+        "version-changed": [
+            {**exact[0], "InstalledVersion": "v1.24.7"},
+            *exact[1:],
+        ],
+    }
+
+    for name, findings in cases.items():
+        result = _run_embedded_scan_enforcement(
+            tmp_path / name,
+            vulnerabilities={"postgres": findings},
+        )
+        assert result.returncode == 1, name
+        assert "postgres_gosu_reviewed_exception=false" in result.stdout
+
+
+def test_backend_frontend_and_secret_findings_keep_zero_tolerance(tmp_path: Path):
+    high = {
+        "Severity": "HIGH",
+        "VulnerabilityID": "CVE-2099-10001",
+        "PkgName": "test-package",
+        "InstalledVersion": "1.0",
+        "FixedVersion": "1.1",
+    }
+    critical = {**high, "Severity": "CRITICAL", "VulnerabilityID": "CVE-2099-10002"}
+    cases = {
+        "backend-high": {
+            "vulnerabilities": {
+                "backend": [high],
+                "postgres": _postgres_reviewed_findings(),
+            },
+            "secret_counts": {},
+        },
+        "frontend-critical": {
+            "vulnerabilities": {
+                "frontend": [critical],
+                "postgres": _postgres_reviewed_findings(),
+            },
+            "secret_counts": {},
+        },
+        "postgres-secret": {
+            "vulnerabilities": {"postgres": _postgres_reviewed_findings()},
+            "secret_counts": {"postgres": 1},
+        },
+    }
+
+    for name, inputs in cases.items():
+        result = _run_embedded_scan_enforcement(
+            tmp_path / name,
+            vulnerabilities=inputs["vulnerabilities"],
+            secret_counts=inputs["secret_counts"],
+        )
+        assert result.returncode == 1, name
+
+
+def test_scan_enforcement_fails_closed_when_any_json_file_is_missing(
+    tmp_path: Path,
+):
+    for image in ("backend", "frontend", "postgres"):
+        for scan_type in ("secret", "vulnerability"):
+            missing = f"{image}-{scan_type}.json"
+            result = _run_embedded_scan_enforcement(
+                tmp_path / missing,
+                vulnerabilities={"postgres": _postgres_reviewed_findings()},
+                missing_files={missing},
+            )
+            assert result.returncode == 1, missing
+            assert f"{image}_scan_result=missing" in result.stderr
+            if image == "postgres":
+                assert "postgres_gosu_reviewed_exception=false" in result.stdout
+
+
+def test_reviewed_gosu_exception_is_exact_and_not_a_generic_bypass():
+    workflow = _publish_workflow()
+    enforcement = _step_block(workflow, "Enforce sanitized scan results")
+
+    for cve in POSTGRES_GO_CVES:
+        assert cve in enforcement
+    for required in (
+        'package_name == "stdlib"',
+        'installed_version == "v1.24.6"',
+        "postgres_reviewed_gosu_findings=",
+        "postgres_unreviewed_fixable_high_critical=",
+        "postgres_gosu_reviewed_exception=true",
+        "postgres_gosu_reviewed_exception=false",
+    ):
+        assert required in enforcement
+    for forbidden in ("ignorefile", "ignore-file", "vex", "continue-on-error"):
+        assert forbidden.lower() not in workflow.lower()
+    for forbidden in ('startswith("CVE-")', "fnmatch"):
+        assert forbidden.lower() not in enforcement.lower()
+
+
+def test_documentation_records_the_exact_reviewed_gosu_exception_boundary():
+    documentation = PUBLISH_DOCUMENTATION.read_text(encoding="utf-8")
+
+    for required in (
+        "29683559066",
+        "gosu 1.19",
+        "go1.24.6",
+        "linux/amd64",
+        "52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0",
+        "15/15",
+        "exactly the 15 reviewed CVE records",
+        "package `stdlib`",
+        "installed version is exactly `v1.24.6`",
+        "requires a new human security review",
+    ):
+        assert required in documentation

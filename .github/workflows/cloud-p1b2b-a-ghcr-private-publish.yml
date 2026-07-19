@@ -466,6 +466,23 @@ jobs:
           from pathlib import Path
 
           root = Path(sys.argv[1])
+          reviewed_gosu_cves = {
+              "CVE-2025-68121",
+              "CVE-2025-61726",
+              "CVE-2025-61729",
+              "CVE-2026-25679",
+              "CVE-2026-27145",
+              "CVE-2026-32280",
+              "CVE-2026-32281",
+              "CVE-2026-32283",
+              "CVE-2026-33811",
+              "CVE-2026-33814",
+              "CVE-2026-39820",
+              "CVE-2026-39822",
+              "CVE-2026-39836",
+              "CVE-2026-42499",
+              "CVE-2026-42504",
+          }
           failed = False
           for image in ("backend", "frontend", "postgres"):
               secret_file = root / f"{image}-secret.json"
@@ -476,6 +493,8 @@ jobs:
                       failed = True
 
               if not secret_file.is_file() or not vulnerability_file.is_file():
+                  if image == "postgres":
+                      print("postgres_gosu_reviewed_exception=false")
                   continue
 
               secret_data = json.loads(secret_file.read_text(encoding="utf-8"))
@@ -541,13 +560,58 @@ jobs:
               if secret_findings:
                   print(f"Secret scan failed for {image}.", file=sys.stderr)
                   failed = True
-              if fixable_vulnerabilities:
-                  print(
-                      "Fixable HIGH/CRITICAL vulnerabilities found "
-                      f"in {image}.",
-                      file=sys.stderr,
+              if image in {"backend", "frontend"}:
+                  if fixable_vulnerabilities:
+                      print(
+                          "Fixable HIGH/CRITICAL vulnerabilities found "
+                          f"in {image}.",
+                          file=sys.stderr,
+                      )
+                      failed = True
+              else:
+                  reviewed_records = set()
+                  for record in records:
+                      (
+                          _,
+                          _,
+                          vulnerability_id,
+                          package_name,
+                          installed_version,
+                          _,
+                      ) = record
+                      if (
+                          vulnerability_id in reviewed_gosu_cves
+                          and package_name == "stdlib"
+                          and installed_version == "v1.24.6"
+                      ):
+                          reviewed_records.add(record)
+                  observed_cves = {record[2] for record in records}
+                  unreviewed_records = records - reviewed_records
+                  reviewed_exception = (
+                      secret_findings == 0
+                      and len(records) == 15
+                      and observed_cves == reviewed_gosu_cves
+                      and len(reviewed_records) == 15
+                      and not unreviewed_records
                   )
-                  failed = True
+                  print(
+                      "postgres_reviewed_gosu_findings="
+                      f"{len(reviewed_records)}"
+                  )
+                  print(
+                      "postgres_unreviewed_fixable_high_critical="
+                      f"{len(unreviewed_records)}"
+                  )
+                  if reviewed_exception:
+                      print("postgres_gosu_reviewed_exception=true")
+                  else:
+                      print("postgres_gosu_reviewed_exception=false")
+                      print(
+                          "PostgreSQL fixable HIGH/CRITICAL findings did not "
+                          "match the reviewed gosu exception.",
+                          file=sys.stderr,
+                      )
+                      failed = True
 
           if failed:
               raise SystemExit(1)

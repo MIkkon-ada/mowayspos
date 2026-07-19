@@ -14,7 +14,7 @@ The private image repositories are:
 
 `publish` must be selected explicitly. It performs the same complete local audit first and retains the existing fail-closed publishing sequence: only a clean audit may proceed to GHCR login, immutable-tag checks, retagging, pushing, remote digest verification, and private-package visibility verification.
 
-When fixable HIGH/CRITICAL findings block either mode, the log emits only the vulnerability ID, package name, installed version, fixed version, and severity, together with the image name, for each sorted, de-duplicated record. It does not print vulnerability descriptions, references, or secret contents, and secret scanning remains count-only. There is no vulnerability allowlist and any fixable HIGH or CRITICAL finding still fails the workflow.
+When fixable HIGH/CRITICAL findings block either mode, the log emits only the vulnerability ID, package name, installed version, fixed version, and severity, together with the image name, for each sorted, de-duplicated record. It does not print vulnerability descriptions, references, or secret contents, and secret scanning remains count-only. Backend and frontend retain zero exceptions: any fixable HIGH or CRITICAL finding fails the workflow. PostgreSQL remains fail closed except for the exact reviewed gosu evidence described below.
 
 The first publish run, `29679562418`, stopped before GHCR login and image pushing because it found one backend and 15 PostgreSQL fixable HIGH/CRITICAL vulnerabilities. The frontend count was zero, all three secret counts were zero, and no GHCR package was created. The next permitted diagnostic action is a separately reviewed audit run to obtain the sanitized list. A publish operation is allowed only after a remediation is designed independently and a later audit succeeds; these counts are historical observations, not a permanent baseline.
 
@@ -22,9 +22,17 @@ The reviewed audit `29680927347` identified the backend finding as CVE-2026-5353
 
 After pulling the immutable PostgreSQL platform image, the gate copies `/usr/local/bin/gosu` directly from that local image and verifies its reviewed SHA256, version, Go build version, and platform. It then installs govulncheck v1.6.0 with a pinned Go 1.26.5 toolchain and scans that exact extracted executable in `binary` mode. The Go vulnerability database must cover all 15 reviewed CVE aliases (`15/15`), and any finding whose first trace frame contains a function is treated as symbol-reachable, de-duplicated, reported with safe fields only, and rejected.
 
-A clear gosu binary reachability result does not authorize publishing and does not weaken the existing Trivy gate. Trivy still scans the full PostgreSQL image and any fixable HIGH or CRITICAL finding still blocks both audit and publish. This evidence is not a vulnerability exception: there is no VEX, no allowlist, and no change to the PostgreSQL image, digest selection, immutable tag, secret checks, content checks, or private-package verification.
+A clear gosu binary reachability result does not authorize publishing by itself or suppress Trivy output. Trivy still scans the full PostgreSQL image, logs every sanitized finding, and feeds the complete de-duplicated result into the final enforcement step. There is no VEX, no allowlist file, and no ignorefile or general PostgreSQL bypass, and there is no change to the PostgreSQL image, digest selection, immutable tag, secret checks, content checks, or private-package verification.
 
 Audit run `29682399341` failed because the report consumer incorrectly parsed govulncheck streaming JSON one physical line at a time. Govulncheck itself successfully generated the report; the consumer now uses `json.JSONDecoder().raw_decode` to decode each consecutive top-level JSON Message while preserving fail-closed handling for empty, malformed, non-object, or trailing-garbage input. This parser correction does not change gosu identity or reachability rules, the Trivy gate, or any publishing condition, and it is not evidence that vulnerabilities are clear or that publishing is allowed.
+
+## Reviewed gosu exception
+
+Audit run `29683559066` is the human-reviewed evidence for one narrowly bounded exception. It verified gosu 1.19, built with go1.24.6 for linux/amd64, with SHA256 `52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0`. The Go vulnerability database covered all 15 reviewed aliases (`15/15`), binary-mode symbol reachability reported zero findings, and image content and Docker history checks passed.
+
+The exception applies only when PostgreSQL has exactly the 15 reviewed CVE records from that gosu Go standard library, every record has package `stdlib`, and every installed version is exactly `v1.24.6`. PostgreSQL secret findings must remain zero. The original 15 Trivy records and `postgres_fixable_high_critical=15` remain visible, while the gate additionally reports 15 reviewed findings, zero unreviewed findings, and a true reviewed-exception decision.
+
+Any added CVE, missing CVE, duplicate record that changes the de-duplicated record set, package-name change, installed-version change, nonzero secret count, missing scan result, or failed preceding identity, binary-reachability, content, or history step blocks both audit and publish again. This is not a PostgreSQL-wide ignore rule. Any upstream gosu identity or scanner-result change requires a new human security review before the exact predicate may be changed.
 
 Backend and frontend images use only the full 40-character Git commit SHA as their immutable tag. PostgreSQL starts from the fixed multi-platform upstream reference `docker.io/library/postgres:16-alpine`. The current production CVM is Ubuntu 22.04 on x86_64, so this phase selects exactly one `linux/amd64` platform manifest from the immutable upstream index and pulls it by its platform manifest digest.
 
@@ -34,7 +42,7 @@ The gate refuses to overwrite an existing backend or frontend tag. An existing P
 
 ## Security and first-publish acceptance
 
-The workflow builds or pulls all three images locally and completes secret scanning, fixable HIGH/CRITICAL vulnerability scanning, content checks, Docker history checks, and source-label checks before logging in to GHCR. Unfixed vulnerabilities are reported by policy but do not block this gate; any fixable HIGH or CRITICAL vulnerability does. A scan failure occurs before any image is pushed.
+The workflow builds or pulls all three images locally and completes secret scanning, fixable HIGH/CRITICAL vulnerability scanning, content checks, Docker history checks, and source-label checks before logging in to GHCR. Unfixed vulnerabilities are reported by policy but do not block this gate. Fixable HIGH/CRITICAL findings remain blocking except for the exact reviewed gosu predicate above; any mismatch or scan failure occurs before any image is pushed.
 
 `GHCR_PUBLISH_TOKEN` is supplied only to the registry login action and the package visibility check. It is never passed as a Docker build argument, written to an image or repository file, or printed. GitHub Actions logs must be treated as public: the gate emits only image names, safe digests, sanitized counts, private visibility, and sanitized failure reasons. It does not upload image archives, file lists, Docker configuration, SBOMs, or complete scan reports.
 

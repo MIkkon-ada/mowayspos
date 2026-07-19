@@ -7,6 +7,7 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PUBLISH_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/cloud-p1b2b-a-ghcr-private-publish.yml"
 P1B2A_WORKFLOW = REPOSITORY_ROOT / ".github/workflows/cloud-p1b2a-gate.yml"
+PUBLISH_DOCUMENTATION = REPOSITORY_ROOT / "docs/ghcr-private-image-publish.md"
 
 
 def _publish_workflow() -> str:
@@ -92,17 +93,67 @@ def test_backend_and_frontend_tags_use_only_the_full_commit_sha():
         assert forbidden_tag not in workflow
 
 
-def test_postgres_uses_upstream_16_alpine_and_digest_derived_ghcr_tag():
+def test_postgres_uses_explicit_amd64_digest_and_architecture_tag():
     workflow = _publish_workflow()
 
-    assert "postgres:16-alpine" in workflow
-    assert 'POSTGRES_TAG="sha256-${POSTGRES_DIGEST#sha256:}"' in workflow
+    assert "docker.io/library/postgres:16-alpine" in workflow
+    assert "POSTGRES_UPSTREAM_INDEX_DIGEST" in workflow
+    assert "POSTGRES_AMD64_DIGEST" in workflow
+    assert 'POSTGRES_TAG="linux-amd64-sha256-${POSTGRES_AMD64_DIGEST#sha256:}"' in workflow
     for forbidden in (
         "mowayspos-postgres:16-alpine",
         "mowayspos-postgres:16",
         "mowayspos-postgres:latest",
     ):
         assert forbidden not in workflow
+
+
+def test_postgres_amd64_digest_is_selected_once_from_the_upstream_index():
+    workflow = _publish_workflow()
+
+    assert 'docker buildx imagetools inspect "$POSTGRES_UPSTREAM"' in workflow
+    assert '--raw "$POSTGRES_UPSTREAM_REPOSITORY@$POSTGRES_UPSTREAM_INDEX_DIGEST"' in workflow
+    assert '.platform.os == "linux"' in workflow
+    assert '.platform.architecture == "amd64"' in workflow
+    assert "amd64_match_count" in workflow
+    assert '[[ "$amd64_match_count" != "1" ]]' in workflow
+    assert "docker image inspect" not in workflow.split(
+        "- name: Resolve PostgreSQL upstream index and linux/amd64 manifest", 1
+    )[1].split("- name:", 1)[0]
+
+
+def test_postgres_pull_uses_linux_amd64_and_the_immutable_platform_digest():
+    workflow = _publish_workflow()
+
+    assert "docker pull --platform linux/amd64" in workflow
+    assert '"$POSTGRES_UPSTREAM_REPOSITORY@$POSTGRES_AMD64_DIGEST"' in workflow
+    assert 'docker pull "$POSTGRES_LOCAL"' not in workflow
+
+
+def test_postgres_overwrite_and_remote_checks_use_amd64_not_index_digest():
+    workflow = _publish_workflow()
+
+    assert '"$remote_digest" != "$POSTGRES_AMD64_DIGEST"' in workflow
+    assert '"$postgres_remote" != "$POSTGRES_AMD64_DIGEST"' in workflow
+    assert '"$remote_digest" != "$POSTGRES_UPSTREAM_INDEX_DIGEST"' not in workflow
+    assert '"$postgres_remote" != "$POSTGRES_UPSTREAM_INDEX_DIGEST"' not in workflow
+    assert "postgres_upstream_index_digest=" in workflow
+    assert "postgres_linux_amd64_digest=" in workflow
+    assert "postgres_remote_digest=" in workflow
+
+
+def test_postgres_documentation_states_single_platform_scope():
+    documentation = PUBLISH_DOCUMENTATION.read_text(encoding="utf-8")
+
+    for expected in (
+        "multi-platform",
+        "x86_64",
+        "linux/amd64",
+        "upstream index digest",
+        "platform manifest digest",
+        "not a complete multi-architecture mirror",
+    ):
+        assert expected in documentation
 
 
 def test_all_scans_and_content_checks_finish_before_registry_login():

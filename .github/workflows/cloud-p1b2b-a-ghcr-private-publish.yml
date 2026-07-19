@@ -14,9 +14,11 @@ jobs:
       BACKEND_REPOSITORY: ghcr.io/mikkon-ada/mowayspos-backend
       FRONTEND_REPOSITORY: ghcr.io/mikkon-ada/mowayspos-frontend
       POSTGRES_REPOSITORY: ghcr.io/mikkon-ada/mowayspos-postgres
+      POSTGRES_UPSTREAM_REPOSITORY: docker.io/library/postgres
+      POSTGRES_UPSTREAM: docker.io/library/postgres:16-alpine
       BACKEND_LOCAL: mowayspos-publish-backend:${{ github.sha }}
       FRONTEND_LOCAL: mowayspos-publish-frontend:${{ github.sha }}
-      POSTGRES_LOCAL: postgres:16-alpine
+      POSTGRES_LOCAL: mowayspos-publish-postgres-linux-amd64
 
     steps:
       - name: Checkout exact revision
@@ -50,26 +52,65 @@ jobs:
           docker build --pull --no-cache -f Dockerfile.frontend -t "$FRONTEND_LOCAL" .
           echo "local_builds=ok"
 
-      - name: Pull PostgreSQL and resolve immutable upstream digest
+      - name: Resolve PostgreSQL upstream index and linux/amd64 manifest
         shell: bash
         run: |
           set -euo pipefail
-          docker pull "$POSTGRES_LOCAL" >/dev/null
-          repo_digest=$(docker image inspect "$POSTGRES_LOCAL" \
-            --format '{{range .RepoDigests}}{{println .}}{{end}}' \
-            | awk '/^postgres@sha256:[0-9a-f]{64}$/ {print $1; exit}')
-          POSTGRES_DIGEST=${repo_digest#*@}
-          if [[ ! "$POSTGRES_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Unable to resolve the PostgreSQL upstream digest." >&2
+          index_manifest="$RUNNER_TEMP/postgres-upstream-index.json"
+          POSTGRES_UPSTREAM_INDEX_DIGEST=$(docker buildx imagetools inspect "$POSTGRES_UPSTREAM" \
+            --format '{{.Manifest.Digest}}')
+          if [[ ! "$POSTGRES_UPSTREAM_INDEX_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Unable to resolve a valid PostgreSQL upstream index digest." >&2
             exit 1
           fi
-          POSTGRES_TAG="sha256-${POSTGRES_DIGEST#sha256:}"
+
+          docker buildx imagetools inspect \
+            --raw "$POSTGRES_UPSTREAM_REPOSITORY@$POSTGRES_UPSTREAM_INDEX_DIGEST" \
+            > "$index_manifest"
+          amd64_match_count=$(jq '[
+            .manifests[]?
+            | select(
+                .platform.os == "linux"
+                and .platform.architecture == "amd64"
+              )
+          ] | length' "$index_manifest")
+          if [[ "$amd64_match_count" != "1" ]]; then
+            echo "PostgreSQL index must contain exactly one linux/amd64 manifest." >&2
+            exit 1
+          fi
+          POSTGRES_AMD64_DIGEST=$(jq -er '[
+            .manifests[]
+            | select(
+                .platform.os == "linux"
+                and .platform.architecture == "amd64"
+              )
+            | .digest
+          ][0]' "$index_manifest")
+          if [[ ! "$POSTGRES_AMD64_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "PostgreSQL linux/amd64 manifest has an invalid digest." >&2
+            exit 1
+          fi
+
+          POSTGRES_TAG="linux-amd64-sha256-${POSTGRES_AMD64_DIGEST#sha256:}"
           POSTGRES_TARGET="$POSTGRES_REPOSITORY:$POSTGRES_TAG"
-          echo "POSTGRES_DIGEST=$POSTGRES_DIGEST" >> "$GITHUB_ENV"
+          echo "POSTGRES_UPSTREAM_INDEX_DIGEST=$POSTGRES_UPSTREAM_INDEX_DIGEST" >> "$GITHUB_ENV"
+          echo "POSTGRES_AMD64_DIGEST=$POSTGRES_AMD64_DIGEST" >> "$GITHUB_ENV"
           echo "POSTGRES_TAG=$POSTGRES_TAG" >> "$GITHUB_ENV"
           echo "POSTGRES_TARGET=$POSTGRES_TARGET" >> "$GITHUB_ENV"
-          echo "postgres_upstream_digest=$POSTGRES_DIGEST"
+          echo "postgres_upstream_index_digest=$POSTGRES_UPSTREAM_INDEX_DIGEST"
+          echo "postgres_linux_amd64_digest=$POSTGRES_AMD64_DIGEST"
           echo "postgres_target=$POSTGRES_TARGET"
+
+      - name: Pull immutable PostgreSQL linux/amd64 image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull --platform linux/amd64 \
+            "$POSTGRES_UPSTREAM_REPOSITORY@$POSTGRES_AMD64_DIGEST" >/dev/null
+          docker tag \
+            "$POSTGRES_UPSTREAM_REPOSITORY@$POSTGRES_AMD64_DIGEST" \
+            "$POSTGRES_LOCAL"
+          echo "postgres_linux_amd64_pull=ok"
 
       - name: Scan backend image for secrets
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
@@ -291,12 +332,12 @@ jobs:
 
           if remote_digest=$(docker buildx imagetools inspect "$POSTGRES_TARGET" \
             --format '{{.Manifest.Digest}}' 2>"$manifest_error"); then
-            if [[ "$remote_digest" != "$POSTGRES_DIGEST" ]]; then
+            if [[ "$remote_digest" != "$POSTGRES_AMD64_DIGEST" ]]; then
               echo "Existing PostgreSQL immutable tag has a mismatched digest." >&2
               exit 1
             fi
             echo "POSTGRES_SHOULD_PUSH=false" >> "$GITHUB_ENV"
-            echo "postgres_existing_digest=$remote_digest"
+            echo "postgres_remote_digest=$remote_digest"
           elif grep -Eqi '(not found|manifest unknown|name unknown)' "$manifest_error"; then
             echo "POSTGRES_SHOULD_PUSH=true" >> "$GITHUB_ENV"
             echo "postgres_immutable_tag=absent"
@@ -350,10 +391,11 @@ jobs:
           verify_pushed_digest "$BACKEND_TARGET"
           verify_pushed_digest "$FRONTEND_TARGET"
           postgres_remote=$(docker buildx imagetools inspect "$POSTGRES_TARGET" --format '{{.Manifest.Digest}}')
-          if [[ "$postgres_remote" != "$POSTGRES_DIGEST" ]]; then
+          if [[ "$postgres_remote" != "$POSTGRES_AMD64_DIGEST" ]]; then
             echo "Remote PostgreSQL digest verification failed." >&2
             exit 1
           fi
+          echo "postgres_remote_digest=$postgres_remote"
           echo "verified_image=$POSTGRES_REPOSITORY digest=$postgres_remote"
 
       - name: Verify GHCR packages are private
@@ -382,8 +424,12 @@ jobs:
             "$RUNNER_TEMP/backend-vulnerability.json" \
             "$RUNNER_TEMP/frontend-vulnerability.json" \
             "$RUNNER_TEMP/postgres-vulnerability.json" \
+            "$RUNNER_TEMP/postgres-upstream-index.json" \
             "$RUNNER_TEMP/manifest-inspect-error"
           refs=("$BACKEND_LOCAL" "$FRONTEND_LOCAL" "$POSTGRES_LOCAL")
+          if [[ -n "${POSTGRES_AMD64_DIGEST:-}" ]]; then
+            refs+=("$POSTGRES_UPSTREAM_REPOSITORY@$POSTGRES_AMD64_DIGEST")
+          fi
           for candidate in \
             "${BACKEND_TARGET:-}" \
             "${FRONTEND_TARGET:-}" \

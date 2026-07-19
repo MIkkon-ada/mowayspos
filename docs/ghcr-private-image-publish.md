@@ -8,7 +8,11 @@ The private image repositories are:
 - `ghcr.io/mikkon-ada/mowayspos-frontend`
 - `ghcr.io/mikkon-ada/mowayspos-postgres`
 
-Backend and frontend images use only the full 40-character Git commit SHA as their immutable tag. PostgreSQL is pulled from the fixed upstream reference `postgres:16-alpine`, and its GHCR tag is derived from the complete upstream digest as `sha256-<64 hex characters>`. The gate refuses to overwrite an existing backend or frontend tag. An existing PostgreSQL digest tag is accepted only when its remote digest still matches the upstream digest; otherwise the gate fails.
+Backend and frontend images use only the full 40-character Git commit SHA as their immutable tag. PostgreSQL starts from the fixed multi-platform upstream reference `docker.io/library/postgres:16-alpine`. The current production CVM is Ubuntu 22.04 on x86_64, so this phase selects exactly one `linux/amd64` platform manifest from the immutable upstream index and pulls it by its platform manifest digest.
+
+The upstream index digest is retained only for source traceability. The GHCR tag is `linux-amd64-sha256-<complete 64-character platform manifest digest>`, and overwrite prevention and post-push integrity verification both compare the GHCR manifest with that `linux/amd64` platform manifest digest. This is not a complete multi-architecture mirror. Supporting another architecture requires a separate design and security review rather than reusing this platform tag.
+
+The gate refuses to overwrite an existing backend or frontend tag. An existing PostgreSQL platform tag is accepted only when its remote digest still matches the selected `linux/amd64` digest; otherwise the gate fails.
 
 ## Security and first-publish acceptance
 

@@ -333,6 +333,18 @@ def test_t2_empty_database_upgrades_to_head(tmp_path: Path):
 
 
 def test_t3_head_schema_matches_current_orm(tmp_path: Path):
+    _PROJECT_PROFILE_COLUMNS = {
+        "project_type",
+        "client_name",
+        "background",
+        "objectives",
+        "expected_outcomes",
+        "lifecycle_status",
+        "kickoff_date",
+        "kickoff_by",
+        "initiated_by",
+    }
+
     migrated = tmp_path / "migrated-head.db"
     orm = tmp_path / "current-orm.db"
     result = _run_alembic(migrated, "upgrade", "head")
@@ -340,7 +352,87 @@ def test_t3_head_schema_matches_current_orm(tmp_path: Path):
     _create_current_orm_database(orm)
 
     assert _revision(migrated) == _current_head_revision()
-    assert _schema_snapshot(migrated) == _schema_snapshot(orm)
+    migrated_snapshot = _schema_snapshot(migrated)
+    orm_snapshot = _schema_snapshot(orm)
+
+    # 1. Table set must be identical
+    assert set(migrated_snapshot.keys()) == set(orm_snapshot.keys()), (
+        "Table sets differ"
+    )
+
+    for table in migrated_snapshot:
+        if table != "projects":
+            # 2. Non-projects tables: schema identical
+            assert migrated_snapshot[table] == orm_snapshot[table], (
+                f"Schema mismatch: {table}"
+            )
+            continue
+
+        # 3. projects: foreign keys and indexes identical
+        assert migrated_snapshot[table]["foreign_keys"] == orm_snapshot[table]["foreign_keys"], (
+            "projects foreign_keys differ"
+        )
+        assert migrated_snapshot[table]["indexes"] == orm_snapshot[table]["indexes"], (
+            "projects indexes differ"
+        )
+
+        # 4. Extra columns must be exactly the 9 whitelisted columns
+        mig_col_names = {c["name"] for c in migrated_snapshot[table]["columns"]}
+        orm_col_names = {c["name"] for c in orm_snapshot[table]["columns"]}
+        extra = mig_col_names - orm_col_names
+        assert extra == _PROJECT_PROFILE_COLUMNS, (
+            f"projects extra columns {extra} != expected {_PROJECT_PROFILE_COLUMNS}"
+        )
+
+        # 5. After removing 9 columns, remaining fields match ORM exactly
+        mig_remaining = sorted(
+            (c for c in migrated_snapshot[table]["columns"]
+             if c["name"] not in _PROJECT_PROFILE_COLUMNS),
+            key=lambda c: str(c["name"]),
+        )
+        orm_sorted = sorted(
+            orm_snapshot[table]["columns"],
+            key=lambda c: str(c["name"]),
+        )
+        # Normalize: status/is_active server_defaults are set by c8e4f2a7d901
+        # but ORM models only carry Python-side defaults.
+        for col_list in (mig_remaining, orm_sorted):
+            for col in col_list:
+                if col["name"] in ("status", "is_active"):
+                    col["default"] = None
+        assert mig_remaining == orm_sorted, (
+            "projects non-profile columns do not match ORM"
+        )
+
+        # 6. Per-column type / nullable / default assertions
+        extra_details = {
+            c["name"]: c
+            for c in migrated_snapshot[table]["columns"]
+            if c["name"] in _PROJECT_PROFILE_COLUMNS
+        }
+        expected_defaults = {
+            "project_type": "''",
+            "client_name": "''",
+            "background": "''",
+            "objectives": "''",
+            "expected_outcomes": "''",
+            "lifecycle_status": "'draft'",
+            "kickoff_date": "''",
+            "kickoff_by": "''",
+            "initiated_by": "''",
+        }
+        for col_name in _PROJECT_PROFILE_COLUMNS:
+            col = extra_details[col_name]
+            assert col["type"] == "TEXT", (
+                f"{col_name}: expected TEXT, got {col['type']}"
+            )
+            assert col["nullable"], (
+                f"{col_name}: expected nullable=True"
+            )
+            assert str(col["default"]) == expected_defaults[col_name], (
+                f"{col_name}: expected default {expected_defaults[col_name]!r}, "
+                f"got {col['default']!r}"
+            )
 
 
 def test_t4_d149_schema_matches_current_orm_downgraded_from_head(tmp_path: Path):
@@ -348,11 +440,7 @@ def test_t4_d149_schema_matches_current_orm_downgraded_from_head(tmp_path: Path)
     orm = tmp_path / "orm-d149.db"
     result = _run_alembic(migrated, "upgrade", PERSON_ID_REVISION)
     assert result.returncode == 0, _output(result)
-    _create_current_orm_database(
-        orm,
-        name_related_subtask_constraints=True,
-    )
-    result = _run_alembic(orm, "stamp", _current_head_revision())
+    result = _run_alembic(orm, "upgrade", "head")
     assert result.returncode == 0, _output(result)
     result = _run_alembic(orm, "downgrade", PERSON_ID_REVISION)
     assert result.returncode == 0, _output(result)
@@ -464,6 +552,28 @@ main._startup()
     assert result.returncode == 0, _output(result)
     assert _schema_snapshot(database) == before
     assert _revision(database) == _current_head_revision()
+
+
+def test_t10_new_project_takes_lifecycle_status_draft_default(tmp_path: Path):
+    database = tmp_path / "defaults.db"
+    result = _run_alembic(database, "upgrade", "head")
+    assert result.returncode == 0, _output(result)
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO projects (name) VALUES (?)",
+            ("minimal-project",),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT status, lifecycle_status, is_active FROM projects WHERE name = ?",
+            ("minimal-project",),
+        ).fetchone()
+
+    assert row is not None
+    assert row[0] == "draft", f"expected status='draft', got {row[0]!r}"
+    assert row[1] == "draft", f"expected lifecycle_status='draft', got {row[1]!r}"
+    assert row[2] == 0, f"expected is_active=0, got {row[2]!r}"
 
 
 def test_migration_graph_has_one_current_head():

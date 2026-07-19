@@ -127,6 +127,7 @@ def test_github_actions_gate_runs_the_complete_isolated_runtime_contract():
         "runs-on: ubuntu-latest",
         "python-version: '3.12'",
         "node-version: '20'",
+        "python -m pip install pytest==9.0.3",
         "npm ci",
         "python -m compileall bowei_ai_dashboard/app",
         "docker compose",

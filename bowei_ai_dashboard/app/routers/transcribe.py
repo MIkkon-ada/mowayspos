@@ -12,6 +12,7 @@ from fastapi.websockets import WebSocketDisconnect
 from ..llm_config import get_provider_config
 from ..permissions import get_current_user_name
 from ..auth import get_session_user
+from ..settings import get_settings
 
 router = APIRouter(prefix="/api/transcribe", tags=["transcribe"])
 
@@ -106,7 +107,7 @@ async def transcribe_stream(websocket: WebSocket):
     - 客户端 → 服务端：binary（PCM 帧） 或 text "stop"（结束录音）
     - 服务端 → 客户端：JSON {"text": str, "final": bool} 或 {"error": str}
     """
-    session_id = websocket.cookies.get("bowei_session")
+    session_id = websocket.cookies.get(get_settings().session_cookie_name)
     username = get_session_user(session_id) if session_id else None
     if not username:
         await websocket.close(code=4001, reason="未登录")

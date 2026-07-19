@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..llm_config import PROVIDERS, get_provider_config, load_configs, save_configs
 from ..permissions import get_current_user_name, get_user_context_from_db
+from ..settings import get_settings
 
 router = APIRouter(prefix="/api/llm-config", tags=["llm-config"])
 
@@ -58,7 +59,7 @@ def list_configs(
             "display_name": meta["display"],
             "default_base_url": meta["default_base_url"],
             "default_model": meta["default_model"],
-            "api_key_set": bool(cfg.get("api_key")),
+            "api_key_set": bool(get_provider_config(provider).get("api_key")),
             "base_url": cfg.get("base_url") or meta["default_base_url"],
             "model": cfg.get("model") or meta["default_model"],
             "enabled": cfg.get("enabled", False),
@@ -76,16 +77,25 @@ def save_config(
     _require_admin(current_user, db)
     if provider not in PROVIDERS:
         raise HTTPException(400, f"不支持的提供商: {provider}")
+    production = get_settings().app_env == "production"
+    supplied_api_key = payload.api_key.strip()
+    if production and supplied_api_key and supplied_api_key != "***":
+        raise HTTPException(400, "生产环境 API Key 必须通过环境变量配置")
     configs = load_configs()
     existing = configs.get(provider, {})
-    # 若前端回传 "***"（掩码），保留原始 Key 不覆盖
-    api_key = payload.api_key if payload.api_key and payload.api_key != "***" else existing.get("api_key", "")
-    configs[provider] = {
-        "api_key": api_key,
+    provider_config = {
         "base_url": payload.base_url,
         "model": payload.model,
         "enabled": payload.enabled,
     }
+    if not production:
+        # 若前端回传 "***"（掩码），保留原始 Key 不覆盖。
+        provider_config["api_key"] = (
+            payload.api_key
+            if payload.api_key and payload.api_key != "***"
+            else existing.get("api_key", "")
+        )
+    configs[provider] = provider_config
     save_configs(configs)
     return {"ok": True}
 

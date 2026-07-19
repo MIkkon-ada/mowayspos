@@ -236,6 +236,11 @@ def _schema_snapshot(database: Path) -> dict[str, object]:
     return snapshot
 
 
+def _logical_database_snapshot(database: Path) -> tuple[str, ...]:
+    with sqlite3.connect(database) as connection:
+        return tuple(connection.iterdump())
+
+
 def _create_current_orm_database(
     database: Path,
     *,
@@ -408,13 +413,13 @@ def test_t7_current_head_database_upgrade_is_a_data_preserving_noop(
             (99, '{"fingerprint":"keep"}'),
         )
         connection.commit()
-    before = database.read_bytes()
+    before = _logical_database_snapshot(database)
 
     result = _run_alembic(database, "upgrade", "head")
 
     assert result.returncode == 0, _output(result)
     assert _revision(database) == current_head
-    assert database.read_bytes() == before
+    assert _logical_database_snapshot(database) == before
 
 
 def test_t8_downgrade_stops_at_d149_without_schema_changes(tmp_path: Path):

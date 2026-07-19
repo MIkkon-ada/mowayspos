@@ -1,52 +1,107 @@
-# ===== 生产环境 Docker Compose =====
-# 在云服务器上执行: docker compose -f docker-compose.prod.yml up -d
+name: mowayspos
 
 services:
-  # ========== PostgreSQL 数据库 ==========
   postgres:
     image: postgres:16-alpine
-    container_name: bowei-postgres
-    restart: always
+    container_name: mowayspos-postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: bowei_ai_dashboard
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}   # 生产环境请修改密码！
-    ports:
-      - "127.0.0.1:5432:5432"    # 仅本地访问，不暴露到公网
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    expose:
+      - "5432"
     volumes:
-      - bowei_postgres_data:/var/lib/postgresql/data
+      - "${MOWAYS_DATA_ROOT:-/data/mowayspos}/postgres:/var/lib/postgresql/data"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d bowei_ai_dashboard"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 10s
+    networks:
+      - mowayspos_app
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
-  # ========== 后端 FastAPI ==========
   backend:
+    image: mowayspos-backend:${MOWAYS_IMAGE_TAG:?MOWAYS_IMAGE_TAG is required}
     build:
       context: .
       dockerfile: Dockerfile.backend
-    container_name: bowei-backend
-    restart: always
+    container_name: mowayspos-backend
+    restart: unless-stopped
+    env_file:
+      - ${MOWAYS_ENV_FILE:?MOWAYS_ENV_FILE is required}
     environment:
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/bowei_ai_dashboard
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?POSTGRES_USER is required}:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      APP_ENV: production
+      FRONTEND_ORIGIN: https://pos.moways.com.cn
+      CORS_ALLOWED_ORIGINS: https://pos.moways.com.cn
+      SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-moways_session}
+      SESSION_COOKIE_SECURE: "true"
+      ALLOW_FILE_SECRET_FALLBACK: "false"
+      ALLOW_LEGACY_PASSWORD_LOGIN: "false"
+      BOWEI_DEV_MODE: "false"
+      ALLOW_DEV_SCHEMA_CREATE_ALL: ""
+      ALLOW_PROTECTED_DATABASE_MIGRATION: ""
+    expose:
+      - "8008"
+    volumes:
+      - "${MOWAYS_DATA_ROOT:-/data/mowayspos}/env/llm_configs.json:/app/llm_configs.json"
     depends_on:
       postgres:
         condition: service_healthy
-    ports:
-      - "127.0.0.1:8008:8008"    # 仅本地访问
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json, urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8008/api/health', timeout=5)); assert data.get('status') == 'ok'"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - mowayspos_app
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
-  # ========== 前端 Nginx ==========
   frontend:
+    image: mowayspos-frontend:${MOWAYS_IMAGE_TAG:?MOWAYS_IMAGE_TAG is required}
     build:
       context: .
       dockerfile: Dockerfile.frontend
-    container_name: bowei-frontend
-    restart: always
+    container_name: mowayspos-frontend
+    restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
-      - "80:80"                   # 对外暴露 80 端口
+      - "127.0.0.1:18100:80"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "wget -qO- http://127.0.0.1/ >/dev/null && wget -qO- http://127.0.0.1/api/health >/dev/null"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - mowayspos_app
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
-volumes:
-  bowei_postgres_data:
+networks:
+  mowayspos_app:
+    name: mowayspos_app
+    driver: bridge

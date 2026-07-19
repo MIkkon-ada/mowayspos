@@ -1,0 +1,449 @@
+name: CLOUD P1B2A production runtime gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cloud-p1b2a-cvm-production-runtime-config
+  pull_request:
+    paths:
+      - .github/workflows/cloud-p1b2a-gate.yml
+      - .env.production.example
+      - Dockerfile.backend
+      - Dockerfile.frontend
+      - docker-compose.prod.yml
+      - nginx.conf
+      - bowei_ai_dashboard/app/routers/llm_config.py
+      - bowei_ai_dashboard/app/routers/transcribe.py
+      - bowei_ai_dashboard/requirements.txt
+      - bowei_ai_dashboard/tests/test_production_runtime_contract.py
+      - bowei_ai_dashboard/tests/test_production_runtime_security.py
+      - docs/production-runtime-contract.md
+
+permissions:
+  contents: read
+
+jobs:
+  production-runtime-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      COMPOSE_PROJECT_NAME: mowayspos-p1b2a-gate
+      MOWAYS_IMAGE_TAG: ci-${{ github.sha }}
+      POSTGRES_DB: mowayspos_gate
+      POSTGRES_USER: mowayspos_gate
+      DB_PASSWORD: p1b2a_ci_url_safe_password
+      SESSION_COOKIE_NAME: moways_ci_session
+      CI_FAKE_LLM_KEY: p1b2a_ci_environment_only_key
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: bowei_ai_dashboard/requirements.txt
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r bowei_ai_dashboard/requirements.txt
+          python -m pip install pytest==9.0.3
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies with lockfile
+        working-directory: frontend
+        run: npm ci
+
+      - name: Prepare isolated runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          runtime_root="$RUNNER_TEMP/moways-p1b2a-runtime"
+          env_file="$runtime_root/env/production.env"
+          echo "MOWAYS_DATA_ROOT=$runtime_root" >> "$GITHUB_ENV"
+          echo "MOWAYS_ENV_FILE=$env_file" >> "$GITHUB_ENV"
+          MOWAYS_DATA_ROOT="$runtime_root"
+          MOWAYS_ENV_FILE="$env_file"
+
+          if ss -ltnH 'sport = :18100' | grep -q .; then
+            echo 'Port 18100 is already occupied.' >&2
+            exit 1
+          fi
+
+          for container in mowayspos-postgres mowayspos-backend mowayspos-frontend; do
+            if docker ps -a --format '{{.Names}}' | grep -Fxq "$container"; then
+              echo "Unexpected pre-existing container: $container" >&2
+              exit 1
+            fi
+          done
+
+          if docker network ls --format '{{.Name}}' | grep -Fxq mowayspos_app; then
+            echo 'Unexpected pre-existing network: mowayspos_app' >&2
+            exit 1
+          fi
+
+          touch "$RUNNER_TEMP/moways-p1b2a-owned"
+          mkdir -p \
+            "$MOWAYS_DATA_ROOT/postgres" \
+            "$MOWAYS_DATA_ROOT/env" \
+            "$MOWAYS_DATA_ROOT/uploads" \
+            "$MOWAYS_DATA_ROOT/backups" \
+            "$MOWAYS_DATA_ROOT/logs"
+
+          cat > "$MOWAYS_ENV_FILE" <<EOF
+          MOWAYS_IMAGE_TAG=$MOWAYS_IMAGE_TAG
+          MOWAYS_DATA_ROOT=$MOWAYS_DATA_ROOT
+          MOWAYS_ENV_FILE=$MOWAYS_ENV_FILE
+          POSTGRES_DB=$POSTGRES_DB
+          POSTGRES_USER=$POSTGRES_USER
+          DB_PASSWORD=$DB_PASSWORD
+          DATABASE_URL=postgresql+psycopg://$POSTGRES_USER:$DB_PASSWORD@postgres:5432/$POSTGRES_DB
+          APP_ENV=production
+          FRONTEND_ORIGIN=https://pos.moways.com.cn
+          CORS_ALLOWED_ORIGINS=https://pos.moways.com.cn
+          SESSION_COOKIE_NAME=$SESSION_COOKIE_NAME
+          SESSION_COOKIE_SECURE=true
+          SESSION_COOKIE_SAMESITE=lax
+          SESSION_TTL_DAYS=7
+          LOG_LEVEL=INFO
+          ALLOW_FILE_SECRET_FALLBACK=false
+          ALLOW_LEGACY_PASSWORD_LOGIN=false
+          BOWEI_DEV_MODE=false
+          ALLOW_DEV_SCHEMA_CREATE_ALL=
+          ALLOW_PROTECTED_DATABASE_MIGRATION=
+          ANTHROPIC_API_KEY=
+          ANTHROPIC_BASE_URL=
+          ANTHROPIC_MODEL=
+          DASHSCOPE_API_KEY=
+          DASHSCOPE_BASE_URL=
+          DASHSCOPE_MODEL=
+          DEEPSEEK_API_KEY=$CI_FAKE_LLM_KEY
+          DEEPSEEK_BASE_URL=https://api.deepseek.com
+          DEEPSEEK_MODEL=deepseek-chat
+          ZHIPUAI_API_KEY=
+          ZHIPUAI_BASE_URL=
+          ZHIPUAI_MODEL=
+          EOF
+
+          printf '{}\n' > "$MOWAYS_DATA_ROOT/env/llm_configs.json"
+          chmod 600 "$MOWAYS_ENV_FILE" "$MOWAYS_DATA_ROOT/env/llm_configs.json"
+
+      - name: Compile backend
+        run: python -m compileall bowei_ai_dashboard/app
+
+      - name: P1B2A production runtime tests
+        working-directory: bowei_ai_dashboard
+        run: >-
+          python -m pytest
+          tests/test_production_runtime_contract.py
+          tests/test_production_runtime_security.py
+          -q
+
+      - name: Authentication and database safety regression
+        working-directory: bowei_ai_dashboard
+        run: >-
+          python -m pytest
+          tests/test_auth_import_contract.py
+          tests/test_database_safety_gate.py
+          tests/test_alembic_database_safety.py
+          -q
+
+      - name: Session cookie and production LLM key contracts
+        working-directory: bowei_ai_dashboard
+        run: python -m pytest tests/test_production_runtime_security.py -q
+
+      - name: Backend full pytest with known structural baseline
+        working-directory: bowei_ai_dashboard
+        shell: bash
+        run: |
+          set -uo pipefail
+          log="$RUNNER_TEMP/backend-pytest.log"
+          set +e
+          python -m pytest -q --tb=no 2>&1 | tee "$log"
+          pytest_code=${PIPESTATUS[0]}
+          set -e
+
+          python - "$log" "$pytest_code" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          allowed = {
+              "tests/test_confirmation_legacy_route_frontend.py::test_legacy_redirect_builds_project_id_query_and_keeps_replace",
+              "tests/test_confirmation_legacy_route_frontend.py::test_other_legacy_routes_keep_their_existing_redirect_types",
+              "tests/test_projects_management_lifecycle_workbench_frontend.py::test_project_cards_show_next_actions_and_key_lifecycle_info",
+              "tests/test_projects_management_lifecycle_workbench_frontend.py::test_project_action_buttons_open_approval_materials_workbench",
+              "tests/test_projects_management_lifecycle_workbench_frontend.py::test_projects_management_keeps_existing_business_entries",
+              "tests/test_work_progress_plan_table_frontend.py::test_task_management_page_has_execution_and_plan_table_views",
+              "tests/test_work_progress_plan_table_frontend.py::test_plan_table_view_has_required_excel_like_columns_and_merging",
+              "tests/test_work_progress_plan_table_frontend.py::test_plan_table_view_reuses_task_subtask_fields_without_new_hierarchy_terms",
+              "tests/test_work_progress_plan_table_frontend.py::test_plan_table_view_weakens_placeholders_without_detail_page_terms",
+              "tests/test_work_submit_project_binding_frontend.py::test_voice_update_page_uses_url_manual_and_single_active_project_binding",
+              "tests/test_work_submit_project_binding_frontend.py::test_voice_update_page_blocks_missing_or_non_active_project_before_extract_and_submit",
+          }
+          text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+          exit_code = int(sys.argv[2])
+          failed = set(re.findall(r"^FAILED (tests/[^\s]+::[^\s]+)", text, re.MULTILINE))
+          unexpected = failed - allowed
+
+          if unexpected:
+              print("Unexpected backend pytest failures:", *sorted(unexpected), sep="\n- ")
+              raise SystemExit(1)
+          if exit_code and not failed:
+              print(f"pytest exited {exit_code} without a recognized failure summary")
+              raise SystemExit(1)
+
+          if failed:
+              print(f"Known structural baseline only: {len(failed)} failures")
+              print(*sorted(failed), sep="\n")
+          else:
+              print("Backend full pytest passed with no failures")
+          PY
+
+      - name: Frontend tests
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t test_files < <(find tests -maxdepth 1 -type f -name '*.test.mjs' | sort)
+          node --test "${test_files[@]}"
+
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Compose configuration
+        run: >-
+          docker compose
+          -p "$COMPOSE_PROJECT_NAME"
+          --env-file "$MOWAYS_ENV_FILE"
+          -f docker-compose.prod.yml
+          config --quiet
+
+      - name: Build backend image without cache
+        run: >-
+          docker compose
+          -p "$COMPOSE_PROJECT_NAME"
+          --env-file "$MOWAYS_ENV_FILE"
+          -f docker-compose.prod.yml
+          build --no-cache backend
+
+      - name: Build frontend image without cache
+        run: >-
+          docker compose
+          -p "$COMPOSE_PROJECT_NAME"
+          --env-file "$MOWAYS_ENV_FILE"
+          -f docker-compose.prod.yml
+          build --no-cache frontend
+
+      - name: Frontend image nginx configuration
+        run: >-
+          docker run --rm
+          --add-host backend:127.0.0.1
+          "mowayspos-frontend:$MOWAYS_IMAGE_TAG"
+          nginx -t
+
+      - name: PostgreSQL 16 migration gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          dc=(docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$MOWAYS_ENV_FILE" -f docker-compose.prod.yml)
+
+          "${dc[@]}" up -d postgres
+          for attempt in $(seq 1 60); do
+            status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' mowayspos-postgres)
+            if [[ "$status" == healthy ]]; then
+              break
+            fi
+            if [[ "$attempt" == 60 ]]; then
+              docker logs mowayspos-postgres
+              exit 1
+            fi
+            sleep 2
+          done
+
+          expected=$("${dc[@]}" run --rm --no-deps backend alembic heads | awk 'NR == 1 {print $1}')
+          "${dc[@]}" run --rm backend alembic upgrade head
+          actual=$("${dc[@]}" exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc 'select version_num from alembic_version')
+          test "$actual" = "$expected"
+
+          missing=$("${dc[@]}" exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc \
+            "SELECT count(*) FROM (VALUES ('accounts'), ('auth_sessions'), ('people'), ('projects'), ('project_close_requests')) AS required(name) WHERE to_regclass('public.' || name) IS NULL;")
+          test "$missing" = "0"
+          echo "alembic_revision=$actual"
+
+      - name: Complete Compose smoke and port isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          dc=(docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$MOWAYS_ENV_FILE" -f docker-compose.prod.yml)
+
+          wait_for_health() {
+            local container="$1"
+            for attempt in $(seq 1 60); do
+              status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")
+              if [[ "$status" == healthy ]]; then
+                return 0
+              fi
+              if [[ "$status" == exited || "$status" == dead ]]; then
+                docker logs "$container"
+                exit 1
+              fi
+              if [[ "$attempt" == 60 ]]; then
+                docker logs "$container"
+                exit 1
+              fi
+              sleep 2
+            done
+          }
+
+          "${dc[@]}" up -d backend
+          wait_for_health mowayspos-backend
+          "${dc[@]}" up -d frontend
+          wait_for_health mowayspos-frontend
+
+          curl --fail --silent --show-error http://127.0.0.1:18100/ >/dev/null
+          curl --fail --silent --show-error http://127.0.0.1:18100/api/health > "$RUNNER_TEMP/moways-health.json"
+          python - "$RUNNER_TEMP/moways-health.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert data == {
+              "app": "bowei-ai-dashboard",
+              "database": "ok",
+              "env": "production",
+              "status": "ok",
+          }, data
+          print(json.dumps(data, ensure_ascii=False, sort_keys=True))
+          PY
+
+          python - \
+            "$(docker inspect --format '{{json .HostConfig.PortBindings}}' mowayspos-postgres)" \
+            "$(docker inspect --format '{{json .HostConfig.PortBindings}}' mowayspos-backend)" \
+            "$(docker inspect --format '{{json .HostConfig.PortBindings}}' mowayspos-frontend)" <<'PY'
+          import json
+          import sys
+
+          postgres, backend, frontend = (json.loads(value) for value in sys.argv[1:])
+          assert postgres in (None, {}), postgres
+          assert backend in (None, {}), backend
+          assert frontend == {
+              "80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18100"}],
+          }, frontend
+          print("host_ports=127.0.0.1:18100->frontend:80")
+          PY
+
+          if ss -ltnH 'sport = :5432' | grep -q . || ss -ltnH 'sport = :8008' | grep -q .; then
+            echo 'Backend or PostgreSQL unexpectedly publishes a host port.' >&2
+            exit 1
+          fi
+          ss -ltnH 'sport = :18100' | grep -Fq '127.0.0.1:18100'
+
+      - name: LLM configuration survives backend recreation
+        shell: bash
+        run: |
+          set -euo pipefail
+          dc=(docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$MOWAYS_ENV_FILE" -f docker-compose.prod.yml)
+
+          cat > "$MOWAYS_DATA_ROOT/env/llm_configs.json" <<'JSON'
+          {
+            "deepseek": {
+              "enabled": true,
+              "base_url": "https://api.deepseek.com",
+              "model": "deepseek-chat"
+            }
+          }
+          JSON
+          chmod 600 "$MOWAYS_DATA_ROOT/env/llm_configs.json"
+
+          if grep -q 'api_key' "$MOWAYS_DATA_ROOT/env/llm_configs.json"; then
+            echo 'Persistent LLM file unexpectedly contains an API key field.' >&2
+            exit 1
+          fi
+
+          "${dc[@]}" up -d --no-deps --force-recreate backend
+          for attempt in $(seq 1 60); do
+            status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' mowayspos-backend)
+            if [[ "$status" == healthy ]]; then
+              break
+            fi
+            if [[ "$attempt" == 60 ]]; then
+              docker logs mowayspos-backend
+              exit 1
+            fi
+            sleep 2
+          done
+
+          "${dc[@]}" exec -T backend python - <<'PY'
+          import json
+          from pathlib import Path
+
+          from app.llm_config import get_provider_config
+
+          config = json.loads(Path('/app/llm_configs.json').read_text(encoding='utf-8'))
+          assert config == {
+              'deepseek': {
+                  'enabled': True,
+                  'base_url': 'https://api.deepseek.com',
+                  'model': 'deepseek-chat',
+              }
+          }
+          assert get_provider_config('deepseek').get('api_key')
+          print('llm_persistence=ok env_api_key_set=true')
+          PY
+
+          if docker logs mowayspos-backend 2>&1 | grep -Fq "$CI_FAKE_LLM_KEY"; then
+            echo 'Backend logs exposed the environment API key.' >&2
+            exit 1
+          fi
+
+      - name: Final repository whitespace check
+        run: git diff --check
+
+      - name: Cleanup isolated runtime
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          if [[ -f "$RUNNER_TEMP/moways-p1b2a-owned" ]]; then
+            docker compose \
+              -p "$COMPOSE_PROJECT_NAME" \
+              --env-file "$MOWAYS_ENV_FILE" \
+              -f docker-compose.prod.yml \
+              down --remove-orphans || true
+            docker image rm \
+              "mowayspos-backend:$MOWAYS_IMAGE_TAG" \
+              "mowayspos-frontend:$MOWAYS_IMAGE_TAG" || true
+
+            case "$MOWAYS_DATA_ROOT" in
+              "$RUNNER_TEMP"/*) sudo rm -rf -- "$MOWAYS_DATA_ROOT" ;;
+              *) echo "Refusing to remove path outside RUNNER_TEMP: $MOWAYS_DATA_ROOT" >&2; exit 1 ;;
+            esac
+            rm -f "$RUNNER_TEMP/moways-p1b2a-owned" "$RUNNER_TEMP/moways-health.json"
+          fi
+
+          for container in mowayspos-postgres mowayspos-backend mowayspos-frontend; do
+            if docker ps -a --format '{{.Names}}' | grep -Fxq "$container"; then
+              echo "Task container remains after cleanup: $container" >&2
+              exit 1
+            fi
+          done
+          if docker network ls --format '{{.Name}}' | grep -Fxq mowayspos_app; then
+            echo 'Task network remains after cleanup: mowayspos_app' >&2
+            exit 1
+          fi

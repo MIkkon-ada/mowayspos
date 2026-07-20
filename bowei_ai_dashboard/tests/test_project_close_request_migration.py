@@ -79,7 +79,7 @@ def _prepare_old_head_database(path: Path) -> str:
 def test_migration_upgrade_creates_expected_table_columns_indexes_and_foreign_keys(tmp_path: Path):
     database = tmp_path / "upgrade.db"
     url = _prepare_old_head_database(database)
-    result = _run_alembic(database, "upgrade", "head")
+    result = _run_alembic(database, "upgrade", NEW_REVISION)
     assert result.returncode == 0, _output(result)
     output = _output(result)
     assert "DATABASE TARGET" in output
@@ -130,13 +130,13 @@ def test_migration_upgrade_creates_expected_table_columns_indexes_and_foreign_ke
 def test_migration_empty_downgrade_and_reupgrade_succeed(tmp_path: Path):
     database = tmp_path / "roundtrip.db"
     url = _prepare_old_head_database(database)
-    result = _run_alembic(database, "upgrade", "head")
+    result = _run_alembic(database, "upgrade", NEW_REVISION)
     assert result.returncode == 0, _output(result)
     result = _run_alembic(database, "downgrade", OLD_HEAD)
     assert result.returncode == 0, _output(result)
     assert "project_close_requests" not in sa.inspect(sa.create_engine(url)).get_table_names()
 
-    result = _run_alembic(database, "upgrade", "head")
+    result = _run_alembic(database, "upgrade", NEW_REVISION)
     assert result.returncode == 0, _output(result)
     assert "project_close_requests" in sa.inspect(sa.create_engine(url)).get_table_names()
 
@@ -144,7 +144,7 @@ def test_migration_empty_downgrade_and_reupgrade_succeed(tmp_path: Path):
 def test_migration_downgrade_refuses_when_close_request_data_exists(tmp_path: Path):
     database = tmp_path / "protected-request.db"
     url = _prepare_old_head_database(database)
-    result = _run_alembic(database, "upgrade", "head")
+    result = _run_alembic(database, "upgrade", NEW_REVISION)
     assert result.returncode == 0, _output(result)
     engine = sa.create_engine(url)
     with engine.begin() as conn:
@@ -165,7 +165,7 @@ def test_migration_downgrade_refuses_when_close_request_data_exists(tmp_path: Pa
 def test_migration_downgrade_refuses_when_projects_use_new_status(tmp_path: Path, status: str):
     database = tmp_path / f"protected-{status}.db"
     url = _prepare_old_head_database(database)
-    result = _run_alembic(database, "upgrade", "head")
+    result = _run_alembic(database, "upgrade", NEW_REVISION)
     assert result.returncode == 0, _output(result)
     engine = sa.create_engine(url)
     with engine.begin() as conn:

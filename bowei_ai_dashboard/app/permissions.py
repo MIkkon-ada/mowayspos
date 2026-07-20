@@ -9,6 +9,7 @@ from . import models
 from .auth import IMPERSONATE_ALLOWED, get_session_user
 from .database import SessionLocal
 from .services.project_resolution import resolve_project_context
+from .settings import get_settings
 
 # ── 全局系统角色常量（仅3个，不含项目级身份）────────────────────
 # DB 存英文键，展示用 SYSTEM_ROLE_LABELS 映射中文
@@ -314,7 +315,7 @@ def get_current_user_name(
     request: Request,
     x_current_user: str | None = Header(default=None, alias="X-Current-User"),
 ) -> str:
-    session_id = request.cookies.get("bowei_session")
+    session_id = request.cookies.get(get_settings().session_cookie_name)
     session_user = get_session_user(session_id) if session_id else None
     if x_current_user:
         decoded = unquote(x_current_user.strip())

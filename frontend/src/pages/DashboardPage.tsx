@@ -133,6 +133,18 @@ export function DashboardPage() {
   const chartInstance = useRef<Chart | null>(null)
   const shouldBlockDashboardLoading = !canViewMyDashboard && scopeMode === 'my'
 
+  // ── 顶层渲染状态 ──
+  // blocked:       shouldBlockDashboardLoading → 显示阻断提示，不请求数据
+  // initialLoading：首次加载尚无可用数据 → 只显示骨架
+  // errorWithNoData：无历史数据且加载失败 → 只显示错误
+  // dataReady:     已有可用数据 → 展示正式内容（refreshing / refreshError 是其上的覆盖提示，不切换顶层状态）
+  const dataReady = data !== null && !shouldBlockDashboardLoading
+  const initialLoading = loading && data === null && loadError === null && !shouldBlockDashboardLoading
+  const errorWithNoData = loadError !== null && data === null && !shouldBlockDashboardLoading
+  // dataReady 上的提示性子状态
+  const refreshing = loading && data !== null && !shouldBlockDashboardLoading
+  const refreshError = loadError !== null && data !== null && !shouldBlockDashboardLoading
+
   useEffect(() => {
     const nextScopeMode = initialDashboardScope()
     const nextScopeId = nextScopeMode === 'project' ? urlProjectId : null
@@ -199,6 +211,7 @@ export function DashboardPage() {
       setLoadError('普通成员请从我的任务查看个人工作')
       return () => { cancelledRef.cancelled = true }
     }
+    setLoadError(null)
     setLoading(true)
     const load = scopeMode === 'my'
       ? loadMyProjectDashboard(cancelledRef)
@@ -624,7 +637,7 @@ export function DashboardPage() {
           </div>
         )}
 
-        {loading && (
+        {initialLoading && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16 }}>
               {Array.from({ length: 5 }).map((_, i) => <SkeletonStatCard key={i} />)}
@@ -641,13 +654,34 @@ export function DashboardPage() {
             </div>
           </div>
         )}
-        {!loading && loadError && (
+        {errorWithNoData && (
           <div className="flex items-center justify-center py-8">
             <div className="text-red-500 text-sm">{loadError}</div>
           </div>
         )}
 
+        {dataReady && <>
         {/* ─── 统计卡片 ─── */}
+        {refreshing && (
+          <div className="flex items-center justify-center py-2">
+            <span className="text-xs text-slate-400 flex items-center gap-1.5">
+              <svg className="animate-spin" style={{ width: 12, height: 12 }} fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              更新中...
+            </span>
+          </div>
+        )}
+        {refreshError && (
+          <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border" style={{ background: '#FFF7ED', borderColor: '#FED7AA' }}>
+            <svg style={{ width: 14, height: 14, flexShrink: 0, color: '#EA580C' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+            <span className="text-sm" style={{ color: '#C2410C' }}>更新失败，当前显示上次成功加载的数据。</span>
+            {loadError && <span className="text-xs" style={{ color: '#9A3412' }}>（{loadError}）</span>}
+          </div>
+        )}
         {(() => {
           const pid = scopeId ?? currentProjectId
           const toTasks = (status?: string) => () => {
@@ -879,6 +913,7 @@ export function DashboardPage() {
             </div>
           </div>
         </div>
+        </>}
       </main>
 
       {/* 负责人填报弹窗（复用 OwnerSubmitModal） */}

@@ -1,5 +1,5 @@
-// P6-P4-B1: ConfirmPage 三栏结构测试
-// 验证三栏视觉骨架改造后核心契约保持完整
+// P6-P4-B1 + B2-1: ConfirmPage 三栏结构测试
+// 验证三栏视觉骨架 + 负责人操作迁移后核心契约保持完整
 
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
@@ -274,6 +274,113 @@ describe('B1.1 layout correction verification', () => {
     assert.ok(rps.includes('任务卡') && rps.includes('成果') &&
       rps.includes('待处理') && rps.includes('下一步'),
       'Must preserve all four stat metrics');
+  });
+});
+
+describe('B2-1 owner actions migrated to right panel in all view', () => {
+
+  // Extract review panel content: from review marker to action-preview marker
+  function reviewPanelContent() {
+    const start = source.indexOf('data-confirm-panel="review"');
+    const end = source.indexOf('data-confirm-panel="action-preview"');
+    if (start === -1 || end === -1) return '';
+    return source.slice(start, end);
+  }
+
+  it('right panel all view has "判断与入库" header', () => {
+    assert.ok(source.includes('判断与入库'),
+      'Expected "判断与入库" title text in right panel for all view');
+  });
+
+  it('"入库范围" section is inside action-preview panel', () => {
+    const rps = rightPanelOrSource();
+    assert.ok(rps.includes('入库范围'),
+      'Expected "入库范围" section inside action-preview panel');
+  });
+
+  it('review panel no longer contains submission-level owner action buttons', () => {
+    const review = reviewPanelContent();
+    // Buttons should NOT be in review panel
+    assert.ok(!review.includes('确认入库'),
+      'Review panel must not contain "确认入库" button (migrated to right panel)');
+    assert.ok(!review.includes('退回提交人'),
+      'Review panel must not contain "退回提交人" button (migrated to right panel)');
+    assert.ok(!review.includes('转交统筹人'),
+      'Review panel must not contain "转交统筹人" button (migrated to right panel)');
+    assert.ok(!review.includes('转交企业教练'),
+      'Review panel must not contain "转交企业教练" button (migrated to right panel)');
+  });
+
+  it('right panel contains all four owner action buttons in all view', () => {
+    const rps = rightPanelOrSource();
+    assert.ok(rps.includes('确认入库'), 'Right panel must contain "确认入库" button');
+    assert.ok(rps.includes('退回提交人'), 'Right panel must contain "退回提交人" button');
+    assert.ok(rps.includes('转交统筹人'), 'Right panel must contain "转交统筹人" button');
+    assert.ok(rps.includes('转交企业教练'), 'Right panel must contain "转交企业教练" button');
+  });
+
+  it('each owner action button appears exactly once in right panel and not in review panel', () => {
+    const rps = rightPanelOrSource();
+    const review = reviewPanelContent();
+    const buttons = ['确认入库', '退回提交人', '转交统筹人', '转交企业教练'];
+    for (const btn of buttons) {
+      // Must appear in right panel
+      assert.ok(rps.includes(btn),
+        `"${btn}" button must appear in right panel`);
+      // Must NOT appear in review panel
+      assert.ok(!review.includes(btn),
+        `"${btn}" button must NOT appear in review panel`);
+    }
+  });
+
+  it('writeToAchievements Toggle is in right panel', () => {
+    const rps = rightPanelOrSource();
+    assert.ok(rps.includes('writeToAchievements'),
+      'Expected writeToAchievements Toggle in right panel');
+  });
+
+  it('writeToIssues Toggle is in right panel', () => {
+    const rps = rightPanelOrSource();
+    assert.ok(rps.includes('writeToIssues'),
+      'Expected writeToIssues Toggle in right panel');
+  });
+
+  it('pendingAction note textarea is in right panel', () => {
+    const rps = rightPanelOrSource();
+    assert.ok(rps.includes('pendingAction'),
+      'Expected pendingAction handling area in right panel');
+  });
+
+  it('handleConfirm function still exists', () => {
+    assert.ok(/\bhandleConfirm\b/.test(source),
+      'Expected handleConfirm function to remain');
+  });
+
+  it('handleDecision function still exists', () => {
+    assert.ok(/\bhandleDecision\b/.test(source),
+      'Expected handleDecision function to remain');
+  });
+
+  it('Modal with handleTaskCardDecision still exists', () => {
+    assert.ok(source.includes('handleTaskCardDecision'),
+      'Expected handleTaskCardDecision to remain for modal');
+    assert.ok(source.includes('cardDetailOpen && activeCard && activeReviewCard'),
+      'Expected modal visibility condition to remain');
+  });
+
+  it('selected / visibleItems sync logic still exists', () => {
+    assert.ok(source.includes('visibleItems.length === 0') || source.includes('visibleItems.some'),
+      'Expected selected/visibleItems sync logic to remain');
+  });
+
+  it('non-all view operation text still exists (mine/coordinator/ceo)', () => {
+    // Check that mine/coordinator/ceo views still have their action text
+    assert.ok(source.includes('补充说明'),
+      'Expected "补充说明" text for mine view to remain');
+    assert.ok(source.includes('统筹反馈'),
+      'Expected "统筹反馈" text for coordinator view to remain');
+    assert.ok(source.includes('企业教练批示'),
+      'Expected "企业教练批示" text for ceo view to remain');
   });
 });
 

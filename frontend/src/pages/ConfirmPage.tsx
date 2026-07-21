@@ -1186,8 +1186,8 @@ export function ConfirmPage() {
           {/* Center: review panel */}
           <section data-confirm-panel="review" className="flex flex-col bg-white rounded-2xl border overflow-hidden" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
             {/* Scrollable body */}
-            {/* Page-level action feedback */}
-            {(actionError || actionSuccess) && (
+            {/* Page-level action feedback — moved to right panel in all view */}
+            {(actionError || actionSuccess) && viewMode !== 'all' && (
               <div className="flex-shrink-0 px-4 pt-3 space-y-2">
                 {actionError && (
                   <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -1426,96 +1426,7 @@ export function ConfirmPage() {
                     </section>
                   )}
 
-                  {/* Submission-level owner actions */}
-                  {viewMode === 'all' && canUseOwnerActions && selected && SS.OWNER_ACTIONABLE.has(selectedStatus) && (
-                    <section className="rounded-[22px] border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-4">
-                      <div className="flex items-start justify-between gap-3 mb-3">
-                        <div>
-                          <p className="text-sm font-bold text-slate-900">整条提交操作</p>
-                          <p className="text-xs text-slate-500 mt-1">本次提交全部任务卡，共 {taskCards.length} 张</p>
-                        </div>
-                        <span className="px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">整条提交</span>
-                      </div>
-                      {hasPendingSubmissionCards && (
-                        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                          本次提交仍有任务卡等待统筹反馈或企业教练批示，暂不可执行整条操作。
-                        </div>
-                      )}
-                      <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4">
-                        <div className="mb-3">
-                          <p className="text-sm font-bold text-slate-900">本次入库范围</p>
-                          <p className="mt-1 text-xs text-slate-500">关闭某项后，本次确认仍会写入工作推进表，但不会写入对应资产库。</p>
-                        </div>
-                        <div className="grid grid-cols-1 gap-2 lg:grid-cols-3">
-                          <div className="flex min-h-16 items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2.5">
-                            <div>
-                              <p className="text-sm font-semibold text-slate-900">工作推进表</p>
-                              <p className="mt-0.5 text-xs text-slate-500">本次确认始终写入工作推进记录</p>
-                            </div>
-                            <span className="flex-shrink-0 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">必写</span>
-                          </div>
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={writeToAchievements}
-                            onClick={() => setWriteToAchievements((value) => !value)}
-                            disabled={submissionActionsLocked}
-                            className="flex min-h-16 items-center justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50/60 px-3 py-2.5 text-left transition hover:border-violet-300 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <div>
-                              <p className="text-sm font-semibold text-slate-900">成果库</p>
-                              <p className="mt-0.5 text-xs text-slate-500">将本次已审核成果写入成果库</p>
-                            </div>
-                            <div className="flex flex-shrink-0 items-center gap-2">
-                              <span className="text-xs font-semibold text-violet-700">{writeToAchievements ? '已开启' : '已关闭'}</span>
-                              <ToggleSwitch on={writeToAchievements} />
-                            </div>
-                          </button>
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={writeToIssues}
-                            onClick={() => setWriteToIssues((value) => !value)}
-                            disabled={submissionActionsLocked}
-                            className="flex min-h-16 items-center justify-between gap-3 rounded-xl border border-orange-200 bg-orange-50/60 px-3 py-2.5 text-left transition hover:border-orange-300 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <div>
-                              <p className="text-sm font-semibold text-slate-900">问题中心</p>
-                              <p className="mt-0.5 text-xs text-slate-500">将本次已审核问题写入问题中心</p>
-                            </div>
-                            <div className="flex flex-shrink-0 items-center gap-2">
-                              <span className="text-xs font-semibold text-orange-700">{writeToIssues ? '已开启' : '已关闭'}</span>
-                              <ToggleSwitch on={writeToIssues} />
-                            </div>
-                          </button>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-                        <button type="button" onClick={handleConfirm} disabled={submissionActionsLocked} className="h-11 rounded-xl bg-blue-600 text-white font-semibold disabled:opacity-50">整条确认入库</button>
-                        <button type="button" onClick={() => { setPendingAction('return'); setActionNote('') }} disabled={submissionActionsLocked} className="h-11 rounded-xl border border-orange-300 bg-white text-orange-600 font-semibold disabled:opacity-50">整条退回提交人</button>
-                        <button type="button" onClick={() => { setPendingAction('transfer'); setActionNote('') }} disabled={submissionActionsLocked || !SS.TRANSFERABLE_TO_COORDINATOR.has(selectedStatus)} className="h-11 rounded-xl border border-violet-300 bg-white text-violet-600 font-semibold disabled:opacity-50">整条转交统筹人</button>
-                        <button type="button" onClick={() => { setPendingAction('ceo'); setActionNote('') }} disabled={submissionActionsLocked || !SS.ESCALATABLE_TO_CEO.has(selectedStatus)} className="h-11 rounded-xl border border-slate-300 bg-white text-slate-600 font-semibold disabled:opacity-50">整条转交企业教练</button>
-                      </div>
-                      {pendingAction && (
-                        <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
-                          <p className="text-xs font-bold text-slate-700 mb-2">
-                            {pendingAction === 'return' ? '退回原因' : pendingAction === 'transfer' ? '转交统筹说明' : '转交企业教练说明'}
-                          </p>
-                          <textarea
-                            value={actionNote}
-                            onChange={(e) => setActionNote(e.target.value)}
-                            placeholder="请输入处理说明（必填）…"
-                            disabled={acting}
-                            className="w-full min-h-20 rounded-xl border border-slate-200 p-3 text-sm resize-none focus:outline-none disabled:opacity-50"
-                          />
-                          <div className="mt-3 flex justify-end gap-2">
-                            <button type="button" onClick={() => { setPendingAction(null); setActionNote('') }} disabled={acting} className="px-4 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 disabled:opacity-50">取消</button>
-                            <button type="button" onClick={() => handleDecision(pendingAction)} disabled={acting || !actionNote.trim() || submissionActionsLocked} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-50">确认提交</button>
-                          </div>
-                        </div>
-                      )}
-                    </section>
-                  )}
+                  {/* Submission-level owner actions migrated to right panel in all view */}
 
                   {/* Member resubmit section */}
                   {isSubmitterView && isReturned && (
@@ -1660,119 +1571,275 @@ export function ConfirmPage() {
           {/* Right: action-preview panel */}
           <aside data-confirm-panel="action-preview" className="flex flex-col bg-white rounded-2xl border overflow-hidden" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
             <div className="px-4 py-3 border-b flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-              <span className="text-sm font-bold text-slate-800">审核概览</span>
+              <span className="text-sm font-bold text-slate-800">{viewMode === 'all' ? '判断与入库' : '审核概览'}</span>
             </div>
             <div className="overflow-y-auto flex-1 px-4 py-3">
               {selected ? (
-                <div className="space-y-4">
-                  {/* 当前记录 */}
-                  <section>
-                    <p className="text-xs font-bold text-slate-500 mb-2 tracking-wider">当前记录</p>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">项目</span>
-                        <span className="font-medium text-slate-700 truncate ml-2 max-w-[140px]">{selectedProjectName || '—'}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">提交人</span>
-                        <span className="font-medium text-slate-700">{selected?.submitter || '—'}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-slate-400">状态</span>
-                        <StatusBadge status={selected?.confirm_status} />
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-slate-400">来源</span>
-                        <SourceBadge type={selected?.source_type} />
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">提交时间</span>
-                        <span className="font-medium text-slate-700 text-xs">{fmtShort(selected?.created_at)}</span>
-                      </div>
-                    </div>
-                  </section>
-                  {/* 内容规模 */}
-                  <section>
-                    <p className="text-xs font-bold text-slate-500 mb-2 tracking-wider">内容规模</p>
-                    <div className="rounded-lg border border-slate-100 bg-slate-50/40 p-2">
-                      <div className="grid grid-cols-2">
-                        <div className="px-2 py-2 border-r border-b border-slate-100">
-                          <div className="flex items-baseline gap-1.5">
-                            <span className="text-lg font-bold text-slate-700">{taskCards.length}</span>
-                            <span className="text-[11px] text-slate-400">任务卡</span>
+                viewMode === 'all' ? (
+                  <div className="space-y-4">
+                    {/* Action feedback — in all view, displayed above owner actions */}
+                    {(actionError || actionSuccess) && (
+                      <div className="space-y-2">
+                        {actionError && (
+                          <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                            <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                            {actionError}
                           </div>
-                        </div>
-                        <div className="px-2 py-2 border-b border-slate-100">
-                          <div className="flex items-baseline gap-1.5">
-                            <span className="text-lg font-bold text-slate-700">{taskCards.reduce((sum, c) => sum + c.achievements.length, 0)}</span>
-                            <span className="text-[11px] text-slate-400">成果</span>
+                        )}
+                        {actionSuccess && (
+                          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                            <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+                            {actionSuccess}
                           </div>
-                        </div>
-                        <div className="px-2 py-2 border-r border-slate-100">
-                          <div className="flex items-baseline gap-1.5">
-                            <span className="text-lg font-bold text-slate-700">{taskCards.reduce((sum, c) => sum + c.pendingItems.length, 0)}</span>
-                            <span className="text-[11px] text-slate-400">待处理</span>
-                          </div>
-                        </div>
-                        <div className="px-2 py-2">
-                          <div className="flex items-baseline gap-1.5">
-                            <span className="text-lg font-bold text-slate-700">{taskCards.reduce((sum, c) => sum + c.nextSteps.length, 0)}</span>
-                            <span className="text-[11px] text-slate-400">下一步</span>
-                          </div>
-                        </div>
+                        )}
                       </div>
-                    </div>
-                  </section>
-                  {/* 当前选中任务卡 */}
-                  {activeCard && (
+                    )}
+                    {/* 当前记录 */}
                     <section>
-                      <p className="text-xs font-bold text-slate-500 mb-2 tracking-wider">当前选中任务卡</p>
+                      <p className="text-xs font-bold text-slate-500 mb-2 tracking-wider">当前记录</p>
                       <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 space-y-2 text-sm">
                         <div className="flex justify-between">
-                          <span className="text-slate-400">序号</span>
-                          <span className="font-medium text-slate-700">任务卡 {activeCardIndex + 1}</span>
+                          <span className="text-slate-400">项目</span>
+                          <span className="font-medium text-slate-700 truncate ml-2 max-w-[140px]">{selectedProjectName || '—'}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-slate-400">标题</span>
-                          <span className="font-medium text-slate-700 text-right ml-2 max-w-[150px] truncate">{activeCard.title}</span>
+                          <span className="text-slate-400">提交人</span>
+                          <span className="font-medium text-slate-700">{selected?.submitter || '—'}</span>
                         </div>
                         <div className="flex justify-between items-center">
-                          <span className="text-slate-400">单卡状态</span>
-                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${taskCardDecisionTone(activeCard.confirmationStatus)}`}>{taskCardDecisionLabel(activeCard.confirmationStatus)}</span>
+                          <span className="text-slate-400">状态</span>
+                          <StatusBadge status={selected?.confirm_status} />
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-400">来源</span>
+                          <SourceBadge type={selected?.source_type} />
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">提交时间</span>
+                          <span className="font-medium text-slate-700 text-xs">{fmtShort(selected?.created_at)}</span>
                         </div>
                       </div>
                     </section>
-                  )}
-                  {/* 入库目标预览 */}
-                  <section>
-                    <p className="text-xs font-bold text-slate-500 mb-2 tracking-wider">入库目标预览</p>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-emerald-50/60 px-3 py-2.5">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-800">工作推进表</p>
-                          <p className="text-[11px] text-emerald-600">始终写入</p>
+                    {/* Owner actions or read-only */}
+                    {canUseOwnerActions && SS.OWNER_ACTIONABLE.has(selectedStatus) ? (
+                      <>
+                        {/* Locked warning */}
+                        {projectArchived && (
+                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                            项目已归档，无法执行整条操作。
+                          </div>
+                        )}
+                        {hasPendingSubmissionCards && !projectArchived && (
+                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                            本次提交仍有任务卡等待统筹反馈或企业教练批示，暂不可执行整条操作。
+                          </div>
+                        )}
+                        {/* 入库范围 */}
+                        <section className="rounded-xl border border-slate-200 bg-white p-3">
+                          <p className="text-sm font-bold text-slate-900 mb-3">入库范围</p>
+                          <div className="space-y-2">
+                            {/* 工作推进表 — 必写 */}
+                            <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2.5">
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">工作推进表</p>
+                                <p className="mt-0.5 text-xs text-slate-500">本次确认始终写入工作推进记录</p>
+                              </div>
+                              <span className="flex-shrink-0 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">必写</span>
+                            </div>
+                            {/* 成果库 Toggle */}
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={writeToAchievements}
+                              onClick={() => setWriteToAchievements((value) => !value)}
+                              disabled={submissionActionsLocked}
+                              className="flex w-full items-center justify-between gap-3 rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-2.5 text-left transition hover:border-violet-200 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">成果库</p>
+                                <p className="mt-0.5 text-xs text-slate-500">将本次已审核成果写入成果库</p>
+                              </div>
+                              <div className="flex flex-shrink-0 items-center gap-1.5">
+                                <span className="text-xs font-semibold text-violet-600">{writeToAchievements ? '已开启' : '已关闭'}</span>
+                                <ToggleSwitch on={writeToAchievements} />
+                              </div>
+                            </button>
+                            {/* 问题中心 Toggle */}
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={writeToIssues}
+                              onClick={() => setWriteToIssues((value) => !value)}
+                              disabled={submissionActionsLocked}
+                              className="flex w-full items-center justify-between gap-3 rounded-lg border border-orange-100 bg-orange-50/60 px-3 py-2.5 text-left transition hover:border-orange-200 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">问题中心</p>
+                                <p className="mt-0.5 text-xs text-slate-500">将本次已审核问题写入问题中心</p>
+                              </div>
+                              <div className="flex flex-shrink-0 items-center gap-1.5">
+                                <span className="text-xs font-semibold text-orange-600">{writeToIssues ? '已开启' : '已关闭'}</span>
+                                <ToggleSwitch on={writeToIssues} />
+                              </div>
+                            </button>
+                          </div>
+                        </section>
+                        {/* 整条提交操作按钮 */}
+                        <div className="space-y-2">
+                          <button type="button" onClick={handleConfirm} disabled={submissionActionsLocked} className="w-full h-10 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-50 hover:bg-blue-700 transition">
+                            确认入库
+                          </button>
+                          <button type="button" onClick={() => { setPendingAction('return'); setActionNote('') }} disabled={submissionActionsLocked} className="w-full h-10 rounded-lg border border-orange-300 bg-white text-orange-600 text-sm font-semibold disabled:opacity-50 hover:bg-orange-50 transition">
+                            退回提交人
+                          </button>
+                          <button type="button" onClick={() => { setPendingAction('transfer'); setActionNote('') }} disabled={submissionActionsLocked || !SS.TRANSFERABLE_TO_COORDINATOR.has(selectedStatus)} className="w-full h-10 rounded-lg border border-violet-300 bg-white text-violet-600 text-sm font-semibold disabled:opacity-50 hover:bg-violet-50 transition">
+                            转交统筹人
+                          </button>
+                          <button type="button" onClick={() => { setPendingAction('ceo'); setActionNote('') }} disabled={submissionActionsLocked || !SS.ESCALATABLE_TO_CEO.has(selectedStatus)} className="w-full h-10 rounded-lg border border-slate-300 bg-white text-slate-600 text-sm font-semibold disabled:opacity-50 hover:bg-slate-50 transition">
+                            转交企业教练
+                          </button>
                         </div>
-                        <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700">必写</span>
+                        {/* pendingAction 处理说明 */}
+                        {pendingAction && (
+                          <div className="rounded-xl border border-slate-200 bg-white p-3">
+                            <p className="text-xs font-bold text-slate-700 mb-2">
+                              {pendingAction === 'return' ? '退回原因' : pendingAction === 'transfer' ? '转交统筹说明' : '转交企业教练说明'}
+                            </p>
+                            <textarea
+                              value={actionNote}
+                              onChange={(e) => setActionNote(e.target.value)}
+                              placeholder="请输入处理说明（必填）…"
+                              disabled={acting}
+                              className="w-full min-h-20 rounded-lg border border-slate-200 p-3 text-sm resize-none focus:outline-none focus:border-blue-300 disabled:opacity-50"
+                            />
+                            <div className="mt-3 flex justify-end gap-2">
+                              <button type="button" onClick={() => { setPendingAction(null); setActionNote('') }} disabled={acting} className="px-4 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50">取消</button>
+                              <button type="button" onClick={() => handleDecision(pendingAction)} disabled={acting || !actionNote.trim() || submissionActionsLocked} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">确认提交</button>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      /* Non-owner or not OWNER_ACTIONABLE in all view — read-only */
+                      <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-center text-sm text-slate-400">
+                        当前记录仅可查看
                       </div>
-                      <div className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-800">成果库</p>
-                          <p className="text-[11px] text-slate-400">已审核成果写入成果库</p>
+                    )}
+                  </div>
+                ) : (
+                  /* Other views: keep original right panel structure */
+                  <div className="space-y-4">
+                    {/* 当前记录 */}
+                    <section>
+                      <p className="text-xs font-bold text-slate-500 mb-2 tracking-wider">当前记录</p>
+                      <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">项目</span>
+                          <span className="font-medium text-slate-700 truncate ml-2 max-w-[140px]">{selectedProjectName || '—'}</span>
                         </div>
-                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${writeToAchievements ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-500'}`}>{writeToAchievements ? '开启' : '关闭'}</span>
-                      </div>
-                      <div className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-800">问题中心</p>
-                          <p className="text-[11px] text-slate-400">已审核问题写入问题中心</p>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">提交人</span>
+                          <span className="font-medium text-slate-700">{selected?.submitter || '—'}</span>
                         </div>
-                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${writeToIssues ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-500'}`}>{writeToIssues ? '开启' : '关闭'}</span>
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-400">状态</span>
+                          <StatusBadge status={selected?.confirm_status} />
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-400">来源</span>
+                          <SourceBadge type={selected?.source_type} />
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">提交时间</span>
+                          <span className="font-medium text-slate-700 text-xs">{fmtShort(selected?.created_at)}</span>
+                        </div>
                       </div>
-                    </div>
-                  </section>
-                </div>
+                    </section>
+                    {/* 内容规模 */}
+                    <section>
+                      <p className="text-xs font-bold text-slate-500 mb-2 tracking-wider">内容规模</p>
+                      <div className="rounded-lg border border-slate-100 bg-slate-50/40 p-2">
+                        <div className="grid grid-cols-2">
+                          <div className="px-2 py-2 border-r border-b border-slate-100">
+                            <div className="flex items-baseline gap-1.5">
+                              <span className="text-lg font-bold text-slate-700">{taskCards.length}</span>
+                              <span className="text-[11px] text-slate-400">任务卡</span>
+                            </div>
+                          </div>
+                          <div className="px-2 py-2 border-b border-slate-100">
+                            <div className="flex items-baseline gap-1.5">
+                              <span className="text-lg font-bold text-slate-700">{taskCards.reduce((sum, c) => sum + c.achievements.length, 0)}</span>
+                              <span className="text-[11px] text-slate-400">成果</span>
+                            </div>
+                          </div>
+                          <div className="px-2 py-2 border-r border-slate-100">
+                            <div className="flex items-baseline gap-1.5">
+                              <span className="text-lg font-bold text-slate-700">{taskCards.reduce((sum, c) => sum + c.pendingItems.length, 0)}</span>
+                              <span className="text-[11px] text-slate-400">待处理</span>
+                            </div>
+                          </div>
+                          <div className="px-2 py-2">
+                            <div className="flex items-baseline gap-1.5">
+                              <span className="text-lg font-bold text-slate-700">{taskCards.reduce((sum, c) => sum + c.nextSteps.length, 0)}</span>
+                              <span className="text-[11px] text-slate-400">下一步</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+                    {/* 当前选中任务卡 */}
+                    {activeCard && (
+                      <section>
+                        <p className="text-xs font-bold text-slate-500 mb-2 tracking-wider">当前选中任务卡</p>
+                        <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">序号</span>
+                            <span className="font-medium text-slate-700">任务卡 {activeCardIndex + 1}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">标题</span>
+                            <span className="font-medium text-slate-700 text-right ml-2 max-w-[150px] truncate">{activeCard.title}</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-slate-400">单卡状态</span>
+                            <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${taskCardDecisionTone(activeCard.confirmationStatus)}`}>{taskCardDecisionLabel(activeCard.confirmationStatus)}</span>
+                          </div>
+                        </div>
+                      </section>
+                    )}
+                    {/* 入库目标预览 */}
+                    <section>
+                      <p className="text-xs font-bold text-slate-500 mb-2 tracking-wider">入库目标预览</p>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-emerald-50/60 px-3 py-2.5">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-800">工作推进表</p>
+                            <p className="text-[11px] text-emerald-600">始终写入</p>
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700">必写</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-800">成果库</p>
+                            <p className="text-[11px] text-slate-400">已审核成果写入成果库</p>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${writeToAchievements ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-500'}`}>{writeToAchievements ? '开启' : '关闭'}</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-800">问题中心</p>
+                            <p className="text-[11px] text-slate-400">已审核问题写入问题中心</p>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${writeToIssues ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-500'}`}>{writeToIssues ? '开启' : '关闭'}</span>
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                )
               ) : (
-                <div className="flex-1 flex items-center justify-center text-slate-400 text-sm text-center py-12">请选择左侧记录查看审核概览</div>
+                <div className="flex-1 flex items-center justify-center text-slate-400 text-sm text-center py-12">
+                  {viewMode === 'all' ? '请选择左侧记录查看审核操作' : '请选择左侧记录查看审核概览'}
+                </div>
               )}
             </div>
           </aside>

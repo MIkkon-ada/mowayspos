@@ -376,3 +376,165 @@ function rightPanelOrSource() {
   if (endIdx === -1) return source;
   return source.slice(idx, endIdx);
 }
+
+// ===== P6-P4-B2-FIX: Persisted task card guard tests =====
+
+describe('task card identity — isPersistedTaskCard and backendCardIndex', () => {
+
+  it('confirmThreeColumnStructure.test.mjs — ConfirmationTaskCard type has backendCardIndex field', () => {
+    const domainFile = readFileSync(resolve(__dirname, '..', 'src', 'domain', 'confirmationTaskCards.ts'), 'utf8');
+    assert.ok(domainFile.includes('backendCardIndex'),
+      'Expected backendCardIndex in ConfirmationTaskCard type definition');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — ConfirmationTaskCard type has isPersistedTaskCard field', () => {
+    const domainFile = readFileSync(resolve(__dirname, '..', 'src', 'domain', 'confirmationTaskCards.ts'), 'utf8');
+    assert.ok(domainFile.includes('isPersistedTaskCard'),
+      'Expected isPersistedTaskCard in ConfirmationTaskCard type definition');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — real cards have isPersistedTaskCard: true', () => {
+    const domainFile = readFileSync(resolve(__dirname, '..', 'src', 'domain', 'confirmationTaskCards.ts'), 'utf8');
+    assert.ok(domainFile.includes('isPersistedTaskCard: true'),
+      'Expected real persisted cards to have isPersistedTaskCard: true');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — fallback cards have isPersistedTaskCard: false', () => {
+    const domainFile = readFileSync(resolve(__dirname, '..', 'src', 'domain', 'confirmationTaskCards.ts'), 'utf8');
+    assert.ok(domainFile.includes('isPersistedTaskCard: false'),
+      'Expected fallback cards to have isPersistedTaskCard: false');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — backendCardIndex is set in real cards', () => {
+    const domainFile = readFileSync(resolve(__dirname, '..', 'src', 'domain', 'confirmationTaskCards.ts'), 'utf8');
+    assert.ok(domainFile.includes('backendCardIndex: index') || domainFile.includes('backendCardIndex:index'),
+      'Expected backendCardIndex to be set to the original array index for real cards');
+  });
+});
+
+describe('non-persisted card guard — no card actions without real task_reports', () => {
+
+  it('confirmThreeColumnStructure.test.mjs — hasAnyPersistedTaskCard computed property exists', () => {
+    assert.ok(source.includes('hasAnyPersistedTaskCard'),
+      'Expected hasAnyPersistedTaskCard computed in ConfirmPage');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — activeCardBackendIndex guard exists', () => {
+    assert.ok(source.includes('activeCardBackendIndex'),
+      'Expected activeCardBackendIndex computed for safely calling backend card APIs');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — handleTaskCardDecision checks activeCardBackendIndex', () => {
+    // The handler must include a null check for activeCardBackendIndex
+    const decisionHandler = source.slice(
+      source.indexOf('handleTaskCardDecision'),
+      source.indexOf('handleCoordinatorCardFeedback') > source.indexOf('handleTaskCardDecision')
+        ? source.indexOf('handleCoordinatorCardFeedback')
+        : source.indexOf('handleCoachCardDecide')
+    );
+    assert.ok(decisionHandler.includes('activeCardBackendIndex'),
+      'Expected handleTaskCardDecision to check activeCardBackendIndex');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — handleCoachCardDecide checks activeCardBackendIndex', () => {
+    const coachHandler = source.slice(
+      source.indexOf('handleCoachCardDecide'),
+      source.indexOf('handleSubmit') > source.indexOf('handleCoachCardDecide')
+        ? source.indexOf('handleSubmit')
+        : source.length
+    );
+    assert.ok(coachHandler.includes('activeCardBackendIndex'),
+      'Expected handleCoachCardDecide to check activeCardBackendIndex');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — handleCoordinatorCardFeedback checks activeCardBackendIndex', () => {
+    const coordHandler = source.slice(
+      source.indexOf('handleCoordinatorCardFeedback'),
+      source.indexOf('handleCoordinatorFeedback') > source.indexOf('handleCoordinatorCardFeedback')
+        ? source.indexOf('handleCoordinatorFeedback')
+        : source.length
+    );
+    assert.ok(coordHandler.includes('activeCardBackendIndex'),
+      'Expected handleCoordinatorCardFeedback to check activeCardBackendIndex');
+  });
+});
+
+describe('fallback card UI — "未生成结构化任务卡" message', () => {
+
+  it('confirmThreeColumnStructure.test.mjs — shows "未生成结构化任务卡" when no persisted cards', () => {
+    const rps = rightPanelOrSource();
+    assert.ok(rps.includes('未生成结构化任务卡'),
+      'Expected "未生成结构化任务卡" fallback message in right panel');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — shows fallback guidance text about using submission actions', () => {
+    const rps = rightPanelOrSource();
+    assert.ok(rps.includes('整条提交'),
+      'Expected guidance to use submission actions when no persisted cards');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — "当前任务卡" tab is disabled when no persisted cards', () => {
+    assert.ok(source.includes('disabled={!hasAnyPersistedTaskCard}'),
+      'Expected "当前任务卡" tab button to be disabled when no persisted cards');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — check ownerActionScope defaults to submission when no real cards (useEffect)', () => {
+    // The useEffect should reference hasAnyPersistedTaskCard
+    assert.ok(source.includes('hasAnyPersistedTaskCard'),
+      'Expected useEffect to check hasAnyPersistedTaskCard for default scope');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — middle panel shows "本次提交概览" for fallback cards', () => {
+    assert.ok(source.includes('本次提交概览'),
+      'Expected fallback card badge to say "本次提交概览" not "任务卡 1/1"');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — middle panel shows warning banner when no persisted cards', () => {
+    const review = reviewPanelContent();
+    assert.ok(review.includes('未生成结构化任务卡'),
+      'Expected warning banner in review panel when no persisted cards');
+  });
+});
+
+describe('card action isolation — actions only for persisted cards', () => {
+
+  it('confirmThreeColumnStructure.test.mjs — card action buttons are guarded by isPersistedTaskCard', () => {
+    const rps = rightPanelOrSource();
+    assert.ok(rps.includes('isPersistedTaskCard'),
+      'Expected card action buttons to be inside isPersistedTaskCard guard');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — submission actions still exist', () => {
+    const rps = rightPanelOrSource();
+    assert.ok(rps.includes('确认入库') && rps.includes('退回提交人'),
+      'Expected submission-level actions to remain available');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — "整条提交" tab is always clickable', () => {
+    assert.ok((source.match(/整条提交/g) || []).length >= 2,
+      'Expected "整条提交" to appear at least twice (tab + guidance text)');
+  });
+});
+
+describe('layout preservation — confirm page unchanged structurally', () => {
+
+  it('confirmThreeColumnStructure.test.mjs — three-column grid still present', () => {
+    const gridMatch = source.match(/gridTemplateColumns\s*:\s*['"]([^'"]+)['"]/);
+    assert.ok(gridMatch, 'Three-column grid template must still exist');
+    const cols = gridMatch[1].split(/\s+/);
+    assert.ok(cols.length >= 3, `Expected ≥3 column tracks, got ${cols.length}`);
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — no Modal has been restored', () => {
+    assert.ok(!source.includes('cardDetailOpen'),
+      'cardDetailOpen must NOT be restored');
+    assert.ok(!source.includes('fixed inset-0 z-50'),
+      'Fixed overlay must NOT be restored');
+  });
+
+  it('confirmThreeColumnStructure.test.mjs — no duplicate operation text in middle panel', () => {
+    const review = reviewPanelContent();
+    assert.ok(!review.includes('确认入库'),
+      'Middle panel must not have action buttons');
+  });
+});

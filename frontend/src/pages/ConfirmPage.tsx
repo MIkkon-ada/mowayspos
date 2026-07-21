@@ -734,6 +734,11 @@ export function ConfirmPage() {
 
   async function handleTaskCardDecision(action: 'confirm' | 'return' | 'transfer' | 'ceo') {
     if (!selected || !currentUser) return
+    if (activeCardBackendIndex == null) {
+      setActionError('当前提交中不存在可处理的任务卡')
+      return
+    }
+    const cardIndex = activeCardBackendIndex
     const note = actionNote.trim() || (
       action === 'return' ? '退回并重新编辑' : action === 'transfer' ? '转交统筹人' : action === 'ceo' ? '转交企业教练' : ''
     )
@@ -742,12 +747,12 @@ export function ConfirmPage() {
     setActing(true)
     try {
       const response = action === 'confirm'
-        ? await confirmTaskCard(selected.id, activeCardIndex, currentUser.name)
+        ? await confirmTaskCard(selected.id, cardIndex, currentUser.name)
         : action === 'return'
-          ? await rejectTaskCard(selected.id, activeCardIndex, note, currentUser.name)
+          ? await rejectTaskCard(selected.id, cardIndex, note, currentUser.name)
           : action === 'transfer'
-            ? await transferTaskCardCoordinator(selected.id, activeCardIndex, note, currentUser.name)
-            : await escalateTaskCardCeo(selected.id, activeCardIndex, note, currentUser.name)
+            ? await transferTaskCardCoordinator(selected.id, cardIndex, note, currentUser.name)
+            : await escalateTaskCardCeo(selected.id, cardIndex, note, currentUser.name)
       const updatedSubmission = (response as { submission?: ConfirmationItem }).submission
       const updated = updatedSubmission || selected
       setItems((prev) => prev.map((i) => i.id === selected.id ? updated : i))
@@ -785,11 +790,15 @@ export function ConfirmPage() {
   // 单卡企业教练批示
   async function handleCoachCardDecide() {
     if (!selected || !currentUser || !coachNote.trim()) return
+    if (activeCardBackendIndex == null) {
+      setActionError('当前提交中不存在可处理的任务卡')
+      return
+    }
     setActionError(null)
     setActionSuccess(null)
     setCoachActing(true)
     try {
-      await ceoDecideTaskCard(selected.id, activeCardIndex, coachNote, currentUser.name)
+      await ceoDecideTaskCard(selected.id, activeCardBackendIndex, coachNote, currentUser.name)
       setActionSuccess('任务卡批示已提交，已返回项目负责人继续处理。')
       setCoachNote('')
       // 重新加载后检查是否还有待办卡
@@ -828,13 +837,17 @@ export function ConfirmPage() {
 
   async function handleCoordinatorCardFeedback() {
     if (!selected || !currentUser || !coordinatorCardNote.trim()) return
+    if (activeCardBackendIndex == null) {
+      setActionError('当前提交中不存在可处理的任务卡')
+      return
+    }
     setActionError(null)
     setActionSuccess(null)
     setCoordinatorActing(true)
     try {
       await coordinatorFeedbackTaskCard(
         selected.id,
-        activeCardIndex,
+        activeCardBackendIndex,
         coordinatorCardNote,
         currentUser.name,
       )
@@ -974,6 +987,7 @@ export function ConfirmPage() {
     fallbackSubtaskNames: confirmationContext.subtaskNames,
   })
   const selectedStatus = SS.normalize(selected?.confirm_status)
+  const hasAnyPersistedTaskCard = taskCards.some((card) => card.isPersistedTaskCard)
   const hasPendingSubmissionCards = taskCards.some((card) =>
     card.confirmationStatus === 'transferred_to_coordinator' ||
     card.confirmationStatus === ('pending_ceo_' + 'decision'),
@@ -981,6 +995,8 @@ export function ConfirmPage() {
   const submissionActionsLocked = acting || projectArchived || hasPendingSubmissionCards
   const activeCardIndex = Math.min(selectedCardIndex, Math.max(taskCards.length - 1, 0))
   const activeCard = taskCards[activeCardIndex]
+  /** 调用后端单卡 API 时使用的索引：使用后端原始索引，fallback 时不可调用 */
+  const activeCardBackendIndex = activeCard?.isPersistedTaskCard ? activeCard.backendCardIndex! : null
   const cardWaitingCoordinator =
     activeCard?.confirmationStatus === 'transferred_to_coordinator'
   const activeReviewCard = activeCard ? normalizeReviewCardData(activeCard, {
@@ -1009,6 +1025,15 @@ export function ConfirmPage() {
   const effectivePendingItems = assetProjection.allIssues
   const hasPendingItems = effectivePendingItems.length > 0
   const canEditSubmissionIssues = viewMode === 'all' && canUseOwnerActions && Boolean(selected) && SS.OWNER_ACTIONABLE.has(selectedStatus)
+
+  // 若无真实卡片，强制切换到整条提交
+  useEffect(() => {
+    if (viewMode === 'all' && !hasAnyPersistedTaskCard) {
+      setOwnerActionScope('submission')
+    } else if (viewMode === 'all' && hasAnyPersistedTaskCard && taskCards.length > 0) {
+      // 有真实卡片时默认展示当前任务卡
+    }
+  }, [viewMode, hasAnyPersistedTaskCard, taskCards.length])
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -1389,7 +1414,7 @@ export function ConfirmPage() {
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <p className="text-xs text-slate-400 font-semibold">任务卡 {cardIndex + 1}</p>
+                                <p className="text-xs text-slate-400 font-semibold">{card.isPersistedTaskCard ? `任务卡 ${cardIndex + 1}` : '本次提交概览'}</p>
                                 <h2 className="mt-1 text-base font-bold text-slate-950 truncate">{card.title}</h2>
                               </div>
                               <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${taskCardDecisionTone(decisionStatus)}`}>{decisionLabel}</span>
@@ -1412,10 +1437,20 @@ export function ConfirmPage() {
               {/* 当前任务卡内嵌详情 */}
               {activeCard && activeReviewCard && (
                 <section className="mt-4 pt-4 border-t overflow-y-auto flex-shrink" style={{ borderColor: '#E9EFF6', minHeight: 0 }}>
+                  {/* 无真实任务卡时显示提示 */}
+                  {!hasAnyPersistedTaskCard && (
+                    <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                      未生成结构化任务卡：本次提交没有可逐卡处理的结构化任务卡，以下为本次提交的只读概览。请使用右侧"整条提交"完成审核。
+                    </div>
+                  )}
                   <div className="flex items-start justify-between gap-3 mb-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-bold text-blue-600 bg-blue-50 rounded-full px-2.5 py-1">{activeReviewCard.cardIndexText}</span>
+                        {hasAnyPersistedTaskCard ? (
+                          <span className="text-xs font-bold text-blue-600 bg-blue-50 rounded-full px-2.5 py-1">{activeReviewCard.cardIndexText}</span>
+                        ) : (
+                          <span className="text-xs font-bold text-slate-500 bg-slate-100 rounded-full px-2.5 py-1">本次提交概览</span>
+                        )}
                         <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-600">{activeReviewCard.statusText}</span>
                       </div>
                       <h2 className="mt-1.5 text-lg font-bold text-slate-950">{activeReviewCard.title}</h2>
@@ -1647,8 +1682,9 @@ export function ConfirmPage() {
                         <div className="flex border-b border-slate-200" style={{ marginBottom: -1 }}>
                           <button
                             type="button"
-                            onClick={() => { setOwnerActionScope('card'); setPendingAction(null); setActionNote('') }}
-                            className={`flex-1 py-2 text-xs font-bold border-b-2 transition-colors ${ownerActionScope === 'card' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+                            onClick={() => { if (hasAnyPersistedTaskCard) { setOwnerActionScope('card'); setPendingAction(null); setActionNote('') } }}
+                            disabled={!hasAnyPersistedTaskCard}
+                            className={`flex-1 py-2 text-xs font-bold border-b-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${ownerActionScope === 'card' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
                           >
                             当前任务卡
                           </button>
@@ -1664,12 +1700,17 @@ export function ConfirmPage() {
                         {ownerActionScope === 'card' ? (
                           /* --- 当前任务卡操作 --- */
                           <div className="space-y-3">
-                            {activeCard ? (
+                            {!hasAnyPersistedTaskCard ? (
+                              <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-sm text-slate-600">
+                                <p className="font-semibold text-slate-800 mb-1">未生成结构化任务卡</p>
+                                <p className="text-xs text-slate-500">本次提交没有可逐卡处理的结构化任务卡，请使用"整条提交"完成审核。</p>
+                              </div>
+                            ) : activeCard ? (
                               <>
                                 {/* 当前卡信息 */}
                                 <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-sm">
                                   <div className="flex items-center justify-between">
-                                    <span className="font-medium text-slate-700">任务卡 {activeCardIndex + 1}</span>
+                                    <span className="font-medium text-slate-700">任务卡 {activeCardIndex + 1}/{taskCards.length}</span>
                                     <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${taskCardDecisionTone(activeCard.confirmationStatus)}`}>{taskCardDecisionLabel(activeCard.confirmationStatus)}</span>
                                   </div>
                                   <p className="mt-1 text-xs text-slate-500 truncate">{activeCard.title}</p>
@@ -1693,23 +1734,25 @@ export function ConfirmPage() {
                                   </div>
                                 )}
 
-                                {/* Card action buttons */}
-                                <div className="space-y-2">
-                                  <button type="button" onClick={() => handleTaskCardDecision('confirm')} disabled={acting || projectArchived || cardWaitingCoordinator} className="w-full h-10 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-50 hover:bg-blue-700 transition">
-                                    确认入库
-                                  </button>
-                                  <button type="button" onClick={() => handleTaskCardDecision('return')} disabled={acting || projectArchived || cardWaitingCoordinator} className="w-full h-10 rounded-lg border border-orange-300 bg-white text-orange-600 text-sm font-semibold disabled:opacity-50 hover:bg-orange-50 transition">
-                                    退回并重新编辑
-                                  </button>
-                                  {!cardWaitingCoordinator && activeCard.confirmationStatus !== 'coordinator_given' && (
-                                    <button type="button" onClick={() => handleTaskCardDecision('transfer')} disabled={acting || projectArchived} className="w-full h-10 rounded-lg border border-violet-300 bg-white text-violet-600 text-sm font-semibold disabled:opacity-50 hover:bg-violet-50 transition">
-                                      转交统筹人
+                                {/* Card action buttons — only for persisted task cards */}
+                                {activeCard.isPersistedTaskCard && (
+                                  <div className="space-y-2">
+                                    <button type="button" onClick={() => handleTaskCardDecision('confirm')} disabled={acting || projectArchived || cardWaitingCoordinator} className="w-full h-10 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-50 hover:bg-blue-700 transition">
+                                      确认入库
                                     </button>
-                                  )}
-                                  <button type="button" onClick={() => handleTaskCardDecision('ceo')} disabled={acting || projectArchived || cardWaitingCoordinator} className="w-full h-10 rounded-lg border border-slate-300 bg-white text-slate-600 text-sm font-semibold disabled:opacity-50 hover:bg-slate-50 transition">
-                                    转交企业教练
-                                  </button>
-                                </div>
+                                    <button type="button" onClick={() => handleTaskCardDecision('return')} disabled={acting || projectArchived || cardWaitingCoordinator} className="w-full h-10 rounded-lg border border-orange-300 bg-white text-orange-600 text-sm font-semibold disabled:opacity-50 hover:bg-orange-50 transition">
+                                      退回并重新编辑
+                                    </button>
+                                    {!cardWaitingCoordinator && activeCard.confirmationStatus !== 'coordinator_given' && (
+                                      <button type="button" onClick={() => handleTaskCardDecision('transfer')} disabled={acting || projectArchived} className="w-full h-10 rounded-lg border border-violet-300 bg-white text-violet-600 text-sm font-semibold disabled:opacity-50 hover:bg-violet-50 transition">
+                                        转交统筹人
+                                      </button>
+                                    )}
+                                    <button type="button" onClick={() => handleTaskCardDecision('ceo')} disabled={acting || projectArchived || cardWaitingCoordinator} className="w-full h-10 rounded-lg border border-slate-300 bg-white text-slate-600 text-sm font-semibold disabled:opacity-50 hover:bg-slate-50 transition">
+                                      转交企业教练
+                                    </button>
+                                  </div>
+                                )}
                               </>
                             ) : (
                               <div className="text-center text-sm text-slate-400 py-4">
@@ -1834,7 +1877,7 @@ export function ConfirmPage() {
                       )}
 
                       {/* 任务卡级统筹反馈 */}
-                      {activeCard && activeCard.confirmationStatus === 'transferred_to_coordinator' && (
+                      {activeCard && activeCard.isPersistedTaskCard && activeCard.confirmationStatus === 'transferred_to_coordinator' && (
                         <section className="rounded-xl border p-3" style={{ borderColor: '#A5B4FC', background: 'linear-gradient(135deg,#EEF2FF,#E0E7FF)' }}>
                           <div className="flex items-center justify-between gap-2 mb-2">
                             <span className="text-sm font-bold text-indigo-800">单卡统筹反馈</span>
@@ -1878,7 +1921,7 @@ export function ConfirmPage() {
                       )}
 
                       {/* 单卡企业教练批示 */}
-                      {activeCard && activeCard.confirmationStatus === 'pending_ceo_decision' && (
+                      {activeCard && activeCard.isPersistedTaskCard && activeCard.confirmationStatus === 'pending_ceo_decision' && (
                         <section className="rounded-xl border p-3" style={{ borderColor: '#C4B5FD', background: 'linear-gradient(135deg,#F5F3FF,#EEF2FF)' }}>
                           <div className="flex items-center justify-between gap-2 mb-2">
                             <span className="text-sm font-bold text-violet-800">单卡企业教练批示</span>

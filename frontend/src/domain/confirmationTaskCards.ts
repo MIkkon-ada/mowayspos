@@ -25,6 +25,10 @@ export type ConfirmationTaskCard = {
   achievements: string[]
   pendingItems: string[]
   nextSteps: string[]
+  /** 在后端 task_reports 中的原始索引（仅真实卡片有值） */
+  backendCardIndex?: number
+  /** 是否为后端真实存在的结构化任务卡 */
+  isPersistedTaskCard: boolean
 }
 
 export type ReviewCardViewModel = {
@@ -296,6 +300,8 @@ export function buildConfirmationTaskCards(
         achievements,
         pendingItems,
         nextSteps,
+        backendCardIndex: index,
+        isPersistedTaskCard: true,
       }
     })
   }
@@ -324,5 +330,7 @@ export function buildConfirmationTaskCards(
     achievements: unique(achievementTextArray(data.achievements)),
     pendingItems: unique([...issueTextArray(data.issues), ...issueTextArray(data.key_task_issues), ...issueTextArray(data.pending_items)]),
     nextSteps: unique(stringArray(data.next_steps)),
+    backendCardIndex: undefined,
+    isPersistedTaskCard: false,
   }]
 }

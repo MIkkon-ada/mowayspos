@@ -920,6 +920,38 @@ export function ConfirmPage() {
     return true
   })
 
+  // 选中状态与可见列表一致性保护
+  // 确保 selected 始终可见于左栏列表，避免「列表空但显示详情幽灵」的问题
+  useEffect(() => {
+    if (loading) return
+    if (!selected) return
+    // 左栏无可见记录 → 清空所有选中状态
+    if (visibleItems.length === 0) {
+      setSelected(null)
+      setCardDetailOpen(false)
+      return
+    }
+    // 当前 selected 不在 visibleItems 中
+    if (!visibleItems.some(v => v.id === selected.id)) {
+      // 深链：尝试调整 filterStatus 使深链记录可见
+      if (urlSubmissionId === selected.id) {
+        const item = items.find(i => i.id === selected.id)
+        if (item) {
+          const s = SS.normalize(item.confirm_status)
+          if (filterStatus === 'owner_actionable' && !SS.OWNER_ACTIONABLE.has(s)) {
+            setFilterStatus('')
+          } else if (filterStatus && filterStatus !== 'owner_actionable' && s !== filterStatus) {
+            setFilterStatus('')
+          }
+        }
+      } else {
+        // 非深链：选第一条可见记录
+        pickItem(visibleItems[0])
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleItems.length, selected, loading, urlSubmissionId, items, filterStatus])
+
   const opLogs = items.filter((i) => SS.normalize(i.confirm_status) !== SS.S_NEW).slice(0, 5)
   const selectedResult = selected ? (getHumanResult(selected) || getAIResult(selected)) : null
   const hasTaskReports = Array.isArray(selectedResult?.task_reports) && (selectedResult!.task_reports as unknown[]).length > 0
@@ -1051,10 +1083,10 @@ export function ConfirmPage() {
       </header>
 
       <div className="flex-1 overflow-hidden flex flex-col p-4 gap-3" style={{ background: '#F1F5F9' }}>
-        <div className="flex gap-3 flex-1 overflow-hidden min-h-0">
+        <div data-confirm-layout="three-column" className="flex-1 overflow-hidden min-h-0" style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 0.8fr) minmax(500px, 1.6fr) minmax(280px, 0.9fr)', gap: '12px' }}>
 
-          {/* Left: compact list */}
-          <div className="w-[400px] xl:w-[420px] flex-shrink-0 flex flex-col bg-white rounded-2xl border overflow-hidden" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+          {/* Left: queue panel */}
+          <section data-confirm-panel="queue" className="flex flex-col bg-white rounded-2xl border overflow-hidden" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
             <div className="px-4 py-3 border-b flex-shrink-0 flex items-center justify-between" style={{ borderColor: '#E9EFF6' }}>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-bold text-slate-800">
@@ -1149,10 +1181,10 @@ export function ConfirmPage() {
                 )
               })}
             </div>
-          </div>
+          </section>
 
-          {/* Right: detail panel */}
-          <div className="flex-1 flex flex-col bg-white rounded-2xl border overflow-hidden" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+          {/* Center: review panel */}
+          <section data-confirm-panel="review" className="flex flex-col bg-white rounded-2xl border overflow-hidden" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
             {/* Scrollable body */}
             {/* Page-level action feedback */}
             {(actionError || actionSuccess) && (
@@ -1564,9 +1596,186 @@ export function ConfirmPage() {
 
               </>
             ) : (
-              <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">← 点击左侧列表查看详情</div>
+              <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">请选择左侧审核事项</div>
             )}
-          </div>
+
+            {/* 操作日志 — 内嵌于中栏底部 */}
+            <div className="border-t flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
+              <button
+                onClick={() => setOpLogsOpen(!opLogsOpen)}
+                className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-700">操作日志</span>
+                  {opLogs.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">{opLogs.length}</span>
+                  )}
+                </div>
+                <svg
+                  style={{ width: 12, height: 12, color: '#94A3B8', transition: 'transform 0.2s', transform: opLogsOpen ? 'rotate(180deg)' : undefined }}
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {opLogsOpen && (
+                <div className="border-t" style={{ borderColor: '#E9EFF6' }}>
+                  {opLogs.length === 0 ? (
+                    <div className="py-3 text-center text-xs text-slate-400">暂无操作记录</div>
+                  ) : (
+                    <div className="px-3 py-2 max-h-52 overflow-y-auto">
+                      <div className="space-y-1.5">
+                        {opLogs.map((item, idx) => {
+                          const action = getConfirmActionLabel(item.confirm_status)
+                          const summary = getConfirmActionSummary(item)
+                          const note = getConfirmActionNote(item)
+                          const time = fmtShort((item as Record<string, unknown>).updated_at as string || item.created_at)
+                          const isDone = SS.CONFIRMED_AND_STORED.has(SS.normalize(item.confirm_status))
+                          const dotColor = isDone ? '#3B82F6' : SS.normalize(item.confirm_status) === SS.S_RETURNED ? '#F97316' : '#8B5CF6'
+                          return (
+                            <div key={item.id} className="flex items-start gap-2.5 px-2 py-1.5 rounded-md hover:bg-slate-50">
+                              <span className="mt-1.5 w-2 h-2 rounded-full flex-shrink-0" style={{ background: dotColor }} />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs font-semibold text-slate-700">{action}</span>
+                                  <span className="text-[10px] text-slate-400 flex-shrink-0">{time}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  <Ava name={item.submitter} />
+                                  <span className="text-[11px] text-slate-500 truncate">{item.submitter}</span>
+                                </div>
+                                {summary && <p className="mt-0.5 text-[11px] text-slate-500 leading-4 line-clamp-1">{summary}</p>}
+                                {note && <p className="mt-0.5 text-[10px] text-slate-400 leading-4 line-clamp-1">{note}</p>}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </section>
+          {/* Right: action-preview panel */}
+          <aside data-confirm-panel="action-preview" className="flex flex-col bg-white rounded-2xl border overflow-hidden" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+            <div className="px-4 py-3 border-b flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
+              <span className="text-sm font-bold text-slate-800">审核概览</span>
+            </div>
+            <div className="overflow-y-auto flex-1 px-4 py-3">
+              {selected ? (
+                <div className="space-y-4">
+                  {/* 当前记录 */}
+                  <section>
+                    <p className="text-xs font-bold text-slate-500 mb-2 tracking-wider">当前记录</p>
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">项目</span>
+                        <span className="font-medium text-slate-700 truncate ml-2 max-w-[140px]">{selectedProjectName || '—'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">提交人</span>
+                        <span className="font-medium text-slate-700">{selected?.submitter || '—'}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">状态</span>
+                        <StatusBadge status={selected?.confirm_status} />
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">来源</span>
+                        <SourceBadge type={selected?.source_type} />
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">提交时间</span>
+                        <span className="font-medium text-slate-700 text-xs">{fmtShort(selected?.created_at)}</span>
+                      </div>
+                    </div>
+                  </section>
+                  {/* 内容规模 */}
+                  <section>
+                    <p className="text-xs font-bold text-slate-500 mb-2 tracking-wider">内容规模</p>
+                    <div className="rounded-lg border border-slate-100 bg-slate-50/40 p-2">
+                      <div className="grid grid-cols-2">
+                        <div className="px-2 py-2 border-r border-b border-slate-100">
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-lg font-bold text-slate-700">{taskCards.length}</span>
+                            <span className="text-[11px] text-slate-400">任务卡</span>
+                          </div>
+                        </div>
+                        <div className="px-2 py-2 border-b border-slate-100">
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-lg font-bold text-slate-700">{taskCards.reduce((sum, c) => sum + c.achievements.length, 0)}</span>
+                            <span className="text-[11px] text-slate-400">成果</span>
+                          </div>
+                        </div>
+                        <div className="px-2 py-2 border-r border-slate-100">
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-lg font-bold text-slate-700">{taskCards.reduce((sum, c) => sum + c.pendingItems.length, 0)}</span>
+                            <span className="text-[11px] text-slate-400">待处理</span>
+                          </div>
+                        </div>
+                        <div className="px-2 py-2">
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-lg font-bold text-slate-700">{taskCards.reduce((sum, c) => sum + c.nextSteps.length, 0)}</span>
+                            <span className="text-[11px] text-slate-400">下一步</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                  {/* 当前选中任务卡 */}
+                  {activeCard && (
+                    <section>
+                      <p className="text-xs font-bold text-slate-500 mb-2 tracking-wider">当前选中任务卡</p>
+                      <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">序号</span>
+                          <span className="font-medium text-slate-700">任务卡 {activeCardIndex + 1}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">标题</span>
+                          <span className="font-medium text-slate-700 text-right ml-2 max-w-[150px] truncate">{activeCard.title}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-400">单卡状态</span>
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${taskCardDecisionTone(activeCard.confirmationStatus)}`}>{taskCardDecisionLabel(activeCard.confirmationStatus)}</span>
+                        </div>
+                      </div>
+                    </section>
+                  )}
+                  {/* 入库目标预览 */}
+                  <section>
+                    <p className="text-xs font-bold text-slate-500 mb-2 tracking-wider">入库目标预览</p>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-emerald-50/60 px-3 py-2.5">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">工作推进表</p>
+                          <p className="text-[11px] text-emerald-600">始终写入</p>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700">必写</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">成果库</p>
+                          <p className="text-[11px] text-slate-400">已审核成果写入成果库</p>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${writeToAchievements ? 'bg-violet-100 text-violet-700' : 'bg-slate-100 text-slate-500'}`}>{writeToAchievements ? '开启' : '关闭'}</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">问题中心</p>
+                          <p className="text-[11px] text-slate-400">已审核问题写入问题中心</p>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${writeToIssues ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-500'}`}>{writeToIssues ? '开启' : '关闭'}</span>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-slate-400 text-sm text-center py-12">请选择左侧记录查看审核概览</div>
+              )}
+            </div>
+          </aside>
         </div>
 
         {cardDetailOpen && activeCard && activeReviewCard && (
@@ -1787,70 +1996,6 @@ export function ConfirmPage() {
           </div>
         )}
 
-        {/* Operation log — collapsible */}
-        <div className="bg-white rounded-2xl border flex-shrink-0" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
-          <button
-            onClick={() => setOpLogsOpen(!opLogsOpen)}
-            className="w-full flex items-center justify-between px-5 py-3 hover:bg-slate-50 transition-colors rounded-2xl"
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-700">操作日志</span>
-              {opLogs.length > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-500">{opLogs.length}</span>
-              )}
-            </div>
-            <svg
-              style={{ width: 14, height: 14, color: '#94A3B8', transition: 'transform 0.2s', transform: opLogsOpen ? 'rotate(180deg)' : undefined }}
-              fill="none" stroke="currentColor" viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-          {opLogsOpen && (
-            <div className="border-t" style={{ borderColor: '#E9EFF6' }}>
-              {opLogs.length === 0 ? (
-                <div className="py-4 text-center text-xs text-slate-400">暂无操作记录</div>
-              ) : (
-                <div className="px-4 py-2.5">
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2.5">
-                    {opLogs.map((item, idx) => {
-                      const action = getConfirmActionLabel(item.confirm_status)
-                      const summary = getConfirmActionSummary(item)
-                      const note = getConfirmActionNote(item)
-                      const time = fmtShort((item as Record<string, unknown>).updated_at as string || item.created_at)
-                      const isDone = SS.CONFIRMED_AND_STORED.has(SS.normalize(item.confirm_status))
-                      const borderColor = isDone ? '#DBEAFE' : SS.normalize(item.confirm_status) === SS.S_RETURNED ? '#FED7AA' : '#E9D5FF'
-                      const dotColor = isDone ? '#3B82F6' : SS.normalize(item.confirm_status) === SS.S_RETURNED ? '#F97316' : '#8B5CF6'
-                      return (
-                        <div key={item.id} className="relative rounded-2xl border bg-white px-3 py-2.5" style={{ borderColor, boxShadow: '0 1px 2px rgba(15,23,42,0.04)' }}>
-                          <div className="absolute left-4.5 top-4.5 bottom-3.5 w-px border-l border-dashed" style={{ borderColor: '#E2E8F0' }} />
-                          <div className="flex items-start gap-2.5">
-                            <span className="mt-0.5 w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: dotColor, boxShadow: `0 0 0 4px ${dotColor}18` }} />
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <Ava name={item.submitter} />
-                                  <span className="text-xs font-semibold text-slate-700 truncate">{item.submitter}</span>
-                                </div>
-                                <span className="text-[11px] text-slate-400 flex-shrink-0">{time}</span>
-                              </div>
-                              <div className="mt-2 flex items-center gap-2.5 flex-wrap">
-                                <span className="text-sm font-bold text-slate-800">{action}</span>
-                                <StatusBadge status={item.confirm_status} />
-                              </div>
-                              <p className="mt-1.5 text-xs text-slate-500 leading-5 line-clamp-1">{summary}</p>
-                              <p className="mt-1 text-[11px] text-slate-400 leading-5 line-clamp-1">{note}</p>
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
       </div>
     </div>
   )

@@ -65,7 +65,7 @@ export function VoiceUpdatePage() {
   const projectArchived = isProjectArchived(selectedProject)
   const selectedProjectStatusLabel = selectedProject ? getProjectStatusLabel(selectedProject) : ''
   const projectInactiveMessage = selectedProject
-    ? `当前项目处于“${selectedProjectStatusLabel || '非执行阶段'}”，只能查看历史汇报，不能提取或提交新汇报。`
+    ? `当前项目处于"${selectedProjectStatusLabel || '非执行阶段'}"，只能查看历史汇报，不能提取或提交新汇报。`
     : null
   const projectSubmitBlockedReason = reportScope === 'all'
     ? null

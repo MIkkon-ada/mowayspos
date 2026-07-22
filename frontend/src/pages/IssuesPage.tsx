@@ -57,8 +57,7 @@ function ownerText(project?: Project | null): string {
 
 function coachText(project?: Project | null): string {
   if (!project) return '—'
-  const count = project.member_counts?.project_ceo ?? 0
-  return count > 0 ? `${count} 位企业教练` : '未配置'
+  return project.coaches?.length ? project.coaches.join('、') : '未配置'
 }
 
 function taskNameForId(tasks: TaskItem[], taskId?: number | null): string {
@@ -119,6 +118,9 @@ export function IssuesPage() {
   // project search
   const [projectSearch, setProjectSearch] = useState('')
 
+  // overview pagination
+  const [overviewPage, setOverviewPage] = useState(1)
+
   // add modal
   const [addOpen, setAddOpen] = useState(false)
 
@@ -138,6 +140,14 @@ export function IssuesPage() {
     if (!term) return projects
     return projects.filter((p) => p.name.toLowerCase().includes(term))
   }, [projects, projectSearch])
+
+  const overviewPageSize = 8
+  const overviewPageCount = Math.max(1, Math.ceil(visibleProjects.length / overviewPageSize))
+  const pagedProjects = visibleProjects.slice((overviewPage - 1) * overviewPageSize, overviewPage * overviewPageSize)
+
+  useEffect(() => {
+    setOverviewPage(1)
+  }, [projectSearch])
 
   // --- Load issues when projectId is set ---
   useEffect(() => {

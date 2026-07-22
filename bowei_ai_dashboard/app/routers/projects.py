@@ -486,6 +486,19 @@ def _member_summary(project_id: int, db: Session) -> dict:
     return counts
 
 
+def _coach_names(project_id: int, db: Session) -> list[str]:
+    """查询项目企业教练人名列表。"""
+    rows = db.execute(
+        text(
+            "SELECT DISTINCT p.name "
+            "FROM project_members pm JOIN people p ON pm.person_id = p.id "
+            "WHERE pm.project_id = :pid AND pm.role = 'project_ceo' ORDER BY p.name"
+        ),
+        {"pid": project_id},
+    ).fetchall()
+    return [r[0] for r in rows if r[0]]
+
+
 def _project_response(raw: dict, user_roles: list[str], db: Session) -> dict:
     """将 raw SQL 结果整理成项目响应。"""
     project_id = raw["id"]
@@ -518,6 +531,7 @@ def _project_response(raw: dict, user_roles: list[str], db: Session) -> dict:
         "coordinator": raw["coordinator"],
         "owners": _split_names(raw["owners"]),
         "collaborators": _split_names(raw["collaborators"]),
+        "coaches": _coach_names(project_id, db),
     }
 
 

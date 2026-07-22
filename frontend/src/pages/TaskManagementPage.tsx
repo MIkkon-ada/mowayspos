@@ -4,7 +4,7 @@ import { exportTasksToExcel } from '../utils/exportTasksExcel'
 import { exportPlanTableToExcel } from '../utils/exportPlanTableExcel'
 import { createTask, deleteTask, fetchTaskLogs, fetchTaskUpdates, fetchTasks, updateTask, extractTasksFromOutline, batchCreateTasks, restoreTask } from '../api/tasks'
 import type { TaskLog, TaskPayload, TaskUpdate, TaskDraft } from '../api/tasks'
-import { fetchSubTasks, createSubTask, patchSubTaskStatus, isPendingConfirmation, updateSubTask, deleteSubTask, restoreSubTask, fetchSubtaskDetail } from '../api/subtasks'
+import { fetchSubTasks, fetchSubTasksBatch, createSubTask, patchSubTaskStatus, isPendingConfirmation, updateSubTask, deleteSubTask, restoreSubTask, fetchSubtaskDetail } from '../api/subtasks'
 import type { SubTaskDetail, SubTaskPayload } from '../api/subtasks'
 import { createUpdate } from '../api/updates'
 import { ApiError, apiGet } from '../api/client'
@@ -460,18 +460,24 @@ export function TaskManagementPage() {
     if (planTableLoading) return
     const missingTasks = planBaseTasks.filter((task) => !(task.id in taskSubMap))
     if (missingTasks.length === 0) return
+    const missingIds = missingTasks.map((task) => task.id)
     setPlanTableLoading(true)
-    Promise.all(
-      missingTasks.map((task) =>
-        fetchSubTasks(task.id, false)
-          .then((subs) => [task.id, subs] as const)
-          .catch(() => [task.id, [] as SubTaskItem[]] as const),
-      ),
-    )
-      .then((results) => {
+    fetchSubTasksBatch(missingIds, false)
+      .then((batch) => {
         setTaskSubMap((prev) => {
           const next = { ...prev }
-          results.forEach(([taskId, subs]) => { next[taskId] = subs })
+          missingIds.forEach((taskId) => {
+            // 后端可能因权限跳过某些 task，对未返回的 key 置空避免重复请求
+            next[taskId] = batch[String(taskId)] ?? []
+          })
+          return next
+        })
+      })
+      .catch(() => {
+        // 批量接口失败：兜底置空，避免反复请求卡住首屏
+        setTaskSubMap((prev) => {
+          const next = { ...prev }
+          missingIds.forEach((taskId) => { next[taskId] = [] })
           return next
         })
       })
@@ -1138,7 +1144,7 @@ function handleFormSave(payload: TaskPayload) {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 9l6 6 6-6" />
                         </svg>
                       </button>
-                      <div className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer" onClick={() => focusProject(key)}>
+                      <div className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer" role="button" tabIndex={0} onClick={() => focusProject(key)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); focusProject(key) } }}>
                         <span className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0" style={{ background: `${groupColor}18`, color: groupColor }}>
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 12, height: 12 }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7a2 2 0 012-2h4l2 2h10a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
                         </span>
@@ -1184,7 +1190,7 @@ function handleFormSave(payload: TaskPayload) {
                               </button>
                             ) : <span style={{ width: 21 }} />}
                             <span className="text-xs font-bold px-1.5 py-0.5 rounded flex-shrink-0 mr-2" style={{ background: '#EEF2FF', color: '#6D28D9', minWidth: 20, textAlign: 'center' }}>{i + 1}</span>
-                            <div className="flex-1 min-w-0 flex items-center gap-1.5 cursor-pointer" onClick={() => openDetail(task)}>
+                            <div className="flex-1 min-w-0 flex items-center gap-1.5 cursor-pointer" role="button" tabIndex={0} onClick={() => openDetail(task)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(task) } }}>
                               <span className="text-sm font-medium text-slate-800 truncate">{task.key_task || '-'}</span>
                               {rowDeleted && <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0" style={{ background: '#FFEDD5', color: '#C2410C' }}>已删除</span>}
                             </div>
@@ -1256,7 +1262,7 @@ function handleFormSave(payload: TaskPayload) {
                                       }}
                                         className="text-xs border rounded-full px-2 py-0.5 font-bold cursor-pointer focus:outline-none"
                                         style={{ background: stBadge.cls.includes('blue') ? '#EFF6FF' : stBadge.cls.includes('emerald') ? '#F0FDF4' : stBadge.cls.includes('red') ? '#FEF2F2' : stBadge.cls.includes('amber') ? '#FFFBEB' : '#F8FAFC', color: stBadge.dot, border: `1.5px solid ${stBadge.dot}50` }}>
-                                        {['未开始','进行中','已完成','延期','暂缓'].map((s) => <option key={s}>{s}</option>)}
+                                        {['未开始','进行中','已完成','暂缓'].map((s) => <option key={s}>{s}</option>)}
                                       </select>
                                     ) : (
                                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${stBadge.cls}`}>
@@ -1371,7 +1377,7 @@ function handleFormSave(payload: TaskPayload) {
                               disabled={subSaving || selectedTaskArchived}
                               className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold focus:outline-none focus:border-indigo-300"
                             >
-                              {['未开始', '进行中', '已完成', '延期', '暂缓'].map((s) => <option key={s}>{s}</option>)}
+                              {['未开始', '进行中', '已完成', '暂缓'].map((s) => <option key={s}>{s}</option>)}
                             </select>
                           ) : (
                             <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${badge.cls}`}>
@@ -2095,7 +2101,9 @@ function SubTaskAssignmentModal({ taskId, projectId, editingSubTask, projectMemb
 
 const YEARS  = [2025, 2026, 2027, 2028]
 const MONTHS = [1,2,3,4,5,6,7,8,9,10,11,12]
-const STATUS_OPTIONS = ['未开始','进行中','已完成','延期','暂缓']
+// 「延期」不再作为可手选状态：延期由计划时间过期且未完成自动计算（isOverdueTask），与 Dashboard 后端逻辑一致。
+// 旧数据 status='延期' 仍能在 STATUS_BADGE 正常展示，但用户无法再手动选成「延期」。
+const STATUS_OPTIONS = ['未开始','进行中','已完成','暂缓']
 
 function parsePlanTime(val: string) {
   // 支持 "2026年5月~2026年8月" 或 "2026年5月" 或 "2026-06" 或 "5-6月"

@@ -303,6 +303,61 @@ def list_subtasks(
     return [crud.to_dict(r) for r in rows]
 
 
+@router.get("/api/tasks/subtasks/batch")
+def list_subtasks_batch(
+    task_ids: str = "",
+    deleted: bool = False,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """批量获取多个 task 的 subtask，一次请求替代多次 /api/tasks/{id}/subtasks。
+
+    用途：工作推进表 plan 视图首屏渲染需要所有 task 的 subtask，避免 N+1 请求。
+    权限：沿用单个接口策略——对每个 task 校验项目访问权；无权访问的 task 其结果不返回。
+    返回：{ "1": [...], "2": [...] }，task_id 作为 key（字符串）。
+    """
+    current_user = require_login(current_user, db)
+    context = get_user_context_from_db(current_user, db)
+    # 解析 task_ids，容错：空串/非法值/去重/上限
+    raw_ids = [s.strip() for s in task_ids.split(",") if s.strip()]
+    try:
+        ids = list({int(s) for s in raw_ids})  # 去重
+    except ValueError:
+        raise HTTPException(400, "task_ids must be comma-separated integers")
+    if not ids:
+        return {}
+    if len(ids) > 200:
+        raise HTTPException(400, "too many task_ids (max 200)")
+    tasks = db.query(models.Task).filter(models.Task.id.in_(ids)).all()
+    result: dict[str, list] = {}
+    for task in tasks:
+        if bool(getattr(task, "is_deleted", False)) and not deleted:
+            continue
+        project_id = _get_task_project_id(task, db)
+        if project_id is not None:
+            # 项目级权限校验：失败跳过该 task，不抛错打断整批
+            try:
+                require_project_access(current_user, project_id, db)
+            except HTTPException:
+                continue
+        elif not (context.get("is_tech_admin") or context.get("is_ceo")):
+            continue
+        if deleted:
+            try:
+                _check_trash_access(context, task, db)
+            except HTTPException:
+                continue
+        rows = (
+            db.query(models.SubTask)
+            .filter_by(task_id=task.id)
+            .filter(models.SubTask.is_deleted.is_(bool(deleted)))
+            .order_by(models.SubTask.created_at.asc())
+            .all()
+        )
+        result[str(task.id)] = [crud.to_dict(r) for r in rows]
+    return result
+
+
 @router.get("/api/subtasks/{row_id}/detail")
 def get_subtask_detail(
     row_id: int,

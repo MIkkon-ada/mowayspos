@@ -4,7 +4,6 @@ import {
   getPending,
   confirmSubmission,
   rejectSubmission,
-  resubmitSubmission,
   transferCoordinator,
   escalateCeo,
   confirmTaskCard,
@@ -16,7 +15,6 @@ import {
   coordinatorFeedback,
   coordinatorFeedbackTaskCard,
 } from '../api/confirmations'
-import { fetchMyUpdates } from '../api/updates'
 import { fetchSubtasksByAssignee, type SubTaskWithParent } from '../api/subtasks'
 import { fetchTasks } from '../api/tasks'
 import { useProject } from '../context/ProjectContext'
@@ -30,9 +28,76 @@ import { buildConfirmationAssetProjection } from '../domain/confirmationAssets'
 import { getProjectDisplayName } from '../domain/projectDisplay'
 
 type WriteMode = 'task_new' | 'subtask_update' | 'subtask_new'
-type ConfirmViewMode = 'mine' | 'all' | 'coordinator' | 'ceo'
+type ConfirmViewMode = 'all' | 'coordinator' | 'ceo'
 
 const REVIEWER_PROJECT_ROLES = new Set(['owner', 'coordinator', 'project_ceo', 'super_admin'])
+
+// Inline icon helpers (avoid react-icons dependency)
+function IconChevronDown({ size = 12, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  )
+}
+function IconSearch({ size = 12, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+    </svg>
+  )
+}
+function IconFileText({ size = 20, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" />
+    </svg>
+  )
+}
+function IconMail({ size = 20, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+    </svg>
+  )
+}
+function IconCheckCircle({ size = 14, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><path d="m22 4-10 10L8 10" />
+    </svg>
+  )
+}
+function IconAlertCircle({ size = 14, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+    </svg>
+  )
+}
+function IconArrowRight({ size = 14, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M5 12h14" /><path d="m12 5 7 7-7 7" />
+    </svg>
+  )
+}
+function IconCrown({ size = 14, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14" /><path d="M12 4v4" />
+    </svg>
+  )
+}
+
+function IconX({ size = 18, className = '' }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+    </svg>
+  )
+}
 
 function fmtTime(s?: string | null) { return fmtFull(s) }
 
@@ -205,8 +270,8 @@ export function ConfirmPage() {
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<'return' | 'transfer' | 'ceo' | null>(null)
   const [actionNote, setActionNote] = useState('')
-  const [supplementNote, setSupplementNote] = useState('')
   const [opLogsOpen, setOpLogsOpen] = useState(false)
+  const [showTranscript, setShowTranscript] = useState(false)
   const [selectedCardIndex, setSelectedCardIndex] = useState(0)
   const [cardDecisions, setCardDecisions] = useState<Record<number, 'confirm' | 'return' | 'transfer' | 'ceo'>>({})
   const [coordinatorCardNote, setCoordinatorCardNote] = useState('')
@@ -263,7 +328,7 @@ export function ConfirmPage() {
 
   const initialRedirectDone = useRef(false)
   const initialViewResolved = useRef(false)
-  const defaultViewMode: ConfirmViewMode = isReviewer ? 'all' : 'mine'
+  const defaultViewMode: ConfirmViewMode = 'all'
 
   // 从 URL 解析初始视图
   const resolveInitialView = (): ConfirmViewMode => {
@@ -271,7 +336,6 @@ export function ConfirmPage() {
     if (urlView === 'ceo' && canUseCoachDecisionView) return 'ceo'
     if (urlView === 'coordinator' && canUseCoordinatorView) return 'coordinator'
     if (urlView === 'all' && isReviewer) return 'all'
-    if (urlView === 'mine') return 'mine'
     return defaultViewMode
   }
   const [viewMode, setViewMode] = useState<ConfirmViewMode>(defaultViewMode)
@@ -328,7 +392,6 @@ export function ConfirmPage() {
     setWriteToAchievements(true)
     setWriteToIssues(true)
     setActionNote('')
-    setSupplementNote('')
     setPendingAction(null)
     setActionError(null)
     setActionSuccess(null)
@@ -373,8 +436,6 @@ export function ConfirmPage() {
   const coordinatorInteractionLocked = isCoordinatorView && coordinatorActing
 
   // 负责人 all 视图下的操作范围切换
-  const [ownerActionScope, setOwnerActionScope] = useState<'card' | 'submission'>('card')
-
   const [cardEditMode, setCardEditMode] = useState<Record<number, boolean>>({})
   const [cardProjOverride, setCardProjOverride] = useState<Record<number, string>>({})
   const [cardKeyTaskOverride, setCardKeyTaskOverride] = useState<Record<number, number | null>>({})
@@ -393,29 +454,7 @@ export function ConfirmPage() {
     setLoadError(null)
     setSelected(null)
     setItems([])
-    if (viewMode === 'mine') {
-      fetchMyUpdates()
-        .then((d) => {
-          if (!cancelled) {
-            const mapped = d as unknown as ConfirmationItem[]
-            setItems(mapped)
-            if (urlSubmissionId != null) {
-              const requested = mapped.find(i => i.id === urlSubmissionId)
-              if (requested) {
-                pickItem(requested)
-              } else {
-                setSelected(null)
-                setLoadError('该提交不存在或不属于当前账号')
-              }
-            } else {
-              const target = mapped[0]
-              if (target) pickItem(target)
-            }
-          }
-        })
-        .catch(() => { if (!cancelled) setLoadError('记录加载失败，请刷新重试') })
-        .finally(() => { if (!cancelled) setLoading(false) })
-    } else if (viewMode === 'ceo') {
+    if (viewMode === 'ceo') {
       const ceoProjectId = urlProjectId ?? null
       getPending(ceoProjectId, 'ceo', { includeCardLevel: true })
         .then((d) => {
@@ -496,7 +535,6 @@ export function ConfirmPage() {
     setEditStatus(String(r?.status_suggestion || '进行中'))
     setPendingAction(null)
     setActionNote('')
-    setSupplementNote('')
     setCoachNote('')
     setCoordinatorNote('')
     setCoordinatorCardNote('')
@@ -698,32 +736,6 @@ export function ConfirmPage() {
       setActionSuccess(action === 'return' ? '已退回' : action === 'transfer' ? '已转交统筹人' : '已提交企业教练决策')
       setActionNote('')
       setPendingAction(null)
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      setActionError(`操作失败：${msg}`)
-    } finally {
-      setActing(false)
-    }
-  }
-
-  async function handleResubmit() {
-    if (!selected || !currentUser) return
-    const note = supplementNote.trim()
-    if (!note) return
-    setActionError(null)
-    setActionSuccess(null)
-    setActing(true)
-    try {
-      const response = await resubmitSubmission(selected.id, note, currentUser.name)
-      const updated = response.submission ?? {
-        ...selected,
-        confirm_status: SS.S_PENDING_OWNER,
-        reject_reason: '',
-      }
-      setItems((prev) => prev.map((i) => i.id === selected.id ? updated : i))
-      setSelected(updated)
-      setSupplementNote('')
-      setActionSuccess('已重新提交，等待项目负责人审核')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       setActionError(`操作失败：${msg}`)
@@ -962,7 +974,10 @@ export function ConfirmPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleItems.length, selected, loading, urlSubmissionId, items, filterStatus])
 
-  const opLogs = items.filter((i) => SS.normalize(i.confirm_status) !== SS.S_NEW).slice(0, 5)
+  const selectedLogStatus = selected ? SS.normalize(selected.confirm_status) : ''
+  const opLogs = selected && selectedLogStatus !== SS.S_NEW && selectedLogStatus !== SS.S_PENDING_OWNER
+    ? [selected]
+    : []
   const selectedResult = selected ? (getHumanResult(selected) || getAIResult(selected)) : null
   const hasTaskReports = Array.isArray(selectedResult?.task_reports) && (selectedResult!.task_reports as unknown[]).length > 0
   const assetProjection = buildConfirmationAssetProjection(selectedResult)
@@ -1005,11 +1020,15 @@ export function ConfirmPage() {
     fallbackProjectName: selectedProjectName || editProject,
     fallbackTaskName: confirmationContext.keyTaskName || selected?.related_task || '',
   }) : null
+  const originalTranscript = String(selected?.transcript_text || '').trim()
+  const activeReviewEvidence = activeReviewCard?.evidence.length
+    ? activeReviewCard.evidence
+    : taskCards.length === 1 && originalTranscript
+      ? [originalTranscript]
+      : []
 
-  const isSubmitterView = viewMode === 'mine'
   const isProcessed = selected && SS.normalize(selected.confirm_status) !== SS.S_NEW
   const isConfirmed = selected ? SS.CONFIRMED_AND_STORED.has(SS.normalize(selected.confirm_status)) : false
-  const isReturned = selected ? SS.normalize(selected.confirm_status) === SS.S_RETURNED : false
 
   const confirmedWrites: string[] = []
   if (isConfirmed && selectedResult) {
@@ -1026,81 +1045,60 @@ export function ConfirmPage() {
   const hasPendingItems = effectivePendingItems.length > 0
   const canEditSubmissionIssues = viewMode === 'all' && canUseOwnerActions && Boolean(selected) && SS.OWNER_ACTIONABLE.has(selectedStatus)
 
-  // 若无真实卡片，强制切换到整条提交
-  useEffect(() => {
-    if (viewMode === 'all' && !hasAnyPersistedTaskCard) {
-      setOwnerActionScope('submission')
-    } else if (viewMode === 'all' && hasAnyPersistedTaskCard && taskCards.length > 0) {
-      // 有真实卡片时默认展示当前任务卡
-    }
-  }, [viewMode, hasAnyPersistedTaskCard, taskCards.length])
-
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Header */}
-      <header className="flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
-        <div className="flex items-center px-5 gap-2.5 h-14">
-          <div className="flex-1 min-w-0">
-            <h1 className="text-sm font-bold text-slate-800">AI 确认中心</h1>
-            <p className="text-[11px] text-slate-400 mt-0.5 truncate">
-              {viewMode === 'ceo'
-                ? '处理负责人上报的提交级或任务卡级决策事项。'
-                : viewMode === 'coordinator'
-                  ? '处理项目负责人转交的统筹意见事项。'
-                  : viewMode === 'all'
-                    ? '负责人确认 AI 提取结果后，正式写入工作推进表、成果库和问题中心。'
-                    : '查看我提交的工作汇报、AI 提取结果和确认状态。'}
-            </p>
+      <header data-confirm-header="compact" className="flex-shrink-0 bg-white border-b px-5 py-3" style={{ borderColor: '#E9EFF6' }}>
+        <div className="flex items-center gap-2">
+          <h1 className="mr-2 whitespace-nowrap text-lg font-bold text-slate-900">AI 确认中心</h1>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            {/* Tab buttons */}
+            <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: '#E9EFF6' }}>
+              {isReviewer && (
+                <button onClick={() => switchView('all')} disabled={coordinatorInteractionLocked} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1 ${viewMode === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                  待确认
+                  {pendingCount > 0 && <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${viewMode === 'all' ? 'bg-white/20 text-white' : 'bg-orange-100 text-orange-600'}`}>{pendingCount}</span>}
+                </button>
+              )}
+              {canUseCoordinatorView && (
+                <button onClick={() => switchView('coordinator')} disabled={coordinatorInteractionLocked} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1 ${viewMode === 'coordinator' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                  待我统筹
+                  {items.length > 0 && viewMode !== 'coordinator' && <span className="px-1.5 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-600">{items.filter(i => SS.normalize(i.confirm_status) === SS.S_WAITING_COORDINATOR).length || 0}</span>}
+                </button>
+              )}
+              {canUseCoachDecisionView && (
+                <button onClick={() => switchView('ceo')} disabled={coordinatorInteractionLocked} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1 ${viewMode === 'ceo' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                  待我决策
+                  {items.length > 0 && viewMode !== 'ceo' && <span className="px-1.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">{items.filter(i => SS.normalize(i.confirm_status) === SS.S_WAITING_CEO).length || 0}</span>}
+                </button>
+              )}
+            </div>
+
+            {/* Filters & search - all views consistent */}
+            <select value={filterProject} onChange={(e) => setFilterProject(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none min-w-[110px]">
+              <option value="">全部项目</option>
+              {allProjects.map((p) => <option key={p}>{p}</option>)}
+            </select>
+            {viewMode === 'all' && (
+              <select value={filterSubmitter} onChange={(e) => setFilterSubmitter(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none min-w-[110px]">
+                <option value="">全部提交人</option>
+                {allSubmitters.map((s) => <option key={s}>{s}</option>)}
+              </select>
+            )}
+            {!isCoachView && !isCoordinatorView && (
+              <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none min-w-[100px]">
+                <option value="">全部状态</option>
+                <option value="owner_actionable">待负责人处理</option>
+                <option value={SS.S_RETURNED}>已退回</option>
+                <option value={SS.S_WAITING_COORDINATOR}>已转交统筹</option>
+                <option value={SS.S_WAITING_CEO}>待企业教练决策</option>
+                <option value={SS.S_CONFIRMED}>已入库</option>
+              </select>
+            )}
+            <div className="relative ml-auto">
+              <IconSearch size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input value={search} onChange={(e) => setSearch(e.target.value)} type="text" placeholder="搜索记录/任务卡…" className="pl-7 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-300 w-40" />
+            </div>
           </div>
-        <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: '#E9EFF6' }}>
-          <button onClick={() => switchView('mine')} disabled={coordinatorInteractionLocked} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 ${viewMode === 'mine' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
-            我的提交记录
-          </button>
-          {isReviewer && (
-            <button onClick={() => switchView('all')} disabled={coordinatorInteractionLocked} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1 ${viewMode === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
-              待确认
-              {pendingCount > 0 && <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${viewMode === 'all' ? 'bg-white/20 text-white' : 'bg-orange-100 text-orange-600'}`}>{pendingCount}</span>}
-            </button>
-          )}
-          {canUseCoordinatorView && (
-            <button onClick={() => switchView('coordinator')} disabled={coordinatorInteractionLocked} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 ${viewMode === 'coordinator' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
-              待我统筹
-            </button>
-          )}
-          {canUseCoachDecisionView && (
-            <button onClick={() => switchView('ceo')} disabled={coordinatorInteractionLocked} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 ${viewMode === 'ceo' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
-              待我决策
-            </button>
-          )}
-        </div>
-        {!isCoachView && !isCoordinatorView && (
-        <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none">
-          <option value="">全部状态</option>
-          <option value="owner_actionable">待负责人处理</option>
-          <option value={SS.S_RETURNED}>已退回</option>
-          <option value={SS.S_WAITING_COORDINATOR}>已转交统筹</option>
-          <option value={SS.S_WAITING_CEO}>待企业教练决策</option>
-          <option value={SS.S_CONFIRMED}>已入库</option>
-        </select>
-        )}
-        {!isCoachView && !isCoordinatorView && (
-        <select value={filterProject} onChange={(e) => setFilterProject(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none">
-          <option value="">全部项目</option>
-          {allProjects.map((p) => <option key={p}>{p}</option>)}
-        </select>
-        )}
-        {viewMode === 'all' && (
-        <select value={filterSubmitter} onChange={(e) => setFilterSubmitter(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none">
-          <option value="">全部提交人</option>
-          {allSubmitters.map((s) => <option key={s}>{s}</option>)}
-        </select>
-        )}
-        {!isCoachView && !isCoordinatorView && (
-        <div className="relative">
-          <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} type="text" placeholder="搜索记录/任务…" className="pl-7 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none w-36" />
-        </div>
-        )}
         </div>
       </header>
 
@@ -1109,52 +1107,59 @@ export function ConfirmPage() {
 
           {/* Left: queue panel */}
           <section data-confirm-panel="queue" className="flex flex-col bg-white rounded-2xl border overflow-hidden" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
-            <div className="px-4 py-3 border-b flex-shrink-0 flex items-center justify-between" style={{ borderColor: '#E9EFF6' }}>
+            {/* Panel header with numbered badge */}
+            <div className="px-4 py-3 border-b flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-slate-800">
-                  {viewMode === 'ceo' ? '待我决策事项' : viewMode === 'coordinator' ? '待我统筹' : viewMode === 'all' ? '待确认事项' : '我的提交记录'}
-                </span>
-                <span className="text-xs text-slate-400">({visibleItems.length})</span>
-              </div>
-              <div className="flex items-center gap-1 text-slate-400">
-                <button type="button" className="w-7 h-7 rounded-lg hover:bg-slate-50 flex items-center justify-center" aria-label="排序">
-                  <svg style={{ width: 14, height: 14 }} viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h10M8 12h7M8 17h4" /></svg>
-                </button>
-                <button type="button" className="w-7 h-7 rounded-lg hover:bg-slate-50 flex items-center justify-center" aria-label="筛选">
-                  <svg style={{ width: 14, height: 14 }} viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5h18l-7 8v5l-4 2v-7L3 5z" /></svg>
-                </button>
+                <span className="flex-shrink-0 w-5 h-5 rounded-md bg-blue-500 text-white text-[11px] font-bold flex items-center justify-center">1</span>
+                <span className="text-sm font-bold text-slate-800">审核队列</span>
+                <span className="text-xs text-slate-400">（找记录）</span>
               </div>
             </div>
-            <div className="overflow-y-auto flex-1 px-3 py-3 space-y-3">
+
+            {/* List */}
+            <div className="overflow-y-auto flex-1 px-3 py-2 space-y-2">
               {loadError && !loading && visibleItems.length > 0 && (
                 <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">{loadError}</div>
               )}
               {loading ? (
-                <div className="py-10 text-center text-xs text-slate-400">加载中…</div>
+                <div className="py-10 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
+                  <IconFileText size={28} className="text-slate-300" />
+                  加载中…
+                </div>
               ) : visibleItems.length === 0 ? (
-                <div className="py-10 text-center text-xs">
-                  {loadError ? (
-                    <span className="text-red-400">{loadError}</span>
-                  ) : (
-                    <span className="text-slate-400">
-                      {viewMode === 'ceo'
-                        ? '暂无待你决策的事项。'
-                        : viewMode === 'coordinator'
-                          ? '暂无待你反馈的统筹事项。'
-                          : viewMode === 'all'
-                            ? '暂无待确认事项。\n可切换到"我的提交记录"查看自己提交的内容。'
-                            : '暂无提交记录，可前往工作汇报提交进展。'}
-                    </span>
-                  )}
+                <div className="py-10 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
+                  <IconFileText size={28} className="text-slate-300" />
+                  <span>
+                    {loadError ? loadError : viewMode === 'ceo' ? '暂无待决策事项' : viewMode === 'coordinator' ? '暂无待统筹事项' : viewMode === 'all' ? '暂无待确认事项' : '暂无提交记录'}
+                  </span>
                 </div>
               ) : visibleItems.map((item) => {
                 const isSelected = selected?.id === item.id
                 const r = getHumanResult(item) || getAIResult(item)
                 const summary = String(r?.summary || item.title || '').slice(0, 36)
-                const isCeoCardScope = item.ceo_decision_scope === 'card'
-                const ceoCardPendingCount = (item.pending_ceo_card_indices ?? []).length
-                const isCoordinatorCardScope = item.coordinator_decision_scope === 'card'
-                const coordinatorCardPendingCount = (item.pending_coordinator_card_indices ?? []).length
+                const normStatus = SS.normalize(item.confirm_status)
+
+                // Status dot color
+                let statusDotColor = '#94A3B8'
+                let statusTagLabel = ''
+                let statusTagBg = ''
+                let statusTagText = ''
+                if (normStatus === SS.S_NEW || normStatus === SS.S_PENDING_OWNER) {
+                  statusDotColor = '#3B82F6'
+                  statusTagLabel = 'NEW'
+                  statusTagBg = '#DBEAFE'
+                  statusTagText = '#1D4ED8'
+                } else if (normStatus === SS.S_WAITING_COORDINATOR) {
+                  statusDotColor = '#8B5CF6'
+                  statusTagLabel = 'PENDING_COORD'
+                  statusTagBg = '#EDE9FE'
+                  statusTagText = '#6D28D9'
+                } else if (normStatus === SS.S_CONFIRMED) {
+                  statusDotColor = '#10B981'
+                } else if (normStatus === SS.S_RETURNED) {
+                  statusDotColor = '#EF4444'
+                }
+
                 return (
                   <div
                     key={item.id}
@@ -1163,693 +1168,291 @@ export function ConfirmPage() {
                       pickItem(item)
                     }}
                     aria-disabled={isCoordinatorView && coordinatorActing}
-                    className={`px-4 py-3 transition-colors border rounded-2xl ${isCoordinatorView && coordinatorActing ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-sky-50'}`}
+                    className={`group px-3 py-2.5 transition-all border rounded-xl ${isCoordinatorView && coordinatorActing ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
                     style={{
-                      borderColor: isSelected ? '#93C5FD' : '#EEF2F7',
-                      borderLeft: `4px solid ${isSelected ? '#2563EB' : 'transparent'}`,
+                      borderColor: isSelected ? '#93C5FD' : '#F1F5F9',
                       background: isSelected ? '#EFF6FF' : undefined,
-                      minHeight: 90,
+                      boxShadow: isSelected ? '0 1px 6px rgba(37,99,235,0.08)' : undefined,
                     }}
                   >
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <Ava name={item.submitter} />
-                        <SourceBadge type={item.source_type} />
-                        {isCoachView && item.ceo_decision_scope === 'submission' && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-50 text-purple-600">整条提交</span>
-                        )}
-                        {isCoachView && isCeoCardScope && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-50 text-sky-600">
-                            任务卡级{ceoCardPendingCount > 1 ? ` · ${ceoCardPendingCount} 张待决策` : ''}
-                          </span>
-                        )}
-                        {isCoordinatorView && item.coordinator_decision_scope === 'submission' && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-600">整条提交</span>
-                        )}
-                        {isCoordinatorView && isCoordinatorCardScope && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-50 text-violet-600">
-                            任务卡级 · {coordinatorCardPendingCount} 张待统筹
-                          </span>
-                        )}
+                    <div className="flex items-start gap-2.5">
+                      {/* Status dot */}
+                      <span className="mt-1.5 w-2 h-2 rounded-full flex-shrink-0" style={{ background: statusDotColor }} />
+
+                      <div className="min-w-0 flex-1">
+                        {/* Title row */}
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-[13px] font-medium text-slate-700 leading-5 line-clamp-2">{summary || '—'}</p>
+                          <span className="text-[11px] text-slate-400 font-medium flex-shrink-0">{taskCards.length > 0 ? taskCards.length : ''}</span>
+                        </div>
+
+                        {/* Meta row */}
+                        <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                          {statusTagLabel && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold" style={{ background: statusTagBg, color: statusTagText }}>
+                              {statusTagLabel}
+                            </span>
+                          )}
+                          <span className="text-[11px] text-slate-400 truncate max-w-[120px]">{projectNameFromConfirmation(item, projects)}</span>
+                          <span className="text-[10px] text-slate-300">·</span>
+                          <span className="text-[11px] text-slate-400">{fmtShort(item.created_at)}</span>
+                        </div>
                       </div>
-                      <StatusBadge status={item.confirm_status} />
-                    </div>
-                    <p className="text-sm font-medium text-slate-700 leading-6 pl-7 truncate">{summary || '—'}</p>
-                    <div className="flex items-center justify-between pl-7 mt-2">
-                      <span className="text-xs text-slate-400">{fmtShort(item.created_at)}</span>
-                      <ConfBadge val={item.confidence} />
                     </div>
                   </div>
                 )
               })}
+
+              {/* Bottom hint */}
+              {visibleItems.length > 0 && (
+                <div className="py-2 text-center">
+                  <span className="text-[11px] text-slate-400">已加载全部</span>
+                </div>
+              )}
             </div>
           </section>
 
           {/* Center: review panel */}
           <section data-confirm-panel="review" className="flex flex-col bg-white rounded-2xl border overflow-hidden" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
-            {/* Scrollable body */}
-            {/* Page-level action feedback — moved to right panel in all view */}
-            {(actionError || actionSuccess) && viewMode !== 'all' && (
-              <div className="flex-shrink-0 px-4 pt-3 space-y-2">
-                {actionError && (
-                  <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                    {actionError}
-                  </div>
-                )}
-                {actionSuccess && (
-                  <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                    <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
-                    {actionSuccess}
-                  </div>
-                )}
+            {/* Panel header with numbered badge */}
+            <div className="px-4 py-3 border-b flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
+              <div className="flex items-center gap-2">
+                <span className="flex-shrink-0 w-5 h-5 rounded-md bg-purple-500 text-white text-[11px] font-bold flex items-center justify-center">2</span>
+                <span className="text-sm font-bold text-slate-800">审核内容</span>
+                <span className="text-xs text-slate-400">（看内容）</span>
               </div>
-            )}
+            </div>
 
             {selected ? (
               <>
-                {/* Detail header */}
-                <div className="px-5 py-3 border-b flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex items-center gap-2 flex-wrap">
-                      <span className="text-lg font-bold text-slate-900 truncate">
-                        {String(confirmationContext.keyTaskName || selected?.related_task || '记录详情')}
-                      </span>
-                      <StatusBadge status={selected.confirm_status} />
-                    </div>
-                    <span className="text-xs text-slate-500 flex-shrink-0">记录ID：{String((selected as Record<string, unknown>).record_id || selected.id)}</span>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500 flex-wrap">
-                    <div className="flex items-center gap-2.5 flex-wrap">
-                      <SourceBadge type={selected.source_type} />
-                      <span className="font-medium text-slate-700">{selected.submitter}</span>
-                      <span className="text-slate-300">|</span>
-                      <span>{fmtTime(selected.created_at)}</span>
-                      <span className="text-slate-300">|</span>
-                      <span>置信度：<ConfBadge val={selected.confidence} /></span>
-                    </div>
-                    <button type="button" className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600 bg-white hover:bg-slate-50">查看原始内容</button>
-                  </div>
-                </div>
-
                 <div className="flex-1 overflow-y-auto min-h-0 px-4 py-3 space-y-4">
-                  {/* CEO/Coordinator interactive forms moved to right panel */}
-
-                  {/* Submitter supplement display */}
-                  {(viewMode === 'mine' || viewMode === 'all') && Boolean(selectedResult?.supplement_note) && (
-                    <section className="rounded-[22px] border border-emerald-100 bg-emerald-50/60 p-4">
-                      <p className="text-sm font-bold text-emerald-800">提交人补充说明</p>
-                      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{renderVal(selectedResult?.supplement_note)}</p>
-                    </section>
+                  {taskCards.length > 1 && (
+                  <div data-confirm-task-switch className="flex gap-2 overflow-x-auto border-b border-slate-100 pb-3">
+                    {taskCards.map((card, cardIndex) => {
+                      const isActive = cardIndex === activeCardIndex
+                      return (
+                        <button type="button" key={card.id + '-switch-' + cardIndex}
+                          onClick={() => {
+                            if (coordinatorInteractionLocked) return
+                            setSelectedCardIndex(cardIndex)
+                            setCoordinatorCardNote('')
+                            setPendingAction(null)
+                            setActionNote('')
+                          }}
+                          disabled={coordinatorInteractionLocked}
+                          className={'min-w-[160px] rounded-xl border px-3 py-2 text-left transition disabled:opacity-50 ' + (isActive ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')}>
+                          <span className="block text-[10px] text-slate-400">任务卡 {cardIndex + 1}/{taskCards.length}</span>
+                          <span className="mt-1 block truncate text-xs font-bold">{card.structure.projectName} · {card.structure.subtaskName !== '-' ? card.structure.subtaskName : card.title}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
                   )}
 
-                  {/* Submission coordinator feedback display */}
-                  {viewMode === 'all' && Boolean(selected.coordinator_note?.trim()) && (
-                    <section className="rounded-[22px] border border-indigo-200 bg-indigo-50/60 p-4">
-                      <p className="text-sm font-bold text-indigo-800">统筹反馈意见</p>
-                      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{selected.coordinator_note}</p>
-                      <p className="mt-2 text-xs text-indigo-600/80">该意见由项目统筹反馈，项目负责人可据此继续确认、退回或上报企业教练。</p>
-                    </section>
-                  )}
-
-                  {/* Submission coach decision display */}
-                  {viewMode === 'all' && Boolean(selected.ceo_note?.trim()) && (
-                    <section className="rounded-[22px] border border-violet-200 bg-violet-50/60 p-4">
-                      <p className="text-sm font-bold text-violet-800">企业教练批示</p>
-                      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{selected.ceo_note}</p>
-                      <p className="mt-2 text-xs text-violet-600/80">企业教练已完成决策，请项目负责人据此继续处理。</p>
-                    </section>
-                  )}
-
-                  {/* Submission-level achievements */}
-                  {submissionAchievements.length > 0 && (
-                    <section className="rounded-[22px] border border-violet-200 bg-violet-50/40 p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-bold text-violet-900">提交级成果</p>
-                          <p className="mt-1 text-xs text-slate-500">以下成果由本次提交整体提取，尚未明确归属到具体关键任务。</p>
+                  {activeCard && activeReviewCard ? (
+                    <article data-confirm-card-detail className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                      <header className="flex items-start justify-between gap-4 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-5 py-4">
+                        <div className="min-w-0">
+                          <div className="mb-1 flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-blue-600">{activeCard.isPersistedTaskCard ? activeReviewCard.cardIndexText : '本次提交概览'}</span>
+                            <span className={'rounded-full px-2 py-0.5 text-[10px] font-bold ' + taskCardDecisionTone(activeCard.confirmationStatus)}>{taskCardDecisionLabel(activeCard.confirmationStatus)}</span>
+                          </div>
+                          <h2 className="text-lg font-bold text-slate-900">{activeReviewCard.title || '—'}</h2>
                         </div>
-                        <span className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-bold text-violet-700">{submissionAchievements.length} 项</span>
-                      </div>
-                      <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
-                        {submissionAchievements.map((achievement, index) => {
-                          const item = achievement.item
-                          const fileLink = String(item.file_link || item.file_url || '').trim()
-                          return (
-                            <article key={`submission-achievement-${index}`} className="rounded-2xl border border-violet-100 bg-white p-3">
-                              <p className="text-sm font-semibold text-slate-900">{String(item.name || '')}</p>
-                              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-                                <span>成果类型：{String(item.achievement_type || item.type || '未标注')}</span>
-                                <span>版本：{String(item.version || '未标注')}</span>
-                              </div>
-                              {fileLink && (
-                                <a className="mt-2 inline-flex text-xs font-semibold text-blue-600 hover:underline" href={fileLink} target="_blank" rel="noreferrer">查看文件</a>
-                              )}
-                            </article>
-                          )
-                        })}
-                      </div>
-                    </section>
-                  )}
+                      </header>
 
-                  {/* Unified issue review projection */}
-                  {hasPendingItems && (
-                    <section className="rounded-[22px] border border-amber-200 bg-amber-50/40 p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-bold text-amber-900">待处理事项审核</p>
-                          <p className="mt-1 text-xs text-slate-500">相同阻塞已合并，关键任务来源优先保留原归属。</p>
+                      <div className="space-y-3 p-4">
+                        <section className="rounded-xl border-l-4 border-blue-400 bg-blue-50/60 px-4 py-3">
+                          <h3 className="text-xs font-bold text-slate-700">原文证据</h3>
+                          {activeReviewEvidence.length > 0 ? (
+                            <div className="mt-2 space-y-1.5">{activeReviewEvidence.map((item, index) => <p key={index} className="text-sm leading-6 text-slate-600">“{item}”</p>)}</div>
+                          ) : <p className="mt-2 text-sm text-slate-400">—</p>}
+                        </section>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          {[
+                            { title: '本次完成', items: activeReviewCard.completed, tone: 'border-emerald-100', titleClass: 'text-emerald-700' },
+                            { title: '下一步计划', items: activeReviewCard.nextSteps, tone: 'border-blue-100', titleClass: 'text-blue-700' },
+                            { title: '问题与风险', items: activeReviewCard.pendingItems, tone: 'border-orange-100', titleClass: 'text-orange-700' },
+                            { title: '取得的成果', items: activeReviewCard.achievements, tone: 'border-violet-100', titleClass: 'text-violet-700' },
+                          ].map((section) => (
+                            <section key={section.title} className={'min-h-[116px] rounded-xl border bg-white p-4 ' + section.tone}>
+                              <h3 className={'text-xs font-bold ' + section.titleClass}>{section.title}</h3>
+                              {section.items.length > 0 ? (
+                                <ul className="mt-2 space-y-1.5">{section.items.map((item, index) => <li key={index} className="text-sm leading-6 text-slate-600">• {item}</li>)}</ul>
+                              ) : <p className="mt-2 text-sm text-slate-400">—</p>}
+                            </section>
+                          ))}
                         </div>
-                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700">{effectivePendingItems.length} 项</span>
-                      </div>
-                      <div className="mt-3 space-y-3">
-                        {effectivePendingItems.map((projected, index) => {
-                          const item = projected.item
-                          const helpers = Array.isArray(item.need_coordination) ? (item.need_coordination as string[]).join('、') : String(item.helper || '')
-                          return (
-                            <article key={`${projected.source}-${projected.reportIndex ?? 'submission'}-${index}`} className="rounded-2xl border border-amber-100 bg-white p-3">
-                              <div className="flex items-start justify-between gap-3">
-                                <p className="text-sm leading-6 text-slate-800">{projected.description}</p>
-                                <span className={`flex-shrink-0 rounded-full px-2 py-1 text-[11px] font-bold ${projected.source === 'task_report' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
-                                  {projected.source === 'task_report' ? '来源：关键任务' : '来源：提交级'}
-                                </span>
-                              </div>
-                              {projected.source === 'task_report' && projected.matchedSubtaskTitle && (
-                                <p className="mt-1 text-xs text-blue-600">匹配关键任务：{projected.matchedSubtaskTitle}</p>
-                              )}
-                              {canEditSubmissionIssues && (
-                                <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
-                                  <label className="text-xs text-slate-600">
-                                    问题类型
-                                    <select
-                                      value={pendingItemTypes[index] ?? String(item.issue_type || '问题')}
-                                      onChange={(event) => setPendingItemTypes((current) => ({ ...current, [index]: event.target.value }))}
-                                      disabled={submissionActionsLocked}
-                                      className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700"
-                                    >
-                                      {['问题', '风险', '待协调', '需决策'].map((type) => <option key={type} value={type}>{type}</option>)}
-                                    </select>
-                                  </label>
-                                  <label className="text-xs text-slate-600">
-                                    协助人
-                                    <input
-                                      value={pendingItemHelpers[index] ?? helpers}
-                                      onChange={(event) => setPendingItemHelpers((current) => ({ ...current, [index]: event.target.value }))}
-                                      disabled={submissionActionsLocked}
-                                      className="mt-1 h-9 w-full rounded-lg border border-slate-200 px-2 text-sm text-slate-700"
-                                    />
-                                  </label>
-                                  <label className="text-xs text-slate-600">
-                                    处理备注
-                                    <input
-                                      value={pendingItemNotes[index] ?? String(item.decision_note || '')}
-                                      onChange={(event) => setPendingItemNotes((current) => ({ ...current, [index]: event.target.value }))}
-                                      disabled={submissionActionsLocked}
-                                      className="mt-1 h-9 w-full rounded-lg border border-slate-200 px-2 text-sm text-slate-700"
-                                    />
-                                  </label>
-                                </div>
-                              )}
-                            </article>
-                          )
-                        })}
-                      </div>
-                    </section>
-                  )}
 
-                  {/* Submission-level owner actions migrated to right panel in all view */}
-
-                  {/* Member resubmit form moved to right panel */}
-
-                  {/* Task card overview */}
-                  <section className="rounded-[22px] border bg-gradient-to-br from-slate-50 to-white p-4" style={{ borderColor: '#E5EEF9' }}>
-                    <div className="flex items-center justify-between gap-3 mb-3">
-                      <div>
-                        <p className="text-sm font-bold text-slate-900">任务卡牌总览</p>
-                        <p className="text-xs text-slate-400 mt-0.5">
-                          {isCoachView ? '查看本次提交包含的任务卡内容' : '先看清本次提交包含哪些任务，再逐张判断'}
-                        </p>
-                      </div>
-                      <span className="px-2.5 py-1 rounded-full bg-blue-50 text-blue-600 text-xs font-bold">{taskCards.length} 张卡</span>
-                    </div>
-                    <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-3">
-                      {taskCards.map((card, cardIndex) => {
-                        const selectedCard = cardIndex === activeCardIndex
-                        const localDecision = cardDecisions[cardIndex]
-                        const backendDecision = card.confirmationStatus
-                        const decisionStatus = localDecision === 'confirm' ? 'confirmed' : localDecision === 'return' ? 'returned' : localDecision === 'transfer' ? 'transferred_to_coordinator' : localDecision === 'ceo' ? 'pending_ceo_decision' : backendDecision
-                        const decisionLabel = taskCardDecisionLabel(decisionStatus)
-                        return (
-                          <button
-                            type="button"
-                            key={`${card.id}-summary-${cardIndex}`}
-                            onClick={() => {
-                              if (coordinatorInteractionLocked) return
-                              setSelectedCardIndex(cardIndex)
-                              setCoordinatorCardNote('')
-                            }}
-                            disabled={coordinatorInteractionLocked}
-                            className="text-left rounded-2xl border bg-white p-4 transition-all hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
-                            style={{ borderColor: selectedCard ? '#2563EB' : '#E5EEF9', boxShadow: selectedCard ? '0 10px 24px rgba(37,99,235,0.12)' : '0 1px 3px rgba(15,23,42,0.04)' }}
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="text-xs text-slate-400 font-semibold">{card.isPersistedTaskCard ? `任务卡 ${cardIndex + 1}` : '本次提交概览'}</p>
-                                <h2 className="mt-1 text-base font-bold text-slate-950 truncate">{card.title}</h2>
-                              </div>
-                              <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${taskCardDecisionTone(decisionStatus)}`}>{decisionLabel}</span>
-                            </div>
-                            <p className="mt-2 text-xs text-slate-500 truncate">{card.structure.projectName} / {card.structure.keyTaskName}</p>
-                            <div className="mt-3 grid grid-cols-4 gap-1.5 text-center">
-                              <span className="rounded-lg bg-emerald-50 py-1 text-[11px] font-semibold text-emerald-700">完成 {card.completedItems.length}</span>
-                              <span className="rounded-lg bg-sky-50 py-1 text-[11px] font-semibold text-sky-700">成果 {card.achievements.length}</span>
-                              <span className="rounded-lg bg-amber-50 py-1 text-[11px] font-semibold text-amber-700">事项 {card.pendingItems.length}</span>
-                              <span className="rounded-lg bg-blue-50 py-1 text-[11px] font-semibold text-blue-700">下一步 {card.nextSteps.length}</span>
-                            </div>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </section>
-
-                </div>
-
-              {/* 当前任务卡内嵌详情 */}
-              {activeCard && activeReviewCard && (
-                <section className="mt-4 pt-4 border-t overflow-y-auto flex-shrink" style={{ borderColor: '#E9EFF6', minHeight: 0 }}>
-                  {/* 无真实任务卡时显示提示 */}
-                  {!hasAnyPersistedTaskCard && (
-                    <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                      未生成结构化任务卡：本次提交没有可逐卡处理的结构化任务卡，以下为本次提交的只读概览。请使用右侧"整条提交"完成审核。
-                    </div>
-                  )}
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {hasAnyPersistedTaskCard ? (
-                          <span className="text-xs font-bold text-blue-600 bg-blue-50 rounded-full px-2.5 py-1">{activeReviewCard.cardIndexText}</span>
-                        ) : (
-                          <span className="text-xs font-bold text-slate-500 bg-slate-100 rounded-full px-2.5 py-1">本次提交概览</span>
+                        {(activeCard.coordinatorNote || activeCard.ceoNote) && (
+                          <div className="grid grid-cols-2 gap-3">
+                            {activeCard.coordinatorNote && (
+                              <section className="min-h-[96px] rounded-xl border border-indigo-100 bg-indigo-50/30 p-4">
+                                <h3 className="text-xs font-bold text-indigo-800">统筹反馈</h3>
+                                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{activeCard.coordinatorNote}</p>
+                              </section>
+                            )}
+                            {activeCard.ceoNote && (
+                              <section className="min-h-[96px] rounded-xl border border-violet-100 bg-violet-50/30 p-4">
+                                <h3 className="text-xs font-bold text-violet-800">企业教练批示</h3>
+                                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{activeCard.ceoNote}</p>
+                              </section>
+                            )}
+                          </div>
                         )}
-                        <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-600">{activeReviewCard.statusText}</span>
                       </div>
-                      <h2 className="mt-1.5 text-lg font-bold text-slate-950">{activeReviewCard.title}</h2>
-                      <div className="mt-1.5 flex items-center gap-3 text-xs text-slate-500 flex-wrap">
-                        <span>项目：{activeReviewCard.projectName}</span>
-                        <span className="text-slate-300">|</span>
-                        <span>任务：{activeReviewCard.taskName}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 本卡重点 */}
-                  <section className="rounded-xl border bg-blue-50/70 px-4 py-3 flex items-start gap-3 mb-3" style={{ borderColor: '#BFDBFE' }}>
-                    <span className="mt-0.5 w-6 h-6 rounded-full bg-white text-blue-600 flex items-center justify-center flex-shrink-0 border border-blue-100">
-                      <svg style={{ width: 14, height: 14 }} viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" /></svg>
-                    </span>
-                    <p className="text-sm leading-6 text-slate-700">
-                      <span className="font-bold text-slate-900">本卡重点：</span>{activeReviewCard.summary}
-                    </p>
-                  </section>
-
-                  {/* 四类内容 2x2 */}
-                  <div className="grid grid-cols-2 gap-3 mb-3">
-                    <TaskCardList title="本周完成" items={activeReviewCard.completed} emptyText="暂无本周完成内容" tone="done" />
-                    <TaskCardList title="需处理事项" items={activeReviewCard.pendingItems} emptyText="暂无需处理事项" tone="issue" />
-                    <TaskCardList title="下一步计划" items={activeReviewCard.nextSteps} emptyText="暂无下一步计划" tone="next" />
-                    <TaskCardList title="成果" items={activeReviewCard.achievements} emptyText="暂无可入库成果" tone="achievement" />
-                  </div>
-
-                  {/* 统筹反馈展示 */}
-                  {activeCard.confirmationStatus === 'coordinator_given' && (
-                    <div className="mb-3 rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-sm text-slate-700">
-                      <p className="font-semibold text-indigo-800 mb-1">统筹反馈内容：</p>
-                      <p>{activeCard.coordinatorNote || '（无）'}</p>
-                      <p className="mt-1.5 text-xs text-slate-500">
-                        反馈人：{activeCard.coordinatorOperator || '—'} · 反馈时间：{fmtTime(activeCard.coordinatorFeedbackAt)}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* 企业教练批示展示 */}
-                  {activeCard.confirmationStatus === 'ceo_decided' && (
-                    <div className="mb-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-sm text-slate-700">
-                      <p className="font-semibold text-emerald-700 mb-1">企业教练批示内容：</p>
-                      <p>{activeCard.ceoNote || '（无）'}</p>
-                      <p className="mt-1.5 text-xs text-slate-500">
-                        批示人：{activeCard.ceoOperator || '—'}{activeCard.ceoDecidedAt ? ` · ${activeCard.ceoDecidedAt}` : ''}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* 归属修正编辑 */}
-                  {cardEditMode && (
-                    <div className="mb-3 rounded-xl border bg-white p-4" style={{ borderColor: '#E9EFF6' }}>
-                      <p className="text-xs font-bold text-slate-500 mb-3 tracking-wider">归属修正</p>
-                      <div className="space-y-3">
-                        <div>
-                          <label className="text-xs text-slate-400 mb-1 block">归属项目</label>
-                          <select
-                            value={cardProjOverride[activeCardIndex] ?? ''}
-                            onChange={(e) => setCardProjOverride(prev => ({ ...prev, [activeCardIndex]: e.target.value }))}
-                            className="w-full border border-slate-200 rounded-lg p-2 text-sm bg-white"
-                          >
-                            <option value="">不修改</option>
-                            {projects.map((p) => (
-                              <option key={p.id} value={p.name}>{p.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-xs text-slate-400 mb-1 block">重点工作</label>
-                          <input
-                            value={cardKeyTaskOverride[activeCardIndex] ?? ''}
-                            onChange={(e) => setCardKeyTaskOverride(prev => ({ ...prev, [activeCardIndex]: e.target.value ? Number(e.target.value) : null }))}
-                            className="w-full border border-slate-200 rounded-lg p-2 text-sm"
-                            placeholder="输入重点工作名称（继承默认值）"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs text-slate-400 mb-1 block">关键任务</label>
-                          <input
-                            value={cardSubtaskOverride[activeCardIndex] ?? ''}
-                            onChange={(e) => setCardSubtaskOverride(prev => ({ ...prev, [activeCardIndex]: e.target.value ? Number(e.target.value) : null }))}
-                            className="w-full border border-slate-200 rounded-lg p-2 text-sm"
-                            placeholder="输入关键任务名称（继承默认值）"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </section>
-              )}
-
-              </>
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">请选择左侧审核事项</div>
-            )}
-
-            {/* 操作日志 — 内嵌于中栏底部 */}
-            <div className="border-t flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-              <button
-                onClick={() => setOpLogsOpen(!opLogsOpen)}
-                className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-700">操作日志</span>
-                  {opLogs.length > 0 && (
-                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">{opLogs.length}</span>
-                  )}
-                </div>
-                <svg
-                  style={{ width: 12, height: 12, color: '#94A3B8', transition: 'transform 0.2s', transform: opLogsOpen ? 'rotate(180deg)' : undefined }}
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              {opLogsOpen && (
-                <div className="border-t" style={{ borderColor: '#E9EFF6' }}>
-                  {opLogs.length === 0 ? (
-                    <div className="py-3 text-center text-xs text-slate-400">暂无操作记录</div>
+                    </article>
                   ) : (
-                    <div className="px-3 py-2 max-h-52 overflow-y-auto">
-                      <div className="space-y-1.5">
-                        {opLogs.map((item, idx) => {
+                    <div className="flex min-h-72 items-center justify-center text-sm text-slate-400">暂无可审核内容</div>
+                  )}
+
+                  {/* 操作日志 */}
+                  <div className="rounded-xl border-t pt-3" style={{ borderColor: '#E9EFF6' }}>
+                    <button onClick={() => setOpLogsOpen(!opLogsOpen)} className="flex items-center justify-between w-full group">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-700">操作日志</span>
+                        <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500">{opLogs.length}</span>
+                      </div>
+                      <IconChevronDown size={12} className={`text-slate-400 transition-transform ${opLogsOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    {opLogsOpen && (
+                      <div className="mt-2 max-h-40 overflow-y-auto space-y-1">
+                        {opLogs.length === 0 ? (
+                          <p className="text-xs text-slate-400 text-center py-3">暂无操作记录</p>
+                        ) : opLogs.map((item, idx) => {
                           const action = getConfirmActionLabel(item.confirm_status)
-                          const summary = getConfirmActionSummary(item)
-                          const note = getConfirmActionNote(item)
                           const time = fmtShort((item as Record<string, unknown>).updated_at as string || item.created_at)
                           const isDone = SS.CONFIRMED_AND_STORED.has(SS.normalize(item.confirm_status))
                           const dotColor = isDone ? '#3B82F6' : SS.normalize(item.confirm_status) === SS.S_RETURNED ? '#F97316' : '#8B5CF6'
                           return (
-                            <div key={item.id} className="flex items-start gap-2.5 px-2 py-1.5 rounded-md hover:bg-slate-50">
-                              <span className="mt-1.5 w-2 h-2 rounded-full flex-shrink-0" style={{ background: dotColor }} />
+                            <div key={item.id} className="flex items-start gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50">
+                              <span className="mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: dotColor }} />
                               <div className="min-w-0 flex-1">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-xs font-semibold text-slate-700">{action}</span>
-                                  <span className="text-[10px] text-slate-400 flex-shrink-0">{time}</span>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-medium text-slate-700">{action}</span>
+                                  <span className="text-[10px] text-slate-400">{time}</span>
                                 </div>
-                                <div className="flex items-center gap-1.5 mt-0.5">
-                                  <Ava name={item.submitter} />
-                                  <span className="text-[11px] text-slate-500 truncate">{item.submitter}</span>
-                                </div>
-                                {summary && <p className="mt-0.5 text-[11px] text-slate-500 leading-4 line-clamp-1">{summary}</p>}
-                                {note && <p className="mt-0.5 text-[10px] text-slate-400 leading-4 line-clamp-1">{note}</p>}
                               </div>
                             </div>
                           )
                         })}
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
+
+              </>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center py-12 text-slate-400">
+                <IconMail size={32} className="text-slate-300 mb-3" />
+                <p className="text-sm">请从左侧队列选择一条提交记录</p>
+              </div>
+            )}
           </section>
           {/* Right: action-preview panel */}
           <aside data-confirm-panel="action-preview" className="flex flex-col bg-white rounded-2xl border overflow-hidden" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+            {/* Panel header with numbered badge */}
             <div className="px-4 py-3 border-b flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-              <span className="text-sm font-bold text-slate-800">
-                {viewMode === 'all' ? '判断与入库' : viewMode === 'mine' ? '提交处理' : viewMode === 'coordinator' ? '统筹反馈' : '企业教练批示'}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="flex-shrink-0 w-5 h-5 rounded-md bg-amber-500 text-white text-[11px] font-bold flex items-center justify-center">3</span>
+                <span className="text-sm font-bold text-slate-800">判断与入库</span>
+                <span className="text-xs text-slate-400">（处理操作）</span>
+              </div>
             </div>
+
             <div className="overflow-y-auto flex-1 px-4 py-3">
               {selected ? (
                 <div className="space-y-4">
-                  {/* 当前记录 摘要 */}
                   <section>
-                    <p className="text-xs font-bold text-slate-500 mb-2 tracking-wider">当前记录</p>
-                    <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">项目</span>
-                        <span className="font-medium text-slate-700 truncate ml-2 max-w-[140px]">{selectedProjectName || '—'}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">提交人</span>
-                        <span className="font-medium text-slate-700">{selected?.submitter || '—'}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-slate-400">状态</span>
-                        <StatusBadge status={selected?.confirm_status} />
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-slate-400">来源</span>
-                        <SourceBadge type={selected?.source_type} />
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">提交时间</span>
-                        <span className="font-medium text-slate-700 text-xs">{fmtShort(selected?.created_at)}</span>
-                      </div>
+                    <div className="mb-2.5 flex items-center justify-between gap-3">
+                      <h3 className="text-xs font-bold text-slate-700">当前记录概览</h3>
+                      <button type="button" onClick={() => setShowTranscript(true)} className="text-xs font-medium text-blue-600 hover:text-blue-700">查看原始内容</button>
+                    </div>
+                    <div className="space-y-2 rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-xs">
+                      <div className="flex justify-between"><span className="w-14 flex-shrink-0 text-slate-400">项目</span><span className="truncate font-medium text-slate-700">{selectedProjectName || '—'}</span></div>
+                      <div className="flex justify-between"><span className="w-14 flex-shrink-0 text-slate-400">提交人</span><span className="font-medium text-slate-700">{selected?.submitter || '—'}</span></div>
+                      <div className="flex items-center justify-between"><span className="w-14 flex-shrink-0 text-slate-400">来源</span><SourceBadge type={selected?.source_type} /></div>
+                      <div className="flex justify-between"><span className="w-14 flex-shrink-0 text-slate-400">时间</span><span className="font-medium text-slate-700">{fmtShort(selected?.created_at)}</span></div>
+                      <div className="flex items-center justify-between"><span className="w-14 flex-shrink-0 text-slate-400">状态</span><StatusBadge status={selected?.confirm_status} /></div>
+                      <div className="flex justify-between"><span className="w-14 flex-shrink-0 text-slate-400">记录ID</span><span className="font-medium text-slate-700">{String((selected as Record<string, unknown>).record_id || selected.id)}</span></div>
                     </div>
                   </section>
 
-                  {/* Action feedback */}
+                  {activeCard?.isPersistedTaskCard && (
+                    <section className="rounded-xl border border-blue-100 bg-blue-50/60 p-3">
+                      <p className="text-[10px] text-slate-400">当前审批对象 · 任务卡 {activeCardIndex + 1}/{taskCards.length}</p>
+                      <p className="mt-1 text-xs font-bold leading-5 text-blue-700">{activeCard.structure.projectName || '—'} &gt; {activeCard.structure.keyTaskName || '—'} &gt; {activeCard.structure.subtaskName || '—'}</p>
+                    </section>
+                  )}
+
                   {(actionError || actionSuccess) && (
                     <div className="space-y-2">
-                      {actionError && (
-                        <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                          <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                          {actionError}
-                        </div>
-                      )}
-                      {actionSuccess && (
-                        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                          <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
-                          {actionSuccess}
-                        </div>
-                      )}
+                      {actionError && <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"><IconAlertCircle size={14} />{actionError}</div>}
+                      {actionSuccess && <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"><IconCheckCircle size={14} />{actionSuccess}</div>}
                     </div>
                   )}
 
-                  {/* ===== ALL VIEW: Owner actions ===== */}
-                  {viewMode === 'all' && (
-                    canUseOwnerActions && SS.OWNER_ACTIONABLE.has(selectedStatus) ? (
-                      <>
-                        {/* Locked warnings */}
-                        {projectArchived && (
-                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                            项目已归档，无法执行操作。
-                          </div>
+                  {viewMode === 'all' && canUseOwnerActions && SS.OWNER_ACTIONABLE.has(selectedStatus) && activeCard?.isPersistedTaskCard && (
+                    <section data-confirm-card-actions>
+                      <h3 className="mb-2.5 text-sm font-bold text-slate-800">负责人操作</h3>
+                      {projectArchived && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">项目已归档，无法执行操作。</div>}
+                      {cardWaitingCoordinator && <div className="mb-3 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-700">当前任务卡正在等待统筹反馈，暂不可继续处理。</div>}
+
+                      <div className="space-y-2">
+                        <button type="button" onClick={() => { setPendingAction(null); setActionNote(''); void handleTaskCardDecision('confirm') }} disabled={acting || projectArchived || cardWaitingCoordinator} className="h-10 w-full rounded-lg bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50">确认当前任务卡入库</button>
+                        <button type="button" onClick={() => { setPendingAction('return'); setActionNote('') }} disabled={acting || projectArchived || cardWaitingCoordinator} className="h-10 w-full rounded-lg border border-orange-300 bg-white text-sm font-semibold text-orange-600 transition hover:bg-orange-50 disabled:opacity-50">退回当前任务卡</button>
+                        {!cardWaitingCoordinator && activeCard.confirmationStatus !== 'coordinator_given' && (
+                          <button type="button" onClick={() => { setPendingAction('transfer'); setActionNote('') }} disabled={acting || projectArchived} className="h-10 w-full rounded-lg border border-violet-300 bg-white text-sm font-semibold text-violet-600 transition hover:bg-violet-50 disabled:opacity-50">转交统筹人</button>
                         )}
-                        {hasPendingSubmissionCards && !projectArchived && (
-                          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                            本次提交仍有任务卡等待统筹反馈或企业教练批示，暂不可执行整条操作。
-                          </div>
-                        )}
-
-                        {/* 当前任务卡 / 整条提交 切换 */}
-                        <div className="flex border-b border-slate-200" style={{ marginBottom: -1 }}>
-                          <button
-                            type="button"
-                            onClick={() => { if (hasAnyPersistedTaskCard) { setOwnerActionScope('card'); setPendingAction(null); setActionNote('') } }}
-                            disabled={!hasAnyPersistedTaskCard}
-                            className={`flex-1 py-2 text-xs font-bold border-b-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${ownerActionScope === 'card' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
-                          >
-                            当前任务卡
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => { setOwnerActionScope('submission'); setPendingAction(null); setActionNote('') }}
-                            className={`flex-1 py-2 text-xs font-bold border-b-2 transition-colors ${ownerActionScope === 'submission' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
-                          >
-                            整条提交
-                          </button>
-                        </div>
-
-                        {ownerActionScope === 'card' ? (
-                          /* --- 当前任务卡操作 --- */
-                          <div className="space-y-3">
-                            {!hasAnyPersistedTaskCard ? (
-                              <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-sm text-slate-600">
-                                <p className="font-semibold text-slate-800 mb-1">未生成结构化任务卡</p>
-                                <p className="text-xs text-slate-500">本次提交没有可逐卡处理的结构化任务卡，请使用"整条提交"完成审核。</p>
-                              </div>
-                            ) : activeCard ? (
-                              <>
-                                {/* 当前卡信息 */}
-                                <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-sm">
-                                  <div className="flex items-center justify-between">
-                                    <span className="font-medium text-slate-700">任务卡 {activeCardIndex + 1}/{taskCards.length}</span>
-                                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${taskCardDecisionTone(activeCard.confirmationStatus)}`}>{taskCardDecisionLabel(activeCard.confirmationStatus)}</span>
-                                  </div>
-                                  <p className="mt-1 text-xs text-slate-500 truncate">{activeCard.title}</p>
-                                  {(cardDecisions[activeCardIndex] && activeCard.confirmationStatus === 'pending') && (
-                                    <p className="mt-1 text-[11px] text-blue-600 font-semibold">已设定：{cardDecisions[activeCardIndex] === 'confirm' ? '确认入库' : cardDecisions[activeCardIndex] === 'return' ? '退回' : cardDecisions[activeCardIndex] === 'transfer' ? '转交统筹' : '转交企业教练'}</p>
-                                  )}
-                                </div>
-
-                                {/* Coordinator feedback display */}
-                                {activeCard.confirmationStatus === 'coordinator_given' && (
-                                  <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-sm text-slate-700">
-                                    <p className="font-semibold text-indigo-800 text-xs">统筹反馈：</p>
-                                    <p className="mt-1 text-xs">{activeCard.coordinatorNote || '（无）'}</p>
-                                  </div>
-                                )}
-
-                                {/* Card waiting coordinator */}
-                                {cardWaitingCoordinator && (
-                                  <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-700">
-                                    该任务卡正在等待项目统筹人反馈，反馈完成后可继续处理。
-                                  </div>
-                                )}
-
-                                {/* Card action buttons — only for persisted task cards */}
-                                {activeCard.isPersistedTaskCard && (
-                                  <div className="space-y-2">
-                                    <button type="button" onClick={() => handleTaskCardDecision('confirm')} disabled={acting || projectArchived || cardWaitingCoordinator} className="w-full h-10 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-50 hover:bg-blue-700 transition">
-                                      确认入库
-                                    </button>
-                                    <button type="button" onClick={() => handleTaskCardDecision('return')} disabled={acting || projectArchived || cardWaitingCoordinator} className="w-full h-10 rounded-lg border border-orange-300 bg-white text-orange-600 text-sm font-semibold disabled:opacity-50 hover:bg-orange-50 transition">
-                                      退回并重新编辑
-                                    </button>
-                                    {!cardWaitingCoordinator && activeCard.confirmationStatus !== 'coordinator_given' && (
-                                      <button type="button" onClick={() => handleTaskCardDecision('transfer')} disabled={acting || projectArchived} className="w-full h-10 rounded-lg border border-violet-300 bg-white text-violet-600 text-sm font-semibold disabled:opacity-50 hover:bg-violet-50 transition">
-                                        转交统筹人
-                                      </button>
-                                    )}
-                                    <button type="button" onClick={() => handleTaskCardDecision('ceo')} disabled={acting || projectArchived || cardWaitingCoordinator} className="w-full h-10 rounded-lg border border-slate-300 bg-white text-slate-600 text-sm font-semibold disabled:opacity-50 hover:bg-slate-50 transition">
-                                      转交企业教练
-                                    </button>
-                                  </div>
-                                )}
-                              </>
-                            ) : (
-                              <div className="text-center text-sm text-slate-400 py-4">
-                                暂无任务卡可供操作
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          /* --- 整条提交操作 (from B2-1) --- */
-                          <div className="space-y-4">
-                            {/* 入库范围 */}
-                            <section className="rounded-xl border border-slate-200 bg-white p-3">
-                              <p className="text-sm font-bold text-slate-900 mb-3">入库范围</p>
-                              <div className="space-y-2">
-                                <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2.5">
-                                  <div>
-                                    <p className="text-sm font-semibold text-slate-900">工作推进表</p>
-                                    <p className="mt-0.5 text-xs text-slate-500">本次确认始终写入工作推进记录</p>
-                                  </div>
-                                  <span className="flex-shrink-0 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">必写</span>
-                                </div>
-                                <button type="button" role="switch" aria-checked={writeToAchievements} onClick={() => setWriteToAchievements((v) => !v)} disabled={submissionActionsLocked} className="flex w-full items-center justify-between gap-3 rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-2.5 text-left transition hover:border-violet-200 disabled:cursor-not-allowed disabled:opacity-50">
-                                  <div>
-                                    <p className="text-sm font-semibold text-slate-900">成果库</p>
-                                    <p className="mt-0.5 text-xs text-slate-500">将本次已审核成果写入成果库</p>
-                                  </div>
-                                  <div className="flex flex-shrink-0 items-center gap-1.5">
-                                    <span className="text-xs font-semibold text-violet-600">{writeToAchievements ? '已开启' : '已关闭'}</span>
-                                    <ToggleSwitch on={writeToAchievements} />
-                                  </div>
-                                </button>
-                                <button type="button" role="switch" aria-checked={writeToIssues} onClick={() => setWriteToIssues((v) => !v)} disabled={submissionActionsLocked} className="flex w-full items-center justify-between gap-3 rounded-lg border border-orange-100 bg-orange-50/60 px-3 py-2.5 text-left transition hover:border-orange-200 disabled:cursor-not-allowed disabled:opacity-50">
-                                  <div>
-                                    <p className="text-sm font-semibold text-slate-900">问题中心</p>
-                                    <p className="mt-0.5 text-xs text-slate-500">将本次已审核问题写入问题中心</p>
-                                  </div>
-                                  <div className="flex flex-shrink-0 items-center gap-1.5">
-                                    <span className="text-xs font-semibold text-orange-600">{writeToIssues ? '已开启' : '已关闭'}</span>
-                                    <ToggleSwitch on={writeToIssues} />
-                                  </div>
-                                </button>
-                              </div>
-                            </section>
-                            {/* 整条提交操作按钮 */}
-                            <div className="space-y-2">
-                              <button type="button" onClick={handleConfirm} disabled={submissionActionsLocked} className="w-full h-10 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-50 hover:bg-blue-700 transition">确认入库</button>
-                              <button type="button" onClick={() => { setPendingAction('return'); setActionNote('') }} disabled={submissionActionsLocked} className="w-full h-10 rounded-lg border border-orange-300 bg-white text-orange-600 text-sm font-semibold disabled:opacity-50 hover:bg-orange-50 transition">退回提交人</button>
-                              <button type="button" onClick={() => { setPendingAction('transfer'); setActionNote('') }} disabled={submissionActionsLocked || !SS.TRANSFERABLE_TO_COORDINATOR.has(selectedStatus)} className="w-full h-10 rounded-lg border border-violet-300 bg-white text-violet-600 text-sm font-semibold disabled:opacity-50 hover:bg-violet-50 transition">转交统筹人</button>
-                              <button type="button" onClick={() => { setPendingAction('ceo'); setActionNote('') }} disabled={submissionActionsLocked || !SS.ESCALATABLE_TO_CEO.has(selectedStatus)} className="w-full h-10 rounded-lg border border-slate-300 bg-white text-slate-600 text-sm font-semibold disabled:opacity-50 hover:bg-slate-50 transition">转交企业教练</button>
-                            </div>
-                            {/* pendingAction 处理说明 */}
-                            {pendingAction && (
-                              <div className="rounded-xl border border-slate-200 bg-white p-3">
-                                <p className="text-xs font-bold text-slate-700 mb-2">
-                                  {pendingAction === 'return' ? '退回原因' : pendingAction === 'transfer' ? '转交统筹说明' : '转交企业教练说明'}
-                                </p>
-                                <textarea value={actionNote} onChange={(e) => setActionNote(e.target.value)} placeholder="请输入处理说明（必填）…" disabled={acting} className="w-full min-h-20 rounded-lg border border-slate-200 p-3 text-sm resize-none focus:outline-none focus:border-blue-300 disabled:opacity-50" />
-                                <div className="mt-3 flex justify-end gap-2">
-                                  <button type="button" onClick={() => { setPendingAction(null); setActionNote('') }} disabled={acting} className="px-4 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50">取消</button>
-                                  <button type="button" onClick={() => handleDecision(pendingAction)} disabled={acting || !actionNote.trim() || submissionActionsLocked} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">确认提交</button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      /* Non-owner or not OWNER_ACTIONABLE in all view */
-                      <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-center text-sm text-slate-400">
-                        当前记录仅可查看
+                        <button type="button" onClick={() => { setPendingAction('ceo'); setActionNote('') }} disabled={acting || projectArchived || cardWaitingCoordinator} className="h-10 w-full rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50">转交企业教练</button>
                       </div>
-                    )
+
+                      {pendingAction && (
+                        <div data-confirm-action-note className="mt-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                          <p className="text-xs font-bold text-slate-700">
+                            {pendingAction === 'return' ? '退回原因' : pendingAction === 'transfer' ? '转交统筹说明' : '转交企业教练说明'}
+                            <span className="ml-1 text-red-500">*</span>
+                          </p>
+                          <textarea value={actionNote} onChange={(event) => setActionNote(event.target.value)} placeholder={pendingAction === 'return' ? '请说明需要提交人修改的内容…' : pendingAction === 'transfer' ? '请说明需要统筹人反馈或协调的事项…' : '请说明需要企业教练决策的事项…'} disabled={acting} className="mt-2 min-h-20 w-full resize-none rounded-lg border border-slate-200 bg-white p-3 text-sm focus:border-blue-300 focus:outline-none" />
+                          <div className="mt-3 flex gap-2">
+                            <button type="button" onClick={() => { setPendingAction(null); setActionNote('') }} disabled={acting} className="h-9 flex-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600">取消</button>
+                            <button type="button" onClick={() => void handleTaskCardDecision(pendingAction)} disabled={acting || !actionNote.trim()} className="h-9 flex-1 rounded-lg bg-blue-600 text-xs font-bold text-white disabled:opacity-50">确认提交</button>
+                          </div>
+                        </div>
+                      )}
+                      <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-[10px] leading-5 text-slate-500">确认无需填写说明；退回或转交时才填写对应原因。操作仅作用于当前任务卡。</p>
+                    </section>
                   )}
 
-                  {/* ===== MINE VIEW ===== */}
-                  {viewMode === 'mine' && (
-                    isReturned ? (
-                      <div className="space-y-3">
-                        <section className="rounded-xl border border-orange-200 bg-gradient-to-br from-orange-50 to-white p-4">
-                          <p className="text-sm font-bold text-orange-800">负责人已退回，请补充后重新提交</p>
-                          <div className="mt-3 space-y-2 rounded-xl border border-orange-100 bg-white/80 p-3 text-sm text-slate-700">
-                            <p><span className="font-semibold text-slate-900">退回原因：</span>{selected.reject_reason || '未说明'}</p>
-                            <p><span className="font-semibold text-slate-900">原提交时间：</span>{fmtTime(selected.created_at)}</p>
-                            <p><span className="font-semibold text-slate-900">原提交内容摘要：</span>{String(confirmationContext.keyTaskName || selected.related_task || selected.title || '—')}</p>
+                  {viewMode === 'all' && canUseOwnerActions && SS.OWNER_ACTIONABLE.has(selectedStatus) && !hasAnyPersistedTaskCard && (
+                    <>
+                      <section className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-700">
+                        本次提交未生成结构化任务卡，将自动使用整条提交兼容流程。
+                      </section>
+                      <section className="rounded-xl border border-slate-200 p-3">
+                        <h3 className="mb-2 text-sm font-bold text-slate-900">入库范围</h3>
+                        <p className="mb-2 text-[11px] text-slate-500">工作推进表始终写入；成果和问题按现有开关处理。</p>
+                        <button type="button" role="switch" aria-checked={writeToAchievements} onClick={() => setWriteToAchievements((value) => !value)} disabled={submissionActionsLocked} className="mb-2 flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-2"><span className="text-xs font-semibold">成果库</span><ToggleSwitch on={writeToAchievements} /></button>
+                        <button type="button" role="switch" aria-checked={writeToIssues} onClick={() => setWriteToIssues((value) => !value)} disabled={submissionActionsLocked} className="flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-2"><span className="text-xs font-semibold">问题中心</span><ToggleSwitch on={writeToIssues} /></button>
+                      </section>
+                      <section>
+                        <h3 className="mb-2 text-sm font-bold text-slate-800">整条提交操作</h3>
+                        <div className="space-y-2">
+                          <button type="button" onClick={handleConfirm} disabled={submissionActionsLocked} className="h-10 w-full rounded-lg bg-blue-600 text-sm font-semibold text-white disabled:opacity-50">确认入库</button>
+                          <button type="button" onClick={() => { setPendingAction('return'); setActionNote('') }} disabled={submissionActionsLocked} className="h-10 w-full rounded-lg border border-orange-200 bg-white text-sm font-semibold text-orange-600 disabled:opacity-50">退回提交人</button>
+                          <button type="button" onClick={() => { setPendingAction('transfer'); setActionNote('') }} disabled={submissionActionsLocked || !SS.TRANSFERABLE_TO_COORDINATOR.has(selectedStatus)} className="h-10 w-full rounded-lg border border-violet-200 bg-white text-sm font-semibold text-violet-600 disabled:opacity-50">转交统筹人</button>
+                          <button type="button" onClick={() => { setPendingAction('ceo'); setActionNote('') }} disabled={submissionActionsLocked || !SS.ESCALATABLE_TO_CEO.has(selectedStatus)} className="h-10 w-full rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-600 disabled:opacity-50">转交企业教练</button>
+                        </div>
+                        {pendingAction && (
+                          <div className="mt-3 rounded-xl border border-slate-200 p-3">
+                            <p className="text-xs font-bold text-slate-700">{pendingAction === 'return' ? '退回原因' : pendingAction === 'transfer' ? '转交统筹说明' : '转交企业教练说明'}<span className="ml-1 text-red-500">*</span></p>
+                            <textarea value={actionNote} onChange={(event) => setActionNote(event.target.value)} disabled={acting} className="mt-2 min-h-20 w-full resize-none rounded-lg border border-slate-200 p-3 text-sm" />
+                            <div className="mt-3 flex gap-2"><button type="button" onClick={() => { setPendingAction(null); setActionNote('') }} className="h-9 flex-1 rounded-lg border border-slate-200">取消</button><button type="button" onClick={() => handleDecision(pendingAction)} disabled={acting || !actionNote.trim()} className="h-9 flex-1 rounded-lg bg-blue-600 text-white disabled:opacity-50">确认提交</button></div>
                           </div>
-                          <label className="mt-3 block text-xs font-bold text-slate-700">补充说明</label>
-                          <textarea value={supplementNote} onChange={(e) => setSupplementNote(e.target.value)} placeholder="请说明本次补充或修正的内容（必填）…" disabled={acting || projectArchived} className="mt-2 w-full min-h-24 rounded-xl border border-orange-200 bg-white p-3 text-sm resize-none focus:outline-none disabled:opacity-50" />
-                          <button type="button" onClick={handleResubmit} disabled={acting || projectArchived || !supplementNote.trim()} className="mt-3 w-full h-11 rounded-xl bg-orange-500 text-white font-semibold disabled:opacity-50">
-                            {acting ? '提交中…' : '补充并重新提交'}
-                          </button>
-                        </section>
-                      </div>
-                    ) : (
-                      <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-center text-sm text-slate-400">
-                        当前提交状态正常，无需重新提交。
-                      </div>
-                    )
+                        )}
+                      </section>
+                    </>
                   )}
 
                   {/* ===== COORDINATOR VIEW ===== */}
@@ -1950,6 +1553,34 @@ export function ConfirmPage() {
         </div>
 
       </div>
+
+      {/* 原始内容弹窗 */}
+      {showTranscript && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setShowTranscript(false)}>
+          <div className="relative w-full max-w-2xl max-h-[80vh] bg-white rounded-2xl shadow-xl flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: '#E9EFF6' }}>
+              <h2 className="text-sm font-bold text-slate-800">原始提交内容</h2>
+              <button type="button" onClick={() => setShowTranscript(false)} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors">
+                <IconX />
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1 p-5">
+              {originalTranscript ? (
+                <pre className="whitespace-pre-wrap break-words text-sm text-slate-700 leading-relaxed font-sans">{originalTranscript}</pre>
+              ) : (
+                <p className="text-sm text-slate-400 text-center py-12">暂无原始内容</p>
+              )}
+            </div>
+            <div className="flex items-center justify-between px-5 py-3 border-t bg-slate-50/60" style={{ borderColor: '#E9EFF6' }}>
+              <span className="text-xs text-slate-400">
+                {selected?.submitter && `提交人：${selected.submitter}`}
+                {selected?.created_at && ` · ${fmtShort(selected.created_at)}`}
+              </span>
+              <button type="button" onClick={() => setShowTranscript(false)} className="px-4 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors">关闭</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

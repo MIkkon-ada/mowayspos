@@ -245,8 +245,9 @@ test('fixed footer submits to AI confirmation center and removes the old label',
   assert.match(source, /提交至 AI 确认中心/)
   assert.doesNotMatch(source, /提交给负责人/)
   assert.match(source, /已提交至 AI 确认中心/)
-  assert.match(source, /前往 AI 确认中心/)
-  assert.match(source, /\/work\/confirmations\?projectId=/)
+  assert.match(source, /查看提交记录/)
+  assert.doesNotMatch(source, /前往 AI 确认中心/)
+  assert.doesNotMatch(source, /\/work\/confirmations\?projectId=/)
 })
 
 test('draft payload extends the legacy format with binding and input mode', () => {
@@ -272,15 +273,15 @@ test('history is a right drawer rather than a persistent main-page panel', () =>
 
 test('history drawer has search and exact four status filters', () => {
   const source = read(HISTORY)
-  assert.match(source, /搜索历史汇报内容/)
-  for (const label of ['全部', '草稿', '已提交', '已退回']) assert.match(source, new RegExp(label))
+  assert.match(source, /搜索历史提交/)
+  for (const label of ['全部', '审核中', '已退回', '已确认']) assert.match(source, new RegExp(label))
 })
 
-test('history stays project-scoped and selection opens the existing detail drawer', () => {
+test('history uses current-user records across projects and selection opens the existing detail drawer', () => {
   const page = read(PAGE)
   const historyHook = read('src/features/voice-update/useVoiceHistory.ts')
-  assert.match(historyHook, /if \(!projectId\)[\s\S]*setHistory\(\[\]\)[\s\S]*return/)
-  assert.match(historyHook, /fetchUpdates\(projectId\)/)
+  assert.match(historyHook, /fetchMyUpdates\(\)/)
+  assert.doesNotMatch(historyHook, /slice\(0,\s*20\)/)
   assert.match(page, /handleSelectUpdate/)
   assert.match(page, /<VoiceUpdateDetailDrawer/)
 })

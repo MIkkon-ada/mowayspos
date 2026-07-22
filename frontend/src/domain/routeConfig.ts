@@ -6,7 +6,7 @@ import {
   canViewCoordinatorReview,
   canViewIssues,
   canViewMeetings,
-  canViewOwnerConfirmCenter,
+  canViewConfirmCenter,
   canViewProjectDashboard,
   canViewTasks,
 } from './permissions'
@@ -36,7 +36,7 @@ export const SIDEBAR_ITEMS: SidebarItem[] = [
   { key: 'dashboard', label: '首页', icon: 'home', kind: 'route', page: 'dashboard', visible: canViewProjectDashboard },
   { key: 'voice', label: WORK_REPORT_LABEL, icon: 'voice', kind: 'route', page: 'voice', visible: canSubmitUpdate },
   { key: 'meeting', label: '会议纪要', icon: 'doc', kind: 'route', page: 'meeting', visible: canViewMeetings },
-  { key: 'confirm', label: AI_CONFIRM_CENTER_LABEL, icon: 'confirm', kind: 'route', page: 'confirm', visible: canViewOwnerConfirmCenter },
+  { key: 'confirm', label: AI_CONFIRM_CENTER_LABEL, icon: 'confirm', kind: 'route', page: 'confirm', visible: canViewConfirmCenter },
   { key: 'table', label: '工作推进表', icon: 'table', kind: 'route', page: 'table', visible: canViewTasks },
   { key: 'achievements', label: '成果库', icon: 'archive', kind: 'route', page: 'achievements', visible: canViewAchievements },
   { key: 'issues', label: '问题与决策', icon: 'alert', kind: 'route', page: 'issues', visible: canViewIssues },

@@ -25,6 +25,7 @@ export type ConfirmationTaskCard = {
   achievements: string[]
   pendingItems: string[]
   nextSteps: string[]
+  evidence: string[]
   /** 在后端 task_reports 中的原始索引（仅真实卡片有值） */
   backendCardIndex?: number
   /** 是否为后端真实存在的结构化任务卡 */
@@ -43,6 +44,7 @@ export type ReviewCardViewModel = {
   pendingItems: string[]
   nextSteps: string[]
   achievements: string[]
+  evidence: string[]
 }
 
 type BuildConfirmationTaskCardsOptions = {
@@ -218,6 +220,7 @@ export function normalizeReviewCardData(
     '成果',
     '可入库成果',
   ])
+  const evidence = firstStringArray(data, ['evidence', 'source_evidence', 'original_evidence'])
 
   const projectName = getProjectDisplayName([], data) ||
     firstText(data, ['special_project', 'projectName', 'project_name']) ||
@@ -253,6 +256,7 @@ export function normalizeReviewCardData(
     pendingItems,
     nextSteps,
     achievements,
+    evidence: evidence.length > 0 ? evidence : stringArray(raw.evidence),
   }
 }
 
@@ -275,6 +279,7 @@ export function buildConfirmationTaskCards(
       const achievements = unique(achievementTextArray(report.achievements))
       const pendingItems = unique(issueTextArray(report.subtask_issues))
       const nextSteps = unique(stringArray(report.next_steps))
+      const evidence = unique(stringArray(report.evidence))
 
       return {
         id: String(report.matched_subtask_id || report.parent_task_id || report.title || index),
@@ -300,6 +305,7 @@ export function buildConfirmationTaskCards(
         achievements,
         pendingItems,
         nextSteps,
+        evidence,
         backendCardIndex: index,
         isPersistedTaskCard: true,
       }
@@ -330,6 +336,7 @@ export function buildConfirmationTaskCards(
     achievements: unique(achievementTextArray(data.achievements)),
     pendingItems: unique([...issueTextArray(data.issues), ...issueTextArray(data.key_task_issues), ...issueTextArray(data.pending_items)]),
     nextSteps: unique(stringArray(data.next_steps)),
+    evidence: unique(stringArray(data.evidence)),
     backendCardIndex: undefined,
     isPersistedTaskCard: false,
   }]

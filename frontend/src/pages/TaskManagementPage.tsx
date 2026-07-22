@@ -15,6 +15,7 @@ import type { TaskItem, SubTaskItem, Project, ProjectMember } from '../types'
 import { getProjectById, getProjectDisplayName, getProjectIdFromRecord } from '../domain/projectDisplay'
 import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
 import { PlanTableView } from '../components/task-management/PlanTableView'
+import { toast } from '../utils/toast'
 
 const NOT_STARTED = new Set(['未开始', 'not_started', 'notstarted'])
 const IN_PROGRESS  = new Set(['推进中', '进行中', 'in_progress'])
@@ -376,10 +377,10 @@ export function TaskManagementPage() {
       .catch((err) => {
         if (cancelled) return
         if (err instanceof ApiError && err.status === 403) {
-          alert(TASK_PROJECT_PERMISSION_DENIED_MESSAGE)
+          toast.error(TASK_PROJECT_PERMISSION_DENIED_MESSAGE)
           return
         }
-        alert(TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE)
+        toast.error(TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE)
       })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -392,17 +393,17 @@ export function TaskManagementPage() {
     const taskProjectId = effectiveTaskProjectId
     if (taskProjectId == null) {
       setTasks([])
-      alert(TASK_PROJECT_CONTEXT_REQUIRED_MESSAGE)
+      toast.error(TASK_PROJECT_CONTEXT_REQUIRED_MESSAGE)
       return Promise.resolve()
     }
     return fetchTasks(taskProjectId, effectiveDeleted)
       .then((d) => setTasks(Array.isArray(d) ? d : []))
       .catch((err) => {
         if (err instanceof ApiError && err.status === 403) {
-          alert(TASK_PROJECT_PERMISSION_DENIED_MESSAGE)
+          toast.error(TASK_PROJECT_PERMISSION_DENIED_MESSAGE)
           return
         }
-        alert(TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE)
+        toast.error(TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE)
       })
   }
 
@@ -508,7 +509,7 @@ export function TaskManagementPage() {
   function openSubTaskAssignment(task: TaskItem, subTask?: SubTaskItem | SubTaskDetail | null) {
     const taskProject = projectForTask(resolvedTaskProjects, task)
     if (!isProjectActive(taskProject)) {
-      alert('项目尚未进入执行阶段，暂不能维护执行期关键任务。')
+      toast.warning('项目尚未进入执行阶段，暂不能维护执行期关键任务。')
       return
     }
     if (!canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: taskProject?.user_roles ?? [] })) return
@@ -563,7 +564,7 @@ export function TaskManagementPage() {
     try {
       const updated = await patchSubTaskStatus(selectedSubTask.id, status)
       if (isPendingConfirmation(updated)) {
-        alert('已提交至 AI 确认中心，等待项目负责人确认')
+        toast.success('已提交至 AI 确认中心，等待项目负责人确认')
         return
       }
       const merged = { ...selectedSubTask, ...updated }
@@ -668,7 +669,7 @@ export function TaskManagementPage() {
       }, 1500)
     } catch {
       setProgressSubmitState('idle')
-      alert('提交失败，请重试')
+      toast.error('提交失败，请重试')
     }
   }
 
@@ -702,7 +703,7 @@ export function TaskManagementPage() {
         loadTaskSubTaskBuckets(selectedTask.id).catch(() => {})
         refreshParentTask(selectedTask.id)
       }
-    }).catch(() => alert('恢复失败'))
+    }).catch(() => toast.error('恢复失败'))
   }
 
   // 关键任务变更后由后端汇总重点工作状态，前端只刷新最新事实。
@@ -725,7 +726,7 @@ export function TaskManagementPage() {
     const taskProject = projectForTask(resolvedTaskProjects, parentTask)
     const canClose = !!canManageProjectTrash({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: taskProject?.user_roles ?? [] })
     if (!canClose) {
-      alert('该重点工作下的关键任务已全部完成，请项目负责人确认是否关闭重点工作。')
+      toast.warning('该重点工作下的关键任务已全部完成，请项目负责人确认是否关闭重点工作。')
       return
     }
     if (!confirm(`重点工作「${parentTask.key_task}」下的关键任务已全部完成，是否现在关闭该重点工作？`)) return
@@ -747,7 +748,7 @@ export function TaskManagementPage() {
         setTasks((prev) => prev.map((t) => t.id === updated.id ? updated : t))
         setSelectedTask((prev) => prev?.id === updated.id ? updated : prev)
       })
-      .catch(() => alert('关闭重点工作失败，请稍后重试'))
+      .catch(() => toast.error('关闭重点工作失败，请稍后重试'))
   }
 
   function toggleGroupCollapse(key: string) {
@@ -774,7 +775,7 @@ export function TaskManagementPage() {
         return next
       })
       setTrashedSubTasks([])
-    }).catch(() => alert('删除失败'))
+    }).catch(() => toast.error('删除失败'))
   }
 
   function handleRestoreTask(task: TaskItem) {
@@ -789,7 +790,7 @@ export function TaskManagementPage() {
         delete next[task.id]
         return next
       })
-    }).catch(() => alert('恢复失败'))
+    }).catch(() => toast.error('恢复失败'))
   }
 
   // 按专项分组（保持首次出现的顺序），用于 rowspan 合并
@@ -823,7 +824,7 @@ export function TaskManagementPage() {
 function handleFormSave(payload: TaskPayload) {
     const pid = payload.project_id ?? viewProjectId ?? currentProjectId
     if (!pid) {
-      alert('请选择专项')
+      toast.error('请选择专项')
       return
     }
     const finalPayload = { ...payload, project_id: pid }
@@ -834,7 +835,7 @@ function handleFormSave(payload: TaskPayload) {
       setFormOpen(false)
       setFormTask(null)
       loadTasks(false)
-    }).catch(() => alert('保存失败，请重试'))
+    }).catch(() => toast.error('保存失败，请重试'))
   }
 
   return (
@@ -1251,7 +1252,7 @@ function handleFormSave(payload: TaskPayload) {
                                             if (isPendingConfirmation(updated)) { alert('已提交至 AI 确认中心，等待项目负责人确认'); return }
                                             setTaskSubMap((prev) => ({ ...prev, [task.id]: (prev[task.id] ?? []).map((x) => x.id === st.id ? { ...x, ...updated } : x) }))
                                           })
-                                          .catch(() => alert('更新失败'))
+                                          .catch(() => toast.error('更新失败'))
                                       }}
                                         className="text-xs border rounded-full px-2 py-0.5 font-bold cursor-pointer focus:outline-none"
                                         style={{ background: stBadge.cls.includes('blue') ? '#EFF6FF' : stBadge.cls.includes('emerald') ? '#F0FDF4' : stBadge.cls.includes('red') ? '#FEF2F2' : stBadge.cls.includes('amber') ? '#FFFBEB' : '#F8FAFC', color: stBadge.dot, border: `1.5px solid ${stBadge.dot}50` }}>
@@ -1772,7 +1773,7 @@ function OutlineImportModal({ defaultProjectId, projects, onCreated, onClose }: 
       const created = await batchCreateTasks({ project_id: selectedProjectId, tasks: valid })
       onCreated(created)
     } catch {
-      alert('批量创建失败，请重试')
+      toast.error('批量创建失败，请重试')
     } finally {
       setCreating(false)
     }
@@ -2005,7 +2006,7 @@ function SubTaskAssignmentModal({ taskId, projectId, editingSubTask, projectMemb
         : await createSubTask(taskId, payload)
       onSave(saved)
     } catch {
-      alert(editingSubTask ? '更新失败，请重试' : '创建失败，请重试')
+      toast.error(editingSubTask ? '更新失败，请重试' : '创建失败，请重试')
     } finally {
       setSaving(false)
     }

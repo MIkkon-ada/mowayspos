@@ -512,24 +512,49 @@ export function TaskManagementPage() {
       return
     }
     if (!canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: taskProject?.user_roles ?? [] })) return
-    setSelectedTask(task)
-    setSelectedProjectKey(null)
-    setSelectedSubTask(null)
-    setSubDetailLoading(false)
+    focusTask(task)
     setEditingSubTask(subTask ?? null)
     ensureProjectMembersLoaded(task.project_id ?? currentProjectId)
     setSubTaskFormOpen(true)
   }
 
-  function openSubDetail(st: SubTaskItem) {
+  // ===== Selection 统一入口：所有切换焦点状态必须走这几个 helper，避免漏清互斥状态 =====
+  // 互斥规则：task / subtask / project 三者只能选一；subtask 可叠在 task 之上（用于「返回重点工作」）
+  function focusTask(task: TaskItem) {
+    setSelectedTask(task)
+    setSelectedSubTask(null)
+    setSubDetailLoading(false)
+    setSelectedProjectKey(null)
+  }
+
+  function focusSubTask(st: SubTaskItem, opts?: { keepTask?: boolean }) {
     setSelectedSubTask(null)
     setSubDetailLoading(true)
     setSubEditField(null)
     setSelectedProjectKey(null)
+    if (!opts?.keepTask) setSelectedTask(null)
     fetchSubtaskDetail(st.id)
       .then((d) => setSelectedSubTask(d))
       .catch(() => setSelectedSubTask({ ...st } as SubTaskDetail))
       .finally(() => setSubDetailLoading(false))
+  }
+
+  function focusProject(key: string) {
+    setSelectedProjectKey(key)
+    setSelectedTask(null)
+    setSelectedSubTask(null)
+    setSubDetailLoading(false)
+  }
+
+  function clearSelection() {
+    setSelectedTask(null)
+    setSelectedSubTask(null)
+    setSubDetailLoading(false)
+    setSelectedProjectKey(null)
+  }
+
+  function openSubDetail(st: SubTaskItem) {
+    focusSubTask(st)
   }
 
   async function handleSubStatusUpdate(status: string) {
@@ -608,10 +633,7 @@ export function TaskManagementPage() {
   }
 
   function openDetail(task: TaskItem) {
-    setSelectedTask(task)
-    setSelectedProjectKey(null)
-    setSelectedSubTask(null)
-    setSubDetailLoading(false)
+    focusTask(task)
     setTaskLogs([])
     setTaskUpdates([])
     setSubTasks([])
@@ -655,7 +677,14 @@ export function TaskManagementPage() {
     if (showDeleted) return
     setExpandedTasks((prev) => {
       const next = new Set(prev)
-      if (next.has(taskId)) { next.delete(taskId); return next }
+      if (next.has(taskId)) {
+        // 折叠：若当前选中的 subtask 属于该 task，清空 selection，避免右侧面板残留已折叠任务的子项
+        if (selectedSubTask && selectedSubTask.task_id === taskId) {
+          clearSelection()
+        }
+        next.delete(taskId)
+        return next
+      }
       next.add(taskId)
       if (!(taskId in taskSubMap)) {
         fetchSubTasks(taskId, false)
@@ -794,7 +823,7 @@ export function TaskManagementPage() {
 function handleFormSave(payload: TaskPayload) {
     const pid = payload.project_id ?? viewProjectId ?? currentProjectId
     if (!pid) {
-      alert('璇烽€夋嫨涓撻」')
+      alert('请选择专项')
       return
     }
     const finalPayload = { ...payload, project_id: pid }
@@ -864,8 +893,7 @@ function handleFormSave(payload: TaskPayload) {
             type="button"
             onClick={() => {
               setViewMode('plan')
-              setSelectedTask(null)
-              setSelectedSubTask(null)
+              clearSelection()
             }}
             className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'plan' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
           >
@@ -937,7 +965,7 @@ function handleFormSave(payload: TaskPayload) {
         <div className="plan-execution-actions flex items-center gap-2 ml-1 flex-shrink-0">
           <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
             <button
-              onClick={() => { setSelectedTask(null); setExpandedTasks(new Set()); setShowDeleted(false) }}
+              onClick={() => { clearSelection(); setExpandedTasks(new Set()); setShowDeleted(false) }}
               className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${!showDeleted ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               在办
@@ -945,7 +973,7 @@ function handleFormSave(payload: TaskPayload) {
             {canManageTrash && (
               <button
                 onClick={() => {
-                  setSelectedTask(null)
+                  clearSelection()
                   setExpandedTasks(new Set())
                   setSearch('')
                   setFilterStatus('')
@@ -1109,7 +1137,7 @@ function handleFormSave(payload: TaskPayload) {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 9l6 6 6-6" />
                         </svg>
                       </button>
-                      <div className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer" onClick={() => { setSelectedProjectKey(key); setSelectedTask(null); setSelectedSubTask(null); setSubDetailLoading(false) }}>
+                      <div className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer" onClick={() => focusProject(key)}>
                         <span className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0" style={{ background: `${groupColor}18`, color: groupColor }}>
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 12, height: 12 }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7a2 2 0 012-2h4l2 2h10a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
                         </span>
@@ -1206,7 +1234,7 @@ function handleFormSave(payload: TaskPayload) {
                                   key={st.id}
                                   className={`flex items-center border-t transition-colors cursor-pointer ${isSelSub ? 'bg-purple-50/80' : 'hover:bg-purple-50/40'}`}
                                   style={{ borderColor: '#E9EFF6', borderLeft: `4px solid ${groupColor}`, paddingLeft: 60, paddingRight: 12, paddingTop: 8, paddingBottom: 8 }}
-                                  onClick={(e) => { e.stopPropagation(); setSelectedTask(null); openSubDetail(st) }}
+                                  onClick={(e) => { e.stopPropagation(); openSubDetail(st) }}
                                 >
                                   <span className="flex-shrink-0 w-4" />
                                   <span className="text-xs font-semibold flex-shrink-0 mr-2" style={{ color: groupColor, minWidth: 30 }}>{i+1}.{subIdx+1}</span>
@@ -1240,7 +1268,7 @@ function handleFormSave(payload: TaskPayload) {
                                     {canAssignThisTask && (
                                       <button type="button" onClick={(e) => { e.stopPropagation(); openSubTaskAssignment(task, st) }} className="text-xs text-indigo-600 hover:text-indigo-700 font-semibold">编辑</button>
                                     )}
-                                    <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedTask(null); openSubDetail(st) }} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">详情</button>
+                                    <button type="button" onClick={(e) => { e.stopPropagation(); openSubDetail(st) }} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">详情</button>
                                   </div>
                                 </div>
                               )
@@ -1290,7 +1318,7 @@ function handleFormSave(payload: TaskPayload) {
                   <div className="px-5 pt-4 pb-3 border-b flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
                     <div className="flex items-center justify-between mb-2">
                       <button
-                        onClick={() => { setSelectedSubTask(null); setSubDetailLoading(false) }}
+                        onClick={() => { setSelectedSubTask(null); setSubDetailLoading(false); setSubEditField(null) }}
                         className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-blue-600 transition-colors"
                       >
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 12, height: 12 }}>
@@ -1299,7 +1327,7 @@ function handleFormSave(payload: TaskPayload) {
                         {selectedTask ? '返回重点工作' : '返回列表'}
                       </button>
                       <button
-                        onClick={() => { setSelectedSubTask(null); setSubDetailLoading(false); setSelectedTask(null) }}
+                        onClick={() => clearSelection()}
                         className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100"
                       >
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 13, height: 13 }}>
@@ -1447,7 +1475,7 @@ function handleFormSave(payload: TaskPayload) {
                       <h2 className="text-sm font-bold text-slate-900 mt-0.5 leading-snug">{selectedTask.key_task}</h2>
                     </div>
                     <button
-                      onClick={() => setSelectedTask(null)}
+                      onClick={() => clearSelection()}
                       className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 flex-shrink-0"
                     >
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 13, height: 13 }}>

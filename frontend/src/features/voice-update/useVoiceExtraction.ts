@@ -4,11 +4,13 @@ import { fetchTasks } from '../../api/tasks'
 import type { SubTaskItem, TaskItem } from '../../types'
 import type { KeyTaskIssue, TaskReport, UserSubtaskContext } from '../../api/updates'
 import type { ProposedSubTask } from '../../api/subtaskDrafts'
-import { bindProgressReportsToTask, type CardEdit, type Phase } from './voiceUpdateResultTypes'
+import { bindProgressReportsToTask, type CardEdit, type Phase, type VoiceReportScope } from './voiceUpdateResultTypes'
 
 type UseVoiceExtractionArgs = {
+  reportScope: VoiceReportScope
   selectedProjectId: number | null
   selectedTaskContext: UserSubtaskContext | null
+  voiceCandidates: UserSubtaskContext[]
   selectedProjectIsActive: boolean
   currentUser: { name?: string } | null
   text: string
@@ -18,8 +20,10 @@ type UseVoiceExtractionArgs = {
 }
 
 export function useVoiceExtraction({
+  reportScope,
   selectedProjectId,
   selectedTaskContext,
+  voiceCandidates,
   selectedProjectIsActive,
   currentUser,
   text,
@@ -96,11 +100,6 @@ export function useVoiceExtraction({
   async function handleExtract() {
     if (submitLock.current) return
     submitLock.current = true
-    if (!selectedProjectId) {
-      submitLock.current = false
-      setError('请先选择所属项目，再进行 AI 提取。')
-      return
-    }
     const content = text.trim()
     if (!content) {
       submitLock.current = false
@@ -113,21 +112,28 @@ export function useVoiceExtraction({
       return
     }
 
-    const projectId = selectedProjectId
+    if (voiceCandidates.length === 0) {
+      submitLock.current = false
+      setError('当前范围内暂无可汇报工作，请调整汇报范围。')
+      return
+    }
+
+    const projectId = reportScope === 'all' ? undefined : selectedProjectId ?? undefined
     setPhase('extracting')
     setError(null)
     setResult(null)
 
-    setVoiceSubtasksContext(selectedTaskContext ? [selectedTaskContext] : [])
+    setVoiceSubtasksContext(voiceCandidates)
 
     try {
       const res = await extractOnly({
-        project_id: projectId,
+        ...(projectId ? { project_id: projectId } : {}),
+        report_scope: reportScope,
         source_type: mode === 'voice' ? '语音更新' : '文字更新',
         transcript_text: content,
         submitter: currentUser?.name,
         llm_provider: selectedProvider,
-        ...(selectedTaskContext ? { user_subtasks: [selectedTaskContext] } : {}),
+        user_subtasks: voiceCandidates,
       })
       const suggestion = res.suggestion ?? {}
       setResult(suggestion)
@@ -135,25 +141,24 @@ export function useVoiceExtraction({
       setEditingField(null)
       const rawProposed = (suggestion.proposed_subtasks as ProposedSubTask[] | undefined) ?? []
       setProposedSubtasks(rawProposed.filter((s) => s.title?.trim()))
-      const nextTaskReports = bindProgressReportsToTask(
-        (suggestion.task_reports as TaskReport[] | undefined) ?? [],
-        selectedTaskContext,
-      )
+      const extractedReports = (suggestion.task_reports as TaskReport[] | undefined) ?? []
+      const nextTaskReports = reportScope === 'task' && selectedTaskContext
+        ? bindProgressReportsToTask(extractedReports, selectedTaskContext)
+        : extractedReports
       setTaskReports(nextTaskReports)
       const initEdits: Record<number, CardEdit> = {}
-      if (selectedTaskContext) {
-        nextTaskReports.forEach((r, idx) => {
-          if (r.type === 'progress' && r.matched_subtask_id) {
-            initEdits[idx] = {
-              taskId: selectedTaskContext.parent_task_id ?? null,
-              subtaskId: r.matched_subtask_id,
-              subtasks: [],
-              editorOpen: false,
-              modified: false,
-            }
+      nextTaskReports.forEach((r, idx) => {
+        if (r.type === 'progress' && r.matched_subtask_id) {
+          const matchedContext = voiceCandidates.find((item) => item.id === r.matched_subtask_id)
+          initEdits[idx] = {
+            taskId: matchedContext?.parent_task_id ?? r.parent_task_id ?? null,
+            subtaskId: r.matched_subtask_id,
+            subtasks: [],
+            editorOpen: false,
+            modified: false,
           }
-        })
-      }
+        }
+      })
       setCardEdits(initEdits)
       setKeyTaskIssues((suggestion.key_task_issues as KeyTaskIssue[] | undefined) ?? [])
       setPhase('extracted')

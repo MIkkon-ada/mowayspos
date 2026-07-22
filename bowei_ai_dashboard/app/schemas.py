@@ -8,10 +8,22 @@ class UserSubtaskContext(BaseModel):
     title: str
     status: str = ""
     parent_key_task: str = ""
+    project_id: int | None = None
+    project_name: str = ""
+    parent_task_id: int | None = None
+    matched_subtask_id: int | None = None
+    subtask_id: int | None = None
+    subtask_title: str = ""
+    parent_project_id: int | None = None
+    assignee: str = ""
+    user_relation: str = ""
+    completion_criteria: str = ""
+    plan_time: str = ""
 
 
 class ExtractRequest(BaseModel):
     project_id: int | None = None
+    report_scope: str | None = None
     special_project: str | None = None
     source_type: str
     submitter: str | None = None
@@ -21,6 +33,14 @@ class ExtractRequest(BaseModel):
     edited_suggestion: dict[str, Any] | None = None
     llm_provider: str | None = None
     user_subtasks: list[UserSubtaskContext] | None = None
+
+
+class BatchUpdateRequest(BaseModel):
+    client_request_id: str = Field(min_length=8, max_length=64)
+    source_type: str = Field(min_length=1, max_length=40)
+    title: str = Field(default="工作汇报", max_length=200)
+    transcript_text: str = Field(min_length=1, max_length=5000)
+    human_result: dict[str, Any]
 
 
 class ConfirmationSaveRequest(BaseModel):

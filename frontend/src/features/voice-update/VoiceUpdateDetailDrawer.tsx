@@ -21,7 +21,7 @@ type VoiceUpdateDetailDrawerProps = {
   showTranscript: boolean
   onClose: () => void
   onToggleTranscript: () => void
-  onRestartFromTranscript: (transcript: string) => void
+  onRestartFromSubmission: (detailItem: UpdateDetail) => void
   currentUserName?: string
   onResubmitted: (id: number) => Promise<void>
 }
@@ -32,7 +32,7 @@ export function VoiceUpdateDetailDrawer({
   showTranscript,
   onClose,
   onToggleTranscript,
-  onRestartFromTranscript,
+  onRestartFromSubmission,
   currentUserName,
   onResubmitted,
 }: VoiceUpdateDetailDrawerProps) {
@@ -176,7 +176,7 @@ export function VoiceUpdateDetailDrawer({
                 />
                 {resubmitError && <p className="mt-2 text-xs text-red-600">{resubmitError}</p>}
                 <div className="mt-2 flex gap-2">
-                  <button className="text-xs text-slate-500 underline cursor-pointer" onClick={() => onRestartFromTranscript(detailItem.transcript_text || '')}>从原文重新编辑</button>
+                  <button className="text-xs text-slate-500 underline cursor-pointer" onClick={() => onRestartFromSubmission(detailItem)}>从原文重新编辑</button>
                   <button
                     className="ml-auto rounded-lg bg-orange-500 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
                     onClick={handleResubmit}

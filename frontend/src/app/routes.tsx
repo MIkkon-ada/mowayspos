@@ -71,6 +71,27 @@ function LegacyCoachDecisionRedirect() {
   )
 }
 
+function ConfirmationCenterRoute() {
+  const { currentUser, globalUserRoles } = useProject()
+  const location = useLocation()
+  const searchParams = new URLSearchParams(location.search)
+  const canReview = Boolean(
+    currentUser?.is_tech_admin ||
+    currentUser?.is_ceo ||
+    currentUser?.system_role === 'super_admin' ||
+    globalUserRoles.some((role) => ['owner', 'coordinator', 'project_ceo'].includes(role))
+  )
+
+  if (searchParams.get('view') === 'mine' || !canReview) {
+    const params = new URLSearchParams({ history: '1' })
+    const submissionId = searchParams.get('submissionId')
+    if (submissionId) params.set('submissionId', submissionId)
+    return <Navigate to={`/work/submit?${params.toString()}`} replace />
+  }
+
+  return <ConfirmPage />
+}
+
 type SetupState = 'loading' | 'needed' | 'done'
 
 export function AppRoutes() {
@@ -162,7 +183,7 @@ export function AppRoutes() {
         >
           <Route index element={<Navigate to="/work/tasks" replace />} />
           <Route path="submit" element={<VoiceUpdatePage />} />
-          <Route path="confirmations" element={<ConfirmPage />} />
+          <Route path="confirmations" element={<ConfirmationCenterRoute />} />
           <Route path="tasks" element={<TaskManagementPage />} />
           <Route path="achievements" element={<AchievementsPage />} />
           <Route path="issues" element={<IssuesPage />} />

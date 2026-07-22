@@ -52,10 +52,25 @@ class Task(Base, TimestampMixin):
     delete_batch_id = Column(String(64), default="", index=True)
 
 
+class UpdateSubmissionBatch(Base, TimestampMixin):
+    __tablename__ = "update_submission_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_request_id = Column(String(64), nullable=False, unique=True, index=True)
+    submitter = Column(String(50), default="")
+    submitter_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    source_type = Column(String(40), index=True)
+    title = Column(String(200), default="")
+    transcript_text = Column(Text, nullable=False)
+    submission_count = Column(Integer, default=0)
+
+
 class UpdateSubmission(Base, TimestampMixin):
     __tablename__ = "update_submissions"
 
     id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(Integer, ForeignKey("update_submission_batches.id"), nullable=True, index=True)
+    batch_order = Column(Integer, default=0)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
     source_type = Column(String(40), index=True)
     submitter = Column(String(50), default="")

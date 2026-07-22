@@ -67,7 +67,7 @@ class TestSubmissionActionArea:
         region = _between(
             self.page,
             "{/* Submission-level owner actions */}",
-            "{/* Member resubmit section */}",
+            "{/* Task card overview */}",
         )
         assert "viewMode === 'all'" in region
         assert "canUseOwnerActions" in region
@@ -77,7 +77,7 @@ class TestSubmissionActionArea:
         region = _between(
             self.page,
             "{/* Submission-level owner actions */}",
-            "{/* Member resubmit section */}",
+            "{/* Task card overview */}",
         )
         assert "handleConfirm" in region
         assert "setPendingAction('return')" in region
@@ -96,7 +96,7 @@ class TestSubmissionActionArea:
         region = _between(
             self.page,
             "{/* Submission-level owner actions */}",
-            "{/* Member resubmit section */}",
+            "{/* Task card overview */}",
         )
         assert "submissionActionsLocked" in region
         assert "projectArchived" in self.page[
@@ -116,7 +116,7 @@ class TestSubmissionActionArea:
         region = _between(
             self.page,
             "{/* Submission-level owner actions */}",
-            "{/* Member resubmit section */}",
+            "{/* Task card overview */}",
         )
         assert "SS.TRANSFERABLE_TO_COORDINATOR.has(selectedStatus)" in region
 
@@ -124,7 +124,7 @@ class TestSubmissionActionArea:
         region = _between(
             self.page,
             "{/* Submission-level owner actions */}",
-            "{/* Member resubmit section */}",
+            "{/* Task card overview */}",
         )
         assert "SS.ESCALATABLE_TO_CEO.has(selectedStatus)" in region
 
@@ -132,7 +132,7 @@ class TestSubmissionActionArea:
         region = _between(
             self.page,
             "{/* Submission-level owner actions */}",
-            "{/* Member resubmit section */}",
+            "{/* Task card overview */}",
         )
         assert "!actionNote.trim()" in region
         assert "acting" in region
@@ -191,15 +191,15 @@ class TestSubmissionStatusGroups:
         assert "SS.OWNER_ACTIONABLE.has(SS.normalize(item.confirm_status))" in region
 
 
-class TestMineViewAndResubmit:
+class TestSubmissionHistoryMigration:
     @classmethod
     def setup_class(cls):
         cls.page = _read("pages/ConfirmPage.tsx")
         cls.api = _read("api/confirmations.ts")
 
-    def test_page_imports_resubmit_api(self):
+    def test_page_does_not_import_resubmit_api(self):
         imports = self.page[: self.page.find("export function ConfirmPage")]
-        assert "resubmitSubmission" in imports
+        assert "resubmitSubmission" not in imports
 
     def test_api_posts_resubmit_payload(self):
         body = _extract_function(self.api, "resubmitSubmission")
@@ -218,78 +218,45 @@ class TestMineViewAndResubmit:
         assert "setFilterStatus('owner_actionable')" in switch
         assert "setFilterStatus('')" in switch
 
-    def test_mine_loading_uses_url_submission_id(self):
-        branch = self.page[
-            self.page.find("if (viewMode === 'mine')"):
-            self.page.find("} else if (viewMode === 'ceo')")
-        ]
-        assert "urlSubmissionId" in branch
-        assert "mapped.find(i => i.id === urlSubmissionId)" in branch
-        assert "requested ?? mapped[0]" not in branch
-        assert "pickItem(requested)" in branch
-        assert "setSelected(null)" in branch
-        assert "setCardDetailOpen(false)" in branch
-        assert "pickItem(mapped[0])" not in branch
-        assert "该提交不存在或不属于当前账号" in branch
+    def test_mine_loading_is_removed(self):
+        assert "viewMode === 'mine'" not in self.page
+        assert "fetchMyUpdates" not in self.page
 
-    def test_mine_without_submission_id_selects_first_record(self):
-        branch = self.page[
-            self.page.find("if (viewMode === 'mine')"):
-            self.page.find("} else if (viewMode === 'ceo')")
-        ]
-        assert "const target = mapped[0]" in branch
-        assert "if (target) pickItem(target)" in branch
+    def test_reviewer_deep_link_still_selects_requested_record(self):
+        assert "urlSubmissionId" in self.page
+        assert ".find(i => i.id === urlSubmissionId)" in self.page
 
     def test_clicking_mine_record_clears_invalid_deep_link_error(self):
         body = _extract_function(self.page, "pickItem")
         assert "setLoadError(null)" in body
 
-    def test_mine_submitter_view_does_not_compare_names(self):
-        assert "const isSubmitterView = viewMode === 'mine'" in self.page
+    def test_submitter_view_and_name_comparison_are_absent(self):
+        assert "isSubmitterView" not in self.page
         assert "selected?.submitter === currentUser?.name" not in self.page
 
-    def test_returned_section_shows_reason_and_original_context(self):
-        region = _between(
-            self.page,
-            "{/* Member resubmit section */}",
-            "{/* Task card overview */}",
-        )
-        assert "负责人已退回，请补充后重新提交" in region
-        assert "selected.reject_reason" in region
-        assert "fmtTime(selected.created_at)" in region
-        assert "原提交内容摘要" in region
+    def test_returned_editing_is_not_rendered_in_confirm_center(self):
+        assert "Member resubmit section" not in self.page
+        assert "负责人已退回，请补充后重新提交" not in self.page
 
-    def test_resubmit_note_is_required(self):
-        region = _between(
-            self.page,
-            "{/* Member resubmit section */}",
-            "{/* Task card overview */}",
-        )
-        assert "补充说明" in region
-        assert "!supplementNote.trim()" in region
+    def test_resubmit_note_state_is_removed(self):
+        assert "supplementNote" not in self.page
 
-    def test_resubmit_handler_updates_returned_submission(self):
-        body = _extract_function(self.page, "handleResubmit")
-        assert "resubmitSubmission(selected.id" in body
-        assert "currentUser.name" in body
-        assert "SS.S_PENDING_OWNER" in body
-        assert "reject_reason: ''" in body
-        assert "setItems" in body and "setSelected(updated)" in body
-        assert "setSupplementNote('')" in body
-        assert "已重新提交，等待项目负责人审核" in body
+    def test_resubmit_handler_is_removed(self):
+        assert not _extract_function(self.page, "handleResubmit")
 
     def test_resubmit_failure_preserves_note(self):
         body = _extract_function(self.page, "handleResubmit")
         catch_region = body[body.find("catch (err: unknown)"):]
         assert "setSupplementNote('')" not in catch_region
 
-    def test_switching_submission_clears_unsent_supplement(self):
+    def test_switching_submission_has_no_submitter_supplement_state(self):
         body = _extract_function(self.page, "pickItem")
-        assert "setSupplementNote('')" in body
+        assert "setSupplementNote" not in body
 
-    def test_supplement_note_is_visible_in_mine_and_all(self):
+    def test_supplement_note_is_visible_to_reviewers_only(self):
         assert "提交人补充说明" in self.page
-        assert "(viewMode === 'mine' || viewMode === 'all')" in self.page
+        assert "viewMode === 'all'" in self.page
+        assert "viewMode === 'mine'" not in self.page
         assert "selectedResult?.supplement_note" in self.page
 
     def test_status_filter_has_required_labels(self):
@@ -311,20 +278,15 @@ class TestPersistentPageFeedback:
         assert "actionError" in region
         assert "actionSuccess" in region
 
-    def test_owner_and_member_sections_do_not_duplicate_page_feedback(self):
+    def test_owner_section_does_not_duplicate_page_feedback(self):
         owner = _between(
             self.page,
             "{/* Submission-level owner actions */}",
-            "{/* Member resubmit section */}",
-        )
-        member = _between(
-            self.page,
-            "{/* Member resubmit section */}",
             "{/* Task card overview */}",
         )
-        for region in (owner, member):
-            assert "{actionError" not in region
-            assert "{actionSuccess" not in region
+        assert "{actionError" not in owner
+        assert "{actionSuccess" not in owner
+        assert "Member resubmit section" not in self.page
 
     def test_coach_and_coordinator_sections_use_page_feedback(self):
         coach = _between(
@@ -353,7 +315,6 @@ class TestPersistentPageFeedback:
         expected = {
             "handleConfirm": "已确认入库",
             "handleDecision": "已退回",
-            "handleResubmit": "已重新提交，等待项目负责人审核",
         }
         for handler, message in expected.items():
             assert message in _extract_function(self.page, handler)
@@ -408,7 +369,7 @@ def _notification_links(db, ntype: str) -> list[str]:
 
 
 class TestSubmissionNotificationDeepLinks:
-    def test_rejected_notification_targets_exact_mine_submission(self):
+    def test_rejected_notification_targets_work_report_history(self):
         db = _make_session()
         team = _seed_team(db)
         row = _submission(db, submitter=team["submitter"].name, submitter_id=team["submitter"].id)
@@ -416,10 +377,10 @@ class TestSubmissionNotificationDeepLinks:
         reject(row.id, schemas.RejectRequest(reason="补充", operator="owner"), current_user="owner", db=db)
 
         assert _notification_links(db, "submission_rejected") == [
-            f"/work/confirmations?view=mine&projectId=1&submissionId={row.id}"
+            f"/work/submit?history=1&submissionId={row.id}"
         ]
 
-    def test_confirmed_notification_targets_exact_mine_submission(self):
+    def test_confirmed_notification_targets_work_report_history(self):
         db = _make_session()
         team = _seed_team(db)
         row = _submission(db, submitter=team["submitter"].name, submitter_id=team["submitter"].id)
@@ -427,10 +388,10 @@ class TestSubmissionNotificationDeepLinks:
         confirm(row.id, schemas.ConfirmRequest(operator="owner"), current_user="owner", db=db)
 
         assert _notification_links(db, "submission_confirmed") == [
-            f"/work/confirmations?view=mine&projectId=1&submissionId={row.id}"
+            f"/work/submit?history=1&submissionId={row.id}"
         ]
 
-    def test_reject_final_notification_targets_exact_mine_submission(self):
+    def test_reject_final_notification_targets_work_report_history(self):
         db = _make_session()
         team = _seed_team(db)
         row = _submission(db, submitter=team["submitter"].name, submitter_id=team["submitter"].id)
@@ -438,7 +399,7 @@ class TestSubmissionNotificationDeepLinks:
         reject_final(row.id, schemas.RejectRequest(reason="不入库", operator="owner"), current_user="owner", db=db)
 
         assert _notification_links(db, "submission_rejected") == [
-            f"/work/confirmations?view=mine&projectId=1&submissionId={row.id}"
+            f"/work/submit?history=1&submissionId={row.id}"
         ]
 
     def test_resubmitted_notification_targets_exact_all_submission(self):

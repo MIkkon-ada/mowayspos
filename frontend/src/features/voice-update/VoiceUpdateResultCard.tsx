@@ -32,11 +32,7 @@ export function VoiceUpdateResultCard(props: VoiceUpdateResultCardProps) {
     <section className="voice-update-result-panel" aria-label="AI 提取结果预览">
       <header className="voice-update-panel-header voice-update-result-header">
         <div className="voice-update-panel-heading">
-          <span className="voice-update-panel-step">3</span>
-          <div>
-            <h2>AI 提取结果（预览）</h2>
-            <p>AI 已提取以下结构化内容，请检查并完善</p>
-          </div>
+          <h2>AI 提取结果</h2>
         </div>
         {phase === 'extracted' && (
           <button type="button" className="voice-update-reextract-button" onClick={onExtract}>重新提取</button>

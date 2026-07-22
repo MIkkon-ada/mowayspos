@@ -1,7 +1,9 @@
 import type { Project } from '../../types'
 import type { VoiceTaskContext } from './useVoiceTaskBinding'
+import type { VoiceReportScope } from './voiceUpdateResultTypes'
 
 type VoiceUpdateTaskBindingBarProps = {
+  scope: VoiceReportScope
   activeProjects: Project[]
   selectedProject: Project | null
   selectedProjectId: number | null
@@ -13,11 +15,13 @@ type VoiceUpdateTaskBindingBarProps = {
   controlsLocked: boolean
   selectedProjectIsActive: boolean
   onProjectChange: (projectId: number | null) => void
+  onScopeChange: (scope: VoiceReportScope) => void
   onTaskChange: (subtaskId: number | null) => void
   onOpenTaskDetail: () => void
 }
 
 export function VoiceUpdateTaskBindingBar({
+  scope,
   activeProjects,
   selectedProject,
   selectedProjectId,
@@ -29,13 +33,24 @@ export function VoiceUpdateTaskBindingBar({
   controlsLocked,
   selectedProjectIsActive,
   onProjectChange,
+  onScopeChange,
   onTaskChange,
   onOpenTaskDetail,
 }: VoiceUpdateTaskBindingBarProps) {
   return (
     <section className="voice-update-binding" aria-label="汇报任务绑定">
       <label className="voice-update-binding-field">
-        <span>所属项目 <span aria-hidden="true">*</span></span>
+        <span>汇报范围</span>
+        <select value={scope} disabled={controlsLocked} onChange={(event) => onScopeChange(event.target.value as VoiceReportScope)}>
+          <option value="all">我的全部工作</option>
+          <option value="project">指定项目</option>
+          <option value="task">指定关键任务</option>
+        </select>
+      </label>
+
+      {scope !== 'all' && (
+      <label className="voice-update-binding-field">
+        <span>所属项目{scope === 'task' && <span aria-hidden="true">*</span>}</span>
         <select
           value={selectedProjectId ?? ''}
           disabled={controlsLocked}
@@ -48,7 +63,9 @@ export function VoiceUpdateTaskBindingBar({
           {activeProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
         </select>
       </label>
+      )}
 
+      {scope === 'task' && (
       <label className="voice-update-binding-field voice-update-binding-task">
         <span>关键任务 <span aria-hidden="true">*</span></span>
         <select
@@ -62,20 +79,21 @@ export function VoiceUpdateTaskBindingBar({
           ))}
         </select>
       </label>
+      )}
 
-      <div className="voice-update-binding-plan">
+      {scope !== 'all' && selectedTaskContext && <div className="voice-update-binding-plan">
         <span>计划时间</span>
-        <strong>{selectedTaskContext?.plan_time || '—'}</strong>
-      </div>
+        <strong>{selectedTaskContext.plan_time}</strong>
+      </div>}
 
-      <button
+      {scope === 'task' && <button
         type="button"
         className="voice-update-task-detail-button"
         disabled={!selectedSubtaskId || taskLoading}
         onClick={onOpenTaskDetail}
       >
         查看任务详情
-      </button>
+      </button>}
 
       {selectedProjectId && selectedProjectIsActive && !taskLoading && taskOptions.length === 0 && !taskError && (
         <div className="voice-update-binding-message">

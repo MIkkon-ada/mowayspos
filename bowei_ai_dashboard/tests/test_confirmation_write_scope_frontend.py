@@ -42,7 +42,7 @@ def _owner_actions(source: str) -> str:
     return _between(
         source,
         "{/* Submission-level owner actions */}",
-        "{/* Member resubmit section */}",
+        "{/* Task card overview */}",
     )
 
 

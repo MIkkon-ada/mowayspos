@@ -29,6 +29,8 @@ from ..permissions import (
 from ..time_utils import utc_now
 from ..services.policy import can_submit_to_project as _can_submit_to_project
 from ..services.extractor import extract_update
+from ..services.work_report_agent import extract_work_report_agent
+from ..services.cross_project_submission import create_submission_batch, serialize_batch_result
 from ..services.notify import person_id_for_account as _pid_for_account, send as _notify
 from ..services.project_resolution import resolve_project_context
 from ..archived_guard import require_project_not_archived
@@ -197,7 +199,7 @@ def get_voice_context(
                 user_project_role = "coordinator"
 
     # 非管理员只能看到自己负责/协助的子任务
-    active_proj_ids = db.query(models.Project.id).filter(models.Project.status != "archived")
+    active_proj_ids = db.query(models.Project.id).filter(models.Project.status == "active")
     q = (
         db.query(models.SubTask, models.Task)
         .join(models.Task, models.SubTask.task_id == models.Task.id)
@@ -235,6 +237,11 @@ def get_voice_context(
         d["parent_key_task"] = task.key_task or ""
         d["parent_task_id"] = task.id
         d["parent_project_id"] = task.project_id
+        project = db.get(models.Project, task.project_id) if task.project_id else None
+        d["project_id"] = task.project_id
+        d["project_name"] = project.name if project else ""
+        d["subtask_id"] = subtask.id
+        d["subtask_title"] = subtask.title or ""
         d["user_relation"] = relation
         result.append(d)
 
@@ -251,10 +258,33 @@ async def extract(
     current_user = require_login(current_user, db)
     if payload.project_id is not None:
         require_project_access(current_user, payload.project_id, db)
-    user_subtasks = [s.model_dump() for s in payload.user_subtasks] if payload.user_subtasks else None
+    supplied_subtasks = [s.model_dump() for s in payload.user_subtasks] if payload.user_subtasks else None
+    agent_mode = payload.report_scope in {"all", "project"} or payload.project_id is None
+    # Never trust a client-supplied cross-project candidate pool. Re-read the
+    # current user's reportable work with the same permission-aware endpoint.
+    user_subtasks = (
+        get_voice_context(project_id=payload.project_id, current_user=current_user, db=db)
+        if agent_mode
+        else supplied_subtasks
+    )
     ceo_name = _ceo_name(db)
     source_type_raw = payload.source_type or "人工录入"
     try:
+        if agent_mode:
+            candidates = []
+            for item in user_subtasks or []:
+                candidate = dict(item)
+                candidate["project_id"] = candidate.get("project_id") or candidate.get("parent_project_id")
+                candidate["subtask_id"] = candidate.get("subtask_id") or candidate.get("id")
+                candidate["subtask_title"] = candidate.get("subtask_title") or candidate.get("title") or ""
+                candidates.append(candidate)
+            result = await asyncio.to_thread(
+                extract_work_report_agent,
+                payload.transcript_text,
+                candidates,
+                payload.llm_provider or "deepseek",
+            )
+            return {"suggestion": result}
         result = await asyncio.to_thread(
             extract_update,
             source_type_raw,
@@ -268,6 +298,25 @@ async def extract(
     except RuntimeError as exc:
         raise HTTPException(502, str(exc))
     return {"suggestion": result}
+
+
+@router.post("/batch")
+async def create_update_batch(
+    payload: schemas.BatchUpdateRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    try:
+        result = create_submission_batch(payload, current_user=current_user, db=db)
+        db.commit()
+        for row in result["submissions"]:
+            db.refresh(row)
+        db.refresh(result["batch"])
+        return serialize_batch_result(result)
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.post("")
@@ -408,6 +457,18 @@ def list_updates(
         rows = db.query(models.UpdateSubmission).filter(
             _submitter_identity_filter(db, context, current_user)
         ).order_by(models.UpdateSubmission.created_at.desc()).all()
+        batch_ids = {row.batch_id for row in rows if row.batch_id is not None}
+        batch_counts = {
+            batch.id: batch.submission_count
+            for batch in db.query(models.UpdateSubmissionBatch).filter(
+                models.UpdateSubmissionBatch.id.in_(batch_ids)
+            ).all()
+        } if batch_ids else {}
+        project_ids = {row.project_id for row in rows if row.project_id is not None}
+        project_names = {
+            project.id: project.name
+            for project in db.query(models.Project).filter(models.Project.id.in_(project_ids)).all()
+        } if project_ids else {}
         result = []
         for row in rows:
             item = crud.to_dict(row)
@@ -417,6 +478,8 @@ def list_updates(
                 or (human.get("task") or {}).get("special_project")
                 or ""
             )
+            item["project_name"] = project_names.get(row.project_id, item["special_project"])
+            item["batch_submission_count"] = batch_counts.get(row.batch_id, 1)
             result.append(item)
         return result
 

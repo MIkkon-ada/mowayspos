@@ -158,6 +158,9 @@ export function AchievementsPage() {
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [projectSearch, setProjectSearch] = useState('')
+  const [projectAchievementSummary, setProjectAchievementSummary] = useState<Record<number, { count: number; month: number; lastUpdated: string | null }>>({})
+  const [overviewLoading, setOverviewLoading] = useState(false)
+  const [overviewPage, setOverviewPage] = useState(1)
   const [filterType, setFilterType] = useState('全部')
   const [filterTaskId, setFilterTaskId] = useState('')
   const [filterSource, setFilterSource] = useState<(typeof SOURCE_OPTIONS)[number]>('全部')
@@ -182,6 +185,21 @@ export function AchievementsPage() {
     if (!term) return projects
     return projects.filter((project) => project.name.toLowerCase().includes(term))
   }, [projects, projectSearch])
+  const overviewPageSize = 8
+  const overviewPageCount = Math.max(1, Math.ceil(visibleProjects.length / overviewPageSize))
+  const pagedProjects = visibleProjects.slice((overviewPage - 1) * overviewPageSize, overviewPage * overviewPageSize)
+  const overviewStats = useMemo(() => {
+    const summaries = Object.values(projectAchievementSummary)
+    const latest = projects
+      .map((project) => ({ project, value: projectAchievementSummary[project.id]?.lastUpdated }))
+      .filter((entry): entry is { project: Project; value: string } => Boolean(entry.value))
+      .sort((a, b) => new Date(b.value).getTime() - new Date(a.value).getTime())[0]
+    return {
+      total: summaries.reduce((sum, item) => sum + item.count, 0),
+      month: summaries.reduce((sum, item) => sum + item.month, 0),
+      latestProject: latest?.project.name || '—',
+    }
+  }, [projectAchievementSummary, projects])
 
   const filteredItems = useMemo(() => {
     const term = keyword.trim().toLowerCase()
@@ -237,6 +255,36 @@ export function AchievementsPage() {
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [projectId])
+
+  useEffect(() => {
+    if (projectId) return
+    let cancelled = false
+    setOverviewLoading(true)
+    Promise.allSettled(projects.map(async (project) => {
+      const rows = await fetchAchievements(project.id)
+      const dates = rows
+        .map((item) => item.confirmed_at || item.updated_at || item.created_at)
+        .filter((value): value is string => Boolean(value))
+      return {
+        projectId: project.id,
+        count: rows.length,
+        month: rows.filter((item) => isThisMonth(item.confirmed_at || item.updated_at || item.created_at)).length,
+        lastUpdated: dates.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || null,
+      }
+    }))
+      .then((results) => {
+        if (cancelled) return
+        const next: Record<number, { count: number; month: number; lastUpdated: string | null }> = {}
+        for (const result of results) if (result.status === 'fulfilled') next[result.value.projectId] = result.value
+        setProjectAchievementSummary(next)
+      })
+      .finally(() => { if (!cancelled) setOverviewLoading(false) })
+    return () => { cancelled = true }
+  }, [projectId, projects])
+
+  useEffect(() => {
+    setOverviewPage(1)
+  }, [projectSearch])
 
   useEffect(() => {
     if (!projectId) return
@@ -385,93 +433,74 @@ export function AchievementsPage() {
 
   if (!projectId) {
     return (
-      <div className="flex-1 overflow-y-auto bg-[#f6f8fb]">
-        <div className="mx-auto max-w-[1440px] px-6 py-6">
-          <div className="mb-6 flex items-start justify-between gap-5">
+      <div className="flex-1 overflow-y-auto bg-[#f7f9fc]">
+        <div className="mx-auto max-w-[1500px] px-6 py-6">
+          <div className="mb-7 flex items-center justify-between gap-6">
             <div>
-              <p className="text-[11px] font-extrabold uppercase tracking-[0.24em] text-sky-600">PROJECT ACHIEVEMENT LIBRARY</p>
-              <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">项目成果库</h1>
-              <p className="mt-2 text-sm text-slate-500">请先选择一个项目，进入后查看该项目已入库成果，也可以手动登记成果。</p>
+              <h1 className="text-[28px] font-black tracking-tight text-slate-950">项目成果库</h1>
+              <p className="mt-2 text-sm text-slate-500">查看项目沉淀成果</p>
             </div>
-            <div className="w-80 rounded border border-slate-200 bg-white px-4 py-2.5 shadow-sm">
-              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">搜索项目名称</label>
-              <input
-                value={projectSearch}
-                onChange={(event) => setProjectSearch(event.target.value)}
-                placeholder="搜索项目名称"
-                className="mt-1.5 w-full border-0 p-0 text-sm font-medium text-slate-800 outline-none placeholder:text-slate-300"
-              />
+            <div className="flex items-center gap-4">
+              <label className="flex h-12 w-[320px] items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 shadow-sm">
+                <span className="text-lg text-slate-400">⌕</span>
+                <input value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="搜索项目名称" className="min-w-0 flex-1 border-0 bg-transparent text-sm font-medium text-slate-800 outline-none placeholder:text-slate-400" />
+              </label>
+              <button type="button" onClick={openRegisterModal} className="h-12 rounded-lg bg-blue-600 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700">⊕&nbsp; 登记成果</button>
             </div>
           </div>
 
-          <div className="achievement-stat-bar mb-6 grid grid-cols-4 gap-4">
+          <div className="achievement-stat-bar mb-6 grid grid-cols-4 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
             {[
-              ['可查看项目数', projects.length],
-              ['已入库成果总数', '—'],
-              ['本月新增成果', '—'],
-              ['最近更新项目', '—'],
-            ].map(([label, value]) => (
-              <div key={label} className="rounded border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
-                <p className="mt-2 text-2xl font-black tabular-nums text-slate-950">{value}</p>
+              ['项目', projects.length],
+              ['已入库成果', overviewLoading ? '…' : overviewStats.total],
+              ['本月新增成果', overviewLoading ? '…' : overviewStats.month],
+              ['最近更新', overviewLoading ? '…' : overviewStats.latestProject],
+            ].map(([label, value], index) => (
+              <div key={label} className={`px-5 py-5 text-center ${index ? 'border-l border-slate-200' : ''}`}>
+                <p className="text-sm font-semibold text-slate-500">{label}</p>
+                <p className="mt-2 truncate text-2xl font-black tabular-nums text-blue-600">{value}</p>
               </div>
             ))}
           </div>
 
-          <div className="achievement-project-picker-card overflow-hidden rounded border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-3">
-              <div>
-                <h2 className="text-base font-bold text-slate-900">选择项目成果库</h2>
-                <p className="mt-0.5 text-xs text-slate-500">请先选择一个项目，进入后查看或登记该项目成果。</p>
-              </div>
-              <div className="flex gap-2">
-                <button type="button" disabled className="rounded border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-400">筛选</button>
-                <button type="button" disabled className="rounded border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-400">排序</button>
-              </div>
-            </div>
+          <div className="achievement-project-picker-card overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
             <div className="overflow-auto">
-              <table className="w-full min-w-[920px] text-left text-sm">
-                <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
+              <table className="w-full min-w-[980px] text-left text-sm">
+                <thead className="border-b border-slate-200 bg-slate-50/70 text-sm font-bold text-slate-500">
                   <tr>
-                    <th className="px-5 py-2.5">项目名称</th>
-                    <th className="px-4 py-2.5">状态</th>
-                    <th className="px-4 py-2.5">项目负责人</th>
-                    <th className="px-4 py-2.5">Coach / 企业教练</th>
-                    <th className="px-4 py-2.5">成果数量</th>
-                    <th className="px-4 py-2.5">最后更新</th>
-                    <th className="px-4 py-2.5 text-center">操作</th>
+                    <th className="px-6 py-4">项目名称</th><th className="px-5 py-4">状态</th><th className="px-5 py-4">项目负责人</th><th className="px-5 py-4">企业教练</th><th className="px-5 py-4">成果数量</th><th className="px-5 py-4">最近更新</th><th className="px-5 py-4 text-center">操作</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {visibleProjects.length === 0 ? (
+                  {!overviewLoading && visibleProjects.length === 0 ? (
                     <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-slate-400">暂无可查看项目</td></tr>
-                  ) : visibleProjects.map((project) => (
-                    <tr key={project.id} className="transition-colors hover:bg-sky-50/70">
-                      <td className="px-5 py-2.5">
+                  ) : pagedProjects.map((project) => {
+                    const summary = projectAchievementSummary[project.id]
+                    return <tr key={project.id} className="transition-colors hover:bg-blue-50/50">
+                      <td className="px-6 py-5">
                         <p className="font-bold text-slate-950">{project.name}</p>
                         <p className="mt-0.5 text-xs text-slate-400">项目编号：{project.code || `#${project.id}`}</p>
                       </td>
-                      <td className="px-4 py-2.5"><span className="rounded border border-sky-100 bg-sky-50 px-2 py-0.5 text-xs font-bold text-sky-700">{projectStatusLabel(project)}</span></td>
-                      <td className="px-4 py-2.5 text-sm text-slate-600">{ownerText(project)}</td>
-                      <td className="px-4 py-2.5 text-sm text-slate-600">{coachText(project)}</td>
-                      <td className="px-4 py-2.5 text-sm text-slate-400">—</td>
-                      <td className="px-4 py-2.5 text-sm text-slate-400">—</td>
-                      <td className="px-4 py-2.5 text-center">
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/work/achievements?projectId=${project.id}`)}
-                          className="rounded bg-sky-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-sky-700"
-                        >
-                          进入成果库
-                        </button>
+                      <td className="px-5 py-5"><span className="rounded-md border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">{projectStatusLabel(project)}</span></td>
+                      <td className="px-5 py-5 text-slate-700">{ownerText(project)}</td>
+                      <td className="px-5 py-5 text-slate-700">{coachText(project)}</td>
+                      <td className="px-5 py-5 font-semibold text-slate-800">{overviewLoading ? '…' : summary?.count ?? 0}</td>
+                      <td className="px-5 py-5 text-slate-600">{overviewLoading ? '…' : formatDate(summary?.lastUpdated)}</td>
+                      <td className="px-5 py-5 text-center">
+                        <button type="button" onClick={() => navigate(`/work/achievements?projectId=${project.id}`)} className="rounded-md border border-blue-500 bg-white px-3 py-2 text-xs font-bold text-blue-600 transition hover:bg-blue-50">查看成果&nbsp;›</button>
                       </td>
                     </tr>
-                  ))}
+                  })}
                 </tbody>
               </table>
             </div>
-            <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/50 px-5 py-2.5">
-              <span className="text-xs text-slate-400">共 {visibleProjects.length} 个项目</span>
+            <div className="flex items-center justify-between border-t border-slate-200 px-6 py-4">
+              <span className="text-sm text-slate-500">共 {visibleProjects.length} 条记录</span>
+              <div className="flex items-center gap-2">
+                <button type="button" disabled={overviewPage <= 1} onClick={() => setOverviewPage((page) => Math.max(1, page - 1))} className="h-9 w-9 rounded-md text-slate-400 hover:bg-slate-50 disabled:opacity-30">‹</button>
+                <span className="grid h-9 min-w-9 place-items-center rounded-md border border-blue-500 px-2 text-sm font-bold text-blue-600">{overviewPage}</span>
+                <button type="button" disabled={overviewPage >= overviewPageCount} onClick={() => setOverviewPage((page) => Math.min(overviewPageCount, page + 1))} className="h-9 w-9 rounded-md text-slate-400 hover:bg-slate-50 disabled:opacity-30">›</button>
+              </div>
             </div>
           </div>
         </div>

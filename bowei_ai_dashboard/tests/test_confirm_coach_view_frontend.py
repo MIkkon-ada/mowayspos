@@ -127,9 +127,10 @@ class TestDataLoading:
         assert all_branch is not None
         assert "'all'" in all_branch
 
-    def test_mine_view_calls_fetch_my_updates(self):
-        """mine 视图调用 fetchMyUpdates。"""
-        assert "fetchMyUpdates" in self.source
+    def test_submitter_history_is_not_loaded_in_confirm_center(self):
+        """提交人历史已迁移到工作汇报。"""
+        assert "fetchMyUpdates" not in self.source
+        assert "viewMode === 'mine'" not in self.source
 
     def test_ceo_default_cross_project(self):
         """ceo 默认跨项目查询（传 null projectId）。"""

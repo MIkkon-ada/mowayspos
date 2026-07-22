@@ -1,116 +1,174 @@
-import { useEffect, useRef, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { apiGet } from '../api/client'
+import { getProject } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { VoiceUpdateDetailDrawer } from '../features/voice-update/VoiceUpdateDetailDrawer'
-import { VoiceUpdateHistoryPanel } from '../features/voice-update/VoiceUpdateHistoryPanel'
-import { VoiceUpdateInputPanel } from '../features/voice-update/VoiceUpdateInputPanel'
+import { VoiceUpdateHistoryDrawer } from '../features/voice-update/VoiceUpdateHistoryDrawer'
+import { VoiceUpdateInputPanel, type VoiceInputMode } from '../features/voice-update/VoiceUpdateInputPanel'
 import { VoiceUpdateResultPanel } from '../features/voice-update/VoiceUpdateResultPanel'
+import { VoiceUpdateSubmitPanel } from '../features/voice-update/VoiceUpdateSubmitPanel'
+import { VoiceUpdateTaskBindingBar } from '../features/voice-update/VoiceUpdateTaskBindingBar'
+import { VoiceUpdateTaskContextDrawer } from '../features/voice-update/VoiceUpdateTaskContextDrawer'
+import { DRAFT_KEY, useVoiceDraft } from '../features/voice-update/useVoiceDraft'
 import { useVoiceExtraction } from '../features/voice-update/useVoiceExtraction'
-import { useVoiceSubmission } from '../features/voice-update/useVoiceSubmission'
 import { useVoiceHistory } from '../features/voice-update/useVoiceHistory'
-import { useVoiceDraft } from '../features/voice-update/useVoiceDraft'
 import { useVoiceRecorder } from '../features/voice-update/useVoiceRecorder'
+import { useVoiceSubmission } from '../features/voice-update/useVoiceSubmission'
+import { readVoiceDraftState, useVoiceTaskBinding } from '../features/voice-update/useVoiceTaskBinding'
 import { useVoiceUpload } from '../features/voice-update/useVoiceUpload'
-import { formatTime } from '../features/voice-update/voiceUpdateHelpers'
-import { fetchVoiceContext } from '../api/updates'
 import { canExtractVoiceUpdate } from '../features/voice-update/voiceUpdateResultTypes'
-import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
+import type { VoiceReportScope } from '../features/voice-update/voiceUpdateResultTypes'
+import { formatTime } from '../features/voice-update/voiceUpdateHelpers'
+import { getProjectStatusLabel, isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
 import type { Project } from '../types'
+import '../features/voice-update/voiceUpdateFlow.css'
 
-function fmtProjectName(p: Project | undefined): string {
-  if (!p) return ''
-  if (p.short_name) return p.short_name
-  return p.name.length > 12 ? `${p.name.slice(0, 10)}…` : p.name
+type AvailableProvider = { provider: string; display_name: string; model: string }
+
+function parseId(value: string | null): number | null {
+  if (!value) return null
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
 }
 
 export function VoiceUpdatePage() {
-  const { id } = useParams<{ id: string }>()
-  const projectId = id ? Number(id) : null
-  const navigate = useNavigate()
-  const { projects, currentUser, loading: projectsLoading } = useProject()
-
-  const user = currentUser ? { name: currentUser.display_name ?? currentUser.username ?? '' } : null
-
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(projectId)
-  const [hasSubtasks, setHasSubtasks] = useState<boolean | null>(null)
+  const { currentUser, projects } = useProject()
+  const [searchParams] = useSearchParams()
+  const draftState = useMemo(() => readVoiceDraftState(localStorage.getItem(DRAFT_KEY)), [])
+  const requestedProjectId = parseId(searchParams.get('projectId'))
+  const requestedSubtaskId = parseId(searchParams.get('subtaskId'))
+  const requestedSubmissionId = parseId(searchParams.get('submissionId'))
+  const historyRequested = searchParams.get('history') === '1'
+  const [mode, setMode] = useState<VoiceInputMode>(draftState.mode ?? 'text')
   const [text, setText] = useState('')
-  const [mode, setMode] = useState<'text' | 'voice' | 'upload'>('text')
-  const [selectedProvider, setSelectedProvider] = useState('anthropic')
+  const [selectedProvider, setSelectedProvider] = useState('deepseek')
+  const [reportScope, setReportScope] = useState<VoiceReportScope>('all')
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
+  const [providers, setProviders] = useState<AvailableProvider[]>([])
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [resolvedProjectDetail, setResolvedProjectDetail] = useState<Project | null>(null)
+  const projectSelectionInitialized = useRef(false)
+  const historyDeepLinkHandled = useRef(false)
 
-  const projectOptions = projects.filter((p) => p.id != null && p.name)
-  const selectedProject = selectedProjectId
-    ? projects.find((p) => p.id === selectedProjectId) ?? null
+  const pageProjects = useMemo(() => {
+    const projectsById = new Map(projects.map((project) => [project.id, project]))
+    if (resolvedProjectDetail) projectsById.set(resolvedProjectDetail.id, resolvedProjectDetail)
+    return Array.from(projectsById.values())
+  }, [projects, resolvedProjectDetail])
+  const activeProjects = useMemo(() => pageProjects.filter(isProjectActive), [pageProjects])
+  const selectedProject = useMemo(
+    () => pageProjects.find((project) => project.id === selectedProjectId) ?? null,
+    [pageProjects, selectedProjectId],
+  )
+  const selectedProjectIsActive = selectedProject ? isProjectActive(selectedProject) : false
+  const projectArchived = isProjectArchived(selectedProject)
+  const selectedProjectStatusLabel = selectedProject ? getProjectStatusLabel(selectedProject) : ''
+  const projectInactiveMessage = selectedProject
+    ? `当前项目处于“${selectedProjectStatusLabel || '非执行阶段'}”，只能查看历史汇报，不能提取或提交新汇报。`
     : null
+  const projectSubmitBlockedReason = reportScope === 'all'
+    ? null
+    : !selectedProject
+      ? '请先选择所属项目。'
+      : selectedProjectIsActive
+        ? null
+        : projectInactiveMessage
 
-  const projectActive = selectedProject ? isProjectActive(selectedProject) : false
-  const projectArchived = selectedProject ? isProjectArchived(selectedProject) : false
-  const projectSubmitBlockedReason: string | null = (() => {
-    if (projectArchived) return '项目已归档，无法提交工作汇报'
-    if (selectedProject && !projectActive) return '项目尚未进入执行阶段，暂不能提交工作汇报'
-    return null
-  })()
+  useEffect(() => {
+    apiGet<AvailableProvider[]>('/api/llm-config/available')
+      .then(setProviders)
+      .catch(() => setProviders([]))
+  }, [])
 
-  const { draftSaved, saveDraft } = useVoiceDraft({
-    text,
-    selectedProvider,
-    setText,
-    setSelectedProvider,
+  useEffect(() => {
+    let cancelled = false
+    projectSelectionInitialized.current = false
+    setResolvedProjectDetail(null)
+    if (!requestedProjectId || projects.some((project) => project.id === requestedProjectId)) return
+
+    setSelectedProjectId(null)
+    getProject(requestedProjectId)
+      .then((project) => { if (!cancelled) setResolvedProjectDetail(project) })
+      .catch(() => { if (!cancelled) setResolvedProjectDetail(null) })
+    return () => { cancelled = true }
+  }, [projects, requestedProjectId])
+
+  useEffect(() => {
+    if (projectSelectionInitialized.current) return
+    if (searchParams.get('projectId')) {
+      const requestedProject = pageProjects.find((project) => project.id === requestedProjectId)
+      if (!requestedProject) return
+      setSelectedProjectId(requestedProject.id)
+      if (requestedSubtaskId) setReportScope('task')
+      else setReportScope('project')
+      projectSelectionInitialized.current = true
+      return
+    }
+    setSelectedProjectId(null)
+    setReportScope('all')
+    projectSelectionInitialized.current = true
+  }, [pageProjects, requestedProjectId, requestedSubtaskId, searchParams])
+
+  const taskBinding = useVoiceTaskBinding({
+    scope: reportScope,
+    selectedProjectId,
+    enabled: reportScope === 'all' || selectedProjectIsActive,
+    requestedSubtaskId: selectedProjectId === requestedProjectId ? requestedSubtaskId : null,
+    restoredSubtaskId: !requestedSubtaskId && selectedProjectId === draftState.projectId ? draftState.subtaskId ?? null : null,
   })
-
-  const { recording, transcribing, timer, startRecording, stopRecording } = useVoiceRecorder({
-    setText,
-    setError: () => {},
-  })
-  const { uploading, uploadFileName, uploadInputRef, handleUploadFile } = useVoiceUpload({
-    setText,
-    setError: () => {},
-  })
-
-  const {
-    history,
-    detailItem,
-    detailLoading,
-    showTranscript,
-    setShowTranscript,
-    setDetailItem,
-    refreshHistory,
-    handleSelectUpdate,
-  } = useVoiceHistory()
 
   const {
     phase,
     setPhase,
     result,
     error: extractionError,
-    setError: setExtractionError,
     editValues,
     setEditValues,
     editingField,
     setEditingField,
+    proposedSubtasks,
+    setProposedSubtasks,
     taskReports,
+    setTaskReports,
+    keyTaskIssues,
+    setKeyTaskIssues,
     cardEdits,
     updateCardEdit,
-    proposedSubtasks,
-    keyTaskIssues,
     projectTasksForSuggest,
+    voiceSubtasksContext,
     resetExtractionState,
     handleExtract,
+    setError: setExtractionError,
   } = useVoiceExtraction({
+    reportScope,
     selectedProjectId,
-    selectedTaskContext: null,
-    selectedProjectIsActive: projectActive,
-    currentUser: user,
+    selectedTaskContext: taskBinding.selectedTaskContext,
+    voiceCandidates: reportScope === 'task' && taskBinding.selectedTaskContext ? [taskBinding.selectedTaskContext] : taskBinding.taskOptions,
+    selectedProjectIsActive: reportScope === 'all' || selectedProjectIsActive,
+    currentUser,
     text,
     mode,
     selectedProvider,
     setText,
   })
 
-  const { submittedAt, submittedSubmissionId, handleSubmitFinal } = useVoiceSubmission({
+  const { recording, transcribing, timer, startRecording, stopRecording } = useVoiceRecorder({ setText, setError: setExtractionError })
+  const { uploading, uploadFileName, uploadInputRef, handleUploadFile } = useVoiceUpload({ setText, setError: setExtractionError })
+  const historyState = useVoiceHistory({ activeProjectId: selectedProjectId })
+  useEffect(() => {
+    if (!historyRequested || historyDeepLinkHandled.current) return
+    historyDeepLinkHandled.current = true
+    setHistoryOpen(true)
+    if (requestedSubmissionId) void historyState.handleSelectUpdate(requestedSubmissionId)
+  }, [historyRequested, requestedSubmissionId, historyState])
+  const { draftSaved, saveDraft } = useVoiceDraft({ text, selectedProvider, setText, setSelectedProvider })
+  const { submittedAt, handleSubmitFinal } = useVoiceSubmission({
+    reportScope,
     selectedProjectId,
-    selectedSubtaskId: null,
-    selectedTaskContext: null,
-    currentUser: user,
+    selectedSubtaskId: taskBinding.selectedSubtaskId,
+    selectedTaskContext: taskBinding.selectedTaskContext,
+    currentUser,
     text,
     mode,
     result,
@@ -119,385 +177,211 @@ export function VoiceUpdatePage() {
     keyTaskIssues,
     cardEdits,
     proposedSubtasks,
-    projectTasksForSuggest: projectTasksForSuggest.map((t) => ({ id: t.id, key_task: t.key_task })),
-    projects,
+    projectTasksForSuggest,
+    projects: pageProjects,
     setPhase,
     setError: setExtractionError,
-    refreshHistory,
+    refreshHistory: historyState.refreshHistory,
   })
 
+  const controlsLocked = phase === 'extracting' || phase === 'submitting'
   const extractDisabled = !canExtractVoiceUpdate({
+    scope: reportScope,
+    candidateCount: taskBinding.taskOptions.length,
     projectId: selectedProjectId,
-    selectedTaskContext: null,
+    selectedTaskContext: taskBinding.selectedTaskContext,
     text,
-    projectActive,
+    projectActive: reportScope === 'all' || selectedProjectIsActive,
     recording,
     transcribing,
     uploading,
     phase,
-    requireTaskBinding: false,
   })
 
-  const controlsLocked = phase === 'extracting' || phase === 'submitting'
-
-  // 检查用户是否有可汇报的子任务
-  useEffect(() => {
-    let cancelled = false
-    setHasSubtasks(null)
-    fetchVoiceContext(null)
-      .then((ctx) => {
-        if (!cancelled) {
-          const hasAny = Array.isArray(ctx) ? ctx.some((c: Record<string, unknown>) => c.id) : false
-          setHasSubtasks(hasAny)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setHasSubtasks(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-
-
-  // URL 中的项目变化时同步
-  useEffect(() => {
+  function handleProjectChange(projectId: number | null) {
+    if (controlsLocked) return
+    resetExtractionState()
     setSelectedProjectId(projectId)
-  }, [projectId])
+  }
 
-  const handleSelectProject = (id: number | null) => {
-    setSelectedProjectId(id)
-    resetExtractionState({ clearText: false })
-    if (id) {
-      navigate(`/project/${id}/work/submit`, { replace: true })
-    } else {
-      navigate('/work/submit', { replace: true })
+  function handleScopeChange(scope: VoiceReportScope) {
+    if (controlsLocked) return
+    resetExtractionState()
+    setReportScope(scope)
+    if (scope === 'all') setSelectedProjectId(null)
+  }
+
+  function handleTaskChange(subtaskId: number | null) {
+    if (controlsLocked) return
+    resetExtractionState()
+    taskBinding.selectTask(subtaskId)
+  }
+
+  function handleSaveDraft() {
+    saveDraft()
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({
+        text,
+        provider: selectedProvider,
+        mode,
+        projectId: selectedProjectId,
+        subtaskId: taskBinding.selectedSubtaskId,
+      }))
+    } catch {
+      // Existing draft behavior intentionally ignores storage failures.
     }
   }
 
-  const handleClear = () => {
-    setText('')
-    resetExtractionState({ clearText: true })
-  }
-
-  const handleRestartFromTranscript = (transcript: string) => {
-    setText(transcript)
-    resetExtractionState({ clearText: false })
-  }
-
-  // 空状态：无子任务
-  if (hasSubtasks === false) {
-    return (
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="voice-update-header">
-          <div className="voice-update-header-title-row">
-            <h1>工作汇报</h1>
-          </div>
-        </header>
-        <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center">
-            <p className="text-slate-400 text-sm">暂无可汇报的关键任务</p>
-            <p className="text-slate-300 text-xs mt-1">
-              请联系项目负责人分配关键任务后即可开始汇报
-            </p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
+  const noActiveProjects = activeProjects.length === 0 && !selectedProject
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Header */}
+    <div className="voice-update-page">
       <header className="voice-update-header">
-        <div className="voice-update-header-title-row">
-          <h1>工作汇报</h1>
-          <span className="voice-update-header-desc">
-            {selectedProject
-              ? fmtProjectName(selectedProject)
-              : '我的全部工作'}
-          </span>
-        </div>
-        <div className="voice-update-header-actions">
-          <select
-            className="voice-update-project-select"
-            value={selectedProjectId ?? ''}
-            onChange={(e) => {
-              const val = e.target.value
-              handleSelectProject(val ? Number(val) : null)
-            }}
-          >
-            <option value="">我的全部工作</option>
-            {projectOptions.map((p) => (
-              <option key={p.id} value={p.id!}>
-                {fmtProjectName(p)}
-              </option>
-            ))}
-          </select>
-        </div>
+        <div className="voice-update-title"><h1>工作汇报</h1></div>
+        <VoiceUpdateTaskBindingBar
+          scope={reportScope}
+          activeProjects={activeProjects}
+          selectedProject={selectedProject}
+          selectedProjectId={selectedProjectId}
+          selectedSubtaskId={taskBinding.selectedSubtaskId}
+          selectedTaskContext={taskBinding.selectedTaskContext}
+          taskOptions={taskBinding.taskOptions}
+          taskLoading={taskBinding.taskLoading}
+          taskError={taskBinding.taskError}
+          controlsLocked={controlsLocked}
+          selectedProjectIsActive={selectedProjectIsActive}
+          onProjectChange={handleProjectChange}
+          onScopeChange={handleScopeChange}
+          onTaskChange={handleTaskChange}
+          onOpenTaskDetail={taskBinding.openTaskDetail}
+        />
+        <button type="button" className="voice-update-history-button" onClick={() => setHistoryOpen(true)}>历史提交</button>
       </header>
 
-      {/* 项目已归档提示 */}
-      {projectSubmitBlockedReason && (
-        <div
-          style={{
-            padding: '8px 20px',
-            fontSize: 12,
-            color: '#B45309',
-            background: '#FFFBEB',
-            borderBottom: '1px solid #FDE68A',
-          }}
-        >
-          ⚠ {projectSubmitBlockedReason}
+      {noActiveProjects ? (
+        <div className="voice-update-empty-page">
+          <div><h2>暂无可提交汇报的执行中项目</h2><p>项目进入执行阶段后，可在这里提交工作进展。</p></div>
         </div>
-      )}
-
-      {/* Main content: two columns */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(360px,1fr) minmax(360px,1fr)',
-          gap: 0,
-          flex: 1,
-          overflow: 'hidden',
-        }}
-      >
-        {/* 左栏：输入 */}
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-            borderRight: '1px solid #E9EFF6',
-          }}
-        >
-          <VoiceUpdateInputPanel
-            mode={mode}
-            onModeChange={setMode}
-            providers={[
-              { provider: 'anthropic', display_name: 'Anthropic', model: 'claude-sonnet' },
-              { provider: 'dashscope', display_name: 'DashScope', model: 'qwen-max' },
-              { provider: 'deepseek', display_name: 'DeepSeek', model: 'deepseek-chat' },
-              { provider: 'glm', display_name: 'GLM', model: 'glm-4' },
-            ]}
-            selectedProvider={selectedProvider}
-            onProviderChange={setSelectedProvider}
-            controlsLocked={controlsLocked}
-            extractDisabled={extractDisabled}
-            transcribing={transcribing}
-            recording={recording}
-            timerLabel={formatTime(timer)}
-            text={text}
-            onTextChange={setText}
-            uploading={uploading}
-            uploadFileName={uploadFileName}
-            uploadInputRef={uploadInputRef}
-            onUploadFile={handleUploadFile}
-            onStartRecording={startRecording}
-            onStopRecording={stopRecording}
-            onExtract={handleExtract}
-          />
-        </div>
-
-        {/* 右栏：结果 + 历史 + Footer */}
-        <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {/* 结果区 */}
-          <div className="flex-1 overflow-y-auto">
-            {phase === 'input' && (
-              <div
-                className="flex-1 flex items-center justify-center p-8"
-                style={{ minHeight: 200 }}
-              >
-                <p className="text-slate-300 text-sm">
-                  输入内容后点击「AI 提取」查看结构化结果
-                </p>
-              </div>
-            )}
-
-            {(phase === 'extracting' ||
-              phase === 'extracted' ||
-              phase === 'submitting' ||
-              phase === 'submitted') && (
-              <VoiceUpdateResultPanel
+      ) : (
+        <div className="voice-update-editor-shell">
+          <main className="voice-update-main-scroll">
+            <div className="voice-update-workspace">
+              <VoiceUpdateInputPanel
+                mode={mode}
+                onModeChange={setMode}
+                providers={providers}
+                selectedProvider={selectedProvider}
+                onSelectedProviderChange={setSelectedProvider}
                 phase={phase}
+                controlsLocked={controlsLocked}
+                extractDisabled={extractDisabled}
+                transcribing={transcribing}
+                recording={recording}
+                timerLabel={formatTime(timer)}
+                text={text}
+                onTextChange={setText}
+                uploading={uploading}
+                uploadFileName={uploadFileName}
+                uploadInputRef={uploadInputRef}
+                onUploadFile={handleUploadFile}
+                onStartRecording={startRecording}
+                onStopRecording={stopRecording}
+                onExtract={handleExtract}
+              />
+              <VoiceUpdateResultPanel
                 result={result}
                 error={extractionError}
+                phase={phase}
                 editValues={editValues}
-                setEditValues={setEditValues}
                 editingField={editingField}
                 setEditingField={setEditingField}
+                setEditValues={setEditValues}
                 taskReports={taskReports}
+                setTaskReports={setTaskReports}
+                keyTaskIssues={keyTaskIssues}
+                setKeyTaskIssues={setKeyTaskIssues}
+                selectedSubtaskId={taskBinding.selectedSubtaskId}
+                proposedSubtasks={proposedSubtasks}
+                setProposedSubtasks={setProposedSubtasks}
                 cardEdits={cardEdits}
                 updateCardEdit={updateCardEdit}
                 projectTasksForSuggest={projectTasksForSuggest}
-                hasSelectedTask={false}
-                hasText={text.trim().length > 0}
-                selectedSubtaskId={null}
+                voiceSubtasksContext={voiceSubtasksContext}
+                currentUserName={currentUser?.name}
                 onExtract={handleExtract}
-                onSubmitFinal={handleSubmitFinal}
-                controlsLocked={controlsLocked}
-                extractDisabled={extractDisabled}
-                submittedAt={submittedAt}
-                submittedSubmissionId={submittedSubmissionId}
-                projectArchived={projectArchived}
-                projectSubmitBlockedReason={projectSubmitBlockedReason}
-                onClearText={() => setText('')}
-                onShowHistory={() => {}}
-                draftSaved={false}
-                onSaveDraft={() => {}}
-                onClear={handleClear}
-                onViewSubmissionHistory={() => {}}
+                hasSelectedTask={Boolean(taskBinding.selectedSubtaskId)}
+                hasText={Boolean(text.trim())}
               />
-            )}
-          </div>
-
-          {/* 历史面板 */}
-          <div style={{ borderTop: '1px solid #E9EFF6', flexShrink: 0 }}>
-            <VoiceUpdateHistoryPanel
-              history={history}
-              currentUserName={currentUser?.display_name ?? currentUser?.username ?? ''}
-              onSelectUpdate={handleSelectUpdate}
-            />
-          </div>
-
-          {/* Footer */}
-          <footer style={{ borderTop: '1px solid #E9EFF6', flexShrink: 0 }}>
-            {phase === 'submitted' ? (
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '12px 20px',
-                }}
-              >
-                <span style={{ color: '#10B981', fontSize: 13, fontWeight: 500 }}>
-                  ✓ 已提交至 AI 确认中心
-                  {submittedAt ? ` · ${submittedAt}` : ''}
-                </span>
-                <button
-                  type="button"
-                  style={{
-                    padding: '6px 16px',
-                    fontSize: 13,
-                    border: '1px solid #D1D5DB',
-                    borderRadius: 8,
-                    color: '#374151',
-                    background: '#fff',
-                    cursor: 'pointer',
-                  }}
-                  onClick={() => resetExtractionState({ clearText: true })}
-                >
-                  继续提交新汇报
-                </button>
-                {submittedSubmissionId && (
-                  <button
-                    type="button"
-                    style={{
-                      padding: '6px 16px',
-                      fontSize: 13,
-                      borderRadius: 8,
-                      color: '#fff',
-                      background: '#2563EB',
-                      border: 'none',
-                      cursor: 'pointer',
-                    }}
-                    onClick={() => handleSelectUpdate(submittedSubmissionId)}
-                  >
-                    查看本条记录
-                  </button>
-                )}
-              </div>
-            ) : (
-              <>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '12px 20px',
-                  }}
-                >
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button
-                      type="button"
-                      style={{
-                        padding: '6px 16px',
-                        fontSize: 13,
-                        border: '1px solid #D1D5DB',
-                        borderRadius: 8,
-                        color: '#374151',
-                        background: '#fff',
-                        cursor: 'pointer',
-                      }}
-                      onClick={saveDraft}
-                    >
-                      {draftSaved ? '已保存' : '保存草稿'}
-                    </button>
-                    <button
-                      type="button"
-                      style={{
-                        padding: '6px 16px',
-                        fontSize: 13,
-                        border: '1px solid #D1D5DB',
-                        borderRadius: 8,
-                        color: '#6B7280',
-                        background: '#fff',
-                        cursor: 'pointer',
-                      }}
-                      onClick={handleClear}
-                    >
-                      清空内容
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={phase !== 'extracted' || !!projectSubmitBlockedReason}
-                    style={{
-                      padding: '6px 24px',
-                      fontSize: 13,
-                      borderRadius: 8,
-                      color: '#fff',
-                      background:
-                        phase === 'extracted' && !projectSubmitBlockedReason ? '#2563EB' : '#9CA3AF',
-                      border: 'none',
-                      cursor:
-                        phase === 'extracted' && !projectSubmitBlockedReason
-                          ? 'pointer'
-                          : 'not-allowed',
-                    }}
-                    onClick={handleSubmitFinal}
-                  >
-                    提交至 AI 确认中心
-                  </button>
-                </div>
-                {phase !== 'input' && (
-                  <div style={{ padding: '0 20px 10px' }}>
-                    <span style={{ fontSize: 11, color: '#9CA3AF' }}>
-                      提交后将进入 AI 确认中心，由项目负责人审核确认后写入工作推进表
-                    </span>
-                  </div>
-                )}
-              </>
-            )}
-          </footer>
+            </div>
+          </main>
+          <VoiceUpdateSubmitPanel
+              phase={phase}
+              reportScope={reportScope}
+              taskReports={taskReports}
+              cardEdits={cardEdits}
+              currentUserName={currentUser?.name}
+              selectedProjectName={selectedProject?.name ?? null}
+              isProjectSelected={selectedProjectId !== null}
+              selectedSubtaskId={taskBinding.selectedSubtaskId}
+              text={text}
+              submittedAt={submittedAt}
+              draftSaved={draftSaved}
+              onSaveDraft={handleSaveDraft}
+              onResetExtractionState={resetExtractionState}
+              onClear={() => resetExtractionState({ clearText: true })}
+              onSubmitFinal={handleSubmitFinal}
+              onViewSubmissionHistory={() => setHistoryOpen(true)}
+              projectArchived={projectArchived || Boolean(selectedProject && !selectedProjectIsActive)}
+              projectSubmitBlockedReason={projectSubmitBlockedReason}
+          />
         </div>
-      </div>
+      )}
 
-      {/* Detail Drawer */}
+      <VoiceUpdateHistoryDrawer
+        open={historyOpen}
+        selectedProjectId={selectedProjectId}
+        history={historyState.history}
+        currentUserName={currentUser?.name}
+        onClose={() => setHistoryOpen(false)}
+        onSelectUpdate={historyState.handleSelectUpdate}
+      />
+      <VoiceUpdateTaskContextDrawer
+        open={taskBinding.taskDetailOpen}
+        loading={taskBinding.taskDetailLoading}
+        detail={taskBinding.taskDetail}
+        taskContext={taskBinding.selectedTaskContext}
+        projectName={selectedProject?.name ?? ''}
+        onClose={taskBinding.closeTaskDetail}
+      />
       <VoiceUpdateDetailDrawer
-        detailItem={detailItem}
-        detailLoading={detailLoading}
-        showTranscript={showTranscript}
-        onClose={() => setDetailItem(null)}
-        onToggleTranscript={() => setShowTranscript(!showTranscript)}
-        onRestartFromTranscript={handleRestartFromTranscript}
-        currentUserName={currentUser?.display_name ?? currentUser?.username ?? ''}
-        onResubmitted={async (id: number) => {
-          await refreshHistory()
-          await handleSelectUpdate(id)
+        detailItem={historyState.detailItem}
+        detailLoading={historyState.detailLoading}
+        showTranscript={historyState.showTranscript}
+        onClose={() => { historyState.setDetailItem(null); historyState.setDetailLoading(false); historyState.setShowTranscript(false) }}
+        onToggleTranscript={() => historyState.setShowTranscript((value) => !value)}
+        currentUserName={currentUser?.name}
+        onResubmitted={async (id) => { await historyState.refreshHistory(); void historyState.handleSelectUpdate(id) }}
+        onRestartFromSubmission={(detailItem) => {
+          resetExtractionState()
+          const taskReports = Array.isArray(detailItem.human_result?.task_reports)
+            ? detailItem.human_result.task_reports as Array<Record<string, unknown>>
+            : []
+          const evidence = taskReports.flatMap((report) =>
+            Array.isArray(report.evidence)
+              ? report.evidence.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
+              : [],
+          )
+          const completed = taskReports
+            .map((report) => typeof report.completed === 'string' ? report.completed.trim() : '')
+            .filter(Boolean)
+          setText(evidence.length > 0
+            ? evidence.join('。')
+            : completed.join('。') || detailItem.transcript_text || '')
+          if (detailItem.project_id) {
+            setReportScope('project')
+            setSelectedProjectId(detailItem.project_id)
+          }
+          historyState.setDetailItem(null)
+          historyState.setShowTranscript(false)
         }}
       />
     </div>

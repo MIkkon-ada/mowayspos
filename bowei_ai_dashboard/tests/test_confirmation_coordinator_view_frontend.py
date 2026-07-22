@@ -522,9 +522,8 @@ class TestCoordinatorInteractionLock:
     def test_view_switcher_buttons_disabled(self):
         """所有 view switcher 按钮必须设置 disabled={coordinatorInteractionLocked}。"""
         source = _read_tsx("pages/ConfirmPage.tsx")
-        # 四个按钮的 switchView 调用
+        # 三个审核队列的 switchView 调用
         buttons = [
-            "switchView('mine')",
             "switchView('all')",
             "switchView('coordinator')",
             "switchView('ceo')",

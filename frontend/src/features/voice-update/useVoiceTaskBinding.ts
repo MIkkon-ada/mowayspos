@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { fetchSubtaskDetail, type SubTaskDetail } from '../../api/subtasks'
 import { fetchVoiceContext, type UserSubtaskContext } from '../../api/updates'
 import { resolveVoiceTaskPreselection } from './voiceUpdateResultTypes'
+import type { VoiceReportScope } from './voiceUpdateResultTypes'
 
 export type VoiceTaskContext = UserSubtaskContext & {
   assignee?: string
@@ -29,6 +30,7 @@ export function readVoiceDraftState(raw: string | null): VoiceDraftState {
 }
 
 type UseVoiceTaskBindingArgs = {
+  scope: VoiceReportScope
   selectedProjectId: number | null
   enabled: boolean
   requestedSubtaskId: number | null
@@ -36,6 +38,7 @@ type UseVoiceTaskBindingArgs = {
 }
 
 export function useVoiceTaskBinding({
+  scope,
   selectedProjectId,
   enabled,
   requestedSubtaskId,
@@ -57,7 +60,7 @@ export function useVoiceTaskBinding({
     setTaskDetailOpen(false)
     setTaskError(null)
 
-    if (!selectedProjectId || !enabled) {
+    if ((scope !== 'all' && !selectedProjectId) || !enabled) {
       setTaskOptions([])
       setTaskLoading(false)
       setTaskError(null)
@@ -66,7 +69,7 @@ export function useVoiceTaskBinding({
 
     setTaskOptions([])
     setTaskLoading(true)
-    fetchVoiceContext(selectedProjectId)
+    fetchVoiceContext(scope === 'all' ? undefined : selectedProjectId)
       .then((rows) => {
         if (requestId !== requestIdRef.current) return
         const scopedRows = (Array.isArray(rows) ? rows : []) as VoiceTaskContext[]
@@ -82,7 +85,7 @@ export function useVoiceTaskBinding({
       .finally(() => {
         if (requestId === requestIdRef.current) setTaskLoading(false)
       })
-  }, [enabled, requestedSubtaskId, restoredSubtaskId, selectedProjectId])
+  }, [enabled, requestedSubtaskId, restoredSubtaskId, scope, selectedProjectId])
 
   const selectedTaskContext = useMemo(
     () => taskOptions.find((task) => task.id === selectedSubtaskId) ?? null,

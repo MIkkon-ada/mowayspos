@@ -59,11 +59,7 @@ export function VoiceUpdateInputPanel({
     <section className="voice-update-input-panel" aria-label="输入汇报内容">
       <header className="voice-update-panel-header voice-update-input-panel-header">
         <div className="voice-update-panel-heading">
-          <span className="voice-update-panel-step">2</span>
-          <div>
-            <h2>输入内容</h2>
-            <p>支持文本、录音、音频文件三种方式</p>
-          </div>
+          <h2>输入内容</h2>
         </div>
       </header>
 

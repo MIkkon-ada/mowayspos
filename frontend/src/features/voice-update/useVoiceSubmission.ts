@@ -25,7 +25,7 @@ type UseVoiceSubmissionArgs = {
   projects: Project[]
   setPhase: (phase: Phase) => void
   setError: (value: string | null) => void
-  refreshHistory: (projectId?: number | null) => Promise<void>
+  refreshHistory: () => Promise<void>
 }
 
 export function useVoiceSubmission({
@@ -48,6 +48,7 @@ export function useVoiceSubmission({
   refreshHistory,
 }: UseVoiceSubmissionArgs) {
   const [submittedAt, setSubmittedAt] = useState('')
+  const [submittedSubmissionId, setSubmittedSubmissionId] = useState<number | null>(null)
   const submitLock = useRef(false)
 
   async function handleSubmitFinal() {
@@ -167,13 +168,14 @@ export function useVoiceSubmission({
       }
 
       setPhase('submitted')
+      setSubmittedSubmissionId(submission?.id ?? null)
       setSubmittedAt(
         new Date()
           .toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
           .replace(/\//g, '-'),
       )
       localStorage.removeItem(DRAFT_KEY)
-      await refreshHistory(projectId ?? undefined)
+      await refreshHistory()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '提交失败，请重试')
       setPhase('extracted')
@@ -184,6 +186,7 @@ export function useVoiceSubmission({
 
   return {
     submittedAt,
+    submittedSubmissionId,
     handleSubmitFinal,
   }
 }

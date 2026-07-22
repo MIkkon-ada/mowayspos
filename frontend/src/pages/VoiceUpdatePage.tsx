@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { apiGet } from '../api/client'
 import { getProject } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
@@ -33,7 +33,6 @@ function parseId(value: string | null): number | null {
 }
 
 export function VoiceUpdatePage() {
-  const navigate = useNavigate()
   const { currentProjectId, currentUser, projects } = useProject()
   const [searchParams] = useSearchParams()
   const draftState = useMemo(() => readVoiceDraftState(localStorage.getItem(DRAFT_KEY)), [])
@@ -146,9 +145,9 @@ export function VoiceUpdatePage() {
 
   const { recording, transcribing, timer, startRecording, stopRecording } = useVoiceRecorder({ setText, setError: setExtractionError })
   const { uploading, uploadFileName, uploadInputRef, handleUploadFile } = useVoiceUpload({ setText, setError: setExtractionError })
-  const historyState = useVoiceHistory({ activeProjectId: selectedProjectId })
+  const historyState = useVoiceHistory()
   const { draftSaved, saveDraft } = useVoiceDraft({ text, selectedProvider, setText, setSelectedProvider })
-  const { submittedAt, handleSubmitFinal } = useVoiceSubmission({
+  const { submittedAt, submittedSubmissionId, handleSubmitFinal } = useVoiceSubmission({
     selectedProjectId,
     selectedSubtaskId: taskBinding.selectedSubtaskId,
     selectedTaskContext: taskBinding.selectedTaskContext,
@@ -213,7 +212,7 @@ export function VoiceUpdatePage() {
     <div className="voice-update-page">
       <header className="voice-update-header">
         <div><h1>工作汇报</h1><p>汇报工作进展，AI 提取结构化内容并提交确认</p></div>
-        <button type="button" className="voice-update-history-button" onClick={() => setHistoryOpen(true)}>查看历史汇报</button>
+        <button type="button" className="voice-update-history-button" onClick={() => setHistoryOpen(true)}>历史提交</button>
       </header>
 
       {noActiveProjects ? (
@@ -305,7 +304,7 @@ export function VoiceUpdatePage() {
             onResetExtractionState={resetExtractionState}
             onClear={() => resetExtractionState({ clearText: true })}
             onSubmitFinal={handleSubmitFinal}
-            onGoToConfirmations={() => navigate(`/work/confirmations?projectId=${selectedProjectId}`)}
+            onViewSubmissionHistory={() => setHistoryOpen(true)}
             projectArchived={projectArchived || Boolean(selectedProject && !selectedProjectIsActive)}
             projectSubmitBlockedReason={projectSubmitBlockedReason}
           />
@@ -314,9 +313,10 @@ export function VoiceUpdatePage() {
 
       <VoiceUpdateHistoryDrawer
         open={historyOpen}
-        selectedProjectId={selectedProjectId}
         history={historyState.history}
+        projects={pageProjects}
         currentUserName={currentUser?.name}
+        focusedSubmissionId={submittedSubmissionId}
         onClose={() => setHistoryOpen(false)}
         onSelectUpdate={historyState.handleSelectUpdate}
       />
@@ -339,6 +339,11 @@ export function VoiceUpdatePage() {
           setText(transcript)
           historyState.setDetailItem(null)
           historyState.setShowTranscript(false)
+        }}
+        currentUserName={currentUser?.name}
+        onResubmitted={async (id) => {
+          await historyState.refreshHistory()
+          await historyState.handleSelectUpdate(id)
         }}
       />
     </div>

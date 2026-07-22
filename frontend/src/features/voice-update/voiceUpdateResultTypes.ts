@@ -134,7 +134,7 @@ export type VoiceUpdateSubmitPanelProps = {
   onResetExtractionState: (options?: { clearText?: boolean }) => void
   onClear: () => void
   onSubmitFinal: () => void
-  onGoToConfirmations: () => void
+  onViewSubmissionHistory: () => void
   projectArchived?: boolean
   projectSubmitBlockedReason?: string | null
 }

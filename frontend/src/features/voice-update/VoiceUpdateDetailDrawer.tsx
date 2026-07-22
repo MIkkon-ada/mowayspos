@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import type { UpdateDetail } from '../../api/updates'
+import { resubmitSubmission } from '../../api/confirmations'
 import { getProjectDisplayName } from '../../domain/projectDisplay'
 import * as SS from '../../domain/submissionStatus'
 import { fmtFull } from '../../utils/time'
@@ -20,6 +22,8 @@ type VoiceUpdateDetailDrawerProps = {
   onClose: () => void
   onToggleTranscript: () => void
   onRestartFromTranscript: (transcript: string) => void
+  currentUserName?: string
+  onResubmitted: (id: number) => Promise<void>
 }
 
 export function VoiceUpdateDetailDrawer({
@@ -29,8 +33,33 @@ export function VoiceUpdateDetailDrawer({
   onClose,
   onToggleTranscript,
   onRestartFromTranscript,
+  currentUserName,
+  onResubmitted,
 }: VoiceUpdateDetailDrawerProps) {
+  const [supplementNote, setSupplementNote] = useState('')
+  const [resubmitting, setResubmitting] = useState(false)
+  const [resubmitError, setResubmitError] = useState<string | null>(null)
   const timelineNodes = buildTimelineNodes(detailItem)
+
+  useEffect(() => {
+    setSupplementNote('')
+    setResubmitError(null)
+  }, [detailItem?.id])
+
+  async function handleResubmit() {
+    if (!detailItem || !currentUserName || !supplementNote.trim()) return
+    setResubmitting(true)
+    setResubmitError(null)
+    try {
+      await resubmitSubmission(detailItem.id, supplementNote.trim(), currentUserName)
+      setSupplementNote('')
+      await onResubmitted(detailItem.id)
+    } catch (error: unknown) {
+      setResubmitError(error instanceof Error ? error.message : '重新提交失败，请重试')
+    } finally {
+      setResubmitting(false)
+    }
+  }
 
   if (!detailItem && !detailLoading) return null
 
@@ -136,13 +165,26 @@ export function VoiceUpdateDetailDrawer({
 
             {SS.RETURNED_TO_SUBMITTER.has(SS.normalize(detailItem.confirm_status)) && (
               <div className="p-3 rounded-xl" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
-                <p className="text-xs text-red-700 font-semibold mb-2">Returned</p>
-                <button
-                  className="text-xs text-red-600 underline cursor-pointer"
-                  onClick={() => onRestartFromTranscript(detailItem.transcript_text || '')}
-                >
-                  Re-edit from transcript
-                </button>
+                <p className="text-xs text-red-700 font-semibold mb-1">负责人已退回，请补充后重新提交</p>
+                <p className="text-xs text-red-600 mb-2">退回原因：{detailItem.reject_reason || '未说明'}</p>
+                <textarea
+                  value={supplementNote}
+                  onChange={(event) => setSupplementNote(event.target.value)}
+                  placeholder="请说明本次补充或修正的内容（必填）…"
+                  disabled={resubmitting}
+                  className="w-full min-h-20 rounded-lg border border-red-200 bg-white p-2 text-xs resize-none"
+                />
+                {resubmitError && <p className="mt-2 text-xs text-red-600">{resubmitError}</p>}
+                <div className="mt-2 flex gap-2">
+                  <button className="text-xs text-slate-500 underline cursor-pointer" onClick={() => onRestartFromTranscript(detailItem.transcript_text || '')}>从原文重新编辑</button>
+                  <button
+                    className="ml-auto rounded-lg bg-orange-500 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                    onClick={handleResubmit}
+                    disabled={resubmitting || !supplementNote.trim() || !currentUserName}
+                  >
+                    {resubmitting ? '提交中…' : '补充并重新提交'}
+                  </button>
+                </div>
               </div>
             )}
           </div>

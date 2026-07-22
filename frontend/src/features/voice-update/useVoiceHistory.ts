@@ -1,33 +1,25 @@
 import { useEffect, useState } from 'react'
-import { fetchUpdates, getUpdate } from '../../api/updates'
+import { fetchMyUpdates, getUpdate } from '../../api/updates'
 import type { UpdateDetail, UpdateHistoryItem } from '../../api/updates'
 
-type UseVoiceHistoryArgs = {
-  activeProjectId: number | null
-}
-
-export function useVoiceHistory({ activeProjectId }: UseVoiceHistoryArgs) {
+export function useVoiceHistory() {
   const [history, setHistory] = useState<UpdateHistoryItem[]>([])
   const [detailItem, setDetailItem] = useState<UpdateDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [showTranscript, setShowTranscript] = useState(false)
 
-  async function refreshHistory(projectId: number | null = activeProjectId) {
-    if (!projectId) {
-      setHistory([])
-      return
-    }
+  async function refreshHistory() {
     try {
-      const rows = await fetchUpdates(projectId)
-      setHistory(rows.slice(0, 20))
+      const rows = await fetchMyUpdates()
+      setHistory(rows)
     } catch {
       setHistory([])
     }
   }
 
   useEffect(() => {
-    void refreshHistory(activeProjectId)
-  }, [activeProjectId])
+    void refreshHistory()
+  }, [])
 
   async function handleSelectUpdate(id: number) {
     setShowTranscript(false)

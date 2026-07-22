@@ -41,6 +41,71 @@ describe('ConfirmPage three-column structure', () => {
   });
 });
 
+describe('ConfirmPage filter placement', () => {
+  it('keeps the single functional filter set in the page header', () => {
+    const queueStart = source.indexOf('data-confirm-panel="queue"');
+    const header = source.slice(0, queueStart);
+    for (const binding of ['filterProject', 'filterSubmitter', 'filterStatus', 'search']) {
+      assert.ok(header.includes(`value={${binding}}`), `Expected ${binding} control in the page header`);
+      assert.equal((source.match(new RegExp(`value=\\{${binding}\\}`, 'g')) || []).length, 1,
+        `Expected exactly one ${binding} control`);
+    }
+  });
+
+  it('queue panel contains no duplicate search or filter controls', () => {
+    const queue = queuePanelContent();
+    assert.ok(!queue.includes('Internal search + filter'), 'Queue must not contain its old filter block');
+    assert.ok(!queue.includes('value={search}') && !queue.includes('value={filterProject}') &&
+      !queue.includes('value={filterSubmitter}') && !queue.includes('value={filterStatus}'),
+      'Queue must not contain duplicate filter controls');
+  });
+
+  it('removes the unused IconFilter component', () => {
+    assert.ok(!source.includes('IconFilter'), 'Expected unused IconFilter component to be removed');
+  });
+
+  it('queue title flows directly into the record list without count or sort controls', () => {
+    const queue = queuePanelContent();
+    assert.ok(queue.includes('审核队列'));
+    assert.ok(!queue.includes('共 {visibleItems.length} 条'));
+    assert.ok(!queue.includes('最新提交'));
+  });
+});
+
+describe('ConfirmPage review metadata placement', () => {
+  it('removes the submission basic information block from the review panel', () => {
+    const review = reviewPanelContent();
+    assert.ok(!review.includes('提交基本信息'), 'Review panel must not render the duplicated basic information block');
+    assert.ok(!review.includes('查看原始内容'), 'Raw-content action must move out of the review panel');
+  });
+
+  it('moves the single raw-content action beside the right-panel overview heading', () => {
+    const right = rightPanelOrSource();
+    assert.equal((source.match(/查看原始内容/g) || []).length, 1, 'Expected exactly one raw-content action');
+    const headingIndex = right.indexOf('当前记录概览');
+    const actionIndex = right.indexOf('查看原始内容');
+    const detailsIndex = right.indexOf('selectedProjectName');
+    assert.ok(headingIndex !== -1 && actionIndex > headingIndex && actionIndex < detailsIndex,
+      'Expected raw-content action beside the overview heading and before existing metadata');
+  });
+
+  it('keeps the existing right-panel overview fields without adding another metadata set', () => {
+    const right = rightPanelOrSource();
+    for (const field of ['项目', '提交人', '状态', '来源', '时间', '记录ID']) {
+      assert.ok(right.includes(`>${field}<`), `Expected existing ${field} field in right-panel overview`);
+    }
+  });
+
+  it('review content starts with the task-card switch without a metadata spacer', () => {
+    const review = reviewPanelContent();
+    const selectedIndex = review.indexOf('{selected ? (');
+    const switchIndex = review.indexOf('data-confirm-task-switch');
+    assert.ok(selectedIndex !== -1 && switchIndex > selectedIndex, 'Expected task-card switch in selected review content');
+    assert.ok(!review.slice(selectedIndex, switchIndex).includes('flex-shrink-0 px-4 py-3 border-b'),
+      'Expected no fixed metadata spacer before the card switch');
+  });
+});
+
 describe('no task card modal — inline detail in middle panel', () => {
 
   it('does NOT have cardDetailOpen state (Modal removed)', () => {
@@ -75,8 +140,8 @@ describe('no task card modal — inline detail in middle panel', () => {
   });
 
   it('middle panel has inline task card detail with four content types', () => {
-    assert.ok(source.includes('本周完成') && source.includes('需处理事项') &&
-      source.includes('下一步计划') && source.includes('成果'),
+    assert.ok(source.includes('本次完成') && source.includes('问题与风险') &&
+      source.includes('下一步计划') && source.includes('取得的成果'),
       'Expected four task card content categories in inline detail');
   });
 
@@ -101,9 +166,10 @@ describe('handler function preservation', () => {
       'Expected handleDecision handler to remain');
   });
 
-  it('still has handleResubmit', () => {
-    assert.ok(/\bhandleResubmit\b/.test(source),
-      'Expected handleResubmit handler to remain');
+  it('submitter resubmit handler moved to work report history detail', () => {
+    const detail = readFileSync(resolve(__dirname, '..', 'src', 'features', 'voice-update', 'VoiceUpdateDetailDrawer.tsx'), 'utf8');
+    assert.ok(/\bhandleResubmit\b/.test(detail) && detail.includes('resubmitSubmission'),
+      'Expected handleResubmit to live in work report history detail');
   });
 
   it('still has handleTaskCardDecision', () => {
@@ -140,26 +206,27 @@ describe('API import path preservation', () => {
   });
 });
 
-describe('right panel all view — owner actions with card/submission tabs', () => {
+describe('right panel all view — automatic single-card actions with legacy fallback', () => {
 
   it('right panel all view has "判断与入库" header', () => {
     assert.ok(source.includes('判断与入库'),
       'Expected "判断与入库" title in right panel for all view');
   });
 
-  it('right panel all view has "当前任务卡" tab', () => {
-    assert.ok(source.includes('当前任务卡'),
-      'Expected "当前任务卡" tab in right panel all view');
+  it('right panel identifies the current task card without a scope switch', () => {
+    const right = rightPanelOrSource();
+    assert.ok(right.includes('当前审批对象 · 任务卡'));
+    assert.ok(!right.includes('当前任务卡 / 整条提交'));
   });
 
-  it('right panel all view has "整条提交" tab', () => {
-    assert.ok(source.includes('整条提交'),
-      'Expected "整条提交" tab in right panel all view');
+  it('legacy submissions automatically retain submission-level operations', () => {
+    const right = rightPanelOrSource();
+    assert.ok(right.includes('!hasAnyPersistedTaskCard'));
+    assert.ok(right.includes('整条提交兼容流程'));
   });
 
-  it('right panel all view has ownerActionScope state for tab switching', () => {
-    assert.ok(source.includes('ownerActionScope'),
-      'Expected ownerActionScope state for card/submission tab switching');
+  it('persisted cards expose the card action section directly', () => {
+    assert.ok(rightPanelOrSource().includes('data-confirm-card-actions'));
   });
 
   it('review panel does NOT contain submission action buttons', () => {
@@ -182,9 +249,9 @@ describe('right panel all view — owner actions with card/submission tabs', () 
     assert.ok(rps.includes('转交企业教练'), 'Right panel must contain "转交企业教练" button');
   });
 
-  it('right panel contains card-level action buttons (退回并重新编辑)', () => {
-    assert.ok(source.includes('退回并重新编辑'),
-      'Expected card-level "退回并重新编辑" button in right panel');
+  it('right panel contains card-level return action', () => {
+    assert.ok(source.includes('退回当前任务卡'),
+      'Expected card-level return button in right panel');
   });
 
   it('no duplicate submission action buttons across panels', () => {
@@ -214,21 +281,7 @@ describe('right panel all view — owner actions with card/submission tabs', () 
   });
 });
 
-describe('right panel — mine/coordinator/ceo operations', () => {
-
-  it('mine view has resubmit form in right panel', () => {
-    const rps = rightPanelOrSource();
-    assert.ok(rps.includes('补充并重新提交'),
-      'Expected "补充并重新提交" button in right panel mine view');
-    assert.ok(rps.includes('退回原因'),
-      'Expected "退回原因" display in right panel mine view');
-  });
-
-  it('review panel does NOT contain mine resubmit form', () => {
-    const review = reviewPanelContent();
-    assert.ok(!review.includes('补充并重新提交'),
-      'Review panel must not contain resubmit form');
-  });
+describe('right panel — coordinator/ceo operations', () => {
 
   it('coordinator view has submission-level feedback form in right panel', () => {
     const rps = rightPanelOrSource();
@@ -265,12 +318,7 @@ describe('right panel — mine/coordinator/ceo operations', () => {
   });
 });
 
-describe('non-all view operation text preservation', () => {
-
-  it('has "补充说明" text for mine view', () => {
-    assert.ok(source.includes('补充说明'),
-      'Expected "补充说明" text for mine view to remain');
-  });
+describe('non-all reviewer operation text preservation', () => {
 
   it('has "统筹反馈" text for coordinator view', () => {
     assert.ok(source.includes('统筹反馈'),
@@ -301,9 +349,9 @@ describe('UI structure verification', () => {
       'Expected view-specific right panel titles');
   });
 
-  it('has "仅可查看" read-only state for non-owners', () => {
-    assert.ok(source.includes('仅可查看'),
-      'Expected read-only state for non-owner views');
+  it('has no submitter-only mine view in the reviewer workbench', () => {
+    assert.ok(!source.includes("viewMode === 'mine'") && !source.includes('我的提交记录'),
+      'Reviewer workbench must not expose a submitter-only mine view');
   });
 });
 
@@ -369,6 +417,13 @@ function reviewPanelContent() {
   return source.slice(start, end);
 }
 
+function queuePanelContent() {
+  const start = source.indexOf('data-confirm-panel="queue"');
+  const end = source.indexOf('data-confirm-panel="review"');
+  if (start === -1 || end === -1) return '';
+  return source.slice(start, end);
+}
+
 function rightPanelOrSource() {
   const idx = source.indexOf('data-confirm-panel="action-preview"');
   if (idx === -1) return source;
@@ -380,6 +435,13 @@ function rightPanelOrSource() {
 // ===== P6-P4-B2-FIX: Persisted task card guard tests =====
 
 describe('task card identity — isPersistedTaskCard and backendCardIndex', () => {
+
+  it('preserves original evidence in the frontend card view model', () => {
+    const domainFile = readFileSync(resolve(__dirname, '..', 'src', 'domain', 'confirmationTaskCards.ts'), 'utf8');
+    assert.ok(domainFile.includes('evidence: string[]'));
+    assert.ok(domainFile.includes('stringArray(report.evidence)'));
+    assert.ok(reviewPanelContent().includes('activeReviewEvidence'));
+  });
 
   it('confirmThreeColumnStructure.test.mjs — ConfirmationTaskCard type has backendCardIndex field', () => {
     const domainFile = readFileSync(resolve(__dirname, '..', 'src', 'domain', 'confirmationTaskCards.ts'), 'utf8');
@@ -461,10 +523,9 @@ describe('non-persisted card guard — no card actions without real task_reports
 
 describe('fallback card UI — "未生成结构化任务卡" message', () => {
 
-  it('confirmThreeColumnStructure.test.mjs — shows "未生成结构化任务卡" when no persisted cards', () => {
-    const rps = rightPanelOrSource();
-    assert.ok(rps.includes('未生成结构化任务卡'),
-      'Expected "未生成结构化任务卡" fallback message in right panel');
+  it('confirmThreeColumnStructure.test.mjs — falls back to submission actions when no persisted cards', () => {
+    assert.ok(source.includes("!hasAnyPersistedTaskCard") && source.includes('整条提交兼容流程'),
+      'Expected fallback submissions to use submission-level actions');
   });
 
   it('confirmThreeColumnStructure.test.mjs — shows fallback guidance text about using submission actions', () => {
@@ -473,15 +534,14 @@ describe('fallback card UI — "未生成结构化任务卡" message', () => {
       'Expected guidance to use submission actions when no persisted cards');
   });
 
-  it('confirmThreeColumnStructure.test.mjs — "当前任务卡" tab is disabled when no persisted cards', () => {
-    assert.ok(source.includes('disabled={!hasAnyPersistedTaskCard}'),
-      'Expected "当前任务卡" tab button to be disabled when no persisted cards');
+  it('confirmThreeColumnStructure.test.mjs — card APIs are guarded when no persisted cards', () => {
+    assert.ok(source.includes('activeCardBackendIndex') && source.includes('activeCard?.isPersistedTaskCard'),
+      'Expected card API calls to require a persisted task card');
   });
 
-  it('confirmThreeColumnStructure.test.mjs — check ownerActionScope defaults to submission when no real cards (useEffect)', () => {
-    // The useEffect should reference hasAnyPersistedTaskCard
-    assert.ok(source.includes('hasAnyPersistedTaskCard'),
-      'Expected useEffect to check hasAnyPersistedTaskCard for default scope');
+  it('confirmThreeColumnStructure.test.mjs — fallback is automatic without scope state', () => {
+    assert.ok(!source.includes('ownerActionScope'),
+      'Expected no manual card/submission scope state');
   });
 
   it('confirmThreeColumnStructure.test.mjs — middle panel shows "本次提交概览" for fallback cards', () => {
@@ -489,10 +549,10 @@ describe('fallback card UI — "未生成结构化任务卡" message', () => {
       'Expected fallback card badge to say "本次提交概览" not "任务卡 1/1"');
   });
 
-  it('confirmThreeColumnStructure.test.mjs — middle panel shows warning banner when no persisted cards', () => {
+  it('confirmThreeColumnStructure.test.mjs — middle panel labels fallback content as submission overview', () => {
     const review = reviewPanelContent();
-    assert.ok(review.includes('未生成结构化任务卡'),
-      'Expected warning banner in review panel when no persisted cards');
+    assert.ok(review.includes('本次提交概览'),
+      'Expected fallback content to be labelled as a submission overview');
   });
 });
 
@@ -510,9 +570,9 @@ describe('card action isolation — actions only for persisted cards', () => {
       'Expected submission-level actions to remain available');
   });
 
-  it('confirmThreeColumnStructure.test.mjs — "整条提交" tab is always clickable', () => {
-    assert.ok((source.match(/整条提交/g) || []).length >= 2,
-      'Expected "整条提交" to appear at least twice (tab + guidance text)');
+  it('confirmThreeColumnStructure.test.mjs — no visible card/submission scope tab remains', () => {
+    assert.ok(!source.includes('ownerActionScope'));
+    assert.ok(source.includes('整条提交兼容流程'));
   });
 });
 
@@ -536,5 +596,94 @@ describe('layout preservation — confirm page unchanged structurally', () => {
     const review = reviewPanelContent();
     assert.ok(!review.includes('确认入库'),
       'Middle panel must not have action buttons');
+  });
+});
+
+// ===== Approved compact single-card review redesign =====
+
+describe('approved compact single-card review layout', () => {
+  it('uses one compact header row for title queues filters and search', () => {
+    assert.ok(source.includes('data-confirm-header="compact"'),
+      'Expected the approved compact one-row header marker');
+  });
+
+  it('queue contains only title list and empty states without count or sort strip', () => {
+    const queue = queuePanelContent();
+    assert.ok(!queue.includes('共 {visibleItems.length} 条'),
+      'Queue must not repeat the visible record count');
+    assert.ok(!queue.includes('最新提交'),
+      'Queue must not show the non-functional sort label');
+  });
+
+  it('review panel starts with the horizontal task-card switch and no statistic cards', () => {
+    const review = reviewPanelContent();
+    assert.ok(review.includes('data-confirm-task-switch'),
+      'Expected horizontal task-card switch in review panel');
+    assert.ok(review.includes('data-confirm-card-detail'),
+      'Expected full-width active-card detail in review panel');
+    assert.ok(!review.includes('grid grid-cols-4'),
+      'Review panel must not include the four-stat summary');
+  });
+
+  it('review ownership is read-only and status suggestion is not rendered', () => {
+    const review = reviewPanelContent();
+    assert.ok(!review.includes('项目归属'), 'Project ownership selector must be removed');
+    assert.ok(!review.includes('关联任务'), 'Task ownership selector must be removed');
+    assert.ok(!review.includes('任务状态建议'), 'Task status suggestion must be removed');
+  });
+
+  it('persisted cards have contextual single-card actions in the right panel', () => {
+    const right = rightPanelOrSource();
+    assert.ok(right.includes('data-confirm-card-actions'),
+      'Expected persisted-card actions in right panel');
+    assert.ok(right.includes("handleTaskCardDecision('confirm')"),
+      'Confirm must directly call the card-level handler');
+    assert.ok(right.includes('确认当前任务卡入库'));
+    assert.ok(right.includes('退回当前任务卡'));
+  });
+
+  it('notes appear only for return or transfer actions', () => {
+    const right = rightPanelOrSource();
+    assert.ok(right.includes('data-confirm-action-note'),
+      'Expected contextual note editor marker');
+    assert.ok(right.includes("pendingAction === 'return'"));
+    assert.ok(right.includes("pendingAction === 'transfer'"));
+    assert.ok(right.includes("setPendingAction('ceo')"));
+    assert.ok(!right.includes('确认说明可选'),
+      'Card confirmation must not pretend to save an optional note');
+  });
+});
+
+describe('current review card content isolation', () => {
+  it('does not repeat the three-level ownership path in the middle panel', () => {
+    const review = reviewPanelContent();
+    assert.ok(!review.includes('activeCard.structure.projectName'),
+      'The middle panel must not repeat project > key task > task ownership');
+  });
+
+  it('shows coordinator and coach notes only when they contain real content', () => {
+    const review = reviewPanelContent();
+    assert.ok(review.includes('activeCard.coordinatorNote &&'),
+      'Coordinator feedback must be conditional on actual content');
+    assert.ok(review.includes('activeCard.ceoNote &&'),
+      'Coach decision must be conditional on actual content');
+    assert.ok(!review.includes("activeCard.coordinatorNote || '—'"));
+    assert.ok(!review.includes("activeCard.ceoNote || '—'"));
+  });
+
+  it('builds operation logs from the selected record only', () => {
+    assert.ok(!source.includes('const opLogs = items.filter'),
+      'Operation logs must not aggregate unrelated queue records');
+    assert.ok(source.includes('const opLogs = selected'),
+      'Operation logs must be scoped to the selected record');
+  });
+
+  it('falls back to the real submission transcript only for a single card without evidence', () => {
+    assert.ok(source.includes('activeReviewEvidence'),
+      'Review evidence should have an explicit resolved value');
+    assert.ok(source.includes('taskCards.length === 1'),
+      'Whole-transcript fallback must be limited to a single-card submission');
+    assert.ok(source.includes('selected?.transcript_text'),
+      'Evidence fallback must use the saved original transcript');
   });
 });

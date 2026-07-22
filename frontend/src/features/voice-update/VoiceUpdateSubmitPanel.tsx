@@ -11,7 +11,7 @@ export function VoiceUpdateSubmitPanel({
   onResetExtractionState,
   onClear,
   onSubmitFinal,
-  onGoToConfirmations,
+  onViewSubmissionHistory,
   projectArchived = false,
   projectSubmitBlockedReason = null,
 }: VoiceUpdateSubmitPanelProps) {
@@ -36,7 +36,7 @@ export function VoiceUpdateSubmitPanel({
           </div>
           <div className="voice-update-footer-actions">
             <button type="button" className="voice-update-footer-secondary" onClick={() => onResetExtractionState({ clearText: true })}>继续提交新汇报</button>
-            <button type="button" className="voice-update-footer-primary" onClick={onGoToConfirmations}>前往 AI 确认中心</button>
+            <button type="button" className="voice-update-footer-primary" onClick={onViewSubmissionHistory}>查看提交记录</button>
           </div>
         </div>
         <div className="voice-update-footer-note">提交后将进入 AI 确认中心，由项目负责人审核确认后写入工作推进表</div>

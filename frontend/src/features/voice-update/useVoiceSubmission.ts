@@ -60,11 +60,6 @@ export function useVoiceSubmission({
       setError('请先选择所属项目，再提交至 AI 确认中心。')
       return
     }
-    if (!selectedSubtaskId || !selectedTaskContext) {
-      submitLock.current = false
-      setError('请先选择本次汇报对应的关键任务。')
-      return
-    }
     if (!currentUser) {
       submitLock.current = false
       setError('无法获取当前用户信息')

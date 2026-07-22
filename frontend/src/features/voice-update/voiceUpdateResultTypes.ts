@@ -35,8 +35,9 @@ export function buildSelectedVoiceContext(
 
 export function bindProgressReportsToTask(
   reports: TaskReport[],
-  selectedTaskContext: UserSubtaskContext,
+  selectedTaskContext: UserSubtaskContext | null,
 ): TaskReport[] {
+  if (!selectedTaskContext) return reports
   return reports.map((report) => report.type === 'progress'
     ? {
         ...report,
@@ -57,6 +58,7 @@ export function canExtractVoiceUpdate({
   transcribing,
   uploading,
   phase,
+  requireTaskBinding,
 }: {
   projectId: number | null
   selectedTaskContext: UserSubtaskContext | null
@@ -66,17 +68,19 @@ export function canExtractVoiceUpdate({
   transcribing: boolean
   uploading: boolean
   phase: Phase
+  /** 是否强制要求已绑定关键任务，默认 false */
+  requireTaskBinding?: boolean
 }): boolean {
   return Boolean(
     projectId
-    && selectedTaskContext
     && text.trim()
     && projectActive
     && !recording
     && !transcribing
     && !uploading
     && phase !== 'extracting'
-    && phase !== 'submitting',
+    && phase !== 'submitting'
+    && (requireTaskBinding ? selectedTaskContext : true),
   )
 }
 

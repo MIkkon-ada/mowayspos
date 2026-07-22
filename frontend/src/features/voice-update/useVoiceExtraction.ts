@@ -101,11 +101,6 @@ export function useVoiceExtraction({
       setError('请先选择所属项目，再进行 AI 提取。')
       return
     }
-    if (!selectedTaskContext) {
-      submitLock.current = false
-      setError('请先选择本次汇报对应的关键任务。')
-      return
-    }
     const content = text.trim()
     if (!content) {
       submitLock.current = false
@@ -123,7 +118,7 @@ export function useVoiceExtraction({
     setError(null)
     setResult(null)
 
-    setVoiceSubtasksContext([selectedTaskContext])
+    setVoiceSubtasksContext(selectedTaskContext ? [selectedTaskContext] : [])
 
     try {
       const res = await extractOnly({
@@ -132,7 +127,7 @@ export function useVoiceExtraction({
         transcript_text: content,
         submitter: currentUser?.name,
         llm_provider: selectedProvider,
-        user_subtasks: [selectedTaskContext],
+        ...(selectedTaskContext ? { user_subtasks: [selectedTaskContext] } : {}),
       })
       const suggestion = res.suggestion ?? {}
       setResult(suggestion)
@@ -146,17 +141,19 @@ export function useVoiceExtraction({
       )
       setTaskReports(nextTaskReports)
       const initEdits: Record<number, CardEdit> = {}
-      nextTaskReports.forEach((r, idx) => {
-        if (r.type === 'progress' && r.matched_subtask_id) {
-          initEdits[idx] = {
-            taskId: selectedTaskContext.parent_task_id ?? null,
-            subtaskId: r.matched_subtask_id,
-            subtasks: [],
-            editorOpen: false,
-            modified: false,
+      if (selectedTaskContext) {
+        nextTaskReports.forEach((r, idx) => {
+          if (r.type === 'progress' && r.matched_subtask_id) {
+            initEdits[idx] = {
+              taskId: selectedTaskContext.parent_task_id ?? null,
+              subtaskId: r.matched_subtask_id,
+              subtasks: [],
+              editorOpen: false,
+              modified: false,
+            }
           }
-        }
-      })
+        })
+      }
       setCardEdits(initEdits)
       setKeyTaskIssues((suggestion.key_task_issues as KeyTaskIssue[] | undefined) ?? [])
       setPhase('extracted')

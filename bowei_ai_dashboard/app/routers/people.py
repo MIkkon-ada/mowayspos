@@ -50,15 +50,25 @@ def _all_assigned_projects(coordinated: list[str], owned: list[str], collaborate
 
 
 def _rebuild_person_duties(db: Session):
-    projects = db.query(models.Project).filter(models.Project.status != "archived").all()
-    person_projects: dict[str, set[str]] = {}
-    for project in projects:
-        for name in [project.coordinator, *_split_names(project.owners), *_split_names(project.collaborators)]:
-            if name:
-                person_projects.setdefault(name, set()).add(project.name)
+    # 从 project_members 正规表读取，而非旧字符串字段（单源真相）
+    members = (
+        db.query(models.ProjectMember)
+        .join(models.Project, models.ProjectMember.project_id == models.Project.id)
+        .filter(models.Project.status != "archived")
+        .all()
+    )
+    person_projects: dict[int, set[str]] = {}
+    project_cache: dict[int, str] = {}
+    for m in members:
+        if m.project_id not in project_cache:
+            proj = db.get(models.Project, m.project_id)
+            project_cache[m.project_id] = proj.name if proj else ""
+        proj_name = project_cache[m.project_id]
+        if proj_name:
+            person_projects.setdefault(m.person_id, set()).add(proj_name)
 
     for person in db.query(models.Person).all():
-        assigned = sorted(person_projects.get(person.name, set()))
+        assigned = sorted(person_projects.get(person.id, set()))
         person.special_project_duty = "、".join(assigned) if assigned else ""
 
 
@@ -87,6 +97,31 @@ def _sync_person_assignments(
         project.owners = _join_names(owners)
         project.collaborators = _join_names(collaborators)
 
+    # 同步到 project_members 正式表（解决旧字段有记录但 project_members 缺失的问题）
+    person = db.query(models.Person).filter(models.Person.name == person_name).first()
+    if person:
+        managed_roles = ["coordinator", "owner", "member"]
+        db.query(models.ProjectMember).filter(
+            models.ProjectMember.person_id == person.id,
+            models.ProjectMember.role.in_(managed_roles),
+        ).delete(synchronize_session=False)
+
+        for project in projects:
+            entries: list[tuple[str, str]] = []
+            if project.name in coordinated_projects:
+                entries.append(("coordinator", person_name))
+            if project.name in owned_projects:
+                entries.append(("owner", person_name))
+            if project.name in collaborated_projects:
+                entries.append(("member", person_name))
+            for role, snapshot in entries:
+                db.add(models.ProjectMember(
+                    project_id=project.id,
+                    person_id=person.id,
+                    person_name_snapshot=snapshot,
+                    role=role,
+                ))
+
     _rebuild_person_duties(db)
 
 
@@ -97,6 +132,14 @@ def _detach_person_from_projects(db: Session, person_name: str):
             project.coordinator = ""
         project.owners = _join_names([name for name in _split_names(project.owners) if name != person_name])
         project.collaborators = _join_names([name for name in _split_names(project.collaborators) if name != person_name])
+
+    # 同步清理 project_members 表
+    person = db.query(models.Person).filter(models.Person.name == person_name).first()
+    if person:
+        db.query(models.ProjectMember).filter(
+            models.ProjectMember.person_id == person.id,
+        ).delete(synchronize_session=False)
+
     _rebuild_person_duties(db)
 
 

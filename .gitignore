@@ -109,3 +109,17 @@ pw-qa3/
 # Local password reset helper
 reset_pw.py
 
+# Local debug / admin scripts (root level)
+add_member.py
+check_proj.py
+check_tasks.py
+list_tables.py
+
+# Local debug / admin scripts (bowei_ai_dashboard/)
+bowei_ai_dashboard/check_tasks.py
+bowei_ai_dashboard/check_tasks2.py
+bowei_ai_dashboard/check_tasks3.py
+bowei_ai_dashboard/list_tables2.py
+bowei_ai_dashboard/q.py
+bowei_ai_dashboard/verify.py
+

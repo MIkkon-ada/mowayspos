@@ -24,7 +24,7 @@ def person_id_for_name(name: str, db: Session) -> int | None:
         return None
     try:
         row = db.execute(
-            text("SELECT id FROM people WHERE name=:n AND is_active=1"),
+            text("SELECT id FROM people WHERE name=:n AND is_active=true"),
             {"n": name.strip()},
         ).fetchone()
         return int(row[0]) if row else None

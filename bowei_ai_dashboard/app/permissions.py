@@ -350,7 +350,7 @@ def get_user_context_from_db(name: str, db) -> dict:
     try:
         account_row = db.execute(
             text(
-                "SELECT a.person_id, COALESCE(a.is_tech_admin, 0), p.name, p.system_role, COALESCE(p.is_admin, 0) "
+                "SELECT a.person_id, COALESCE(a.is_tech_admin, false), p.name, p.system_role, COALESCE(p.is_admin, false) "
                 "FROM accounts a LEFT JOIN people p ON p.id = a.person_id "
                 "WHERE a.username=:name AND a.status='active'"
             ),
@@ -364,8 +364,8 @@ def get_user_context_from_db(name: str, db) -> dict:
         else:
             row = db.execute(
             text(
-                "SELECT id, system_role, COALESCE(is_admin, 0) "
-                "FROM people WHERE name=:name AND is_active=1"
+                "SELECT id, system_role, COALESCE(is_admin, false) "
+                "FROM people WHERE name=:name AND is_active=true"
             ),
             {"name": name},
             ).fetchone()
@@ -377,6 +377,7 @@ def get_user_context_from_db(name: str, db) -> dict:
         if not system_role:
             system_role = ROLE_NORMAL
     except Exception:
+        db.rollback()
         person_id_val = None
         system_role   = ROLE_NORMAL
         is_admin      = False
@@ -505,7 +506,7 @@ def get_person_id(person_name: str, db) -> int | None:
         return None
     try:
         row = db.execute(
-            text("SELECT id FROM people WHERE name = :name AND is_active = 1"),
+            text("SELECT id FROM people WHERE name = :name AND is_active = true"),
             {"name": person_name.strip()},
         ).fetchone()
         return int(row[0]) if row else None

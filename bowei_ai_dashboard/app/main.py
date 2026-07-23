@@ -189,7 +189,7 @@ def _auth_me_projects(account: models.Account, context: dict, db) -> list[dict]:
             db.query(models.Project)
             .join(models.ProjectMember, models.ProjectMember.project_id == models.Project.id)
             .filter(models.ProjectMember.person_id == person_id, models.Project.status != "archived")
-            .group_by(models.Project.id, models.Project.name, models.Project.sort_order)
+            .distinct()
             .order_by(models.Project.sort_order, models.Project.id)
             .all()
         )
@@ -355,11 +355,12 @@ async def auth_login(request: Request):
     sid = create_session(username)
     record_login_attempt(username, success=True, **attempt_meta)
     logger.info("user login: %s", username)
+    me = _auth_me_payload(username)
     payload = {
         "ok": True,
         "user": username,
         "username": username,
-        "default_route": _auth_me_payload(username)["default_route"] if _auth_me_payload(username) else "/home",
+        "default_route": me["default_route"] if me else "/home",
     }
     resp = JSONResponse(payload)
     resp.set_cookie(

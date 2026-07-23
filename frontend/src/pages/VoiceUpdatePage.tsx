@@ -153,7 +153,7 @@ export function VoiceUpdatePage() {
     setText,
   })
 
-  const { recording, transcribing, timer, startRecording, stopRecording } = useVoiceRecorder({ setText, setError: setExtractionError })
+  const { recording, timer, startRecording, stopRecording } = useVoiceRecorder({ setText, setError: setExtractionError })
   const { uploading, uploadFileName, uploadInputRef, handleUploadFile } = useVoiceUpload({ setText, setError: setExtractionError })
   const historyState = useVoiceHistory({ activeProjectId: selectedProjectId })
   useEffect(() => {
@@ -193,7 +193,6 @@ export function VoiceUpdatePage() {
     text,
     projectActive: reportScope === 'all' || selectedProjectIsActive,
     recording,
-    transcribing,
     uploading,
     phase,
   })

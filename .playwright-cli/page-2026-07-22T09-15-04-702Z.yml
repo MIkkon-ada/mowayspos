@@ -1,0 +1,164 @@
+- generic [ref=f2e29]:
+  - complementary [ref=f2e30]:
+    - generic [ref=f2e31]:
+      - img "logo" [ref=f2e32]
+      - button "通知" [ref=f2e34] [cursor=pointer]
+    - navigation [ref=f2e37]:
+      - button "驾驶舱" [ref=f2e39] [cursor=pointer]
+      - button "工作推进表" [ref=f2e45] [cursor=pointer]
+      - button "我的任务" [ref=f2e51] [cursor=pointer]
+      - button "AI 确认中心" [ref=f2e56] [cursor=pointer]
+      - button "工作汇报" [ref=f2e62] [cursor=pointer]
+      - button "会议纪要" [ref=f2e67] [cursor=pointer]
+      - button "成果库" [ref=f2e73] [cursor=pointer]
+      - button "问题中心" [ref=f2e78] [cursor=pointer]
+      - button "组织管理" [ref=f2e84] [cursor=pointer]
+      - button "项目管理" [ref=f2e89] [cursor=pointer]
+      - button "通知中心" [ref=f2e94] [cursor=pointer]
+      - button "系统设置" [ref=f2e100] [cursor=pointer]
+    - generic [ref=f2e106]:
+      - generic [ref=f2e107]: m
+      - generic [ref=f2e108]:
+        - generic [ref=f2e109]: moways
+        - generic [ref=f2e110]: 超级管理员
+      - button "修改密码" [ref=f2e111] [cursor=pointer]
+      - button "退出登录" [ref=f2e114] [cursor=pointer]
+  - generic [ref=f2e119]:
+    - banner [ref=f2e120]:
+      - generic [ref=f2e121]:
+        - heading "首页驾驶舱" [level=1] [ref=f2e122]
+        - paragraph [ref=f2e124]: 实时掌握所有专项进度、风险、成果与待决策事项
+      - generic [ref=f2e125]:
+        - combobox [ref=f2e126] [cursor=pointer]:
+          - option "全部项目" [selected]
+          - option "我的项目"
+          - option "博维咨询AI升级转型2026"
+          - option "twe1"
+          - option "P7验收-A项目"
+          - option "P7验收-B项目"
+          - option "P7验收-C项目"
+        - combobox [ref=f2e127] [cursor=pointer]:
+          - option "全部月份" [selected]
+          - option "2026/7"
+          - option "2026/6"
+          - option "2026/5"
+          - option "2026/4"
+          - option "2026/3"
+          - option "2026/2"
+      - generic [ref=f2e128]:
+        - button "1" [ref=f2e130] [cursor=pointer]
+        - button "导出周报" [ref=f2e134] [cursor=pointer]
+    - main [ref=f2e137]:
+      - generic [ref=f2e138]:
+        - generic [ref=f2e141] [cursor=pointer]:
+          - paragraph [ref=f2e142]: 任务总数
+          - paragraph [ref=f2e143]: "4"
+          - paragraph [ref=f2e144]: 未开始 1 项
+        - generic [ref=f2e150] [cursor=pointer]:
+          - paragraph [ref=f2e151]: 进行中
+          - paragraph [ref=f2e152]: "1"
+          - paragraph [ref=f2e153]: 占比 25%
+        - generic [ref=f2e160] [cursor=pointer]:
+          - paragraph [ref=f2e161]: 已完成
+          - paragraph [ref=f2e162]: "0"
+          - paragraph [ref=f2e163]: 完成率 0%
+        - generic [ref=f2e169] [cursor=pointer]:
+          - paragraph [ref=f2e170]: 延期
+          - paragraph [ref=f2e171]: "0"
+          - paragraph [ref=f2e172]: 延期率 0%
+        - generic [ref=f2e178] [cursor=pointer]:
+          - paragraph [ref=f2e179]: 待决策
+          - paragraph [ref=f2e180]: "1"
+          - paragraph [ref=f2e181]: 需及时处理
+        - generic [ref=f2e187] [cursor=pointer]:
+          - paragraph [ref=f2e188]: 成果数量
+          - paragraph [ref=f2e189]: "1"
+          - paragraph [ref=f2e190]: 全部项目汇总
+      - generic [ref=f2e194]:
+        - generic [ref=f2e195]:
+          - heading "本月重点" [level=2] [ref=f2e197]
+          - generic [ref=f2e199] [cursor=pointer]:
+            - generic [ref=f2e200]: "1"
+            - generic [ref=f2e201]:
+              - paragraph [ref=f2e202]: 投放运营
+              - generic [ref=f2e203]:
+                - generic [ref=f2e204]: P7验收成员
+                - generic [ref=f2e205]: 未开始
+        - generic [ref=f2e206]:
+          - heading "延迟任务" [level=2] [ref=f2e208]
+          - paragraph [ref=f2e210]: 暂无延期任务
+        - generic [ref=f2e211]:
+          - heading "需决策事项" [level=2] [ref=f2e213]
+          - paragraph [ref=f2e215]: 暂无待决策事项
+      - generic [ref=f2e216]:
+        - generic [ref=f2e217]:
+          - generic [ref=f2e218]:
+            - heading "专项进度总览" [level=2] [ref=f2e219]
+            - generic [ref=f2e220]: 更新于 全部月份
+          - generic [ref=f2e221]:
+            - generic [ref=f2e223]:
+              - generic [ref=f2e224]:
+                - button "切换到 博维咨询AI升级转型2026" [ref=f2e225] [cursor=pointer]
+                - generic [ref=f2e226] [cursor=pointer]: 博维咨询AI升级转型2026
+              - generic [ref=f2e227]:
+                - generic [ref=f2e228]: 0/1
+                - generic [ref=f2e229]: 0%
+            - generic [ref=f2e232]:
+              - generic [ref=f2e233]:
+                - button "切换到 twe1" [ref=f2e234] [cursor=pointer]
+                - generic [ref=f2e235] [cursor=pointer]: twe1
+              - generic [ref=f2e236]:
+                - generic [ref=f2e237]: 0/0
+                - generic [ref=f2e238]: 0%
+            - generic [ref=f2e241]:
+              - generic [ref=f2e242]:
+                - button "切换到 P7验收-A项目" [ref=f2e243] [cursor=pointer]
+                - generic [ref=f2e244] [cursor=pointer]: P7验收-A项目
+              - generic [ref=f2e245]:
+                - generic [ref=f2e246]: 0/1
+                - generic [ref=f2e247]: 0%
+            - generic [ref=f2e250]:
+              - generic [ref=f2e251]:
+                - button "切换到 P7验收-B项目" [ref=f2e252] [cursor=pointer]
+                - generic [ref=f2e253] [cursor=pointer]: P7验收-B项目
+              - generic [ref=f2e254]:
+                - generic [ref=f2e255]: 0/1
+                - generic [ref=f2e256]: 0%
+            - generic [ref=f2e259]:
+              - generic [ref=f2e260]:
+                - button "切换到 P7验收-C项目" [ref=f2e261] [cursor=pointer]
+                - generic [ref=f2e262] [cursor=pointer]: P7验收-C项目
+              - generic [ref=f2e263]:
+                - generic [ref=f2e264]: 0/1
+                - generic [ref=f2e265]: 0%
+        - generic [ref=f2e267]:
+          - heading "任务状态分布" [level=2] [ref=f2e268]
+          - generic [ref=f2e272]:
+            - generic [ref=f2e273]:
+              - generic [ref=f2e274]: 未启动
+              - generic [ref=f2e277]:
+                - generic [ref=f2e278]: "1"
+                - generic [ref=f2e279]: 25%
+            - generic [ref=f2e280]:
+              - generic [ref=f2e281]: 进行中
+              - generic [ref=f2e284]:
+                - generic [ref=f2e285]: "1"
+                - generic [ref=f2e286]: 25%
+            - generic [ref=f2e287]:
+              - generic [ref=f2e288]: 已完成
+              - generic [ref=f2e291]:
+                - generic [ref=f2e292]: "0"
+                - generic [ref=f2e293]: 0%
+            - generic [ref=f2e294]:
+              - generic [ref=f2e295]: 延期
+              - generic [ref=f2e298]:
+                - generic [ref=f2e299]: "0"
+                - generic [ref=f2e300]: 0%
+            - generic [ref=f2e301]:
+              - generic [ref=f2e302]: 暂缓
+              - generic [ref=f2e305]:
+                - generic [ref=f2e306]: "0"
+                - generic [ref=f2e307]: 0%
+            - generic [ref=f2e308]:
+              - generic [ref=f2e309]: 合计
+              - generic [ref=f2e310]: 4 项

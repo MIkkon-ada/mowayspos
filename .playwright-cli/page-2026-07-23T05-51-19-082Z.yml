@@ -1,0 +1,140 @@
+- generic [ref=e35]:
+  - complementary [ref=e36]:
+    - generic [ref=e37]:
+      - img "logo" [ref=e38]
+      - button "通知" [ref=e40] [cursor=pointer]
+    - navigation [ref=e43]:
+      - button "驾驶舱" [ref=e45] [cursor=pointer]
+      - button "工作推进表" [ref=e51] [cursor=pointer]
+      - button "我的任务" [ref=e57] [cursor=pointer]
+      - button "AI 确认中心 2" [ref=e62] [cursor=pointer]:
+        - generic [ref=e66]: AI 确认中心
+        - generic [ref=e67]: "2"
+      - button "工作汇报" [ref=e69] [cursor=pointer]
+      - button "会议纪要" [ref=e74] [cursor=pointer]
+      - button "成果库" [ref=e80] [cursor=pointer]
+      - button "问题中心" [ref=e85] [cursor=pointer]
+      - button "组织管理" [ref=e91] [cursor=pointer]
+      - button "项目管理" [ref=e96] [cursor=pointer]
+      - button "通知中心" [ref=e101] [cursor=pointer]
+      - button "系统设置" [ref=e107] [cursor=pointer]
+    - generic [ref=e113]:
+      - generic [ref=e114]: m
+      - generic [ref=e115]:
+        - generic [ref=e116]: moways
+        - generic [ref=e117]: 超级管理员
+      - button "修改密码" [ref=e118] [cursor=pointer]
+      - button "退出登录" [ref=e121] [cursor=pointer]
+  - generic [ref=e126]:
+    - banner [ref=e127]:
+      - generic [ref=e128]:
+        - heading "首页驾驶舱" [level=1] [ref=e129]
+        - paragraph [ref=e131]: 实时掌握所有专项进度、风险、成果与待决策事项
+      - generic [ref=e132]:
+        - combobox [ref=e133] [cursor=pointer]:
+          - option "全部项目" [selected]
+          - option "我的项目"
+          - option "博维咨询AI升级转型2026"
+          - option "twe1"
+        - combobox [ref=e134] [cursor=pointer]:
+          - option "全部月份" [selected]
+          - option "2026/7"
+          - option "2026/6"
+          - option "2026/5"
+          - option "2026/4"
+          - option "2026/3"
+          - option "2026/2"
+      - generic [ref=e135]:
+        - button "1" [ref=e137] [cursor=pointer]
+        - button "导出周报" [ref=e141] [cursor=pointer]
+    - main [ref=e144]:
+      - generic [ref=e145]:
+        - generic [ref=e148] [cursor=pointer]:
+          - paragraph [ref=e149]: 任务总数
+          - paragraph [ref=e150]: "1"
+          - paragraph [ref=e151]: 全部已启动
+        - generic [ref=e157] [cursor=pointer]:
+          - paragraph [ref=e158]: 进行中
+          - paragraph [ref=e159]: "1"
+          - paragraph [ref=e160]: 占比 100%
+        - generic [ref=e167] [cursor=pointer]:
+          - paragraph [ref=e168]: 已完成
+          - paragraph [ref=e169]: "0"
+          - paragraph [ref=e170]: 完成率 0%
+        - generic [ref=e176] [cursor=pointer]:
+          - paragraph [ref=e177]: 延期
+          - paragraph [ref=e178]: "0"
+          - paragraph [ref=e179]: 延期率 0%
+        - generic [ref=e185] [cursor=pointer]:
+          - paragraph [ref=e186]: 待决策
+          - paragraph [ref=e187]: "1"
+          - paragraph [ref=e188]: 需及时处理
+        - generic [ref=e194] [cursor=pointer]:
+          - paragraph [ref=e195]: 成果数量
+          - paragraph [ref=e196]: "1"
+          - paragraph [ref=e197]: 全部项目汇总
+      - generic [ref=e201]:
+        - generic [ref=e202]:
+          - heading "本月重点" [level=2] [ref=e204]
+          - generic [ref=e206] [cursor=pointer]:
+            - generic [ref=e207]: "1"
+            - generic [ref=e208]:
+              - paragraph [ref=e209]: 联合腾讯WorkBuddy开拓AI相关业务
+              - generic [ref=e210]: 进行中
+        - generic [ref=e212]:
+          - heading "延迟任务" [level=2] [ref=e214]
+          - paragraph [ref=e216]: 暂无延期任务
+        - generic [ref=e217]:
+          - heading "需决策事项" [level=2] [ref=e219]
+          - paragraph [ref=e221]: 暂无待决策事项
+      - generic [ref=e222]:
+        - generic [ref=e223]:
+          - generic [ref=e224]:
+            - heading "专项进度总览" [level=2] [ref=e225]
+            - generic [ref=e226]: 更新于 全部月份
+          - generic [ref=e227]:
+            - generic [ref=e229]:
+              - generic [ref=e230]:
+                - button "切换到 博维咨询AI升级转型2026" [ref=e231] [cursor=pointer]
+                - generic [ref=e232] [cursor=pointer]: 博维咨询AI升级转型2026
+              - generic [ref=e233]:
+                - generic [ref=e234]: 0/1
+                - generic [ref=e235]: 0%
+            - generic [ref=e238]:
+              - generic [ref=e239]:
+                - button "切换到 twe1" [ref=e240] [cursor=pointer]
+                - generic [ref=e241] [cursor=pointer]: twe1
+              - generic [ref=e242]:
+                - generic [ref=e243]: 0/0
+                - generic [ref=e244]: 0%
+        - generic [ref=e246]:
+          - heading "任务状态分布" [level=2] [ref=e247]
+          - generic [ref=e251]:
+            - generic [ref=e252]:
+              - generic [ref=e253]: 未启动
+              - generic [ref=e256]:
+                - generic [ref=e257]: "0"
+                - generic [ref=e258]: 0%
+            - generic [ref=e259]:
+              - generic [ref=e260]: 进行中
+              - generic [ref=e263]:
+                - generic [ref=e264]: "1"
+                - generic [ref=e265]: 100%
+            - generic [ref=e266]:
+              - generic [ref=e267]: 已完成
+              - generic [ref=e270]:
+                - generic [ref=e271]: "0"
+                - generic [ref=e272]: 0%
+            - generic [ref=e273]:
+              - generic [ref=e274]: 延期
+              - generic [ref=e277]:
+                - generic [ref=e278]: "0"
+                - generic [ref=e279]: 0%
+            - generic [ref=e280]:
+              - generic [ref=e281]: 暂缓
+              - generic [ref=e284]:
+                - generic [ref=e285]: "0"
+                - generic [ref=e286]: 0%
+            - generic [ref=e287]:
+              - generic [ref=e288]: 合计
+              - generic [ref=e289]: 1 项

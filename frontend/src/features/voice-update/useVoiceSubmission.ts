@@ -4,11 +4,12 @@ import { createDrafts } from '../../api/subtaskDrafts'
 import type { Project } from '../../types'
 import type { KeyTaskIssue, TaskReport, UserSubtaskContext } from '../../api/updates'
 import type { ProposedSubTask } from '../../api/subtaskDrafts'
-import { bindProgressReportsToTask, type CardEdit, type Phase } from './voiceUpdateResultTypes'
+import { bindProgressReportsToTask, type CardEdit, type Phase, type VoiceReportScope } from './voiceUpdateResultTypes'
 import { buildVoiceUpdateHumanResult } from '../../domain/voiceUpdateFlow'
 import { DRAFT_KEY } from './useVoiceDraft'
 
 type UseVoiceSubmissionArgs = {
+  reportScope: VoiceReportScope
   selectedProjectId: number | null
   selectedSubtaskId: number | null
   selectedTaskContext: UserSubtaskContext | null
@@ -58,6 +59,11 @@ export function useVoiceSubmission({
     if (!projectId) {
       submitLock.current = false
       setError('请先选择所属项目，再提交至 AI 确认中心。')
+      return
+    }
+    if (!selectedSubtaskId || !selectedTaskContext) {
+      submitLock.current = false
+      setError('请先选择本次汇报对应的关键任务。')
       return
     }
     if (!currentUser) {

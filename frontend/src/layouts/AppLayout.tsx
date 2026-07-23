@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useSearchParams } from 'react-router-dom'
 import { useProject } from '../context/ProjectContext'
 import { getPostLoginDestination, getProjectsLandingDestination } from '../domain/authFlow'
 import { SYSTEM_NAME_CN } from '../domain/displayNames'
+import { getWecomQrcodeUrl } from '../api/auth'
 
 export function CenterMessage({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
@@ -17,6 +18,19 @@ function LoginPanel() {
   const { login, loading, error } = useProject()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [searchParams] = useSearchParams()
+  const [wecomLoading, setWecomLoading] = useState(false)
+  const [showWecomGuide, setShowWecomGuide] = useState(false)
+
+  // 企业微信回调失败时的提示
+  const wecomReason = searchParams.get('reason')
+  const wecomMessages: Record<string, string> = {
+    wecom_unbound: '该企业微信账号未绑定系统账号，请联系管理员在账号管理页绑定。',
+    wecom_error: '企业微信登录失败，请重试或使用账号密码登录。',
+    wecom_disabled: '企业微信登录未启用，请使用账号密码登录。',
+    account_disabled: '该账号已被禁用，请联系管理员。',
+  }
+  const wecomError = wecomReason ? wecomMessages[wecomReason] ?? '' : ''
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -24,6 +38,16 @@ function LoginPanel() {
       await login(username.trim(), password)
     } catch {
       // 错误已存入 context.error
+    }
+  }
+
+  const handleWecomLogin = async () => {
+    setWecomLoading(true)
+    try {
+      const { url } = await getWecomQrcodeUrl()
+      if (url) window.location.href = url
+    } catch {
+      setWecomLoading(false)
     }
   }
 
@@ -83,9 +107,9 @@ function LoginPanel() {
                 <label className="login-field-label" htmlFor="login-password">
                   密码
                 </label>
-                <a href="#" className="login-forgot" onClick={(e) => e.preventDefault()}>
+                <button type="button" className="login-forgot" onClick={() => setShowWecomGuide(prev => !prev)}>
                   忘记密码？
-                </a>
+                </button>
               </div>
               <input
                 id="login-password"
@@ -113,12 +137,67 @@ function LoginPanel() {
               </div>
             )}
 
+            {wecomError && !error && (
+              <div className="login-error">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span>{wecomError}</span>
+              </div>
+            )}
+
+            {showWecomGuide && (
+              <div className="login-info">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span>忘记密码或账号被锁定？请使用下方<strong>企业微信扫码登录</strong>，登录后在侧边栏点击锁形图标即可修改密码。如企业微信未绑定，请联系管理员在账号管理页绑定。</span>
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={loading || !username || !password}
               className="login-submit"
             >
               {loading ? '进入中…' : '进入系统'}
+            </button>
+
+            <div className="login-divider">
+              <span>或</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleWecomLogin}
+              disabled={wecomLoading}
+              className="login-wecom-btn"
+            >
+              {wecomLoading ? (
+                '跳转中…'
+              ) : (
+                <>
+                  <svg viewBox="0 0 24 24" className="login-wecom-icon" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M12 2C6.48 2 2 5.94 2 10.8c0 2.77 1.46 5.24 3.74 6.86L5 21l3.6-1.98c1.04.29 2.14.45 3.4.45 5.52 0 10-3.94 10-8.67S17.52 2 12 2zm-3.2 9.6c-.66 0-1.2-.54-1.2-1.2s.54-1.2 1.2-1.2 1.2.54 1.2 1.2-.54 1.2-1.2 1.2zm6.4 0c-.66 0-1.2-.54-1.2-1.2s.54-1.2 1.2-1.2 1.2.54 1.2 1.2-.54 1.2-1.2 1.2z"
+                    />
+                  </svg>
+                  企业微信登录
+                </>
+              )}
             </button>
 
             <div className="login-card-footer">

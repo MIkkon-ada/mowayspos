@@ -1,0 +1,185 @@
+- generic [ref=f1e28]:
+  - complementary [ref=f1e29]:
+    - generic [ref=f1e30]:
+      - img "logo" [ref=f1e31]
+      - button "通知" [ref=f1e33] [cursor=pointer]
+    - navigation [ref=f1e36]:
+      - button "驾驶舱" [ref=f1e38] [cursor=pointer]
+      - button "工作推进表" [ref=f1e44] [cursor=pointer]
+      - button "我的任务" [ref=f1e50] [cursor=pointer]
+      - button "AI 确认中心" [ref=f1e55] [cursor=pointer]
+      - button "工作汇报" [ref=f1e61] [cursor=pointer]
+      - button "会议纪要" [ref=f1e66] [cursor=pointer]
+      - button "成果库" [ref=f1e72] [cursor=pointer]
+      - button "问题中心" [ref=f1e77] [cursor=pointer]
+      - button "组织管理" [ref=f1e83] [cursor=pointer]
+      - button "项目管理" [ref=f1e88] [cursor=pointer]
+      - button "通知中心" [ref=f1e93] [cursor=pointer]
+      - button "系统设置" [ref=f1e99] [cursor=pointer]
+    - generic [ref=f1e105]:
+      - generic [ref=f1e106]: m
+      - generic [ref=f1e107]:
+        - generic [ref=f1e108]: moways
+        - generic [ref=f1e109]: 超级管理员
+      - button "修改密码" [ref=f1e110] [cursor=pointer]
+      - button "退出登录" [ref=f1e113] [cursor=pointer]
+  - generic [ref=f1e139]:
+    - banner [ref=f1e208]:
+      - generic [ref=f1e209]:
+        - generic [ref=f1e210]:
+          - paragraph [ref=f1e211]: ISSUE CENTER
+          - generic [ref=f1e212]:
+            - heading "博维咨询AI升级转型2026 项目问题中心" [level=1] [ref=f1e213]
+            - generic [ref=f1e214]: 进行中
+          - generic [ref=f1e215]:
+            - generic [ref=f1e216]: 项目负责人：冯海林
+            - generic [ref=f1e217]: Coach / 企业教练：moways
+            - generic [ref=f1e218]: 项目编号：#1
+        - generic [ref=f1e219]:
+          - button "切换项目" [ref=f1e220] [cursor=pointer]
+          - button "刷新" [ref=f1e221] [cursor=pointer]
+          - button "新增问题" [ref=f1e222] [cursor=pointer]
+      - generic [ref=f1e223]:
+        - generic [ref=f1e224]:
+          - paragraph [ref=f1e225]: 问题总数
+          - paragraph [ref=f1e226]: "2"
+        - generic [ref=f1e227]:
+          - paragraph [ref=f1e228]: 待处理
+          - paragraph [ref=f1e229]: "0"
+        - generic [ref=f1e230]:
+          - paragraph [ref=f1e231]: 处理中
+          - paragraph [ref=f1e232]: "0"
+        - generic [ref=f1e233]:
+          - paragraph [ref=f1e234]: 待协调
+          - paragraph [ref=f1e235]: "1"
+        - generic [ref=f1e236]:
+          - paragraph [ref=f1e237]: 待决策
+          - paragraph [ref=f1e238]: "1"
+        - generic [ref=f1e239]:
+          - paragraph [ref=f1e240]: 已关闭
+          - paragraph [ref=f1e241]: "0"
+      - generic [ref=f1e242]:
+        - combobox [ref=f1e243]:
+          - option "全部类型" [selected]
+          - option "问题"
+          - option "风险"
+          - option "待协调"
+          - option "需决策"
+        - combobox [ref=f1e244]:
+          - option "全部优先级" [selected]
+          - option "高"
+          - option "中"
+          - option "低"
+        - textbox "负责人" [ref=f1e245]
+        - textbox "协助人" [ref=f1e246]
+        - textbox "搜索问题摘要" [ref=f1e247]
+    - generic [ref=f1e248]:
+      - generic [ref=f1e250]:
+        - generic [ref=f1e251]:
+          - generic [ref=f1e252]:
+            - generic [ref=f1e253]: 待处理
+            - generic [ref=f1e254]: "0"
+          - paragraph [ref=f1e256]: 暂无待处理问题
+        - generic [ref=f1e257]:
+          - generic [ref=f1e258]:
+            - generic [ref=f1e259]: 处理中
+            - generic [ref=f1e260]: "0"
+          - paragraph [ref=f1e262]: 暂无处理中问题
+        - generic [ref=f1e263]:
+          - generic [ref=f1e264]:
+            - generic [ref=f1e265]: 待协调
+            - generic [ref=f1e266]: "1"
+          - generic [ref=f1e268] [cursor=pointer]:
+            - paragraph [ref=f1e269]: 客户无法提交资料清单，任务要延期
+            - generic [ref=f1e270]:
+              - generic [ref=f1e271]: 问题
+              - generic [ref=f1e272]: 中
+            - generic [ref=f1e273]:
+              - paragraph [ref=f1e274]: 负责人：—
+              - paragraph [ref=f1e275]: 协助人：moways
+              - paragraph [ref=f1e276]: 上报人：冯海林
+              - paragraph [ref=f1e277]: 预计解决：2026-07-15
+              - paragraph [ref=f1e278]:
+                - generic [ref=f1e279]: 手动新增
+              - paragraph [ref=f1e280]: 关联重点工作：联合腾讯WorkBuddy开拓AI相关业务
+              - paragraph [ref=f1e281]: 关键任务：整理客户现有 SOP 资料清单
+        - generic [ref=f1e282]:
+          - generic [ref=f1e283]:
+            - generic [ref=f1e284]: 待决策
+            - generic [ref=f1e285]: "1"
+          - generic [ref=f1e287] [cursor=pointer]:
+            - paragraph [ref=f1e288]: 客户提供的财务流程资料缺少审批节点截图，可能影响后续流程复盘
+            - generic [ref=f1e289]:
+              - generic [ref=f1e290]: 需决策
+              - generic [ref=f1e291]: 中
+            - generic [ref=f1e292]:
+              - paragraph [ref=f1e293]: 负责人：冯海林
+              - paragraph [ref=f1e294]: 协助人：—
+              - paragraph [ref=f1e295]:
+                - generic [ref=f1e296]: 手动新增
+              - paragraph [ref=f1e297]: 关联重点工作：联合腾讯WorkBuddy开拓AI相关业务
+              - paragraph [ref=f1e298]: 关键任务：整理客户现有 SOP 资料清单
+        - generic [ref=f1e299]:
+          - generic [ref=f1e300]:
+            - generic [ref=f1e301]: 已解决
+            - generic [ref=f1e302]: "0"
+          - paragraph [ref=f1e304]: 暂无已解决问题
+        - generic [ref=f1e305]:
+          - generic [ref=f1e306]:
+            - generic [ref=f1e307]: 已关闭
+            - generic [ref=f1e308]: "0"
+          - paragraph [ref=f1e310]: 暂无已关闭问题
+      - generic [ref=f1e311]:
+        - generic [ref=f1e312]:
+          - generic [ref=f1e313]:
+            - heading "问题详情" [level=2] [ref=f1e314]
+            - button [ref=f1e315] [cursor=pointer]
+          - paragraph [ref=f1e318]: 客户无法提交资料清单，任务要延期
+          - generic [ref=f1e319]:
+            - generic [ref=f1e320]: 中
+            - generic [ref=f1e321]: 待协调
+        - generic [ref=f1e323]:
+          - heading "问题信息" [level=3] [ref=f1e324]
+          - generic [ref=f1e325]:
+            - generic [ref=f1e326]:
+              - generic [ref=f1e327]: 所属项目
+              - generic [ref=f1e328]: 博维咨询AI升级转型2026
+            - generic [ref=f1e329]:
+              - generic [ref=f1e330]: 来源
+              - generic [ref=f1e331]: 手动新增
+            - generic [ref=f1e332]:
+              - generic [ref=f1e333]: 问题类型
+              - generic [ref=f1e334]: 问题
+            - generic [ref=f1e335]:
+              - generic [ref=f1e336]: 关联重点工作
+              - generic [ref=f1e337]: 联合腾讯WorkBuddy开拓AI相关业务
+            - generic [ref=f1e338]:
+              - generic [ref=f1e339]: 关联关键任务
+              - generic [ref=f1e340]: 整理客户现有 SOP 资料清单
+            - generic [ref=f1e341]:
+              - generic [ref=f1e342]: 上报人
+              - generic [ref=f1e343]: 冯海林
+            - generic [ref=f1e344]:
+              - generic [ref=f1e345]: 负责人
+              - generic [ref=f1e346]: —
+            - generic [ref=f1e347]:
+              - generic [ref=f1e348]: 协助人
+              - generic [ref=f1e349]: moways
+            - generic [ref=f1e350]:
+              - generic [ref=f1e351]: 需决策人
+              - generic [ref=f1e352]: —
+            - generic [ref=f1e353]:
+              - generic [ref=f1e354]: 预计解决时间
+              - generic [ref=f1e355]: 2026-07-15
+            - generic [ref=f1e356]:
+              - generic [ref=f1e357]: 创建时间
+              - generic [ref=f1e358]: 2026/7/13
+            - generic [ref=f1e359]:
+              - generic [ref=f1e360]: 更新时间
+              - generic [ref=f1e361]: 2026/7/13
+        - generic [ref=f1e362]:
+          - generic [ref=f1e363]:
+            - paragraph [ref=f1e364]: 处理结论
+            - textbox "请输入处理措施、结果或后续安排" [ref=f1e365]
+          - button "提交解决结果" [ref=f1e366] [cursor=pointer]
+          - button "▼ 上报Coach" [ref=f1e368] [cursor=pointer]

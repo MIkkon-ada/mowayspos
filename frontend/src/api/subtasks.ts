@@ -34,6 +34,17 @@ export function fetchSubTasks(taskId: number, deleted = false): Promise<SubTaskI
   return apiGet<SubTaskItem[]>(`/api/tasks/${taskId}/subtasks?deleted=${deleted ? 'true' : 'false'}`)
 }
 
+/**
+ * 批量获取多个 task 的 subtask，一次请求替代多次 fetchSubTasks。
+ * 后端：GET /api/tasks/subtasks/batch?task_ids=1,2,3
+ * 返回：{ "1": [...], "2": [...] }，task_id 字符串作为 key
+ */
+export function fetchSubTasksBatch(taskIds: number[], deleted = false): Promise<Record<string, SubTaskItem[]>> {
+  if (taskIds.length === 0) return Promise.resolve({})
+  const qs = `task_ids=${taskIds.join(',')}&deleted=${deleted ? 'true' : 'false'}`
+  return apiGet<Record<string, SubTaskItem[]>>(`/api/tasks/subtasks/batch?${qs}`)
+}
+
 export function createSubTask(taskId: number, data: SubTaskPayload): Promise<SubTaskItem> {
   return apiPost<SubTaskItem>(`/api/tasks/${taskId}/subtasks`, data)
 }

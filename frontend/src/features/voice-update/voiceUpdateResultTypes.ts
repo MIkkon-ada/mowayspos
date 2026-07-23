@@ -5,18 +5,17 @@ import type { ProposedSubTask } from '../../api/subtaskDrafts'
 import type { SubTaskItem, TaskItem } from '../../types'
 
 export type Phase = 'input' | 'extracting' | 'extracted' | 'submitting' | 'submitted'
+export type VoiceReportScope = 'all' | 'project' | 'task'
 export type CardEdit = { taskId: number | null; subtaskId: number | null; subtasks: SubTaskItem[]; editorOpen: boolean; modified: boolean }
 
 export function getVoiceFlowStep(
   phase: Phase,
-  selectedProjectId: number | null,
-  selectedSubtaskId: number | null,
+  hasContent: boolean,
 ): 1 | 2 | 3 | 4 | 5 {
-  if (!selectedProjectId || !selectedSubtaskId) return 1
   if (phase === 'extracting') return 3
-  if (phase === 'extracted' || phase === 'submitting') return 4
-  if (phase === 'submitted') return 5
-  return 2
+  if (phase === 'extracted') return 4
+  if (phase === 'submitting' || phase === 'submitted') return 5
+  return hasContent ? 2 : 1
 }
 
 export function resolveVoiceTaskPreselection(
@@ -35,9 +34,8 @@ export function buildSelectedVoiceContext(
 
 export function bindProgressReportsToTask(
   reports: TaskReport[],
-  selectedTaskContext: UserSubtaskContext | null,
+  selectedTaskContext: UserSubtaskContext,
 ): TaskReport[] {
-  if (!selectedTaskContext) return reports
   return reports.map((report) => report.type === 'progress'
     ? {
         ...report,
@@ -50,38 +48,43 @@ export function bindProgressReportsToTask(
 }
 
 export function canExtractVoiceUpdate({
+  scope,
+  candidateCount,
   projectId,
   selectedTaskContext,
   text,
   projectActive,
   recording,
-  transcribing,
   uploading,
   phase,
-  requireTaskBinding,
 }: {
+  scope?: VoiceReportScope
+  candidateCount?: number
   projectId: number | null
   selectedTaskContext: UserSubtaskContext | null
   text: string
   projectActive: boolean
   recording: boolean
-  transcribing: boolean
   uploading: boolean
   phase: Phase
-  /** 是否强制要求已绑定关键任务，默认 false */
-  requireTaskBinding?: boolean
 }): boolean {
   return Boolean(
-    projectId
+    ((scope === 'all' && Number(candidateCount) > 0)
+      || (scope === 'project' && projectId && Number(candidateCount) > 0)
+      || ((!scope || scope === 'task') && projectId && selectedTaskContext))
     && text.trim()
     && projectActive
     && !recording
-    && !transcribing
     && !uploading
     && phase !== 'extracting'
-    && phase !== 'submitting'
-    && (requireTaskBinding ? selectedTaskContext : true),
+    && phase !== 'submitting',
   )
+}
+
+export function hasUnconfirmedOwnership(reports: TaskReport[]): boolean {
+  return reports.some((report) => report.type === 'progress'
+    && Boolean(report.match_status)
+    && (report.match_status !== 'matched' || !report.matched_subtask_id))
 }
 
 export function canSubmitVoiceUpdate(selectedSubtaskId: number | null, phase: Phase): boolean {
@@ -125,6 +128,7 @@ export type VoiceUpdateEditableFieldsSectionProps = Pick<
 
 export type VoiceUpdateSubmitPanelProps = {
   phase: Phase
+  reportScope: VoiceReportScope
   taskReports: TaskReport[]
   cardEdits: Record<number, CardEdit>
   currentUserName?: string

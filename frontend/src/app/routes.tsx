@@ -20,6 +20,7 @@ const TaskManagementPage = lazy(() => import('../pages/TaskManagementPage').then
 const VoiceUpdatePage = lazy(() => import('../pages/VoiceUpdatePage').then((m) => ({ default: m.VoiceUpdatePage })))
 const AchievementsPage = lazy(() => import('../pages/AchievementsPage').then((m) => ({ default: m.AchievementsPage })))
 const IssuesPage = lazy(() => import('../pages/IssuesPage').then((m) => ({ default: m.IssuesPage })))
+const IssueDetailPage = lazy(() => import('../pages/IssueDetailPage').then((m) => ({ default: m.IssueDetailPage })))
 const CoordinatePage = lazy(() => import('../pages/CoordinatePage').then((m) => ({ default: m.CoordinatePage })))
 const NotificationCenterPage = lazy(() => import('../pages/NotificationCenterPage').then((m) => ({ default: m.NotificationCenterPage })))
 const SettingsPage = lazy(() => import('../pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
@@ -69,6 +70,27 @@ function LegacyCoachDecisionRedirect() {
       replace
     />
   )
+}
+
+function ConfirmationCenterRoute() {
+  const { currentUser, globalUserRoles } = useProject()
+  const location = useLocation()
+  const searchParams = new URLSearchParams(location.search)
+  const canReview = Boolean(
+    currentUser?.is_tech_admin ||
+    currentUser?.is_ceo ||
+    currentUser?.system_role === 'super_admin' ||
+    globalUserRoles.some((role) => ['owner', 'coordinator', 'project_ceo'].includes(role))
+  )
+
+  if (searchParams.get('view') === 'mine' || !canReview) {
+    const params = new URLSearchParams({ history: '1' })
+    const submissionId = searchParams.get('submissionId')
+    if (submissionId) params.set('submissionId', submissionId)
+    return <Navigate to={`/work/submit?${params.toString()}`} replace />
+  }
+
+  return <ConfirmPage />
 }
 
 type SetupState = 'loading' | 'needed' | 'done'
@@ -162,10 +184,11 @@ export function AppRoutes() {
         >
           <Route index element={<Navigate to="/work/tasks" replace />} />
           <Route path="submit" element={<VoiceUpdatePage />} />
-          <Route path="confirmations" element={<ConfirmPage />} />
+          <Route path="confirmations" element={<ConfirmationCenterRoute />} />
           <Route path="tasks" element={<TaskManagementPage />} />
           <Route path="achievements" element={<AchievementsPage />} />
           <Route path="issues" element={<IssuesPage />} />
+          <Route path="issues/:issueId" element={<IssueDetailPage />} />
           <Route path="org" element={<CoordinatePage />} />
           <Route path="decisions" element={<LegacyCoachDecisionRedirect />} />
           <Route path="meetings" element={<MeetingPage />} />

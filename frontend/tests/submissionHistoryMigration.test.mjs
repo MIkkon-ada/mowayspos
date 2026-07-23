@@ -31,6 +31,7 @@ async function loadHistoryFilterModel() {
       normalize: (status) => status || '待确认',
       DISPLAY_LABEL: {}, STATUS_BADGE_CLASS: {},
       RETURNED_TO_SUBMITTER: new Set(['已打回提交人']),
+      CONFIRMED_AND_STORED: new Set(['已入库']),
     }
   `
   const js = ts.transpileModule(`${ssStub}\n${helperSource}`, {
@@ -65,24 +66,24 @@ test('history submission filter has the exact four labels and required status gr
   assert.doesNotMatch(source, /['"]草稿['"]\s*\|\s*['"]已提交['"]/)
 
   const { matchesHistoryFilter } = await loadHistoryFilterModel()
-  const item = (confirm_status) => ({ confirm_status })
+  const group = (confirm_status) => ({ aggregateStatus: confirm_status, items: [{ confirm_status }], key: 'test', batchId: null })
   for (const status of ['待确认', '待负责人审核', '已转交统筹人', '统筹人已反馈', '待CEO决策', 'CEO已批示', '需修改']) {
-    assert.equal(matchesHistoryFilter(item(status), '审核中'), true, `${status} must be under review`)
+    assert.equal(matchesHistoryFilter(group(status), '审核中'), true, `${status} must be under review`)
   }
-  assert.equal(matchesHistoryFilter(item('已打回提交人'), '已退回'), true)
-  assert.equal(matchesHistoryFilter(item('已入库'), '已确认'), true)
+  assert.equal(matchesHistoryFilter(group('已打回提交人'), '已退回'), true)
+  assert.equal(matchesHistoryFilter(group('已入库'), '已确认'), true)
   for (const status of ['已撤回', '不入库']) {
-    assert.equal(matchesHistoryFilter(item(status), '全部'), true)
-    assert.equal(matchesHistoryFilter(item(status), '审核中'), false)
-    assert.equal(matchesHistoryFilter(item(status), '已退回'), false)
-    assert.equal(matchesHistoryFilter(item(status), '已确认'), false)
+    assert.equal(matchesHistoryFilter(group(status), '全部'), true)
+    assert.equal(matchesHistoryFilter(group(status), '审核中'), false)
+    assert.equal(matchesHistoryFilter(group(status), '已退回'), false)
+    assert.equal(matchesHistoryFilter(group(status), '已确认'), false)
   }
 })
 
-test('history rows show project key task time source and normalized review state', () => {
+test('history rows show project time source and normalized review state', () => {
   const source = read(HISTORY)
   assert.match(source, /project/)
-  assert.match(source, /关键任务/)
+  assert.match(source, /project_name/)
   assert.match(source, /created_at/)
   assert.match(source, /source_type/)
   assert.match(source, /normalizeHistoryStatus\(item\.confirm_status\)/)

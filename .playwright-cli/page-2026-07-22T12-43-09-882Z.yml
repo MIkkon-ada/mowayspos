@@ -1,0 +1,114 @@
+- generic [ref=f1e28]:
+  - complementary [ref=f1e29]:
+    - generic [ref=f1e30]:
+      - img "logo" [ref=f1e31]
+      - button "通知" [ref=f1e33] [cursor=pointer]
+    - navigation [ref=f1e36]:
+      - button "驾驶舱" [ref=f1e38] [cursor=pointer]
+      - button "工作推进表" [ref=f1e44] [cursor=pointer]
+      - button "我的任务" [ref=f1e50] [cursor=pointer]
+      - button "AI 确认中心" [ref=f1e55] [cursor=pointer]
+      - button "工作汇报" [ref=f1e61] [cursor=pointer]
+      - button "会议纪要" [ref=f1e66] [cursor=pointer]
+      - button "成果库" [ref=f1e72] [cursor=pointer]
+      - button "问题中心" [ref=f1e77] [cursor=pointer]
+      - button "组织管理" [ref=f1e83] [cursor=pointer]
+      - button "项目管理" [ref=f1e88] [cursor=pointer]
+      - button "通知中心" [ref=f1e93] [cursor=pointer]
+      - button "系统设置" [ref=f1e99] [cursor=pointer]
+    - generic [ref=f1e105]:
+      - generic [ref=f1e106]: m
+      - generic [ref=f1e107]:
+        - generic [ref=f1e108]: moways
+        - generic [ref=f1e109]: 超级管理员
+      - button "修改密码" [ref=f1e110] [cursor=pointer]
+      - button "退出登录" [ref=f1e113] [cursor=pointer]
+  - generic [ref=f1e370]:
+    - banner [ref=f1e371]:
+      - generic [ref=f1e372]:
+        - heading "工作推进表" [level=1] [ref=f1e373]
+        - paragraph [ref=f1e492]: 按项目、重点工作、关键任务追踪真实推进状态
+      - generic [ref=f1e374]:
+        - button "表格视图" [ref=f1e375] [cursor=pointer]
+        - button "执行详情" [ref=f1e376] [cursor=pointer]
+      - generic [ref=f1e377]:
+        - generic [ref=f1e378]:
+          - generic [ref=f1e379]: 专项
+          - combobox [ref=f1e380] [cursor=pointer]:
+            - option "请选择项目"
+            - option "博维咨询AI升级转型2026" [selected]
+        - generic [ref=f1e381]:
+          - generic [ref=f1e382]: 状态
+          - combobox [ref=f1e383] [cursor=pointer]:
+            - option "全部状态" [selected]
+            - option "未开始"
+            - option "进行中"
+            - option "已完成"
+            - option "延期"
+            - option "暂缓"
+        - generic [ref=f1e384]:
+          - generic [ref=f1e385]: 专项负责人
+          - combobox [ref=f1e386] [cursor=pointer]:
+            - option "全部专项负责人" [selected]
+            - option "冯海林"
+            - option "杨宇帆"
+        - textbox "搜索重点工作…" [ref=f1e493]
+      - generic [ref=f1e494]:
+        - generic [ref=f1e495]:
+          - button "在办" [ref=f1e496] [cursor=pointer]
+          - button "回收站" [ref=f1e497] [cursor=pointer]
+        - combobox [ref=f1e498] [cursor=pointer]:
+          - option "操作" [disabled] [selected]
+          - option "导出表格"
+          - option "新增重点工作"
+    - generic [ref=f1e500]:
+      - generic [ref=f1e506] [cursor=pointer]:
+        - paragraph [ref=f1e507]: 未启动
+        - paragraph [ref=f1e508]: "0"
+      - generic [ref=f1e514] [cursor=pointer]:
+        - paragraph [ref=f1e515]: 进行中
+        - paragraph [ref=f1e516]: "1"
+      - generic [ref=f1e521] [cursor=pointer]:
+        - paragraph [ref=f1e522]: 已完成
+        - paragraph [ref=f1e523]: "0"
+      - generic [ref=f1e528] [cursor=pointer]:
+        - paragraph [ref=f1e529]: 延期
+        - paragraph [ref=f1e530]: "0"
+      - generic [ref=f1e535] [cursor=pointer]:
+        - paragraph [ref=f1e536]: 暂缓
+        - paragraph [ref=f1e537]: "0"
+    - generic [ref=f1e391]:
+      - generic [ref=f1e538]:
+        - generic [ref=f1e539]:
+          - generic [ref=f1e540]: 层级 / 名称
+          - generic [ref=f1e541]: 负责人
+          - generic [ref=f1e542]: 计划时间
+          - generic [ref=f1e543]: 状态
+          - generic [ref=f1e544]: 关键任务
+          - generic [ref=f1e545]: 风险
+          - generic [ref=f1e546]: 操作
+        - generic [ref=f1e547]:
+          - generic [ref=f1e548] [cursor=pointer]:
+            - button [ref=f1e549]
+            - button "博维咨询AI升级转型2026 负责人：冯海林" [ref=f1e552]:
+              - generic: 博维咨询AI升级转型2026
+              - generic [ref=f1e556]: 负责人：冯海林
+            - generic [ref=f1e557]: 进行中
+            - generic [ref=f1e560]: 1个任务
+          - generic [ref=f1e562]:
+            - button [active] [ref=f1e563] [cursor=pointer]
+            - generic [ref=f1e566]: "1"
+            - button "联合腾讯WorkBuddy开拓AI相关业务"
+            - generic [ref=f1e568]:
+              - generic [ref=f1e569]: 冯
+              - generic [ref=f1e570]: 冯海林
+            - generic [ref=f1e571]: "-"
+            - generic [ref=f1e572]: 进行中
+            - generic [ref=f1e575]: 0/3
+            - generic [ref=f1e580]:
+              - button "新增关键任务" [ref=f1e581] [cursor=pointer]
+              - button "查看" [ref=f1e582] [cursor=pointer]
+      - complementary [ref=f1e583]:
+        - generic [ref=f1e585]:
+          - paragraph [ref=f1e589]: 选择左侧项目、重点工作或关键任务查看详情
+          - paragraph [ref=f1e676]: 树状表格负责浏览层级，右侧面板负责查看和处理详情。

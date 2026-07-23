@@ -8,6 +8,7 @@ import { isProjectActive } from '../domain/projectLifecycleStatus'
 import { getProjectRoleLabel } from '../domain/roleLabels'
 import { systemRoleLabel } from '../domain/roles'
 import { AI_CONFIRM_CENTER_LABEL } from '../domain/displayNames'
+import { canViewMeetings } from '../domain/permissions'
 
 type SidebarProps = {
   activePage: AppPage
@@ -90,7 +91,7 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
 
   const processInputItems: NavItem[] = [
     ...(showParticipantModules ? [{ page: 'voice' as const, label: '工作汇报', icon: <IconVoice /> }] : []),
-    ...(showParticipantModules ? [{ page: 'meeting' as const, label: '会议纪要', icon: <IconDoc /> }] : []),
+    ...(canViewMeetings(currentUser, globalUserRoles) ? [{ page: 'meeting' as const, label: '会议纪要', icon: <IconDoc /> }] : []),
   ]
 
   const assetItems: NavItem[] = [

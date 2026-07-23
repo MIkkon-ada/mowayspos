@@ -6,6 +6,7 @@ export type OperationLogItem = {
   action: string
   target_type: string
   target_id: number | null
+  note?: string
   before_json: string
   after_json: string
   created_at: string

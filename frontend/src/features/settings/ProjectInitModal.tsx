@@ -97,7 +97,8 @@ export function ProjectInitModal({
     if (!open) setPicker(null)
   }, [open])
 
-  const allSelectedIds = useMemo(() => new Set(Object.values(team).flat()), [team])
+  // 允许同一人兼任多个角色，不再互斥过滤
+  const allSelectedIds = useMemo(() => new Set<number>([]), [])
 
   function closeModal() {
     setPicker(null)
@@ -416,7 +417,8 @@ function TeamConfigCard({
   onOpenPicker: (role: TeamRole, anchorEl: HTMLButtonElement) => void
   onRemoveMember: (role: keyof TeamMap, personId: number) => void
 }) {
-  const allSelectedIds = useMemo(() => new Set(Object.values(team).flat()), [team])
+  // 允许同一人兼任多个角色，不再互斥过滤
+  const allSelectedIds = useMemo(() => new Set<number>([]), [])
 
   return (
     <div className="rounded-2xl border-2 border-blue-100/80 bg-gradient-to-br from-slate-50 via-blue-50/40 to-indigo-50/30 p-5 shadow-[0_1px_3px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.06)]">
@@ -430,7 +432,7 @@ function TeamConfigCard({
         <div className="min-w-0 pt-0.5">
           <h3 className="text-base font-bold text-gray-900">团队配置</h3>
           <p className="mt-1 text-xs font-medium leading-relaxed text-gray-500">
-            同一人不可同时担任多个角色<br />可立项后再配置，留空也可以 ✓
+            同一人可担任多个角色<br />可立项后再配置，留空也可以 ✓
           </p>
         </div>
       </div>
@@ -441,7 +443,7 @@ function TeamConfigCard({
           const style = ROLE_STYLES[role]
           const selected = team[role]
           const selectedPeople = people.filter((person) => selected.includes(person.id))
-          const availableCount = people.filter((person) => !allSelectedIds.has(person.id) || selected.includes(person.id)).length
+          const availableCount = people.length
 
           return (
             <div key={role} className={`group rounded-xl border-2 ${style.border} bg-white/80 backdrop-blur-sm p-4 transition-shadow duration-300 hover:shadow-[0_10px_25px_rgba(0,0,0,0.1),0_6px_10px_rgba(0,0,0,0.08)]`}>

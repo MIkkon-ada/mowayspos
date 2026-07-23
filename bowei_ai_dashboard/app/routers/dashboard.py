@@ -301,7 +301,7 @@ def _project_overview(
     )
     issues = issue_q.order_by(models.Issue.updated_at.desc()).all()
 
-    open_issues   = [i for i in issues if (i.status or "") in ("待处理", "处理中")]
+    open_issues   = [i for i in issues if (i.status or "") in ("待处理", "待协调", "待决策", "待负责人确认")]
     high_pri      = [i for i in open_issues if (i.priority or "") == "高"]
     ceo_issues    = [i for i in issues if bool(i.need_decision_by) or IT.is_decision(i.issue_type)]
 
@@ -657,7 +657,7 @@ def _global_overview(
             db.query(models.Issue)
             .filter(
                 _proj_or_filter(models.Issue, proj.id, proj.name),
-                models.Issue.status.in_(["待处理", "处理中"]),
+                models.Issue.status.in_(["待处理", "待协调", "待决策", "待负责人确认"]),
             )
             .count()
         )
@@ -707,7 +707,7 @@ def _global_overview(
     ).count()
     visible_open_issue_count = (
         _apply_project_scope(db.query(models.Issue), context, models.Issue, visible_proj_ids)
-        .filter(models.Issue.status.in_(["待处理", "处理中"]))
+        .filter(models.Issue.status.in_(["待处理", "待协调", "待决策", "待负责人确认"]))
         .count()
     )
 
@@ -740,7 +740,7 @@ def _global_overview(
         "issue_stats": {
             "total_issues":         len(issue_rows),
             "open_issues":          visible_open_issue_count,
-            "high_priority_issues": sum(1 for i in issue_rows if (i.priority or "") == "高" and (i.status or "") in ("待处理", "处理中")),
+            "high_priority_issues": sum(1 for i in issue_rows if (i.priority or "") == "高" and (i.status or "") in ("待处理", "待协调", "待决策", "待负责人确认")),
             "waiting_ceo_decision": sum(1 for i in issue_rows if bool(i.need_decision_by) or IT.is_decision(i.issue_type)) if can_view_issue_decisions(context) else 0,
         },
         "recent": {
@@ -840,7 +840,7 @@ def _build_weekly_report(
     issue_q = _apply_project_scope(db.query(models.Issue), context, models.Issue, visible_proj_ids)
     if project_id is not None:
         issue_q = issue_q.filter(_proj_or_filter(models.Issue, project_id, proj_name))
-    issues = issue_q.filter(models.Issue.status.in_(["待处理", "处理中"])).order_by(models.Issue.updated_at.desc()).limit(20).all()
+    issues = issue_q.filter(models.Issue.status.in_(["待处理", "待协调", "待决策", "待负责人确认"])).order_by(models.Issue.updated_at.desc()).limit(20).all()
 
     stats = _task_stats(tasks)
 

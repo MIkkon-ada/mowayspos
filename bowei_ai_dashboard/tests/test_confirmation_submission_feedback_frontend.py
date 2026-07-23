@@ -175,7 +175,7 @@ class TestDisplayOrderAndPermissionBoundaries:
         owner = _between(
             _page(),
             "{/* Submission-level owner actions */}",
-            "{/* Member resubmit section */}",
+            "{/* Task card overview */}",
         )
 
         assert "viewMode === 'all'" in owner
@@ -189,7 +189,7 @@ class TestDisplayOrderAndPermissionBoundaries:
         owner = _between(
             _page(),
             "{/* Submission-level owner actions */}",
-            "{/* Member resubmit section */}",
+            "{/* Task card overview */}",
         )
 
         assert "SS.TRANSFERABLE_TO_COORDINATOR.has(selectedStatus)" in owner

@@ -7,7 +7,8 @@ from ..auth import hash_password, invalidate_user_sessions, _check_password, val
 from ..database import get_db
 from ..permissions import get_current_user_name, require_tech_admin, ROLE_SUPER_ADMIN, normalize_system_role
 from ..time_utils import utc_now
-from ..settings import get_legacy_password_file_users, legacy_password_login_enabled
+from ..settings import get_legacy_password_file_users, legacy_password_login_enabled, get_settings
+from ..services import wecom
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
@@ -73,6 +74,7 @@ def _account_to_dict(row: models.Account, person: models.Person | None = None) -
         "status": row.status,
         "is_tech_admin": bool(row.is_tech_admin),
         "must_change_password": bool(row.must_change_password),
+        "wecom_userid": row.wecom_userid or "",
         "last_login_at": iso(row.last_login_at),
         "last_password_changed_at": iso(row.last_password_changed_at),
         "failed_login_count": row.failed_login_count or 0,
@@ -269,3 +271,193 @@ def change_my_password(
     current_sid = request.cookies.get(cookie_name) if request else None
     invalidate_user_sessions(current_user, except_session_id=current_sid)
     return {"ok": True}
+
+
+class AccountWecomBindRequest(BaseModel):
+    wecom_userid: str
+
+    @field_validator("wecom_userid")
+    @classmethod
+    def not_blank(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("企业微信 ID 不能为空")
+        return v.strip()
+
+
+@router.put("/{account_id}/wecom")
+def bind_wecom(
+    account_id: int,
+    payload: AccountWecomBindRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """绑定企业微信 userid 到账号。"""
+    _require_admin(current_user, db)
+    row = db.get(models.Account, account_id)
+    if not row:
+        raise HTTPException(404, "account not found")
+    wecom_userid = payload.wecom_userid.strip()
+    # 唯一性校验：同一企微 ID 不能绑到多个账号
+    existing = (
+        db.query(models.Account)
+        .filter(models.Account.wecom_userid == wecom_userid, models.Account.id != account_id)
+        .first()
+    )
+    if existing:
+        raise HTTPException(400, f"该企业微信 ID 已绑定到账号 {existing.username}")
+    before = _account_to_dict(row, db.get(models.Person, row.person_id) if row.person_id else None)
+    row.wecom_userid = wecom_userid
+    crud.log(db, current_user, "bind_wecom", "account", row.id, before=before, after=_account_to_dict(row))
+    db.commit()
+    return _account_to_dict(row, db.get(models.Person, row.person_id) if row.person_id else None)
+
+
+@router.delete("/{account_id}/wecom")
+def unbind_wecom(
+    account_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """解绑企业微信 userid。"""
+    _require_admin(current_user, db)
+    row = db.get(models.Account, account_id)
+    if not row:
+        raise HTTPException(404, "account not found")
+    before = _account_to_dict(row, db.get(models.Person, row.person_id) if row.person_id else None)
+    row.wecom_userid = None
+    crud.log(db, current_user, "unbind_wecom", "account", row.id, before=before, after=_account_to_dict(row))
+    db.commit()
+    return _account_to_dict(row, db.get(models.Person, row.person_id) if row.person_id else None)
+
+
+# === 企微通讯录批量绑定 ===
+
+
+@router.get("/wecom-users")
+def list_wecom_users(
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """拉取企业微信通讯录，附带本地账号的绑定情况。
+
+    返回每个企微成员及其在本地账号中的绑定状态，前端用来做批量绑定 UI。
+
+    自动匹配建议：若 person.name 与企微 name 完全一致，preselect_account_id 自动填上，
+    前端可一键「应用推荐」。
+    """
+    _require_admin(current_user, db)
+    if not get_settings().wecom_enabled:
+        raise HTTPException(503, "wecom_login_disabled")
+
+    try:
+        wecom_users = wecom.list_department_users(department_id=1, fetch_child=True)
+    except wecom.WecomError as e:
+        raise HTTPException(502, str(e))
+
+    # 本地账号索引：wecom_userid → account，name → account（用于自动推荐）
+    accounts = db.query(models.Account).all()
+    by_wecom_userid: dict[str, models.Account] = {
+        a.wecom_userid: a for a in accounts if a.wecom_userid
+    }
+    persons = {p.id: p for p in db.query(models.Person).all()} if hasattr(models, "Person") else {}
+    by_person_name: dict[str, models.Account] = {}
+    for a in accounts:
+        if a.person_id and a.person_id in persons:
+            pname = persons[a.person_id].name
+            if pname and pname not in by_person_name:
+                by_person_name[pname] = a
+
+    result = []
+    for u in wecom_users:
+        userid = u.get("userid") or ""
+        name = u.get("name") or ""
+        dept_ids = u.get("department") or []
+        if not userid:
+            continue
+        bound = by_wecom_userid.get(userid)
+        preselect_id = None
+        preselect_username = ""
+        if bound:
+            preselect_id = bound.id
+            preselect_username = bound.username
+        elif name and name in by_person_name:
+            # 按 Person.name 自动推荐
+            preselect_id = by_person_name[name].id
+            preselect_username = by_person_name[name].username
+        result.append({
+            "wecom_userid": userid,
+            "wecom_name": name,
+            "department_ids": dept_ids,
+            "bound_account_id": bound.id if bound else None,
+            "bound_username": bound.username if bound else "",
+            "preselect_account_id": preselect_id,
+            "preselect_username": preselect_username,
+        })
+    return result
+
+
+class WecomBatchBindItem(BaseModel):
+    account_id: int
+    wecom_userid: str
+
+
+class WecomBatchBindRequest(BaseModel):
+    items: list[WecomBatchBindItem]
+
+
+@router.post("/wecom-bind-batch")
+def batch_bind_wecom(
+    payload: WecomBatchBindRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """批量绑定企微 userid 到账号。
+
+    - 校验每个 wecom_userid 唯一性（同一 ID 不能绑到多个账号）
+    - 一次事务提交，任意一条失败全部回滚
+    """
+    _require_admin(current_user, db)
+    if not get_settings().wecom_enabled:
+        raise HTTPException(503, "wecom_login_disabled")
+
+    items = payload.items
+    if not items:
+        raise HTTPException(400, "items is empty")
+
+    # 预校验：account_id 必须存在；wecom_userid 不能在本次批次内重复
+    seen_userids: set[str] = set()
+    account_ids = {it.account_id for it in items}
+    accounts = db.query(models.Account).filter(models.Account.id.in_(account_ids)).all()
+    account_map = {a.id: a for a in accounts}
+    for it in items:
+        if it.account_id not in account_map:
+            raise HTTPException(400, f"account {it.account_id} not found")
+        if it.wecom_userid in seen_userids:
+            raise HTTPException(400, f"wecom_userid {it.wecom_userid} duplicated in batch")
+        seen_userids.add(it.wecom_userid)
+
+    # 校验：wecom_userid 不能已被本次批次外的账号绑定
+    existing = (
+        db.query(models.Account)
+        .filter(models.Account.wecom_userid.in_(seen_userids))
+        .all()
+    )
+    for a in existing:
+        if a.id not in account_map:
+            raise HTTPException(400, f"wecom_userid {a.wecom_userid} already bound to {a.username}")
+
+    # 应用绑定
+    for it in items:
+        row = account_map[it.account_id]
+        before = _account_to_dict(row, db.get(models.Person, row.person_id) if row.person_id else None)
+        row.wecom_userid = it.wecom_userid
+        crud.log(db, current_user, "batch_bind_wecom", "account", row.id, before=before, after=_account_to_dict(row))
+
+    db.commit()
+    # 返回更新后的账号列表
+    updated_ids = list(account_map.keys())
+    updated = db.query(models.Account).filter(models.Account.id.in_(updated_ids)).all()
+    return [
+        _account_to_dict(a, db.get(models.Person, a.person_id) if a.person_id else None)
+        for a in updated
+    ]

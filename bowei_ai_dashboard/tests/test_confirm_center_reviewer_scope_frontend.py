@@ -31,9 +31,8 @@ def test_confirm_page_defaults_reviewers_to_pending_without_current_project():
     # 语义: reviewer 默认 'all'(待确认), 非 reviewer 默认 'mine'(我的提交记录),
     #       initialRedirectDone 保护用户手动切换不被强制弹回。
     assert "defaultViewMode" in source
-    assert "isReviewer" in source
-    assert "'all'" in source or '"all"' in source
-    assert "'mine'" in source or '"mine"' in source
+    assert "const defaultViewMode: ConfirmViewMode = 'all'" in source
+    assert "'mine'" not in source
     assert "initialRedirectDone" in source
     assert "useRef" in source
 
@@ -48,11 +47,11 @@ def test_confirm_page_supports_project_id_query_for_pending_scope():
     assert "getPending(pendingProjectId, 'all')" in source
 
 
-def test_confirm_page_keeps_mine_and_pending_data_sources_separate():
+def test_confirm_page_only_loads_reviewer_data_sources():
     source = _confirm_page_source()
 
-    assert "viewMode === 'mine'" in source
-    assert "fetchMyUpdates()" in source
+    assert "viewMode === 'mine'" not in source
+    assert "fetchMyUpdates" not in source
     assert "getPending(pendingProjectId, 'all')" in source
     assert "itemProjectId" in source
     assert "fetchSubtasksByAssignee(submitter, itemProjectId)" in source

@@ -16,6 +16,12 @@ export type ConfirmationTaskCard = {
   coordinatorNote: string
   coordinatorOperator: string
   coordinatorFeedbackAt: string
+  /** 最终处理结果（负责人确认后写入，与状态流分开展示） */
+  finalResult: string
+  /** 负责人给提交者的回复 */
+  handlerReply: string
+  /** 转出到问题中心的历史记录 */
+  escalationHistory: Array<{ issue_id: number; target: string; note: string; at: string; operator: string }>
   structure: {
     projectName: string
     keyTaskName: string
@@ -295,6 +301,9 @@ export function buildConfirmationTaskCards(
         coordinatorNote: text(report.coordinator_note),
         coordinatorOperator: text(report.coordinator_operator),
         coordinatorFeedbackAt: text(report.coordinator_feedback_at),
+        finalResult: text(report.final_result),
+        handlerReply: text(report.handler_reply),
+        escalationHistory: Array.isArray(report.escalation_history) ? report.escalation_history : [],
         status: text(report.status_update) || '进行中',
         structure: {
           projectName,
@@ -326,6 +335,9 @@ export function buildConfirmationTaskCards(
     coordinatorNote: text(data.coordinator_note),
     coordinatorOperator: text(data.coordinator_operator),
     coordinatorFeedbackAt: text(data.coordinator_feedback_at),
+    finalResult: '',
+    handlerReply: '',
+    escalationHistory: [],
     status: text(data.status_suggestion) || text(task.status) || '进行中',
     structure: {
       projectName,

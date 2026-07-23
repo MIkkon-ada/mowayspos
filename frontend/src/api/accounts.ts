@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiPost } from './client'
+import { apiGet, apiPatch, apiPost, apiPut, apiDelete } from './client'
 
 export type AccountItem = {
   id: number
@@ -8,6 +8,7 @@ export type AccountItem = {
   status: 'active' | 'disabled'
   is_tech_admin: boolean
   must_change_password: boolean
+  wecom_userid: string
   last_login_at?: string | null
   last_password_changed_at?: string | null
   failed_login_count: number
@@ -37,6 +38,37 @@ export function resetAccountPassword(id: number, password: string): Promise<{ ok
 
 export function updateAccountStatus(id: number, status: AccountItem['status']): Promise<AccountItem> {
   return apiPatch<AccountItem>(`/api/accounts/${id}/status`, { status })
+}
+
+export function bindAccountWecom(id: number, wecomUserid: string): Promise<AccountItem> {
+  return apiPut<AccountItem>(`/api/accounts/${id}/wecom`, { wecom_userid: wecomUserid })
+}
+
+export function unbindAccountWecom(id: number): Promise<AccountItem> {
+  return apiDelete<AccountItem>(`/api/accounts/${id}/wecom`)
+}
+
+export type WecomUserItem = {
+  wecom_userid: string
+  wecom_name: string
+  department_ids: number[]
+  bound_account_id: number | null
+  bound_username: string
+  preselect_account_id: number | null
+  preselect_username: string
+}
+
+export function fetchWecomUsers(): Promise<WecomUserItem[]> {
+  return apiGet<WecomUserItem[]>('/api/accounts/wecom-users')
+}
+
+export type WecomBatchBindItem = {
+  account_id: number
+  wecom_userid: string
+}
+
+export function batchBindWecom(items: WecomBatchBindItem[]): Promise<AccountItem[]> {
+  return apiPost<AccountItem[]>('/api/accounts/wecom-bind-batch', { items })
 }
 
 export function changeMyPassword(oldPassword: string, newPassword: string): Promise<{ ok: boolean }> {

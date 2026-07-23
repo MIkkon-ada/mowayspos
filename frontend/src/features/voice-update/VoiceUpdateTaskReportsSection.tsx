@@ -1,9 +1,11 @@
+import { useState } from 'react'
 import { fetchSubTasks } from '../../api/subtasks'
 import type { TaskReport, TaskReportAchievement, TaskReportProgress } from '../../api/updates'
 import type { SubTaskItem } from '../../types'
 import type { VoiceUpdateTaskReportsSectionProps } from './voiceUpdateResultTypes'
 
 const STATUS_OPTIONS = ['未开始', '进行中', '延期', '已完成', '暂缓']
+const MATCH_LABELS = { matched: '已匹配归属', needs_confirmation: '需要确认归属', unmatched: '无法匹配' } as const
 
 function lines(value: string): string[] {
   return value.split('\n').map((item) => item.trim()).filter(Boolean)
@@ -15,20 +17,34 @@ export function VoiceUpdateTaskReportsSection({
   setTaskReports,
   keyTaskIssues,
   setKeyTaskIssues,
-  selectedSubtaskId,
   cardEdits,
   updateCardEdit,
   projectTasksForSuggest,
   voiceSubtasksContext,
 }: VoiceUpdateTaskReportsSectionProps) {
-  const primaryIndex = taskReports.findIndex((report) => report.type === 'progress' && report.matched_subtask_id === selectedSubtaskId)
-  const primaryItem = primaryIndex >= 0 ? { report: taskReports[primaryIndex], index: primaryIndex } : null
-  const otherItems = taskReports
-    .map((report, index) => ({ report, index }))
-    .filter(({ index }) => index !== primaryIndex)
+  const [activeReportIndex, setActiveReportIndex] = useState(0)
+  const safeActiveIndex = Math.min(activeReportIndex, Math.max(taskReports.length - 1, 0))
+  const activeItem = taskReports[safeActiveIndex]
+    ? { report: taskReports[safeActiveIndex], index: safeActiveIndex }
+    : null
 
   function updateReport(index: number, patch: Partial<TaskReportProgress> | Record<string, unknown>) {
     setTaskReports((previous) => previous.map((report, reportIndex) => reportIndex === index ? { ...report, ...patch } as TaskReport : report))
+  }
+
+  function applyOwnership(index: number, candidateId: number | null, candidates: typeof voiceSubtasksContext) {
+    const selected = candidates.find((item) => (item.subtask_id ?? item.id) === candidateId)
+    updateReport(index, selected ? {
+      matched_subtask_id: candidateId,
+      matched_subtask_title: selected.subtask_title || selected.title,
+      parent_task_id: selected.parent_task_id ?? null,
+      parent_key_task: selected.parent_key_task,
+      project_id: selected.project_id ?? selected.parent_project_id ?? null,
+      project_name: selected.project_name || '',
+      match_status: 'matched',
+      match_reason: '用户手动确认归属',
+      match_confidence: 1,
+    } : { matched_subtask_id: null })
   }
 
   function updateAchievements(index: number, value: string) {
@@ -106,24 +122,72 @@ export function VoiceUpdateTaskReportsSection({
     )
   }
 
-  function renderReport(report: TaskReport, index: number, primary: boolean) {
+  function renderReport(report: TaskReport, index: number) {
     const progress = report.type === 'progress' ? report : null
-    const title = progress?.matched_subtask_title || ('title' in report ? report.title : 'AI 识别项')
     const completed = report.completed == null ? '' : String(report.completed)
     const matchingKeyIssues = progress
       ? keyTaskIssues.map((issue, issueIndex) => ({ issue, issueIndex })).filter(({ issue }) => issue.key_task_title === progress.parent_key_task)
       : []
+    const ownershipCandidates = progress?.match_candidates?.length ? progress.match_candidates : voiceSubtasksContext
 
     return (
-      <article key={index} className={`voice-update-report-card${primary ? ' is-primary' : ''}`}>
-        {!primary && <header>
-          <div>
-            <span>{progress ? (primary ? '本次汇报任务' : '其他进展') : report.type === 'suggest_new_subtask' ? '建议新增关键任务' : '新建关键任务'}</span>
-            <h3>{title}</h3>
-          </div>
-          {progress?.status_update && <em>{progress.status_update}</em>}
-        </header>}
-        {!primary && renderOwnership(report, index)}
+      <article key={index} className="voice-update-report-card is-primary">
+        {!progress && renderOwnership(report, index)}
+        {progress?.match_status && (
+          <section className={`voice-update-agent-match is-${progress.match_status}`}>
+            <div className="voice-update-agent-match-heading">
+              <strong>{MATCH_LABELS[progress.match_status]}</strong>
+              {progress.match_status === 'matched' && (
+                <button type="button" onClick={() => updateCardEdit(index, { editorOpen: !(cardEdits[index]?.editorOpen ?? false) })}>
+                  {cardEdits[index]?.editorOpen ? '收起修改' : '修改归属'}
+                </button>
+              )}
+            </div>
+            <span>{progress.project_name || '—'} &gt; {progress.parent_key_task || '—'} &gt; {progress.matched_subtask_title || '—'}</span>
+            <small>{progress.match_reason || ''}</small>
+            <div><b>原文证据</b>{(progress.evidence ?? []).map((item) => <q key={item}>{item}</q>)}</div>
+            {progress.match_status === 'matched' && cardEdits[index]?.editorOpen && (
+              <label>
+                重新选择归属
+                <select value={progress.matched_subtask_id ?? ''} onChange={(event) => applyOwnership(index, event.target.value ? Number(event.target.value) : null, voiceSubtasksContext)}>
+                  <option value="">请选择项目、重点工作与关键任务</option>
+                  {voiceSubtasksContext.map((item) => <option key={item.subtask_id ?? item.id} value={item.subtask_id ?? item.id}>{item.project_name || '—'} &gt; {item.parent_key_task || '—'} &gt; {item.subtask_title || item.title}</option>)}
+                </select>
+              </label>
+            )}
+            {progress.match_status === 'needs_confirmation' && (
+              <label>
+                选择候选归属
+                <select value={progress.matched_subtask_id ?? ''} onChange={(event) => {
+                  applyOwnership(index, event.target.value ? Number(event.target.value) : null, ownershipCandidates)
+                }}>
+                  <option value="">请选择候选任务，不会自动选中</option>
+                  {ownershipCandidates.map((item) => <option key={item.subtask_id ?? item.id} value={item.subtask_id ?? item.id}>{item.project_name || '—'} &gt; {item.parent_key_task || '—'} &gt; {item.subtask_title || item.title}</option>)}
+                </select>
+              </label>
+            )}
+            {progress.match_status === 'unmatched' && (() => {
+              const projectCandidates = voiceSubtasksContext.filter((item, candidateIndex, all) => all.findIndex((candidate) => (candidate.project_id ?? candidate.parent_project_id) === (item.project_id ?? item.parent_project_id)) === candidateIndex)
+              const workstreamCandidates = voiceSubtasksContext.filter((item) => (item.project_id ?? item.parent_project_id) === progress.project_id).filter((item, candidateIndex, all) => all.findIndex((candidate) => candidate.parent_task_id === item.parent_task_id) === candidateIndex)
+              const subtaskCandidates = voiceSubtasksContext.filter((item) => (item.project_id ?? item.parent_project_id) === progress.project_id && item.parent_task_id === progress.parent_task_id)
+              return (
+                <div className="voice-update-unmatched-ownership" aria-label="手动确认任务归属">
+                  <label>选择项目<select value={progress.project_id ?? ''} onChange={(event) => {
+                    const projectId = event.target.value ? Number(event.target.value) : null
+                    const selected = projectCandidates.find((item) => (item.project_id ?? item.parent_project_id) === projectId)
+                    updateReport(index, { project_id: projectId, project_name: selected?.project_name || '', parent_task_id: null, parent_key_task: '', matched_subtask_id: null, matched_subtask_title: '' })
+                  }}><option value="">请选择项目</option>{projectCandidates.map((item) => <option key={item.project_id ?? item.parent_project_id} value={item.project_id ?? item.parent_project_id ?? ''}>{item.project_name || '—'}</option>)}</select></label>
+                  <label>选择重点工作<select value={progress.parent_task_id ?? ''} disabled={!progress.project_id} onChange={(event) => {
+                    const parentTaskId = event.target.value ? Number(event.target.value) : null
+                    const selected = workstreamCandidates.find((item) => item.parent_task_id === parentTaskId)
+                    updateReport(index, { parent_task_id: parentTaskId, parent_key_task: selected?.parent_key_task || '', matched_subtask_id: null, matched_subtask_title: '' })
+                  }}><option value="">请选择重点工作</option>{workstreamCandidates.map((item) => <option key={item.parent_task_id} value={item.parent_task_id ?? ''}>{item.parent_key_task || '—'}</option>)}</select></label>
+                  <label>选择关键任务<select value={progress.matched_subtask_id ?? ''} disabled={!progress.parent_task_id} onChange={(event) => applyOwnership(index, event.target.value ? Number(event.target.value) : null, subtaskCandidates)}><option value="">请选择关键任务</option>{subtaskCandidates.map((item) => <option key={item.subtask_id ?? item.id} value={item.subtask_id ?? item.id}>{item.subtask_title || item.title}</option>)}</select></label>
+                </div>
+              )
+            })()}
+          </section>
+        )}
         <div className="voice-update-progress-editor">
           <div className="voice-update-progress-field">
             <label className="voice-update-field-label"><span className="is-complete">✓</span>本次完成</label>
@@ -171,9 +235,9 @@ export function VoiceUpdateTaskReportsSection({
                   <label key={status}>
                     <input
                       type="radio"
-                      name={primary ? 'voice-update-status' : `voice-update-status-${index}`}
+                      name={`voice-update-status-${index}`}
                       value={status}
-                      checked={(progress.status_update || '进行中') === status}
+                      checked={progress.status_update === status}
                       disabled={phase === 'submitted'}
                       onChange={(event) => updateReport(index, { status_update: event.target.value })}
                     />
@@ -184,7 +248,7 @@ export function VoiceUpdateTaskReportsSection({
             </div>
           )}
         </div>
-        {primary && (
+        {(
           <details className="voice-update-ownership-details">
             <summary>调整任务归属及成果链接</summary>
             {renderOwnership(report, index)}
@@ -246,9 +310,23 @@ export function VoiceUpdateTaskReportsSection({
 
   return (
     <div className="voice-update-task-reports">
-      {primaryItem && renderReport(primaryItem.report, primaryItem.index, true)}
-      {otherItems.length > 0 && <h3 className="voice-update-other-results-title">其他 AI 识别项</h3>}
-      {otherItems.map(({ report, index }) => renderReport(report, index, false))}
+      <h3 className="voice-update-agent-count">AI 已识别 {taskReports.length} 项工作</h3>
+      {taskReports.length > 1 && (
+        <nav className="voice-update-task-switcher" aria-label="切换 AI 识别任务卡">
+          {taskReports.map((report, index) => {
+            const progress = report.type === 'progress' ? report : null
+            const label = progress
+              ? `${progress.project_name || `任务卡 ${index + 1}`} · ${progress.matched_subtask_title || progress.parent_key_task || '待确认归属'}`
+              : `任务卡 ${index + 1}/${taskReports.length}`
+            return (
+              <button type="button" key={index} className={`${index === safeActiveIndex ? 'is-active' : ''}${progress?.match_status && progress.match_status !== 'matched' ? ' is-unresolved' : ''}`} aria-current={index === safeActiveIndex ? 'true' : undefined} onClick={() => setActiveReportIndex(index)}>
+                <span>{label}</span><small>任务卡 {index + 1}/{taskReports.length}</small>
+              </button>
+            )
+          })}
+        </nav>
+      )}
+      {activeItem && renderReport(activeItem.report, activeItem.index)}
     </div>
   )
 }

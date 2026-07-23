@@ -13,7 +13,6 @@ type VoiceUpdateInputPanelProps = {
   phase: Phase
   controlsLocked: boolean
   extractDisabled: boolean
-  transcribing: boolean
   recording: boolean
   timerLabel: string
   text: string
@@ -42,7 +41,6 @@ export function VoiceUpdateInputPanel({
   phase,
   controlsLocked,
   extractDisabled,
-  transcribing,
   recording,
   timerLabel,
   text,
@@ -59,11 +57,7 @@ export function VoiceUpdateInputPanel({
     <section className="voice-update-input-panel" aria-label="输入汇报内容">
       <header className="voice-update-panel-header voice-update-input-panel-header">
         <div className="voice-update-panel-heading">
-          <span className="voice-update-panel-step">2</span>
-          <div>
-            <h2>输入内容</h2>
-            <p>支持文本、录音、音频文件三种方式</p>
-          </div>
+          <h2>输入内容</h2>
         </div>
       </header>
 
@@ -104,9 +98,9 @@ export function VoiceUpdateInputPanel({
 
       {mode === 'voice' && (
         <div className="voice-update-audio-zone">
-          <strong>{transcribing ? '正在转写录音…' : recording ? '正在录音' : '录音输入'}</strong>
+          <strong>{recording ? '正在录音（实时转写中）' : '录音输入'}</strong>
           <span>{timerLabel}</span>
-          <button type="button" className="voice-update-task-detail-button" disabled={transcribing} onClick={recording ? onStopRecording : onStartRecording}>
+          <button type="button" className="voice-update-task-detail-button" onClick={recording ? onStopRecording : onStartRecording}>
             {recording ? '停止录音' : '开始录音'}
           </button>
           {text && <p>{text}</p>}

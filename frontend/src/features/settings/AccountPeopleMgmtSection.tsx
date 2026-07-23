@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createAccount, fetchAccounts, resetAccountPassword, updateAccountStatus, type AccountItem } from '../../api/accounts'
+import { createAccount, fetchAccounts, resetAccountPassword, updateAccountStatus, bindAccountWecom, unbindAccountWecom, fetchWecomUsers, batchBindWecom, type AccountItem, type WecomUserItem } from '../../api/accounts'
 import { fetchPeople, createPerson, updatePerson, deletePerson } from '../../api/people'
 import type { Person } from '../../types'
 import { Card, SectionTitle } from './settingsShared'
@@ -24,6 +24,12 @@ export function AccountPeopleMgmtSection() {
   const [creating, setCreating] = useState(false)
   const [accountDraft, setAccountDraft] = useState<Record<number, { username: string; password: string }>>({})
   const [resetDraft, setResetDraft] = useState<Record<number, string>>({})
+  const [wecomDraft, setWecomDraft] = useState<Record<number, string>>({})
+  const [showWecomImport, setShowWecomImport] = useState(false)
+  const [wecomUsers, setWecomUsers] = useState<WecomUserItem[]>([])
+  const [wecomLoading, setWecomLoading] = useState(false)
+  const [wecomSelected, setWecomSelected] = useState<Record<string, number | null>>({})
+  const [wecomSaving, setWecomSaving] = useState(false)
   const [message, setMessage] = useState('')
 
   function loadAll() {
@@ -131,6 +137,81 @@ export function AccountPeopleMgmtSection() {
     showMessage(nextStatus === 'active' ? '账号已启用' : '账号已禁用')
   }
 
+  async function handleBindWecom(account: AccountItem) {
+    const wecomUserid = (wecomDraft[account.id] || '').trim()
+    if (!wecomUserid) return toast.error('请输入企业微信 ID')
+    try {
+      const updated = await bindAccountWecom(account.id, wecomUserid)
+      setAccounts((prev) => prev.map((item) => item.id === updated.id ? updated : item))
+      setWecomDraft((prev) => ({ ...prev, [account.id]: '' }))
+      showMessage('企业微信 ID 已绑定')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '绑定失败')
+    }
+  }
+
+  async function handleUnbindWecom(account: AccountItem) {
+    if (!window.confirm(`确认解绑「${account.username}」的企业微信 ID？解绑后该用户不能用企业微信登录。`)) return
+    try {
+      const updated = await unbindAccountWecom(account.id)
+      setAccounts((prev) => prev.map((item) => item.id === updated.id ? updated : item))
+      showMessage('企业微信 ID 已解绑')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '解绑失败')
+    }
+  }
+
+  async function handleLoadWecomUsers() {
+    setShowWecomImport(true)
+    setWecomLoading(true)
+    try {
+      const rows = await fetchWecomUsers()
+      setWecomUsers(rows)
+      // 初始化每行的选中账号：优先 preselect，否则 bound_account_id，否则 null
+      const initial: Record<string, number | null> = {}
+      rows.forEach((u) => {
+        if (u.preselect_account_id) {
+          initial[u.wecom_userid] = u.preselect_account_id
+        } else if (u.bound_account_id) {
+          initial[u.wecom_userid] = u.bound_account_id
+        } else {
+          initial[u.wecom_userid] = null
+        }
+      })
+      setWecomSelected(initial)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '拉取企微通讯录失败')
+      setShowWecomImport(false)
+    } finally {
+      setWecomLoading(false)
+    }
+  }
+
+  async function handleBatchBindWecom() {
+    const items: { account_id: number; wecom_userid: string }[] = []
+    Object.entries(wecomSelected).forEach(([wecomUserid, accountId]) => {
+      if (accountId) items.push({ account_id: accountId, wecom_userid: wecomUserid })
+    })
+    if (items.length === 0) {
+      toast.warning('请至少选择一个要绑定的账号')
+      return
+    }
+    setWecomSaving(true)
+    try {
+      const updated = await batchBindWecom(items)
+      setAccounts((prev) => {
+        const map = new Map(updated.map((a) => [a.id, a]))
+        return prev.map((p) => map.get(p.id) ?? p)
+      })
+      setShowWecomImport(false)
+      showMessage(`成功绑定 ${items.length} 个企业微信账号`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '批量绑定失败')
+    } finally {
+      setWecomSaving(false)
+    }
+  }
+
   async function handleDelete(id: number, name: string) {
     if (!window.confirm(`确认删除「${name}」？建议优先禁用账号，删除人员会影响项目成员关系。`)) return
     await deletePerson(id)
@@ -148,6 +229,10 @@ export function AccountPeopleMgmtSection() {
           <button type="button" onClick={() => setShowBatchImport(true)}
             className="cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-indigo-200 text-indigo-600 bg-indigo-50 hover:bg-indigo-100">
             批量导入人员
+          </button>
+          <button type="button" onClick={handleLoadWecomUsers}
+            className="cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-emerald-200 text-emerald-600 bg-emerald-50 hover:bg-emerald-100">
+            拉取企微通讯录
           </button>
           <button type="button" onClick={() => setShowNew(true)}
             className="cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-xs font-semibold"
@@ -167,6 +252,96 @@ export function AccountPeopleMgmtSection() {
             setShowBatchImport(false)
           }}
         />
+      )}
+
+      {showWecomImport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-bold text-slate-800">企业微信通讯录</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {wecomLoading ? '加载中…' : `共 ${wecomUsers.length} 位成员，系统已按姓名自动推荐绑定，可手动调整`}
+                </p>
+              </div>
+              <button type="button" onClick={() => !wecomSaving && setShowWecomImport(false)}
+                className="w-7 h-7 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 16, height: 16 }}>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="overflow-auto px-5 py-4 flex-1">
+              {wecomLoading ? (
+                <div className="text-center text-slate-400 py-12">加载中…</div>
+              ) : wecomUsers.length === 0 ? (
+                <div className="text-center text-slate-400 py-12">没有通讯录数据</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-slate-500 border-b border-slate-100">
+                      <th className="py-2 px-2 font-semibold">企微 ID</th>
+                      <th className="py-2 px-2 font-semibold">姓名</th>
+                      <th className="py-2 px-2 font-semibold">绑定到系统账号</th>
+                      <th className="py-2 px-2 font-semibold">状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {wecomUsers.map((u) => {
+                      const sel = wecomSelected[u.wecom_userid]
+                      const isRecommended = !u.bound_account_id && !!u.preselect_account_id && sel === u.preselect_account_id
+                      return (
+                        <tr key={u.wecom_userid} className="border-b border-slate-50 hover:bg-slate-50/50">
+                          <td className="py-2 px-2 font-mono text-xs text-slate-700">{u.wecom_userid}</td>
+                          <td className="py-2 px-2 text-slate-700">{u.wecom_name}</td>
+                          <td className="py-2 px-2">
+                            <select
+                              value={sel ?? ''}
+                              onChange={(e) => setWecomSelected((prev) => ({ ...prev, [u.wecom_userid]: e.target.value ? Number(e.target.value) : null }))}
+                              className="border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none min-w-[140px]"
+                            >
+                              <option value="">不绑定</option>
+                              {accounts.map((a) => (
+                                <option key={a.id} value={a.id}>{a.username}{a.person_name ? `（${a.person_name}）` : ''}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="py-2 px-2">
+                            {u.bound_account_id ? (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">已绑定 {u.bound_username}</span>
+                            ) : isRecommended ? (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">推荐</span>
+                            ) : sel ? (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">待绑定</span>
+                            ) : (
+                              <span className="text-xs text-slate-400">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100">
+              <div className="text-xs text-slate-500">
+                将绑定 {Object.values(wecomSelected).filter(Boolean).length} 个账号
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => !wecomSaving && setShowWecomImport(false)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 border border-slate-200 hover:bg-slate-50">
+                  取消
+                </button>
+                <button type="button" onClick={handleBatchBindWecom}
+                  disabled={wecomSaving || wecomLoading}
+                  className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50">
+                  {wecomSaving ? '保存中…' : '保存绑定'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {showNew && (
@@ -272,6 +447,27 @@ export function AccountPeopleMgmtSection() {
                                 className="px-2 py-1 rounded-lg text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50">
                                 {account.status === 'active' ? '禁用账号' : '启用账号'}
                               </button>
+                            </div>
+                          )}
+
+                          {account && (
+                            <div className="flex items-center gap-2 mt-2 flex-wrap">
+                              <span className="text-xs text-slate-500">企微：</span>
+                              {account.wecom_userid ? (
+                                <>
+                                  <span className="text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">{account.wecom_userid}</span>
+                                  <button type="button" onClick={() => handleUnbindWecom(account)}
+                                    className="px-2 py-1 rounded-lg text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50">解绑</button>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">未绑定</span>
+                                  <input value={wecomDraft[account.id] || ''} onChange={e => setWecomDraft(prev => ({ ...prev, [account.id]: e.target.value }))}
+                                    placeholder="输入企业微信 ID" className="w-32 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none" />
+                                  <button type="button" onClick={() => handleBindWecom(account)}
+                                    className="px-2 py-1 rounded-lg text-xs font-semibold border border-emerald-200 text-emerald-600 bg-emerald-50 hover:bg-emerald-100">绑定</button>
+                                </>
+                              )}
                             </div>
                           )}
                         </div>

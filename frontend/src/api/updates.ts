@@ -19,6 +19,12 @@ export type UserSubtaskContext = {
   parent_project_id?: number | null
   assignee?: string
   user_relation?: string // 'owner' | 'coordinator' | 'task_owner' | 'subtask_assignee'
+  project_id?: number | null
+  project_name?: string
+  subtask_id?: number
+  subtask_title?: string
+  completion_criteria?: string
+  plan_time?: string
 }
 
 export type TaskReportAchievement = {
@@ -38,6 +44,13 @@ export type TaskReportProgress = {
   subtask_issues: string[]
   next_steps: string[]
   status_update: string
+  project_id?: number | null
+  project_name?: string
+  match_status?: 'matched' | 'needs_confirmation' | 'unmatched'
+  match_confidence?: number
+  match_reason?: string
+  evidence?: string[]
+  match_candidates?: UserSubtaskContext[]
 }
 
 export type TaskReportNewTask = {
@@ -79,6 +92,7 @@ export type KeyTaskIssue = {
 
 export type ExtractOnlyPayload = {
   project_id?: number
+  report_scope?: 'all' | 'project' | 'task'
   source_type: string
   transcript_text: string
   submitter?: string
@@ -91,6 +105,20 @@ export type CreateUpdateResult = {
   suggestion?: Record<string, unknown>
 }
 
+export type CreateUpdateBatchPayload = {
+  client_request_id: string
+  source_type: string
+  title?: string
+  transcript_text: string
+  human_result: Record<string, unknown>
+}
+
+export type CreateUpdateBatchResult = {
+  batch: { id: number; submission_count: number; [key: string]: unknown }
+  submissions: Array<{ id: number; project_id: number; confirm_status: string; [key: string]: unknown }>
+  idempotent: boolean
+}
+
 // AI 提取，不写 DB：POST /api/updates/extract
 export function extractOnly(payload: ExtractOnlyPayload): Promise<{ suggestion: Record<string, unknown> }> {
   return apiPost<{ suggestion: Record<string, unknown> }>('/api/updates/extract', payload)
@@ -101,9 +129,17 @@ export function createUpdate(payload: CreateUpdatePayload): Promise<CreateUpdate
   return apiPost<CreateUpdateResult>('/api/updates', payload)
 }
 
+export function createUpdateBatch(payload: CreateUpdateBatchPayload): Promise<CreateUpdateBatchResult> {
+  return apiPost<CreateUpdateBatchResult>('/api/updates/batch', payload)
+}
+
 export type UpdateHistoryItem = {
   id: number
   project_id?: number | null
+  project_name?: string
+  batch_id?: number | null
+  batch_order?: number
+  batch_submission_count?: number
   submitter: string
   source_type: string
   title?: string

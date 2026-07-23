@@ -4,12 +4,14 @@ import { fetchTasks } from '../../api/tasks'
 import type { SubTaskItem, TaskItem } from '../../types'
 import type { KeyTaskIssue, TaskReport, UserSubtaskContext } from '../../api/updates'
 import type { ProposedSubTask } from '../../api/subtaskDrafts'
-import { bindProgressReportsToTask, type CardEdit, type Phase } from './voiceUpdateResultTypes'
+import { bindProgressReportsToTask, type CardEdit, type Phase, type VoiceReportScope } from './voiceUpdateResultTypes'
 
 type UseVoiceExtractionArgs = {
+  reportScope?: VoiceReportScope
   selectedProjectId: number | null
   selectedTaskContext: UserSubtaskContext | null
   selectedProjectIsActive: boolean
+  voiceCandidates: UserSubtaskContext[]
   currentUser: { name?: string } | null
   text: string
   mode: 'voice' | 'upload' | 'text'
@@ -101,6 +103,11 @@ export function useVoiceExtraction({
       setError('请先选择所属项目，再进行 AI 提取。')
       return
     }
+    if (!selectedTaskContext) {
+      submitLock.current = false
+      setError('请先选择本次汇报对应的关键任务。')
+      return
+    }
     const content = text.trim()
     if (!content) {
       submitLock.current = false
@@ -118,7 +125,7 @@ export function useVoiceExtraction({
     setError(null)
     setResult(null)
 
-    setVoiceSubtasksContext(selectedTaskContext ? [selectedTaskContext] : [])
+    setVoiceSubtasksContext([selectedTaskContext])
 
     try {
       const res = await extractOnly({
@@ -127,7 +134,7 @@ export function useVoiceExtraction({
         transcript_text: content,
         submitter: currentUser?.name,
         llm_provider: selectedProvider,
-        ...(selectedTaskContext ? { user_subtasks: [selectedTaskContext] } : {}),
+        user_subtasks: [selectedTaskContext],
       })
       const suggestion = res.suggestion ?? {}
       setResult(suggestion)
@@ -141,19 +148,17 @@ export function useVoiceExtraction({
       )
       setTaskReports(nextTaskReports)
       const initEdits: Record<number, CardEdit> = {}
-      if (selectedTaskContext) {
-        nextTaskReports.forEach((r, idx) => {
-          if (r.type === 'progress' && r.matched_subtask_id) {
-            initEdits[idx] = {
-              taskId: selectedTaskContext.parent_task_id ?? null,
-              subtaskId: r.matched_subtask_id,
-              subtasks: [],
-              editorOpen: false,
-              modified: false,
-            }
+      nextTaskReports.forEach((r, idx) => {
+        if (r.type === 'progress' && r.matched_subtask_id) {
+          initEdits[idx] = {
+            taskId: selectedTaskContext.parent_task_id ?? null,
+            subtaskId: r.matched_subtask_id,
+            subtasks: [],
+            editorOpen: false,
+            modified: false,
           }
-        })
-      }
+        }
+      })
       setCardEdits(initEdits)
       setKeyTaskIssues((suggestion.key_task_issues as KeyTaskIssue[] | undefined) ?? [])
       setPhase('extracted')

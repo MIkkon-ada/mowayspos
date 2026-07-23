@@ -1,0 +1,131 @@
+- generic [ref=f5e5]:
+  - complementary [ref=f5e6]:
+    - generic [ref=f5e7]:
+      - img "logo" [ref=f5e8]
+      - button "通知" [ref=f5e10] [cursor=pointer]
+    - navigation [ref=f5e13]:
+      - button "驾驶舱" [ref=f5e15] [cursor=pointer]
+      - button "工作推进表" [active] [ref=f5e21] [cursor=pointer]
+      - button "我的任务" [ref=f5e27] [cursor=pointer]
+      - button "AI 确认中心 2" [ref=f5e32] [cursor=pointer]:
+        - generic [ref=f5e36]: AI 确认中心
+        - generic [ref=f5e37]: "2"
+      - button "工作汇报" [ref=f5e39] [cursor=pointer]
+      - button "会议纪要" [ref=f5e44] [cursor=pointer]
+      - button "成果库" [ref=f5e50] [cursor=pointer]
+      - button "问题中心" [ref=f5e55] [cursor=pointer]
+      - button "组织管理" [ref=f5e61] [cursor=pointer]
+      - button "项目管理" [ref=f5e66] [cursor=pointer]
+      - button "通知中心" [ref=f5e71] [cursor=pointer]
+      - button "系统设置" [ref=f5e77] [cursor=pointer]
+    - generic [ref=f5e83]:
+      - generic [ref=f5e84]: m
+      - generic [ref=f5e85]:
+        - generic [ref=f5e86]: moways
+        - generic [ref=f5e87]: 超级管理员
+      - button "修改密码" [ref=f5e88] [cursor=pointer]
+      - button "退出登录" [ref=f5e91] [cursor=pointer]
+  - generic [ref=f5e261]:
+    - banner [ref=f5e262]:
+      - heading "工作推进表" [level=1] [ref=f5e264]
+      - generic [ref=f5e265]:
+        - button "表格视图" [ref=f5e266] [cursor=pointer]
+        - button "执行详情" [ref=f5e267] [cursor=pointer]
+      - generic [ref=f5e268]:
+        - generic [ref=f5e269]:
+          - generic [ref=f5e270]: 专项
+          - combobox [ref=f5e271] [cursor=pointer]:
+            - option "请选择项目"
+            - option "博维咨询AI升级转型2026" [selected]
+        - generic [ref=f5e272]:
+          - generic [ref=f5e273]: 状态
+          - combobox [ref=f5e274] [cursor=pointer]:
+            - option "全部状态" [selected]
+            - option "未开始"
+            - option "进行中"
+            - option "已完成"
+            - option "延期"
+            - option "暂缓"
+        - generic [ref=f5e275]:
+          - generic [ref=f5e276]: 专项负责人
+          - combobox [ref=f5e277] [cursor=pointer]:
+            - option "全部专项负责人" [selected]
+            - option "冯海林"
+            - option "杨宇帆"
+        - textbox "搜索重点工作、关键任务、责任人" [ref=f5e281]
+    - region "Excel 式工作推进表" [ref=f5e284]:
+      - generic "工作推进表视图工具栏" [ref=f5e285]:
+        - generic "顶部缩放控件" [ref=f5e286]:
+          - button "缩小表格" [ref=f5e287] [cursor=pointer]: −
+          - generic [ref=f5e288]: 100%
+          - button "放大表格" [ref=f5e289] [cursor=pointer]: ＋
+        - button "适合宽度" [ref=f5e290] [cursor=pointer]
+        - button "重置视图" [ref=f5e291] [cursor=pointer]
+        - button "导出 Excel" [ref=f5e292] [cursor=pointer]
+      - generic [ref=f5e293]: 博维咨询AI升级转型2026目标与重点工作计划表
+      - table [ref=f5e296]:
+        - rowgroup [ref=f5e313]:
+          - row [ref=f5e314]:
+            - columnheader "行号" [ref=f5e315]: "#"
+            - columnheader "目标" [ref=f5e316]
+            - columnheader "重点工作" [ref=f5e317]
+            - columnheader "评价标准" [ref=f5e318]
+            - columnheader "序号" [ref=f5e319]
+            - columnheader "关键任务" [ref=f5e320]
+            - columnheader "责任人" [ref=f5e321]
+            - columnheader "计划开始时间" [ref=f5e322]
+            - columnheader "计划结束时间" [ref=f5e323]
+            - columnheader "协同人" [ref=f5e324]
+            - columnheader "完成情况" [ref=f5e325]
+            - columnheader "备注" [ref=f5e326]
+            - columnheader "项目经理" [ref=f5e327]
+            - columnheader "重点工作计划开始时间" [ref=f5e328]
+            - columnheader "重点工作计划结束时间" [ref=f5e329]
+        - rowgroup [ref=f5e330]:
+          - row [ref=f5e331]:
+            - cell "1" [ref=f5e332]
+            - cell "1.快速拓展AI相关业务 【AI相关业务收入占比 ≥ 10%】 2.项目运营系统全面覆盖现有项目管理【项目运营系统覆盖率 ≥ 80%】 3.形成完整的AI资产体系【AI知识库 + Skill + Agent体系初步建成并在项目中应用运行】" [ref=f5e333]
+            - cell "联合腾讯WorkBuddy开拓AI相关业务" [ref=f5e334]
+            - cell "1.AI相关业务收入占比达到10%； 2.形成联合拓客机制； 3.达成阶段性客户转化目标。" [ref=f5e335]
+            - cell "1" [ref=f5e336]
+            - button "明确联合拓展方案与目标客户范围" [ref=f5e337] [cursor=pointer]
+            - cell "杨宇帆" [ref=f5e338]
+            - cell "7.1-7.5" [ref=f5e339]
+            - cell "—" [ref=f5e340]
+            - cell "邹奇敏" [ref=f5e341]
+            - cell "进行中" [ref=f5e342]
+            - cell "—" [ref=f5e345]
+            - cell "冯海林" [ref=f5e346]
+            - cell "—" [ref=f5e347]
+            - cell "—" [ref=f5e348]
+          - row [ref=f5e349]:
+            - cell "2" [ref=f5e350]
+            - cell "2" [ref=f5e351]
+            - button "策划并执行联合市场活动" [ref=f5e352] [cursor=pointer]
+            - cell "邹奇敏" [ref=f5e353]
+            - cell "7.1-7.5" [ref=f5e354]
+            - cell "—" [ref=f5e355]
+            - cell "杨宇帆/温会林" [ref=f5e356]
+            - cell "进行中" [ref=f5e357]
+            - cell "—" [ref=f5e360]
+          - row [ref=f5e361]:
+            - cell "3" [ref=f5e362]
+            - cell "3" [ref=f5e363]
+            - button "整理客户现有 SOP 资料清单" [ref=f5e364] [cursor=pointer]
+            - cell "冯海林" [ref=f5e365]
+            - cell "—" [ref=f5e366]
+            - cell "—" [ref=f5e367]
+            - cell "—" [ref=f5e368]
+            - cell "进行中 [2026-07-13] 完成了客户现有SOP资料清单第一版整理，将访谈材料、制度文件、流程截图按模块归类" [ref=f5e369]:
+              - generic [ref=f5e370]:
+                - generic [ref=f5e371]: 进行中
+                - generic [ref=f5e372]: "[2026-07-13] 完成了客户现有SOP资料清单第一版整理，将访谈材料、制度文件、流程截图按模块归类"
+            - cell "—" [ref=f5e373]
+      - generic [ref=f5e374]:
+        - generic [ref=f5e375]: 共 3 条关键任务
+        - generic "底部缩放控件" [ref=f5e377]:
+          - button "缩小表格" [ref=f5e378] [cursor=pointer]: −
+          - slider "表格缩放比例" [ref=f5e379]: "100"
+          - button "放大表格" [ref=f5e380] [cursor=pointer]: ＋
+          - generic [ref=f5e381]: 100%
+          - button "重置视图" [ref=f5e382] [cursor=pointer]: ↺

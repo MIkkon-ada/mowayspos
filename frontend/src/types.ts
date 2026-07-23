@@ -96,6 +96,7 @@ export type Project = {
   coordinator?: string
   owners?: string[]
   collaborators?: string[]
+  coaches?: string[]             // 企业教练人名列表
   user_roles: string[]           // 当前用户在该项目的角色：owner/coordinator/member/project_ceo/super_admin
   member_counts: Record<string, number>
   // 立项扩展字段

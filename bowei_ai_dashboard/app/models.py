@@ -52,10 +52,25 @@ class Task(Base, TimestampMixin):
     delete_batch_id = Column(String(64), default="", index=True)
 
 
+class UpdateSubmissionBatch(Base, TimestampMixin):
+    __tablename__ = "update_submission_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_request_id = Column(String(64), nullable=False, unique=True, index=True)
+    submitter = Column(String(50), default="")
+    submitter_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    source_type = Column(String(40), index=True)
+    title = Column(String(200), default="")
+    transcript_text = Column(Text, nullable=False)
+    submission_count = Column(Integer, default=0)
+
+
 class UpdateSubmission(Base, TimestampMixin):
     __tablename__ = "update_submissions"
 
     id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(Integer, ForeignKey("update_submission_batches.id"), nullable=True, index=True)
+    batch_order = Column(Integer, default=0)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
     source_type = Column(String(40), index=True)
     submitter = Column(String(50), default="")
@@ -164,6 +179,8 @@ class Issue(Base, TimestampMixin):
     source_type = Column(String(40), default="人工录入")
     confirmed_by = Column(String(50), default="")
     source_submission_id = Column(Integer, nullable=True, index=True)
+    source_card_index = Column(Integer, nullable=True)
+    opinion = Column(Text, default="")
     edit_count = Column(Integer, default=0)
     reporter = Column(String(50), default="", index=True)
     handler_reply = Column(Text, default="")
@@ -234,6 +251,7 @@ class Account(Base, TimestampMixin):
     failed_login_count = Column(Integer, default=0)
     locked_until = Column(DateTime, nullable=True)
     must_change_password = Column(Boolean, default=False)
+    wecom_userid = Column(String(64), nullable=True, index=True)
 
 
 class PlatformSettings(Base, TimestampMixin):

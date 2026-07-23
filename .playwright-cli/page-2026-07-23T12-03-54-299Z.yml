@@ -1,0 +1,16 @@
+- generic [ref=f2e34]:
+  - generic [ref=f2e35]:
+    - heading "修改密码" [level=1] [ref=f2e39]
+    - paragraph [ref=f2e40]: 杨宇帆
+  - generic [ref=f2e41]:
+    - generic [ref=f2e42]:
+      - generic [ref=f2e43]: 原密码
+      - textbox "请输入原密码" [ref=f2e44]
+    - generic [ref=f2e45]:
+      - generic [ref=f2e46]: 新密码
+      - textbox "至少 6 位" [ref=f2e47]
+    - generic [ref=f2e48]:
+      - generic [ref=f2e49]: 确认新密码
+      - textbox "再次输入新密码" [ref=f2e50]
+    - button "确认修改" [disabled] [ref=f2e51]
+    - button "取消" [ref=f2e52] [cursor=pointer]

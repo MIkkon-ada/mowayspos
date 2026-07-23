@@ -175,7 +175,7 @@ jobs:
           set -uo pipefail
           log="$RUNNER_TEMP/backend-pytest.log"
           set +e
-          python -m pytest -q --tb=no 2>&1 | tee "$log"
+          python -m pytest tests -q --tb=no 2>&1 | tee "$log"
           pytest_code=${PIPESTATUS[0]}
           set -e
 

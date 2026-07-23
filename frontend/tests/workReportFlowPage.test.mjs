@@ -150,11 +150,10 @@ test('selected AI context contains exactly one key task', async () => {
   assert.deepEqual(buildSelectedVoiceContext(null), [])
 })
 
-test('AI extraction sends the active scope candidate pool', () => {
+test('AI extraction sends the selected task context as user_subtasks', () => {
   const source = read(EXTRACTION)
-  assert.match(source, /user_subtasks:\s*voiceCandidates/)
-  assert.match(source, /setVoiceSubtasksContext\(voiceCandidates\)/)
-  assert.doesNotMatch(source, /slice\(0,\s*60\)/)
+  assert.match(source, /user_subtasks:\s*\[selectedTaskContext\]/)
+  assert.match(source, /setVoiceSubtasksContext\(\[selectedTaskContext\]\)/)
 })
 
 test('progress reports default to the selected key-task ownership', async () => {
@@ -183,8 +182,8 @@ test('extraction validation requires project task content active lifecycle and i
   assert.equal(canExtractVoiceUpdate({ ...valid, phase: 'submitting' }), false)
 })
 
-test('empty candidate scope produces explicit extraction guidance', () => {
-  assert.match(read(EXTRACTION), /当前范围内暂无可汇报工作，请调整汇报范围。/)
+test('extraction validates project selection before calling Agent', () => {
+  assert.match(read(EXTRACTION), /请先选择所属项目，再进行 AI 提取。/)
 })
 
 test('submission requires a selected key task and preserves explicit ownership edits', () => {
@@ -458,21 +457,20 @@ test('cross-project report defaults to all work and preserves optional scopes', 
   assert.doesNotMatch(bar, /selectedTaskContext\?\.plan_time\s*\|\|\s*['"]—['"]/)
 })
 
-test('all-work scope loads unscoped voice context and allows extraction without project selection', () => {
+test('all-work scope still requires project and task before extraction', () => {
   const page = read(PAGE)
   const binding = read(BINDING)
   const extraction = read(EXTRACTION)
   assert.match(binding, /fetchVoiceContext\(scope === 'all' \? undefined : selectedProjectId\)/)
   assert.match(page, /projectActive:\s*reportScope === 'all' \|\| selectedProjectIsActive/)
-  assert.doesNotMatch(extraction, /请先选择所属项目，.*AI 提取/)
-  assert.doesNotMatch(extraction, /请先选择本次汇报对应的关键任务/)
+  assert.match(extraction, /请先选择所属项目，.*AI 提取/)
+  assert.match(extraction, /请先选择本次汇报对应的关键任务/)
 })
 
-test('extraction sends the complete selected candidate pool to the Agent', () => {
+test('extraction sends the selected single task context to the Agent', () => {
   const source = read(EXTRACTION)
-  assert.match(source, /user_subtasks:\s*voiceCandidates/)
-  assert.match(source, /setVoiceSubtasksContext\(voiceCandidates\)/)
-  assert.match(source, /report_scope:\s*reportScope/)
+  assert.match(source, /user_subtasks:\s*\[selectedTaskContext\]/)
+  assert.match(source, /setVoiceSubtasksContext\(\[selectedTaskContext\]\)/)
 })
 
 test('single-task deep links remain supported as task scope preselection', () => {
@@ -527,16 +525,15 @@ test('unconfirmed Agent ownership blocks formal submission without changing crea
   assert.equal((read(SUBMISSION).match(/createUpdate\(/g) ?? []).length, 1)
 })
 
-test('resolved cross-project scopes use one atomic batch request while task scope keeps createUpdate', () => {
+test('submission uses createUpdate with human_result and handles drafts', () => {
   const submission = read(SUBMISSION)
   const api = read('src/api/updates.ts')
   const page = read(PAGE)
-  assert.match(api, /createUpdateBatch/)
-  assert.match(api, /\/api\/updates\/batch/)
-  assert.match(submission, /reportScope === 'task'/)
-  assert.match(submission, /createUpdateBatch/)
+  assert.match(api, /createUpdate/)
   assert.match(submission, /createUpdate\(/)
-  assert.match(submission, /client_request_id/)
+  assert.match(submission, /human_result:/)
+  assert.match(submission, /buildVoiceUpdateHumanResult/)
+  assert.match(submission, /createDrafts/)
   assert.match(page, /reportScope,/)
   assert.doesNotMatch(page, /姝ｅ紡鎻愪氦灏嗗湪涓嬩竴闃舵寮€鏀?/) // 正式提交将在下一阶段开放
 })

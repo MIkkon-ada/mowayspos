@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createAccount, fetchAccounts, resetAccountPassword, updateAccountStatus, type AccountItem } from '../../api/accounts'
+import { createAccount, fetchAccounts, resetAccountPassword, updateAccountStatus, bindAccountWecom, unbindAccountWecom, type AccountItem } from '../../api/accounts'
 import { fetchPeople, createPerson, updatePerson, deletePerson } from '../../api/people'
 import type { Person } from '../../types'
 import { Card, SectionTitle } from './settingsShared'
@@ -24,6 +24,7 @@ export function AccountPeopleMgmtSection() {
   const [creating, setCreating] = useState(false)
   const [accountDraft, setAccountDraft] = useState<Record<number, { username: string; password: string }>>({})
   const [resetDraft, setResetDraft] = useState<Record<number, string>>({})
+  const [wecomDraft, setWecomDraft] = useState<Record<number, string>>({})
   const [message, setMessage] = useState('')
 
   function loadAll() {
@@ -129,6 +130,30 @@ export function AccountPeopleMgmtSection() {
     const updated = await updateAccountStatus(account.id, nextStatus)
     setAccounts((prev) => prev.map((item) => item.id === updated.id ? updated : item))
     showMessage(nextStatus === 'active' ? '账号已启用' : '账号已禁用')
+  }
+
+  async function handleBindWecom(account: AccountItem) {
+    const wecomUserid = (wecomDraft[account.id] || '').trim()
+    if (!wecomUserid) return toast.error('请输入企业微信 ID')
+    try {
+      const updated = await bindAccountWecom(account.id, wecomUserid)
+      setAccounts((prev) => prev.map((item) => item.id === updated.id ? updated : item))
+      setWecomDraft((prev) => ({ ...prev, [account.id]: '' }))
+      showMessage('企业微信 ID 已绑定')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '绑定失败')
+    }
+  }
+
+  async function handleUnbindWecom(account: AccountItem) {
+    if (!window.confirm(`确认解绑「${account.username}」的企业微信 ID？解绑后该用户不能用企业微信登录。`)) return
+    try {
+      const updated = await unbindAccountWecom(account.id)
+      setAccounts((prev) => prev.map((item) => item.id === updated.id ? updated : item))
+      showMessage('企业微信 ID 已解绑')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '解绑失败')
+    }
   }
 
   async function handleDelete(id: number, name: string) {
@@ -272,6 +297,27 @@ export function AccountPeopleMgmtSection() {
                                 className="px-2 py-1 rounded-lg text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50">
                                 {account.status === 'active' ? '禁用账号' : '启用账号'}
                               </button>
+                            </div>
+                          )}
+
+                          {account && (
+                            <div className="flex items-center gap-2 mt-2 flex-wrap">
+                              <span className="text-xs text-slate-500">企微：</span>
+                              {account.wecom_userid ? (
+                                <>
+                                  <span className="text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">{account.wecom_userid}</span>
+                                  <button type="button" onClick={() => handleUnbindWecom(account)}
+                                    className="px-2 py-1 rounded-lg text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50">解绑</button>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">未绑定</span>
+                                  <input value={wecomDraft[account.id] || ''} onChange={e => setWecomDraft(prev => ({ ...prev, [account.id]: e.target.value }))}
+                                    placeholder="输入企业微信 ID" className="w-32 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none" />
+                                  <button type="button" onClick={() => handleBindWecom(account)}
+                                    className="px-2 py-1 rounded-lg text-xs font-semibold border border-emerald-200 text-emerald-600 bg-emerald-50 hover:bg-emerald-100">绑定</button>
+                                </>
+                              )}
                             </div>
                           )}
                         </div>

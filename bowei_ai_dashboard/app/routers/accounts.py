@@ -73,6 +73,7 @@ def _account_to_dict(row: models.Account, person: models.Person | None = None) -
         "status": row.status,
         "is_tech_admin": bool(row.is_tech_admin),
         "must_change_password": bool(row.must_change_password),
+        "wecom_userid": row.wecom_userid or "",
         "last_login_at": iso(row.last_login_at),
         "last_password_changed_at": iso(row.last_password_changed_at),
         "failed_login_count": row.failed_login_count or 0,
@@ -269,3 +270,60 @@ def change_my_password(
     current_sid = request.cookies.get(cookie_name) if request else None
     invalidate_user_sessions(current_user, except_session_id=current_sid)
     return {"ok": True}
+
+
+class AccountWecomBindRequest(BaseModel):
+    wecom_userid: str
+
+    @field_validator("wecom_userid")
+    @classmethod
+    def not_blank(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("企业微信 ID 不能为空")
+        return v.strip()
+
+
+@router.put("/{account_id}/wecom")
+def bind_wecom(
+    account_id: int,
+    payload: AccountWecomBindRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """绑定企业微信 userid 到账号。"""
+    _require_admin(current_user, db)
+    row = db.get(models.Account, account_id)
+    if not row:
+        raise HTTPException(404, "account not found")
+    wecom_userid = payload.wecom_userid.strip()
+    # 唯一性校验：同一企微 ID 不能绑到多个账号
+    existing = (
+        db.query(models.Account)
+        .filter(models.Account.wecom_userid == wecom_userid, models.Account.id != account_id)
+        .first()
+    )
+    if existing:
+        raise HTTPException(400, f"该企业微信 ID 已绑定到账号 {existing.username}")
+    before = _account_to_dict(row, db.get(models.Person, row.person_id) if row.person_id else None)
+    row.wecom_userid = wecom_userid
+    crud.log(db, current_user, "bind_wecom", "account", row.id, before=before, after=_account_to_dict(row))
+    db.commit()
+    return _account_to_dict(row, db.get(models.Person, row.person_id) if row.person_id else None)
+
+
+@router.delete("/{account_id}/wecom")
+def unbind_wecom(
+    account_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """解绑企业微信 userid。"""
+    _require_admin(current_user, db)
+    row = db.get(models.Account, account_id)
+    if not row:
+        raise HTTPException(404, "account not found")
+    before = _account_to_dict(row, db.get(models.Person, row.person_id) if row.person_id else None)
+    row.wecom_userid = None
+    crud.log(db, current_user, "unbind_wecom", "account", row.id, before=before, after=_account_to_dict(row))
+    db.commit()
+    return _account_to_dict(row, db.get(models.Person, row.person_id) if row.person_id else None)

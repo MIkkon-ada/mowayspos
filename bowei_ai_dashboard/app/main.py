@@ -53,6 +53,7 @@ from .routers import (
     tasks,
     transcribe,
     updates,
+    wecom_auth,
 )
 from .seed import EXCEL_SEED, seed
 from .settings import get_settings
@@ -503,3 +504,4 @@ app.include_router(subtasks.router)
 app.include_router(subtask_drafts.router)
 app.include_router(notifications.router)
 app.include_router(admin.router)
+app.include_router(wecom_auth.router)

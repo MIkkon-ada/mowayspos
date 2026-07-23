@@ -429,6 +429,59 @@ select:focus {
   text-decoration: underline;
 }
 
+.login-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 16px 0 12px;
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  flex: 1;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.login-divider span {
+  padding: 0 12px;
+}
+
+.login-wecom-btn {
+  width: 100%;
+  height: 48px;
+  border: 1px solid #07c160;
+  border-radius: 12px;
+  background: #f0fbf5;
+  color: #07c160;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 0.15s, box-shadow 0.15s, opacity 0.15s;
+}
+
+.login-wecom-btn:hover:not(:disabled) {
+  background: #e1f7ec;
+  box-shadow: 0 6px 14px rgba(7, 193, 96, 0.15);
+}
+
+.login-wecom-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.login-wecom-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
 @media (max-width: 960px) {
   .login-header {
     padding: 24px 32px 0;

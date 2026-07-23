@@ -249,6 +249,7 @@ class Account(Base, TimestampMixin):
     failed_login_count = Column(Integer, default=0)
     locked_until = Column(DateTime, nullable=True)
     must_change_password = Column(Boolean, default=False)
+    wecom_userid = Column(String(64), nullable=True, index=True)
 
 
 class PlatformSettings(Base, TimestampMixin):

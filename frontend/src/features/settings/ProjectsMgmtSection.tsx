@@ -590,7 +590,7 @@ export function ProjectsMgmtSection() {
   }
 
   function openCloseFlow(project: Project, requestId?: number | null) {
-    setSelectedProjectId(project.id)
+    setEditProjectId(project.id)
     setCloseFlowProjectId(project.id)
     setCloseFlowRequestId(requestId ?? null)
   }

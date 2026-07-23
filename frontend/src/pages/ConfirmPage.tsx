@@ -311,7 +311,7 @@ export function ConfirmPage() {
     hasReviewerRoleInAnyProject
   )
 
-  const viewMode: ConfirmViewMode = 'all'
+  const [viewMode, setViewMode] = useState<ConfirmViewMode>('all')
   const [filterStatus, setFilterStatus] = useState('owner_actionable')
   const [filterProject, setFilterProject] = useState('')
   const [filterSubmitter, setFilterSubmitter] = useState('')

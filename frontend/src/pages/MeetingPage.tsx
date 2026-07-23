@@ -13,7 +13,7 @@ import { isProjectArchived } from '../domain/projectLifecycleStatus'
 
 export function MeetingPage() {
   const { currentProjectId, projects } = useProject()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const urlProjectId = searchParams.get('projectId')
   const urlMeetingType = searchParams.get('meeting_type') ?? ''
   const effectiveProjectId = urlProjectId ? Number(urlProjectId) : currentProjectId
@@ -25,9 +25,11 @@ export function MeetingPage() {
   const [returnNote, setReturnNote] = useState('')
   const [showReturnInput, setShowReturnInput] = useState(false)
   const [showNewModal, setShowNewModal] = useState(false)
+  const [editingItem, setEditingItem] = useState<MeetingItem | null>(null)
 
   const currentProject = projects.find((p) => p.id === currentProjectId) ?? null
   const projectArchived = isProjectArchived(currentProject)
+  const noProject = !effectiveProjectId
 
   useEffect(() => {
     if (!effectiveProjectId) return
@@ -66,9 +68,18 @@ export function MeetingPage() {
   }
 
   function handleCreated(m: MeetingItem) {
-    setMeetings((prev) => [m, ...prev])
+    setMeetings((prev) => {
+      const idx = prev.findIndex((x) => x.id === m.id)
+      if (idx >= 0) {
+        const updated = [...prev]
+        updated[idx] = m
+        return updated
+      }
+      return [m, ...prev]
+    })
     setSelected(m)
     setShowNewModal(false)
+    setEditingItem(null)
   }
 
   const typeOptions = [...new Set(meetings.map((m) => typeLabel(m.meeting_type)).filter((l) => l !== '-'))]
@@ -81,8 +92,9 @@ export function MeetingPage() {
       <header className="h-16 flex items-center px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
         <div className="flex-1">
           <h1 className="text-base font-bold text-slate-800">会议纪要</h1>
-          <p className="text-xs text-slate-400 mt-0.5">上传会议文本或录音，AI 自动生成纪要，并可一键推送任务</p>
+          <p className="text-xs text-slate-400 mt-0.5">粘贴会议讨论文字，AI 自动提取会议总结和工作计划，一键推送到工作推进</p>
         </div>
+
         <div className="flex items-center gap-2">
           <select
             className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none"
@@ -98,8 +110,8 @@ export function MeetingPage() {
           </select>
           <button
             onClick={() => setShowNewModal(true)}
-            disabled={projectArchived}
-            title={projectArchived ? '项目已归档，不可写入。' : undefined}
+            disabled={noProject || projectArchived}
+            title={projectArchived ? '项目已归档，不可写入。' : noProject ? '请先选择下方项目' : undefined}
             className="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-semibold transition-all hover:opacity-90 disabled:opacity-50"
             style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)', boxShadow: '0 2px 8px rgba(3,105,161,0.25)' }}
           >
@@ -112,11 +124,36 @@ export function MeetingPage() {
       </header>
 
       <main className="flex-1 overflow-y-auto p-6" style={{ background: '#F1F5F9' }}>
-        {loading && (
-          <div className="bg-white rounded-2xl border p-4" style={{ borderColor: '#E9EFF6' }}>
-            <table className="w-full text-sm"><tbody><SkeletonTableRows rows={6} cols={6} /></tbody></table>
+        {!effectiveProjectId && !loading && (
+          <div className="max-w-md mx-auto mt-16">
+            <div className="bg-white rounded-2xl border p-6 text-center" style={{ borderColor: '#E9EFF6' }}>
+              <h2 className="text-base font-bold text-slate-700 mb-2">请选择要查看的项目</h2>
+              <p className="text-sm text-slate-400 mb-5">选择一个项目，即可查看和创建会议纪要</p>
+              <div className="space-y-2">
+                {projects.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => setSearchParams((prev) => { prev.set('projectId', String(p.id)); return prev })}
+                    className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium text-slate-700 hover:bg-blue-50 hover:border-blue-200 transition-colors"
+                  >
+                    <div>{p.name}</div>
+                    {p.code && <div className="text-xs text-slate-400 mt-0.5">{p.code}</div>}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-slate-400 mt-4">
+                或从左侧菜单进入任意项目功能区，顶部栏会自动切换当前项目
+              </p>
+            </div>
           </div>
         )}
+        {effectiveProjectId && (
+          <>
+            {loading && (
+              <div className="bg-white rounded-2xl border p-4" style={{ borderColor: '#E9EFF6' }}>
+                <table className="w-full text-sm"><tbody><SkeletonTableRows rows={6} cols={6} /></tbody></table>
+              </div>
+            )}
 
         {selected && (
           <div className="grid grid-cols-5 gap-5 mb-5">
@@ -258,7 +295,7 @@ export function MeetingPage() {
                             查看
                           </button>
                           <span className="text-slate-200">|</span>
-                          <button className="text-slate-400 hover:text-slate-600 font-medium" disabled={projectArchived} title={projectArchived ? '项目已归档，不可写入。' : undefined}>编辑</button>
+                          <button className="text-slate-400 hover:text-slate-600 font-medium" disabled={projectArchived} title={projectArchived ? '项目已归档，不可写入。' : undefined} onClick={() => setEditingItem(m)}>编辑</button>
                         </div>
                       </td>
                     </tr>
@@ -282,9 +319,12 @@ export function MeetingPage() {
             <span className="text-xs text-slate-400">10 条 / 页</span>
           </div>
         </div>
+          </>
+        )}
       </main>
 
       {showNewModal && effectiveProjectId && <NewMeetingModal projectId={effectiveProjectId} defaultMeetingType={urlMeetingType} onClose={() => setShowNewModal(false)} onCreated={handleCreated} />}
+      {editingItem && effectiveProjectId && <NewMeetingModal projectId={effectiveProjectId} editItem={editingItem} onClose={() => setEditingItem(null)} onCreated={handleCreated} />}
     </div>
   )
 }

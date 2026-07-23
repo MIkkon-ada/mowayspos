@@ -3,6 +3,7 @@ import unicodedata
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,7 @@ from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
 from ..services import policy as P
 from ..services import workflow as W
+from ..services import escalation as ESC
 
 router = APIRouter(prefix="/api/confirmations", tags=["confirmations"])
 
@@ -2207,4 +2209,125 @@ def assign(
                     project_id=project_id)
     db.commit()
     return {"ok": True, "submission": crud.to_dict(row)}
+
+
+# ── 任务卡转问题中心（替代原 transfer-coordinator / escalate-ceo）──────────
+
+
+class CardEscalateToIssueRequest(BaseModel):
+    """任务卡转问题中心时的请求体。"""
+    target: str          # "ceo" / "coordinator"
+    note: str = ""        # 转交说明
+    operator: str = "管理员"
+
+
+@router.post("/{submission_id}/cards/{card_index}/escalate-to-issue")
+def escalate_card_to_issue(
+    submission_id: int,
+    card_index: int,
+    payload: CardEscalateToIssueRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """负责人把任务卡转到问题中心。
+
+    - target=coordinator → 在问题中心新建 Issue(issue_type=待协调)
+    - target=ceo → 新建 Issue(issue_type=需决策)
+    - 任务卡进入锁定状态，直到 Issue 解决后自动回写
+    """
+    target = (payload.target or "").strip().lower()
+    if target not in {"ceo", "coordinator"}:
+        raise HTTPException(400, "target must be 'ceo' or 'coordinator'")
+    note = (payload.note or "").strip()
+    if not note:
+        raise HTTPException(400, "请填写转交说明")
+
+    row = _load_submission(db, submission_id)
+    context = get_user_context_from_db(current_user or payload.operator, db)
+    _require_submission_writable(row, context, db)
+    _require_confirmation_center(context)
+    _require_owner_style_actor(context, row, db)
+    W.require_submission_status(row, SS.OWNER_ACTIONABLE)
+
+    effective_project_id = _submission_project_id(db, row)
+    caller_name = _person_name_for_account(current_user or payload.operator, db)
+
+    decision_by = "企业教练" if target == "ceo" else "统筹人"
+
+    before = crud.to_dict(row)
+    issue = ESC.escalate_card_to_issue(
+        db=db,
+        submission=row,
+        card_index=card_index,
+        target=target,  # type: ignore[arg-type]
+        note=note,
+        caller_username=current_user or payload.operator,
+        caller_name=caller_name,
+        project_id=effective_project_id,
+        decision_by_username=decision_by,
+    )
+    crud.log(
+        db, current_user or payload.operator,
+        "confirmation_card_escalate_to_issue", "confirmation", row.id,
+        before, {"card_index": card_index, "target": target, "note": note, "issue_id": issue.id},
+        project_id=effective_project_id,
+    )
+
+    _notify_escalation_targets(
+        db=db,
+        target=target,
+        project_id=effective_project_id,
+        caller_name=caller_name,
+        caller_username=current_user or payload.operator,
+        card_index=card_index,
+        issue_id=issue.id,
+        note=note,
+        submission_title=row.title or "（无标题）",
+    )
+
+    db.commit()
+    return {"ok": True, "issue_id": issue.id, "submission": crud.to_dict(row)}
+
+
+def _person_name_for_account(username: str, db: Session) -> str:
+    from ..services.notify import person_name_for_account
+    return person_name_for_account(username, db)
+
+
+def _notify_escalation_targets(
+    db: Session,
+    target: str,
+    project_id: int,
+    caller_name: str,
+    caller_username: str,
+    card_index: int,
+    issue_id: int,
+    note: str,
+    submission_title: str,
+):
+    """通知统筹/教练有新 Issue 待处理。"""
+    from ..services.notify import send as _notify, person_id_for_account
+    from ..services.notify import project_coach_person_ids, project_coordinator_ids
+    caller_id = person_id_for_account(caller_username, db)
+    if target == "ceo":
+        recipient_ids = project_coach_person_ids(project_id, db)
+        ntype = "issue_escalated_to_coach"
+        title = f"有任务卡需要您决策（问题中心）：{submission_title}"
+    else:
+        recipient_ids = project_coordinator_ids(project_id, db)
+        ntype = "issue_escalated_to_coordinator"
+        title = f"有任务卡需要您统筹（问题中心）：{submission_title}"
+    for rid in recipient_ids:
+        if rid != caller_id:
+            _notify(
+                db, recipient_id=rid, ntype=ntype,
+                title=title,
+                body=(f"提交标题：{submission_title}\n"
+                      f"任务卡：第 {card_index + 1} 张\n"
+                      f"转交人：{caller_name}\n"
+                      f"转交说明：{note or '无'}\n"
+                      f"请前往问题中心处理（Issue #{issue_id}）"),
+                link=f"/work/issues?projectId={project_id}&issueId={issue_id}",
+                project_id=project_id,
+            )
 

@@ -1,0 +1,67 @@
+- generic [ref=f2e29]:
+  - complementary [ref=f2e30]:
+    - generic [ref=f2e31]:
+      - img "logo" [ref=f2e32]
+      - button "通知" [ref=f2e34] [cursor=pointer]
+    - navigation [ref=f2e37]:
+      - button "驾驶舱" [ref=f2e39] [cursor=pointer]
+      - button "工作推进表" [ref=f2e45] [cursor=pointer]
+      - button "我的任务" [active] [ref=f2e51] [cursor=pointer]
+      - button "AI 确认中心" [ref=f2e56] [cursor=pointer]
+      - button "工作汇报" [ref=f2e62] [cursor=pointer]
+      - button "会议纪要" [ref=f2e67] [cursor=pointer]
+      - button "成果库" [ref=f2e73] [cursor=pointer]
+      - button "问题中心" [ref=f2e78] [cursor=pointer]
+      - button "组织管理" [ref=f2e84] [cursor=pointer]
+      - button "项目管理" [ref=f2e89] [cursor=pointer]
+      - button "通知中心" [ref=f2e94] [cursor=pointer]
+      - button "系统设置" [ref=f2e100] [cursor=pointer]
+    - generic [ref=f2e106]:
+      - generic [ref=f2e107]: m
+      - generic [ref=f2e108]:
+        - generic [ref=f2e109]: moways
+        - generic [ref=f2e110]: 超级管理员
+      - button "修改密码" [ref=f2e111] [cursor=pointer]
+      - button "退出登录" [ref=f2e114] [cursor=pointer]
+  - generic [ref=f2e312]:
+    - banner [ref=f2e313]:
+      - generic [ref=f2e314]:
+        - paragraph [ref=f2e315]: 个人工作
+        - heading "我的任务" [level=1] [ref=f2e316]
+        - paragraph [ref=f2e317]: 汇总你在所有进行中项目里的关键任务，快速掌握优先级与当前进展。
+      - button "更新于 17:15" [ref=f2e318] [cursor=pointer]:
+        - generic [ref=f2e319]: ↻
+    - main [ref=f2e321]:
+      - region "任务筛选" [ref=f2e322]:
+        - tablist "任务状态" [ref=f2e323]:
+          - tab "全部 0" [selected] [ref=f2e324] [cursor=pointer]:
+            - text: 全部
+            - generic [ref=f2e325]: "0"
+          - tab "未开始 0" [ref=f2e326] [cursor=pointer]:
+            - text: 未开始
+            - generic [ref=f2e327]: "0"
+          - tab "进行中 0" [ref=f2e328] [cursor=pointer]:
+            - text: 进行中
+            - generic [ref=f2e329]: "0"
+          - tab "延期 0" [ref=f2e330] [cursor=pointer]:
+            - text: 延期
+            - generic [ref=f2e331]: "0"
+          - tab "已完成 0" [ref=f2e332] [cursor=pointer]:
+            - text: 已完成
+            - generic [ref=f2e333]: "0"
+          - tab "暂缓 0" [ref=f2e334] [cursor=pointer]:
+            - text: 暂缓
+            - generic [ref=f2e335]: "0"
+        - generic [ref=f2e336]:
+          - generic [ref=f2e337]:
+            - generic [ref=f2e338]: 项目
+            - combobox "项目" [ref=f2e339]:
+              - option "全部项目" [selected]
+          - generic [ref=f2e340]:
+            - generic [ref=f2e341]: ⌕
+            - textbox [ref=f2e342]:
+              - /placeholder: 搜索任务、完成标准、项目、重点工作或进展
+      - generic [ref=f2e343]:
+        - generic [ref=f2e344]: ✓
+        - heading "暂无分配给你的任务" [level=2] [ref=f2e345]
+        - paragraph [ref=f2e346]: 进行中项目已经加载完成，但还没有以当前账号姓名分配给你的关键任务。

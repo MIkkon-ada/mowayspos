@@ -4,7 +4,7 @@ import { exportTasksToExcel } from '../utils/exportTasksExcel'
 import { exportPlanTableToExcel } from '../utils/exportPlanTableExcel'
 import { createTask, deleteTask, fetchTaskLogs, fetchTaskUpdates, fetchTasks, updateTask, extractTasksFromOutline, batchCreateTasks, restoreTask } from '../api/tasks'
 import type { TaskLog, TaskPayload, TaskUpdate, TaskDraft } from '../api/tasks'
-import { fetchSubTasks, createSubTask, patchSubTaskStatus, isPendingConfirmation, updateSubTask, deleteSubTask, restoreSubTask, fetchSubtaskDetail } from '../api/subtasks'
+import { fetchSubTasks, fetchSubTasksBatch, createSubTask, patchSubTaskStatus, isPendingConfirmation, updateSubTask, deleteSubTask, restoreSubTask, fetchSubtaskDetail } from '../api/subtasks'
 import type { SubTaskDetail, SubTaskPayload } from '../api/subtasks'
 import { createUpdate } from '../api/updates'
 import { ApiError, apiGet } from '../api/client'
@@ -14,7 +14,8 @@ import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } fro
 import type { TaskItem, SubTaskItem, Project, ProjectMember } from '../types'
 import { getProjectById, getProjectDisplayName, getProjectIdFromRecord } from '../domain/projectDisplay'
 import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
-import { PlanTableView } from '../components/task-management/PlanTableView'
+import { PlanTableViewV2 } from '../components/task-management/PlanTableViewV2'
+import { toast } from '../utils/toast'
 
 const NOT_STARTED = new Set(['未开始', 'not_started', 'notstarted'])
 const IN_PROGRESS  = new Set(['推进中', '进行中', 'in_progress'])
@@ -376,10 +377,10 @@ export function TaskManagementPage() {
       .catch((err) => {
         if (cancelled) return
         if (err instanceof ApiError && err.status === 403) {
-          alert(TASK_PROJECT_PERMISSION_DENIED_MESSAGE)
+          toast.error(TASK_PROJECT_PERMISSION_DENIED_MESSAGE)
           return
         }
-        alert(TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE)
+        toast.error(TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE)
       })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
@@ -392,17 +393,17 @@ export function TaskManagementPage() {
     const taskProjectId = effectiveTaskProjectId
     if (taskProjectId == null) {
       setTasks([])
-      alert(TASK_PROJECT_CONTEXT_REQUIRED_MESSAGE)
+      toast.error(TASK_PROJECT_CONTEXT_REQUIRED_MESSAGE)
       return Promise.resolve()
     }
     return fetchTasks(taskProjectId, effectiveDeleted)
       .then((d) => setTasks(Array.isArray(d) ? d : []))
       .catch((err) => {
         if (err instanceof ApiError && err.status === 403) {
-          alert(TASK_PROJECT_PERMISSION_DENIED_MESSAGE)
+          toast.error(TASK_PROJECT_PERMISSION_DENIED_MESSAGE)
           return
         }
-        alert(TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE)
+        toast.error(TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE)
       })
   }
 
@@ -459,18 +460,24 @@ export function TaskManagementPage() {
     if (planTableLoading) return
     const missingTasks = planBaseTasks.filter((task) => !(task.id in taskSubMap))
     if (missingTasks.length === 0) return
+    const missingIds = missingTasks.map((task) => task.id)
     setPlanTableLoading(true)
-    Promise.all(
-      missingTasks.map((task) =>
-        fetchSubTasks(task.id, false)
-          .then((subs) => [task.id, subs] as const)
-          .catch(() => [task.id, [] as SubTaskItem[]] as const),
-      ),
-    )
-      .then((results) => {
+    fetchSubTasksBatch(missingIds, false)
+      .then((batch) => {
         setTaskSubMap((prev) => {
           const next = { ...prev }
-          results.forEach(([taskId, subs]) => { next[taskId] = subs })
+          missingIds.forEach((taskId) => {
+            // 后端可能因权限跳过某些 task，对未返回的 key 置空避免重复请求
+            next[taskId] = batch[String(taskId)] ?? []
+          })
+          return next
+        })
+      })
+      .catch(() => {
+        // 批量接口失败：兜底置空，避免反复请求卡住首屏
+        setTaskSubMap((prev) => {
+          const next = { ...prev }
+          missingIds.forEach((taskId) => { next[taskId] = [] })
           return next
         })
       })
@@ -508,28 +515,53 @@ export function TaskManagementPage() {
   function openSubTaskAssignment(task: TaskItem, subTask?: SubTaskItem | SubTaskDetail | null) {
     const taskProject = projectForTask(resolvedTaskProjects, task)
     if (!isProjectActive(taskProject)) {
-      alert('项目尚未进入执行阶段，暂不能维护执行期关键任务。')
+      toast.warning('项目尚未进入执行阶段，暂不能维护执行期关键任务。')
       return
     }
     if (!canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: taskProject?.user_roles ?? [] })) return
-    setSelectedTask(task)
-    setSelectedProjectKey(null)
-    setSelectedSubTask(null)
-    setSubDetailLoading(false)
+    focusTask(task)
     setEditingSubTask(subTask ?? null)
     ensureProjectMembersLoaded(task.project_id ?? currentProjectId)
     setSubTaskFormOpen(true)
   }
 
-  function openSubDetail(st: SubTaskItem) {
+  // ===== Selection 统一入口：所有切换焦点状态必须走这几个 helper，避免漏清互斥状态 =====
+  // 互斥规则：task / subtask / project 三者只能选一；subtask 可叠在 task 之上（用于「返回重点工作」）
+  function focusTask(task: TaskItem) {
+    setSelectedTask(task)
+    setSelectedSubTask(null)
+    setSubDetailLoading(false)
+    setSelectedProjectKey(null)
+  }
+
+  function focusSubTask(st: SubTaskItem, opts?: { keepTask?: boolean }) {
     setSelectedSubTask(null)
     setSubDetailLoading(true)
     setSubEditField(null)
     setSelectedProjectKey(null)
+    if (!opts?.keepTask) setSelectedTask(null)
     fetchSubtaskDetail(st.id)
       .then((d) => setSelectedSubTask(d))
       .catch(() => setSelectedSubTask({ ...st } as SubTaskDetail))
       .finally(() => setSubDetailLoading(false))
+  }
+
+  function focusProject(key: string) {
+    setSelectedProjectKey(key)
+    setSelectedTask(null)
+    setSelectedSubTask(null)
+    setSubDetailLoading(false)
+  }
+
+  function clearSelection() {
+    setSelectedTask(null)
+    setSelectedSubTask(null)
+    setSubDetailLoading(false)
+    setSelectedProjectKey(null)
+  }
+
+  function openSubDetail(st: SubTaskItem) {
+    focusSubTask(st)
   }
 
   async function handleSubStatusUpdate(status: string) {
@@ -538,7 +570,7 @@ export function TaskManagementPage() {
     try {
       const updated = await patchSubTaskStatus(selectedSubTask.id, status)
       if (isPendingConfirmation(updated)) {
-        alert('已提交至 AI 确认中心，等待项目负责人确认')
+        toast.success('已提交至 AI 确认中心，等待项目负责人确认')
         return
       }
       const merged = { ...selectedSubTask, ...updated }
@@ -608,10 +640,7 @@ export function TaskManagementPage() {
   }
 
   function openDetail(task: TaskItem) {
-    setSelectedTask(task)
-    setSelectedProjectKey(null)
-    setSelectedSubTask(null)
-    setSubDetailLoading(false)
+    focusTask(task)
     setTaskLogs([])
     setTaskUpdates([])
     setSubTasks([])
@@ -646,7 +675,7 @@ export function TaskManagementPage() {
       }, 1500)
     } catch {
       setProgressSubmitState('idle')
-      alert('提交失败，请重试')
+      toast.error('提交失败，请重试')
     }
   }
 
@@ -655,7 +684,14 @@ export function TaskManagementPage() {
     if (showDeleted) return
     setExpandedTasks((prev) => {
       const next = new Set(prev)
-      if (next.has(taskId)) { next.delete(taskId); return next }
+      if (next.has(taskId)) {
+        // 折叠：若当前选中的 subtask 属于该 task，清空 selection，避免右侧面板残留已折叠任务的子项
+        if (selectedSubTask && selectedSubTask.task_id === taskId) {
+          clearSelection()
+        }
+        next.delete(taskId)
+        return next
+      }
       next.add(taskId)
       if (!(taskId in taskSubMap)) {
         fetchSubTasks(taskId, false)
@@ -673,7 +709,7 @@ export function TaskManagementPage() {
         loadTaskSubTaskBuckets(selectedTask.id).catch(() => {})
         refreshParentTask(selectedTask.id)
       }
-    }).catch(() => alert('恢复失败'))
+    }).catch(() => toast.error('恢复失败'))
   }
 
   // 关键任务变更后由后端汇总重点工作状态，前端只刷新最新事实。
@@ -696,7 +732,7 @@ export function TaskManagementPage() {
     const taskProject = projectForTask(resolvedTaskProjects, parentTask)
     const canClose = !!canManageProjectTrash({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: taskProject?.user_roles ?? [] })
     if (!canClose) {
-      alert('该重点工作下的关键任务已全部完成，请项目负责人确认是否关闭重点工作。')
+      toast.warning('该重点工作下的关键任务已全部完成，请项目负责人确认是否关闭重点工作。')
       return
     }
     if (!confirm(`重点工作「${parentTask.key_task}」下的关键任务已全部完成，是否现在关闭该重点工作？`)) return
@@ -718,7 +754,7 @@ export function TaskManagementPage() {
         setTasks((prev) => prev.map((t) => t.id === updated.id ? updated : t))
         setSelectedTask((prev) => prev?.id === updated.id ? updated : prev)
       })
-      .catch(() => alert('关闭重点工作失败，请稍后重试'))
+      .catch(() => toast.error('关闭重点工作失败，请稍后重试'))
   }
 
   function toggleGroupCollapse(key: string) {
@@ -745,7 +781,7 @@ export function TaskManagementPage() {
         return next
       })
       setTrashedSubTasks([])
-    }).catch(() => alert('删除失败'))
+    }).catch(() => toast.error('删除失败'))
   }
 
   function handleRestoreTask(task: TaskItem) {
@@ -760,7 +796,7 @@ export function TaskManagementPage() {
         delete next[task.id]
         return next
       })
-    }).catch(() => alert('恢复失败'))
+    }).catch(() => toast.error('恢复失败'))
   }
 
   // 按专项分组（保持首次出现的顺序），用于 rowspan 合并
@@ -794,7 +830,7 @@ export function TaskManagementPage() {
 function handleFormSave(payload: TaskPayload) {
     const pid = payload.project_id ?? viewProjectId ?? currentProjectId
     if (!pid) {
-      alert('璇烽€夋嫨涓撻」')
+      toast.error('请选择专项')
       return
     }
     const finalPayload = { ...payload, project_id: pid }
@@ -805,7 +841,7 @@ function handleFormSave(payload: TaskPayload) {
       setFormOpen(false)
       setFormTask(null)
       loadTasks(false)
-    }).catch(() => alert('保存失败，请重试'))
+    }).catch(() => toast.error('保存失败，请重试'))
   }
 
   return (
@@ -864,8 +900,7 @@ function handleFormSave(payload: TaskPayload) {
             type="button"
             onClick={() => {
               setViewMode('plan')
-              setSelectedTask(null)
-              setSelectedSubTask(null)
+              clearSelection()
             }}
             className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'plan' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
           >
@@ -882,46 +917,37 @@ function handleFormSave(payload: TaskPayload) {
 
         {/* Filters */}
         <div className="flex flex-1 items-center justify-end gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-500 font-medium">专项</span>
-            <select
-              value={String(effectiveTaskProjectId ?? '')}
-              onChange={(event) => {
-                handleProjectFilter(event.target.value)
-                setAutoSelectedTaskProjectId(null)
-              }}
-              className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none"
-            >
-              <option value="">请选择项目</option>
-              {availableTaskProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-500 font-medium">状态</span>
-            <select
-              value={filterStatus}
-              onChange={(event) => setFilterStatus(event.target.value)}
-              className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none"
-            >
-              <option value="">全部状态</option>
-              <option value="未开始">未开始</option>
-              <option value="进行中">进行中</option>
-              <option value="已完成">已完成</option>
-              <option value="延期">延期</option>
-              <option value="暂缓">暂缓</option>
-            </select>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-500 font-medium">专项负责人</span>
-            <select
-              value={filterOwner}
-              onChange={(e) => setFilterOwner(e.target.value)}
-              className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none"
-            >
-              <option value="">全部专项负责人</option>
-              {ownerNames.map((o) => <option key={o}>{o}</option>)}
-            </select>
-          </div>
+          <select
+            value={String(effectiveTaskProjectId ?? '')}
+            onChange={(event) => {
+              handleProjectFilter(event.target.value)
+              setAutoSelectedTaskProjectId(null)
+            }}
+            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 cursor-pointer focus:outline-none font-medium"
+          >
+            <option value="">请选择项目</option>
+            {availableTaskProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <select
+            value={filterStatus}
+            onChange={(event) => setFilterStatus(event.target.value)}
+            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 cursor-pointer focus:outline-none font-medium"
+          >
+            <option value="">全部状态</option>
+            <option value="未开始">未开始</option>
+            <option value="进行中">进行中</option>
+            <option value="已完成">已完成</option>
+            <option value="延期">延期</option>
+            <option value="暂缓">暂缓</option>
+          </select>
+          <select
+            value={filterOwner}
+            onChange={(e) => setFilterOwner(e.target.value)}
+            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 cursor-pointer focus:outline-none font-medium"
+          >
+            <option value="">全部负责人</option>
+            {ownerNames.map((o) => <option key={o}>{o}</option>)}
+          </select>
           <div className="relative">
             <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" style={{ width: 13, height: 13 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
             <input
@@ -937,7 +963,7 @@ function handleFormSave(payload: TaskPayload) {
         <div className="plan-execution-actions flex items-center gap-2 ml-1 flex-shrink-0">
           <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
             <button
-              onClick={() => { setSelectedTask(null); setExpandedTasks(new Set()); setShowDeleted(false) }}
+              onClick={() => { clearSelection(); setExpandedTasks(new Set()); setShowDeleted(false) }}
               className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${!showDeleted ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               在办
@@ -945,7 +971,7 @@ function handleFormSave(payload: TaskPayload) {
             {canManageTrash && (
               <button
                 onClick={() => {
-                  setSelectedTask(null)
+                  clearSelection()
                   setExpandedTasks(new Set())
                   setSearch('')
                   setFilterStatus('')
@@ -1028,7 +1054,7 @@ function handleFormSave(payload: TaskPayload) {
       {/* Main */}
       <div className="flex-1 min-w-0 min-h-0 flex overflow-hidden" style={{ background: viewMode === 'plan' ? '#F8FAFC' : '#F1F5F9' }}>
         <div
-          className={viewMode === 'plan' ? 'work-progress-plan-shell flex-1' : 'flex-1 overflow-y-auto'}
+          className={viewMode === 'plan' ? 'work-progress-plan-shell flex-1 min-w-0 overflow-hidden flex flex-col' : 'flex-1 overflow-y-auto'}
           style={viewMode === 'plan'
             ? { background: '#F8FAFC' }
             : { background: '#F1F5F9', padding: '16px 20px 20px', paddingRight: 20 }}
@@ -1048,7 +1074,7 @@ function handleFormSave(payload: TaskPayload) {
               </div>
             </div>
           ) : viewMode === 'plan' ? (
-            <PlanTableView
+            <PlanTableViewV2
               project={focusedProject}
               tasks={planBaseTasks}
               taskSubMap={taskSubMap}
@@ -1109,7 +1135,7 @@ function handleFormSave(payload: TaskPayload) {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 9l6 6 6-6" />
                         </svg>
                       </button>
-                      <div className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer" onClick={() => { setSelectedProjectKey(key); setSelectedTask(null); setSelectedSubTask(null); setSubDetailLoading(false) }}>
+                      <div className="flex-1 min-w-0 flex items-center gap-2 cursor-pointer" role="button" tabIndex={0} onClick={() => focusProject(key)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); focusProject(key) } }}>
                         <span className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0" style={{ background: `${groupColor}18`, color: groupColor }}>
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 12, height: 12 }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7a2 2 0 012-2h4l2 2h10a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
                         </span>
@@ -1155,7 +1181,7 @@ function handleFormSave(payload: TaskPayload) {
                               </button>
                             ) : <span style={{ width: 21 }} />}
                             <span className="text-xs font-bold px-1.5 py-0.5 rounded flex-shrink-0 mr-2" style={{ background: '#EEF2FF', color: '#6D28D9', minWidth: 20, textAlign: 'center' }}>{i + 1}</span>
-                            <div className="flex-1 min-w-0 flex items-center gap-1.5 cursor-pointer" onClick={() => openDetail(task)}>
+                            <div className="flex-1 min-w-0 flex items-center gap-1.5 cursor-pointer" role="button" tabIndex={0} onClick={() => openDetail(task)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(task) } }}>
                               <span className="text-sm font-medium text-slate-800 truncate">{task.key_task || '-'}</span>
                               {rowDeleted && <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0" style={{ background: '#FFEDD5', color: '#C2410C' }}>已删除</span>}
                             </div>
@@ -1206,7 +1232,7 @@ function handleFormSave(payload: TaskPayload) {
                                   key={st.id}
                                   className={`flex items-center border-t transition-colors cursor-pointer ${isSelSub ? 'bg-purple-50/80' : 'hover:bg-purple-50/40'}`}
                                   style={{ borderColor: '#E9EFF6', borderLeft: `4px solid ${groupColor}`, paddingLeft: 60, paddingRight: 12, paddingTop: 8, paddingBottom: 8 }}
-                                  onClick={(e) => { e.stopPropagation(); setSelectedTask(null); openSubDetail(st) }}
+                                  onClick={(e) => { e.stopPropagation(); openSubDetail(st) }}
                                 >
                                   <span className="flex-shrink-0 w-4" />
                                   <span className="text-xs font-semibold flex-shrink-0 mr-2" style={{ color: groupColor, minWidth: 30 }}>{i+1}.{subIdx+1}</span>
@@ -1223,11 +1249,11 @@ function handleFormSave(payload: TaskPayload) {
                                             if (isPendingConfirmation(updated)) { alert('已提交至 AI 确认中心，等待项目负责人确认'); return }
                                             setTaskSubMap((prev) => ({ ...prev, [task.id]: (prev[task.id] ?? []).map((x) => x.id === st.id ? { ...x, ...updated } : x) }))
                                           })
-                                          .catch(() => alert('更新失败'))
+                                          .catch(() => toast.error('更新失败'))
                                       }}
                                         className="text-xs border rounded-full px-2 py-0.5 font-bold cursor-pointer focus:outline-none"
                                         style={{ background: stBadge.cls.includes('blue') ? '#EFF6FF' : stBadge.cls.includes('emerald') ? '#F0FDF4' : stBadge.cls.includes('red') ? '#FEF2F2' : stBadge.cls.includes('amber') ? '#FFFBEB' : '#F8FAFC', color: stBadge.dot, border: `1.5px solid ${stBadge.dot}50` }}>
-                                        {['未开始','进行中','已完成','延期','暂缓'].map((s) => <option key={s}>{s}</option>)}
+                                        {['未开始','进行中','已完成','暂缓'].map((s) => <option key={s}>{s}</option>)}
                                       </select>
                                     ) : (
                                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${stBadge.cls}`}>
@@ -1240,7 +1266,7 @@ function handleFormSave(payload: TaskPayload) {
                                     {canAssignThisTask && (
                                       <button type="button" onClick={(e) => { e.stopPropagation(); openSubTaskAssignment(task, st) }} className="text-xs text-indigo-600 hover:text-indigo-700 font-semibold">编辑</button>
                                     )}
-                                    <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedTask(null); openSubDetail(st) }} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">详情</button>
+                                    <button type="button" onClick={(e) => { e.stopPropagation(); openSubDetail(st) }} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">详情</button>
                                   </div>
                                 </div>
                               )
@@ -1285,12 +1311,12 @@ function handleFormSave(payload: TaskPayload) {
                 assignee: selectedSubTask.assignee,
               })
               return (
-                <div className="flex flex-col h-full overflow-hidden">
-                  {/* 顶部：返回按钮 + 标题 + 关闭 */}
-                  <div className="px-5 pt-4 pb-3 border-b flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-                    <div className="flex items-center justify-between mb-2">
+                <div className="flex flex-col h-full overflow-hidden bg-white">
+                  {/* 顶部：返回 + 标题 + 关闭 */}
+                  <div className="px-4 pt-3 pb-2 border-b flex-shrink-0" style={{ borderColor: '#E2E8F0', background: '#F8FAFC' }}>
+                    <div className="flex items-center justify-between mb-1">
                       <button
-                        onClick={() => { setSelectedSubTask(null); setSubDetailLoading(false) }}
+                        onClick={() => { setSelectedSubTask(null); setSubDetailLoading(false); setSubEditField(null) }}
                         className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-blue-600 transition-colors"
                       >
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 12, height: 12 }}>
@@ -1299,7 +1325,7 @@ function handleFormSave(payload: TaskPayload) {
                         {selectedTask ? '返回重点工作' : '返回列表'}
                       </button>
                       <button
-                        onClick={() => { setSelectedSubTask(null); setSubDetailLoading(false); setSelectedTask(null) }}
+                        onClick={() => clearSelection()}
                         className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100"
                       >
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 13, height: 13 }}>
@@ -1307,89 +1333,106 @@ function handleFormSave(payload: TaskPayload) {
                         </svg>
                       </button>
                     </div>
-                    <p className="text-xs text-slate-400 font-semibold">关键任务详情</p>
-                    <h2 className="text-sm font-bold text-slate-900 mt-0.5 leading-snug">{selectedSubTask?.title ?? '加载中...'}</h2>
+                    <p className="text-xs font-semibold" style={{ color: '#94A3B8' }}>关键任务详情</p>
+                    <h2 className="text-sm font-bold mt-0.5 leading-snug" style={{ color: '#1E293B' }}>{selectedSubTask?.title ?? '加载中...'}</h2>
                   </div>
 
-                  {/* 滚动区 */}
-                  <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                  {/* 滚动区 — 精简紧凑 */}
+                  <div className="flex-1 overflow-y-auto p-3 space-y-2">
                     {subDetailLoading && !selectedSubTask ? (
-                      <p className="text-xs text-slate-400 text-center py-8">加载中…</p>
+                      <p className="text-xs text-center py-8" style={{ color: '#94A3B8' }}>加载中…</p>
                     ) : selectedSubTask ? (
                       <>
+                        {/* 状态 + 责任人 + 计划时间 */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold whitespace-nowrap"
+                            style={{
+                              background: badge.label === '已完成' ? '#DCFCE7' : badge.label === '进行中' ? '#DBEAFE' : badge.label === '暂缓' ? '#FEF3C7' : '#F1F5F9',
+                              color: badge.label === '已完成' ? '#15803D' : badge.label === '进行中' ? '#2563EB' : badge.label === '暂缓' ? '#B45309' : '#64748B'
+                            }}>
+                            <span className="w-1.5 h-1.5 rounded-full" style={{
+                              background: badge.label === '已完成' ? '#22C55E' : badge.label === '进行中' ? '#3B82F6' : badge.label === '暂缓' ? '#F59E0B' : '#94A3B8'
+                            }} />{badge.label}
+                          </span>
+                          {selectedSubTask.assignee && (
+                            <span className="text-xs font-semibold" style={{ color: '#475569' }}>责任人：{selectedSubTask.assignee}</span>
+                          )}
+                          {selectedSubTask.plan_time && (
+                            <span className="text-xs" style={{ color: '#94A3B8' }}>{selectedSubTask.plan_time}</span>
+                          )}
+                        </div>
+
                         {/* 基本信息 */}
-                        <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#E9EFF6' }}>
+                        <div className="rounded border overflow-hidden" style={{ borderColor: '#E2E8F0', background: '#FFF' }}>
                           {([
                             { label: '所属项目', value: selectedSubProject?.name },
                             { label: '重点工作', value: subParent?.key_task ?? selectedSubTask.parent_task?.key_task },
                             { label: '负责人', value: selectedSubTask.assignee },
-                            { label: '计划时间', value: selectedSubTask.plan_time },
                           ] as { label: string; value?: string }[]).filter((r) => r.value).map((row) => (
-                            <div key={row.label} className="flex gap-3 px-4 py-2.5 border-b last:border-b-0" style={{ borderColor: '#F1F5F9' }}>
-                              <span className="w-16 shrink-0 text-xs font-semibold text-slate-400">{row.label}</span>
-                              <span className="flex-1 text-xs font-semibold text-slate-700">{row.value || '—'}</span>
+                            <div key={row.label} className="flex gap-2 px-2.5 py-1.5 border-b last:border-b-0" style={{ borderColor: '#F1F5F9' }}>
+                              <span className="w-14 shrink-0 text-xs font-semibold" style={{ color: '#94A3B8' }}>{row.label}</span>
+                              <span className="flex-1 text-xs font-medium" style={{ color: '#334155' }}>{row.value || '—'}</span>
                             </div>
                           ))}
                         </div>
 
                         {/* 当前状态 */}
-                        <div>
-                          <p className="text-xs font-bold text-slate-500 mb-1.5">当前状态</p>
-                          {subCanEdit ? (
+                        {subCanEdit ? (
+                          <div>
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>当前状态</p>
                             <select
                               value={selectedSubTask.status ?? ''}
                               onChange={(e) => handleSubStatusUpdate(e.target.value)}
                               disabled={subSaving || selectedTaskArchived}
-                              className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold focus:outline-none focus:border-indigo-300"
+                              className="w-full rounded border px-2.5 py-1 text-xs font-bold focus:outline-none"
+                              style={{ borderColor: '#E2E8F0', background: '#FFF', color: '#334155' }}
                             >
-                              {['未开始', '进行中', '已完成', '延期', '暂缓'].map((s) => <option key={s}>{s}</option>)}
+                              {['未开始', '进行中', '已完成', '暂缓'].map((s) => <option key={s}>{s}</option>)}
                             </select>
-                          ) : (
-                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${badge.cls}`}>
-                              <span className="w-1.5 h-1.5 rounded-full" style={{ background: badge.dot }} />{badge.label}
-                            </span>
-                          )}
-                        </div>
+                          </div>
+                        ) : null}
 
                         {/* 完成标准 */}
                         {selectedSubTask.completion_criteria && (
                           <div>
-                            <p className="text-xs font-bold text-slate-500 mb-1.5">完成标准</p>
-                            <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2.5 text-xs text-indigo-900 leading-relaxed">
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>评价标准</p>
+                            <div className="rounded px-2.5 py-1.5 text-xs leading-relaxed" style={{ background: '#EEF2FF', color: '#3730A3', border: '1px solid #C7D2FE' }}>
                               {selectedSubTask.completion_criteria}
                             </div>
                           </div>
                         )}
 
-                        {/* 进展记录 */}
+                        {/* 最新进展 */}
                         <div>
-                          <p className="text-xs font-bold text-slate-500 mb-1.5">进展记录</p>
+                          <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>最新进展</p>
                           {parseProgressTimeline(selectedSubTask.notes).length > 0 ? (
-                            <div className="space-y-2">
+                            <div className="space-y-1">
                               {parseProgressTimeline(selectedSubTask.notes).map((entry, idx) => (
-                                <div key={`${entry.date}-${idx}`} className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
-                                  {entry.date && <p className="text-xs font-semibold text-slate-400 mb-0.5">{entry.date}</p>}
-                                  <p className="text-xs text-slate-700 leading-relaxed">{entry.text}</p>
+                                <div key={`${entry.date}-${idx}`} className="rounded px-2.5 py-1.5" style={{ background: '#F8FAFC', border: '1px solid #F1F5F9' }}>
+                                  <span className="text-xs" style={{ color: '#334155' }}>
+                                    {entry.date && <span style={{ color: '#94A3B8', fontSize: '11px', marginRight: '6px' }}>[{entry.date}]</span>}
+                                    {entry.text}
+                                  </span>
                                 </div>
                               ))}
                             </div>
                           ) : (
-                            <p className="text-xs text-slate-400">暂无进展记录</p>
+                            <p className="text-xs" style={{ color: '#CBD5E1' }}>暂无进展记录</p>
                           )}
                         </div>
 
                         {/* 来源信息 */}
                         {selectedSubTask.source_submission && (
                           <div>
-                            <p className="text-xs font-bold text-slate-500 mb-1.5">来源</p>
-                            <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
-                              <div className="flex items-center gap-2 flex-wrap mb-1">
-                                <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs font-semibold">{selectedSubTask.source_submission.source_type}</span>
-                                <span className="text-xs text-slate-500">{selectedSubTask.source_submission.submitter}</span>
-                                <span className="text-xs text-slate-400">{selectedSubTask.source_submission.created_at?.slice(0, 10)}</span>
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>来源</p>
+                            <div className="rounded px-2.5 py-1.5" style={{ background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="px-1.5 py-0.5 rounded text-xs font-bold" style={{ background: '#DBEAFE', color: '#1D4ED8' }}>{selectedSubTask.source_submission.source_type}</span>
+                                <span className="text-xs" style={{ color: '#64748B' }}>{selectedSubTask.source_submission.submitter}</span>
+                                <span className="text-xs" style={{ color: '#94A3B8' }}>{selectedSubTask.source_submission.created_at?.slice(0, 10)}</span>
                               </div>
                               {selectedSubTask.source_submission.title && (
-                                <p className="text-xs text-slate-700 font-medium">{selectedSubTask.source_submission.title}</p>
+                                <p className="text-xs font-medium mt-0.5" style={{ color: '#334155' }}>{selectedSubTask.source_submission.title}</p>
                               )}
                             </div>
                           </div>
@@ -1398,12 +1441,12 @@ function handleFormSave(payload: TaskPayload) {
                         {/* 关联成果 */}
                         {selectedSubTask.related_achievements && selectedSubTask.related_achievements.length > 0 && (
                           <div>
-                            <p className="text-xs font-bold text-slate-500 mb-1.5">关联成果（{selectedSubTask.related_achievements.length}）</p>
-                            <div className="space-y-1.5">
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>关联成果（{selectedSubTask.related_achievements.length}）</p>
+                            <div className="space-y-1">
                               {selectedSubTask.related_achievements.map((ach) => (
-                                <div key={ach.id} className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
-                                  <p className="text-xs font-semibold text-amber-900">{ach.name}</p>
-                                  <p className="text-xs text-amber-600 mt-0.5">{ach.achievement_type} · {ach.status}</p>
+                                <div key={ach.id} className="rounded px-2.5 py-1.5" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+                                  <p className="text-xs font-semibold" style={{ color: '#92400E' }}>{ach.name}</p>
+                                  <p className="text-xs" style={{ color: '#B45309' }}>{ach.achievement_type} · {ach.status}</p>
                                 </div>
                               ))}
                             </div>
@@ -1413,12 +1456,12 @@ function handleFormSave(payload: TaskPayload) {
                         {/* 关联问题 */}
                         {selectedSubTask.related_issues && selectedSubTask.related_issues.length > 0 && (
                           <div>
-                            <p className="text-xs font-bold text-slate-500 mb-1.5">关联问题（{selectedSubTask.related_issues.length}）</p>
-                            <div className="space-y-1.5">
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>关键问题（{selectedSubTask.related_issues.length}）</p>
+                            <div className="space-y-1">
                               {selectedSubTask.related_issues.map((issue) => (
-                                <div key={issue.id} className="rounded-lg border border-red-100 bg-red-50 px-3 py-2">
-                                  <p className="text-xs text-red-800 leading-relaxed">{issue.description}</p>
-                                  <p className="text-xs text-red-500 mt-0.5">{issue.issue_type} · {issue.priority} · {issue.status}</p>
+                                <div key={issue.id} className="rounded px-2.5 py-1.5" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+                                  <p className="text-xs leading-relaxed" style={{ color: '#991B1B' }}>{issue.description}</p>
+                                  <p className="text-xs" style={{ color: '#DC2626' }}>{issue.issue_type} · {issue.priority} · {issue.status}</p>
                                 </div>
                               ))}
                             </div>
@@ -1447,7 +1490,7 @@ function handleFormSave(payload: TaskPayload) {
                       <h2 className="text-sm font-bold text-slate-900 mt-0.5 leading-snug">{selectedTask.key_task}</h2>
                     </div>
                     <button
-                      onClick={() => setSelectedTask(null)}
+                      onClick={() => clearSelection()}
                       className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 flex-shrink-0"
                     >
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 13, height: 13 }}>
@@ -1744,7 +1787,7 @@ function OutlineImportModal({ defaultProjectId, projects, onCreated, onClose }: 
       const created = await batchCreateTasks({ project_id: selectedProjectId, tasks: valid })
       onCreated(created)
     } catch {
-      alert('批量创建失败，请重试')
+      toast.error('批量创建失败，请重试')
     } finally {
       setCreating(false)
     }
@@ -1977,7 +2020,7 @@ function SubTaskAssignmentModal({ taskId, projectId, editingSubTask, projectMemb
         : await createSubTask(taskId, payload)
       onSave(saved)
     } catch {
-      alert(editingSubTask ? '更新失败，请重试' : '创建失败，请重试')
+      toast.error(editingSubTask ? '更新失败，请重试' : '创建失败，请重试')
     } finally {
       setSaving(false)
     }
@@ -2066,7 +2109,9 @@ function SubTaskAssignmentModal({ taskId, projectId, editingSubTask, projectMemb
 
 const YEARS  = [2025, 2026, 2027, 2028]
 const MONTHS = [1,2,3,4,5,6,7,8,9,10,11,12]
-const STATUS_OPTIONS = ['未开始','进行中','已完成','延期','暂缓']
+// 「延期」不再作为可手选状态：延期由计划时间过期且未完成自动计算（isOverdueTask），与 Dashboard 后端逻辑一致。
+// 旧数据 status='延期' 仍能在 STATUS_BADGE 正常展示，但用户无法再手动选成「延期」。
+const STATUS_OPTIONS = ['未开始','进行中','已完成','暂缓']
 
 function parsePlanTime(val: string) {
   // 支持 "2026年5月~2026年8月" 或 "2026年5月" 或 "2026-06" 或 "5-6月"

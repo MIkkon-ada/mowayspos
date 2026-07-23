@@ -107,18 +107,21 @@ async def transcribe_stream(websocket: WebSocket):
     - 客户端 → 服务端：binary（PCM 帧） 或 text "stop"（结束录音）
     - 服务端 → 客户端：JSON {"text": str, "final": bool} 或 {"error": str}
     """
+    # 先 accept 再校验，保证前端能收到错误消息而非裸连接失败
+    await websocket.accept()
+
     session_id = websocket.cookies.get(get_settings().session_cookie_name)
     username = get_session_user(session_id) if session_id else None
     if not username:
-        await websocket.close(code=4001, reason="未登录")
+        await websocket.send_json({"error": "未登录，请重新登录后重试"})
+        await websocket.close(code=4001)
         return
 
     api_key = get_provider_config("dashscope").get("api_key", "")
     if not api_key:
-        await websocket.close(code=4002, reason="未配置 Dashscope API Key")
+        await websocket.send_json({"error": "未配置语音识别服务，请联系管理员配置 Dashscope API Key"})
+        await websocket.close(code=4002)
         return
-
-    await websocket.accept()
 
     loop = asyncio.get_event_loop()
     q: asyncio.Queue = asyncio.Queue()

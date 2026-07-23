@@ -1,0 +1,34 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - img "MOWAYS 博维咨询" [ref=e6]
+  - main [ref=e7]:
+    - region "系统介绍" [ref=e8]:
+      - heading "Moways-SOP" [level=1] [ref=e9]
+      - heading "Moways 项目协同平台" [level=2] [ref=e10]
+      - paragraph [ref=e12]: 内部协同平台
+    - region "登录表单" [ref=e13]:
+      - generic [ref=e14]:
+        - heading "welcome" [level=2] [ref=e15]
+        - paragraph [ref=e16]: 请输入您的系统账号与密码以访问管理平台。
+        - generic [ref=e17]:
+          - generic [ref=e18]: 系统账号
+          - textbox "系统账号" [ref=e19]:
+            - /placeholder: 请输入系统账号
+        - generic [ref=e20]:
+          - generic [ref=e21]:
+            - generic [ref=e22]: 密码
+            - link "忘记密码？" [ref=e23] [cursor=pointer]:
+              - /url: "#"
+          - textbox "密码" [ref=e24]:
+            - /placeholder: 请输入密码
+        - button "进入系统" [disabled] [ref=e25]
+        - generic [ref=e26]: 或
+        - button "企业微信登录" [ref=e28] [cursor=pointer]
+        - generic [ref=e31]:
+          - text: 本系统仅供授权人员内部使用。登录即表示您已同意
+          - link "服务条款" [ref=e32] [cursor=pointer]:
+            - /url: "#"
+          - text: 与
+          - link "数据隐私协议" [ref=e33] [cursor=pointer]:
+            - /url: "#"
+          - text: 。

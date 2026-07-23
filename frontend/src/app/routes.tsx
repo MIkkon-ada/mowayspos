@@ -20,6 +20,7 @@ const TaskManagementPage = lazy(() => import('../pages/TaskManagementPage').then
 const VoiceUpdatePage = lazy(() => import('../pages/VoiceUpdatePage').then((m) => ({ default: m.VoiceUpdatePage })))
 const AchievementsPage = lazy(() => import('../pages/AchievementsPage').then((m) => ({ default: m.AchievementsPage })))
 const IssuesPage = lazy(() => import('../pages/IssuesPage').then((m) => ({ default: m.IssuesPage })))
+const IssueDetailPage = lazy(() => import('../pages/IssueDetailPage').then((m) => ({ default: m.IssueDetailPage })))
 const CoordinatePage = lazy(() => import('../pages/CoordinatePage').then((m) => ({ default: m.CoordinatePage })))
 const NotificationCenterPage = lazy(() => import('../pages/NotificationCenterPage').then((m) => ({ default: m.NotificationCenterPage })))
 const SettingsPage = lazy(() => import('../pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
@@ -187,6 +188,7 @@ export function AppRoutes() {
           <Route path="tasks" element={<TaskManagementPage />} />
           <Route path="achievements" element={<AchievementsPage />} />
           <Route path="issues" element={<IssuesPage />} />
+          <Route path="issues/:issueId" element={<IssueDetailPage />} />
           <Route path="org" element={<CoordinatePage />} />
           <Route path="decisions" element={<LegacyCoachDecisionRedirect />} />
           <Route path="meetings" element={<MeetingPage />} />

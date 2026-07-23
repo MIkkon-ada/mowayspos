@@ -104,10 +104,27 @@ class RuntimeSettings:
     log_level: str
     legacy_password_login_enabled: bool
     cors_allowed_origins: tuple[str, ...]
+    # 企业微信登录配置（不填则 wecom_enabled 返回 False，相关接口返回 503）
+    wecom_corpid: str
+    wecom_agent_id: str
+    wecom_secret: str
+    wecom_redirect_uri: str
+    # 前端基础 URL，用于 OAuth 回调时重定向回前端（如 https://moways.example.com）
+    frontend_base_url: str
 
     @property
     def session_ttl_seconds(self) -> int:
         return self.session_ttl_days * 86400
+
+    @property
+    def wecom_enabled(self) -> bool:
+        """企业微信登录是否启用（4 个核心配置都填了才算启用）。"""
+        return bool(
+            self.wecom_corpid
+            and self.wecom_agent_id
+            and self.wecom_secret
+            and self.wecom_redirect_uri
+        )
 
 
 def get_settings() -> RuntimeSettings:
@@ -127,6 +144,11 @@ def get_settings() -> RuntimeSettings:
         log_level=_normalize_loglevel(os.getenv("LOG_LEVEL")),
         legacy_password_login_enabled=legacy_password_login_enabled(),
         cors_allowed_origins=_parse_allowed_origins(os.getenv("CORS_ALLOWED_ORIGINS")),
+        wecom_corpid=os.getenv("WECOM_CORPID", "").strip(),
+        wecom_agent_id=os.getenv("WECOM_AGENT_ID", "").strip(),
+        wecom_secret=os.getenv("WECOM_SECRET", "").strip(),
+        wecom_redirect_uri=os.getenv("WECOM_REDIRECT_URI", "").strip(),
+        frontend_base_url=os.getenv("FRONTEND_BASE_URL", "").strip(),
     )
 
 

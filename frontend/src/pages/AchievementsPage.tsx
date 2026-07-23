@@ -104,8 +104,7 @@ function ownerText(project?: Project | null): string {
 
 function coachText(project?: Project | null): string {
   if (!project) return '—'
-  const count = project.member_counts?.project_ceo ?? 0
-  return count > 0 ? `${count} 位企业教练` : '未配置'
+  return project.coaches?.length ? project.coaches.join('、') : '未配置'
 }
 
 function taskName(tasks: TaskItem[], taskId?: number | null): string {
@@ -437,28 +436,28 @@ export function AchievementsPage() {
         <div className="mx-auto max-w-[1500px] px-6 py-6">
           <div className="mb-7 flex items-center justify-between gap-6">
             <div>
-              <h1 className="text-[28px] font-black tracking-tight text-slate-950">项目成果库</h1>
-              <p className="mt-2 text-sm text-slate-500">查看项目沉淀成果</p>
+              <h1 className="text-2xl font-black tracking-tight text-slate-950">项目成果库</h1>
+              <p className="mt-1 text-sm text-slate-500">查看项目沉淀成果</p>
             </div>
             <div className="flex items-center gap-4">
-              <label className="flex h-12 w-[320px] items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 shadow-sm">
+              <label className="flex h-11 w-[300px] items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 shadow-sm">
                 <span className="text-lg text-slate-400">⌕</span>
                 <input value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="搜索项目名称" className="min-w-0 flex-1 border-0 bg-transparent text-sm font-medium text-slate-800 outline-none placeholder:text-slate-400" />
               </label>
-              <button type="button" onClick={openRegisterModal} className="h-12 rounded-lg bg-blue-600 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700">⊕&nbsp; 登记成果</button>
+              <button type="button" onClick={openRegisterModal} className="h-11 rounded-lg bg-blue-600 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700">⊕&nbsp; 登记成果</button>
             </div>
           </div>
 
-          <div className="achievement-stat-bar mb-6 grid grid-cols-4 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="achievement-stat-bar mb-5 grid grid-cols-4 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
             {[
               ['项目', projects.length],
               ['已入库成果', overviewLoading ? '…' : overviewStats.total],
               ['本月新增成果', overviewLoading ? '…' : overviewStats.month],
               ['最近更新', overviewLoading ? '…' : overviewStats.latestProject],
             ].map(([label, value], index) => (
-              <div key={label} className={`px-5 py-5 text-center ${index ? 'border-l border-slate-200' : ''}`}>
-                <p className="text-sm font-semibold text-slate-500">{label}</p>
-                <p className="mt-2 truncate text-2xl font-black tabular-nums text-blue-600">{value}</p>
+              <div key={label} className={`px-4 py-3 text-center ${index ? 'border-l border-slate-200' : ''}`}>
+                <p className="text-xs font-semibold text-slate-500">{label}</p>
+                <p className="mt-1 truncate text-xl font-black tabular-nums text-blue-600">{value}</p>
               </div>
             ))}
           </div>
@@ -477,16 +476,16 @@ export function AchievementsPage() {
                   ) : pagedProjects.map((project) => {
                     const summary = projectAchievementSummary[project.id]
                     return <tr key={project.id} className="transition-colors hover:bg-blue-50/50">
-                      <td className="px-6 py-5">
+                      <td className="px-6 py-3.5">
                         <p className="font-bold text-slate-950">{project.name}</p>
                         <p className="mt-0.5 text-xs text-slate-400">项目编号：{project.code || `#${project.id}`}</p>
                       </td>
-                      <td className="px-5 py-5"><span className="rounded-md border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">{projectStatusLabel(project)}</span></td>
-                      <td className="px-5 py-5 text-slate-700">{ownerText(project)}</td>
-                      <td className="px-5 py-5 text-slate-700">{coachText(project)}</td>
-                      <td className="px-5 py-5 font-semibold text-slate-800">{overviewLoading ? '…' : summary?.count ?? 0}</td>
-                      <td className="px-5 py-5 text-slate-600">{overviewLoading ? '…' : formatDate(summary?.lastUpdated)}</td>
-                      <td className="px-5 py-5 text-center">
+                      <td className="px-4 py-3.5"><span className="rounded-md border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">{projectStatusLabel(project)}</span></td>
+                      <td className="px-4 py-3.5 text-slate-700">{ownerText(project)}</td>
+                      <td className="px-4 py-3.5 text-slate-700">{coachText(project)}</td>
+                      <td className="px-4 py-3.5 font-semibold text-slate-800">{overviewLoading ? '…' : summary?.count ?? 0}</td>
+                      <td className="px-4 py-3.5 text-slate-600">{overviewLoading ? '…' : formatDate(summary?.lastUpdated)}</td>
+                      <td className="px-4 py-3.5 text-center">
                         <button type="button" onClick={() => navigate(`/work/achievements?projectId=${project.id}`)} className="rounded-md border border-blue-500 bg-white px-3 py-2 text-xs font-bold text-blue-600 transition hover:bg-blue-50">查看成果&nbsp;›</button>
                       </td>
                     </tr>
@@ -516,7 +515,7 @@ export function AchievementsPage() {
             <div>
               <p className="text-[11px] font-extrabold uppercase tracking-[0.24em] text-sky-600">PROJECT ACHIEVEMENT LIBRARY</p>
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-950">{currentProject?.name || '未识别项目'} 项目成果库</h1>
+                <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950">{currentProject?.name || '未识别项目'} 项目成果库</h1>
                 <span className="mt-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">{projectStatusLabel(currentProject)}</span>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-500">
@@ -541,9 +540,9 @@ export function AchievementsPage() {
               ['手动登记', stats.manual],
               ['关联重点工作数', stats.taskCount],
             ].map(([label, value]) => (
-              <div key={label} className="border-r border-slate-200 px-4 py-3 last:border-r-0">
+              <div key={label} className="border-r border-slate-200 px-4 py-2 last:border-r-0">
                 <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">{label}</p>
-                <p className="mt-1 text-2xl font-black tabular-nums text-slate-950">{value}</p>
+                <p className="mt-1 text-xl font-black tabular-nums text-slate-950">{value}</p>
               </div>
             ))}
           </div>

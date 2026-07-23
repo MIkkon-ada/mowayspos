@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
@@ -469,6 +470,16 @@ def resolve_issue(
     row.edit_count = (row.edit_count or 0) + 1
     project_id = row.project_id
     crud.log(db, current_user, "issue_resolve", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
+
+    # 如果来自 AI 确认中心，回写任务卡意见
+    if row.source_type == "ai_confirmation" and row.source_submission_id is not None:
+        try:
+            from ..services import escalation as ESC
+            ESC.write_back_to_card(db, row)
+            db.flush()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error("write_back_to_card failed for issue %s: %s", row.id, e)
     if (row.reporter or "").strip() and row.reporter != current_user:
         from ..services.notify import send as _notify, person_id_for_account
         reply_text = payload.handler_reply or payload.resolution or "无"
@@ -597,5 +608,157 @@ def request_ceo(
                     body=f"上报人：{caller_name}，决策人：{payload.need_decision_by or '待定'}，专项：{row.special_project or ''}",
                     link=f"/project/{project_id}/issues" if project_id else "",
                     project_id=project_id)
+    db.commit()
+    return crud.to_dict(row)
+
+
+# ── 任务卡问题流转：统筹/教练提交意见 + 负责人确认 ──────────────
+
+
+class SubmitOpinionRequest(BaseModel):
+    opinion: str
+
+
+@router.patch("/{row_id}/submit-opinion")
+def submit_opinion(
+    row_id: int,
+    payload: SubmitOpinionRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """统筹/教练提交意见，Issue 进入「待负责人确认」状态。"""
+    current_user = require_login(current_user, db)
+    context = get_user_context_from_db(current_user, db)
+    row = db.get(models.Issue, row_id)
+    if not row:
+        raise HTTPException(404, "issue not found")
+
+    # 权限：统筹/教练或超管可操作
+    project_id = row.project_id
+    if not context.get("is_tech_admin"):
+        can_opinion = False
+        if project_id is not None:
+            roles = set(get_all_project_roles(current_user, project_id, db))
+            # 统筹人 对 待协调 的 Issue 可提交意见
+            if PROJECT_ROLE_COORD_KEY in roles and row.issue_type == IT.TYPE_COORDINATE:
+                can_opinion = True
+            # 项目企业教练(project_ceo) 对 需决策 的 Issue 可提交意见
+            if "project_ceo" in roles and row.issue_type == IT.TYPE_DECISION:
+                can_opinion = True
+        if not can_opinion:
+            raise HTTPException(403, "permission denied — 仅该专项的统筹人/企业教练可提交意见")
+
+    opinion = (payload.opinion or "").strip()
+    if not opinion:
+        raise HTTPException(400, "请填写意见")
+
+    # 状态校验：只能在 待协调/待决策 状态提交意见
+    if row.status not in {IF.STATUS_COORDINATING, IF.STATUS_PENDING_DECISION, IF.STATUS_IN_PROGRESS}:
+        raise HTTPException(409, f"当前状态「{row.status}」不能提交意见")
+
+    before = crud.to_dict(row)
+    row.opinion = opinion
+    row.status = IF.STATUS_PENDING_OWNER_CONFIRM
+    row.edit_count = (row.edit_count or 0) + 1
+    crud.log(db, current_user, "issue_submit_opinion", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
+
+    # 通知负责人
+    if row.owner and row.owner != current_user:
+        from ..services.notify import send as _notify, person_id_for_account
+        _notify(
+            db, recipient_id=person_id_for_account(row.owner, db),
+            recipient=row.owner, ntype="issue_opinion_submitted",
+            title=f"统筹/教练已提交意见，请确认：{row.description[:40]}",
+            body=f"意见：{opinion}",
+            link=f"/work/issues?projectId={project_id}&issueId={row.id}" if project_id else "",
+            project_id=project_id,
+        )
+
+    db.commit()
+    return crud.to_dict(row)
+
+
+class OwnerConfirmOpinionRequest(BaseModel):
+    accepted: bool = True
+    note: str = ""
+
+
+@router.patch("/{row_id}/owner-confirm")
+def owner_confirm_opinion(
+    row_id: int,
+    payload: OwnerConfirmOpinionRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """负责人确认意见：accepted=true → 已解决并回写；accepted=false → 退回继续处理。"""
+    current_user = require_login(current_user, db)
+    context = get_user_context_from_db(current_user, db)
+    row = db.get(models.Issue, row_id)
+    if not row:
+        raise HTTPException(404, "issue not found")
+
+    # 权限：Issue owner 或超管
+    if not context.get("is_tech_admin"):
+        if row.owner != current_user:
+            project_id = row.project_id
+            if project_id is not None:
+                require_project_role(current_user, project_id, [PROJECT_ROLE_OWNER_KEY], db)
+            else:
+                raise HTTPException(403, "permission denied — 仅负责人可确认")
+
+    # 状态校验
+    if row.status != IF.STATUS_PENDING_OWNER_CONFIRM:
+        raise HTTPException(409, f"当前状态「{row.status}」不能确认意见")
+
+    before = crud.to_dict(row)
+    project_id = row.project_id
+
+    if payload.accepted:
+        # 确认接受 → 已解决，回写任务卡
+        row.status = IF.STATUS_RESOLVED
+        resolution_parts = [row.opinion or ""]
+        if payload.note:
+            resolution_parts.append(f"负责人确认：{payload.note}")
+        row.resolution = "\n".join(p for p in resolution_parts if p)
+        _sync_issue_closed_at(row)
+        row.edit_count = (row.edit_count or 0) + 1
+        crud.log(db, current_user, "issue_owner_accept_opinion", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
+
+        # 回写任务卡
+        if row.source_type == "ai_confirmation" and row.source_submission_id is not None:
+            try:
+                from ..services import escalation as ESC
+                ESC.write_back_to_card(db, row)
+                db.flush()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error("write_back_to_card failed for issue %s: %s", row.id, e)
+    else:
+        # 拒绝接受 → 退回处理中，等统筹/教练补充
+        row.status = IF.STATUS_IN_PROGRESS
+        if payload.note:
+            row.resolution = f"负责人要求补充：{payload.note}"
+        row.edit_count = (row.edit_count or 0) + 1
+        crud.log(db, current_user, "issue_owner_reject_opinion", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
+
+        # 通知统筹/教练补充
+        from ..services.notify import send as _notify, person_id_for_account
+        from ..services.notify import project_coach_person_ids, project_coordinator_ids
+        if project_id is not None:
+            if row.issue_type == IT.TYPE_DECISION:
+                rids = project_coach_person_ids(project_id, db)
+            else:
+                rids = project_coordinator_ids(project_id, db)
+            caller_id = person_id_for_account(current_user, db)
+            for rid in rids:
+                if rid != caller_id:
+                    _notify(
+                        db, recipient_id=rid, ntype="issue_opinion_rejected",
+                        title=f"负责人要求补充意见：{row.description[:40]}",
+                        body=f"负责人反馈：{payload.note or '无'}",
+                        link=f"/work/issues?projectId={project_id}&issueId={row.id}",
+                        project_id=project_id,
+                    )
+
     db.commit()
     return crud.to_dict(row)

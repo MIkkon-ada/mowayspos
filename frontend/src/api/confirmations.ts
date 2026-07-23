@@ -96,6 +96,17 @@ export function ceoDecideTaskCard(id: number, cardIndex: number, note: string, o
   return apiPost(`/api/confirmations/${id}/cards/${cardIndex}/ceo-decide`, { note, operator })
 }
 
+// 任务卡转问题中心（替代原 transfer-coordinator / escalate-ceo）
+export function escalateCardToIssue(
+  id: number,
+  cardIndex: number,
+  target: 'ceo' | 'coordinator',
+  note: string,
+  operator: string,
+): Promise<{ ok?: boolean; issue_id?: number; submission?: ConfirmationItem }> {
+  return apiPost(`/api/confirmations/${id}/cards/${cardIndex}/escalate-to-issue`, { target, note, operator })
+}
+
 export function getConfirmationCounts(): Promise<Record<string, number>> {
   return apiGet<Record<string, number>>('/api/confirmations/counts')
 }

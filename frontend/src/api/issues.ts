@@ -58,3 +58,13 @@ export function requestIssueCeo(id: number, needDecisionBy: string, note?: strin
 export function updateIssueStatus(issueId: number, status: string): Promise<IssueItem> {
   return apiPatch<IssueItem>(`/api/issues/${issueId}/status`, { status })
 }
+
+// 统筹/教练提交意见（Issue 进入「待负责人确认」）
+export function submitIssueOpinion(id: number, opinion: string): Promise<IssueItem> {
+  return apiPatch<IssueItem>(`/api/issues/${id}/submit-opinion`, { opinion })
+}
+
+// 负责人确认意见（accepted=true → 已解决并回写；false → 退回）
+export function ownerConfirmOpinion(id: number, accepted: boolean, note: string): Promise<IssueItem> {
+  return apiPatch<IssueItem>(`/api/issues/${id}/owner-confirm`, { accepted, note })
+}

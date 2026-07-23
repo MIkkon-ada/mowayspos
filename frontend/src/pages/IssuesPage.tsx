@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { createIssue, closeIssue, resolveIssue, assignIssueHelper, requestIssueCeo, fetchIssues, updateIssueStatus } from '../api/issues'
+import { createIssue, closeIssue, resolveIssue, assignIssueHelper, requestIssueCeo, fetchIssues, updateIssueStatus, submitIssueOpinion, ownerConfirmOpinion } from '../api/issues'
 import { fetchTasks } from '../api/tasks'
 import { fetchSubTasks, fetchSubtasksByProject } from '../api/subtasks'
 import { useProject } from '../context/ProjectContext'
@@ -130,6 +130,8 @@ export function IssuesPage() {
   const [resolutionInput, setResolutionInput] = useState('')
   const [handlerReplyInput, setHandlerReplyInput] = useState('')
   const [helperInput, setHelperInput] = useState('')
+  const [opinionInput, setOpinionInput] = useState('')
+  const [confirmNoteInput, setConfirmNoteInput] = useState('')
   const [ceoTarget, setCeoTarget] = useState('')
   const [ceoNote, setCeoNote] = useState('')
   const [showCeoForm, setShowCeoForm] = useState(false)
@@ -292,6 +294,8 @@ export function IssuesPage() {
     setResolutionInput(selected?.resolution ?? '')
     setHandlerReplyInput(selected?.handler_reply ?? '')
     setHelperInput(selected?.helper ?? '')
+    setOpinionInput((selected as Record<string, unknown>)?.opinion as string ?? '')
+    setConfirmNoteInput('')
     setCeoTarget('')
     setCeoNote('')
     setShowCeoForm(false)
@@ -324,6 +328,25 @@ export function IssuesPage() {
   function handleResolve() {
     if (!selected) return
     doAction(() => resolveIssue(selected.id, resolutionInput.trim(), handlerReplyInput.trim()))
+  }
+
+  function handleSubmitOpinion() {
+    if (!selected) return
+    if (!opinionInput.trim()) { setActionErr('请填写意见'); return }
+    doAction(async () => {
+      const updated = await submitIssueOpinion(selected.id, opinionInput.trim())
+      setOpinionInput('')
+      return updated
+    })
+  }
+
+  function handleOwnerConfirm(accepted: boolean) {
+    if (!selected) return
+    doAction(async () => {
+      const updated = await ownerConfirmOpinion(selected.id, accepted, confirmNoteInput.trim())
+      setConfirmNoteInput('')
+      return updated
+    })
   }
 
   function handleClose() {
@@ -889,6 +912,9 @@ export function IssuesPage() {
               </div>
               <p className="text-sm font-bold text-slate-800 leading-snug">{selected.description || '—'}</p>
               <div className="flex items-center gap-2 mt-2">
+                {(selected as Record<string, unknown>).source_type === 'ai_confirmation' && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-700 border border-purple-200">来自 AI 确认中心</span>
+                )}
                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${PRIORITY_STYLE[selected.priority || ''] || PRIORITY_STYLE['中']}`}>{selected.priority || '—'}</span>
                 <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border ${STATUS_STYLE[selectedStatus]?.badge || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                   <span className="w-1.5 h-1.5 rounded-full" style={{ background: STATUS_STYLE[selectedStatus]?.dot || '#94A3B8' }}></span>
@@ -1000,7 +1026,7 @@ export function IssuesPage() {
                     )}
 
                     {/* 提交解决结果: 非待处理 */}
-                    {selectedStatus !== '待处理' && (
+                    {selectedStatus !== '待处理' && selectedStatus !== '待负责人确认' && (
                       <button
                         onClick={handleResolve}
                         disabled={actionLoading || projectArchived}
@@ -1009,6 +1035,60 @@ export function IssuesPage() {
                       >
                         {isDecision ? '确认决策' : '提交解决结果'}
                       </button>
+                    )}
+
+                    {/* 统筹/教练提交意见（来自确认中心的 Issue）：待协调/待决策/处理中 */}
+                    {(selected as Record<string, unknown>).source_type === 'ai_confirmation' && (selectedStatus === '待协调' || selectedStatus === '待决策' || selectedStatus === '处理中') && (
+                      <div className="mb-2 p-2 rounded border border-violet-200 bg-violet-50/60">
+                        <p className="text-xs font-semibold text-violet-700 mb-1">提交意见</p>
+                        <textarea
+                          value={opinionInput}
+                          onChange={(e) => setOpinionInput(e.target.value)}
+                          rows={3}
+                          placeholder={isDecision ? '请填写决策意见…' : '请填写统筹协调意见…'}
+                          className="w-full text-xs border border-violet-200 rounded px-2 py-1.5 focus:outline-none focus:border-violet-400 resize-none leading-relaxed mb-2"
+                        />
+                        <button
+                          onClick={handleSubmitOpinion}
+                          disabled={actionLoading || !opinionInput.trim() || projectArchived}
+                          className="w-full py-1.5 rounded text-white text-xs font-bold hover:opacity-90 disabled:opacity-50 bg-violet-600"
+                        >
+                          提交意见
+                        </button>
+                      </div>
+                    )}
+
+                    {/* 负责人确认意见（来自确认中心的 Issue）：待负责人确认 */}
+                    {(selected as Record<string, unknown>).source_type === 'ai_confirmation' && selectedStatus === '待负责人确认' && (
+                      <div className="mb-2 p-2 rounded border border-emerald-200 bg-emerald-50/60">
+                        <p className="text-xs font-semibold text-emerald-700 mb-1">统筹/教练已提交意见，请确认</p>
+                        <div className="text-xs text-slate-700 bg-white rounded p-2 mb-2 border border-slate-200 whitespace-pre-wrap">
+                          {(selected as Record<string, unknown>).opinion as string || '（无意见）'}
+                        </div>
+                        <textarea
+                          value={confirmNoteInput}
+                          onChange={(e) => setConfirmNoteInput(e.target.value)}
+                          rows={2}
+                          placeholder="确认备注（可选，拒绝时填写原因）"
+                          className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:border-emerald-400 resize-none leading-relaxed mb-2"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleOwnerConfirm(true)}
+                            disabled={actionLoading || projectArchived}
+                            className="flex-1 py-1.5 rounded text-white text-xs font-bold hover:opacity-90 disabled:opacity-50 bg-emerald-600"
+                          >
+                            确认接受
+                          </button>
+                          <button
+                            onClick={() => handleOwnerConfirm(false)}
+                            disabled={actionLoading || projectArchived}
+                            className="flex-1 py-1.5 rounded text-white text-xs font-bold hover:opacity-90 disabled:opacity-50 bg-orange-500"
+                          >
+                            退回补充
+                          </button>
+                        </div>
+                      </div>
                     )}
 
                     {/* 上报Coach: 非待决策 */}

@@ -10,6 +10,7 @@ import {
   rejectTaskCard,
   transferTaskCardCoordinator,
   escalateTaskCardCeo,
+  escalateCardToIssue,
   ceoDecide,
   ceoDecideTaskCard,
   coordinatorFeedback,
@@ -155,8 +156,8 @@ function getConfirmActionLabel(status?: string) {
   const norm = SS.normalize(status)
   if (norm === SS.S_CONFIRMED) return '确认入库'
   if (norm === SS.S_RETURNED) return '退回修改'
-  if (norm === SS.S_WAITING_COORDINATOR) return '转交统筹人'
-  if (norm === SS.S_WAITING_CEO) return '转交企业教练'
+  if (norm === SS.S_WAITING_COORDINATOR) return '已转问题中心（待协调）'
+  if (norm === SS.S_WAITING_CEO) return '已转问题中心（需决策）'
   if (norm === SS.S_PENDING_OWNER) return '待项目负责人处理'
   return '提交待确认'
 }
@@ -752,7 +753,7 @@ export function ConfirmPage() {
     }
     const cardIndex = activeCardBackendIndex
     const note = actionNote.trim() || (
-      action === 'return' ? '退回并重新编辑' : action === 'transfer' ? '转交统筹人' : action === 'ceo' ? '转交企业教练' : ''
+      action === 'return' ? '退回并重新编辑' : action === 'transfer' ? '转问题中心（待协调）' : action === 'ceo' ? '转问题中心（需决策）' : ''
     )
     setActionError(null)
     setActionSuccess(null)
@@ -763,14 +764,14 @@ export function ConfirmPage() {
         : action === 'return'
           ? await rejectTaskCard(selected.id, cardIndex, note, currentUser.name)
           : action === 'transfer'
-            ? await transferTaskCardCoordinator(selected.id, cardIndex, note, currentUser.name)
-            : await escalateTaskCardCeo(selected.id, cardIndex, note, currentUser.name)
+            ? await escalateCardToIssue(selected.id, cardIndex, 'coordinator', note, currentUser.name)
+            : await escalateCardToIssue(selected.id, cardIndex, 'ceo', note, currentUser.name)
       const updatedSubmission = (response as { submission?: ConfirmationItem }).submission
       const updated = updatedSubmission || selected
       setItems((prev) => prev.map((i) => i.id === selected.id ? updated : i))
       setSelected(updated)
       setCardDecisions(prev => ({ ...prev, [activeCardIndex]: action }))
-      setActionSuccess(action === 'confirm' ? '已确认入库' : action === 'return' ? '已退回' : action === 'transfer' ? '已转交统筹人' : '已转交企业教练')
+      setActionSuccess(action === 'confirm' ? '已确认入库' : action === 'return' ? '已退回' : action === 'transfer' ? '已转问题中心（待协调）' : '已转问题中心（需决策）')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       setActionError(`操作失败：${msg}`)
@@ -1060,16 +1061,16 @@ export function ConfirmPage() {
                 </button>
               )}
               {canUseCoordinatorView && (
-                <button onClick={() => switchView('coordinator')} disabled={coordinatorInteractionLocked} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1 ${viewMode === 'coordinator' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                <a href={`/work/issues?projectId=${urlProjectId ?? ''}&type=待协调`} onClick={(e) => { e.preventDefault(); window.location.href = `/work/issues${urlProjectId ? '?projectId=' + urlProjectId + '&type=待协调' : '?type=待协调'}` }} className="px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 bg-white text-slate-500 hover:bg-slate-50">
                   待我统筹
-                  {items.length > 0 && viewMode !== 'coordinator' && <span className="px-1.5 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-600">{items.filter(i => SS.normalize(i.confirm_status) === SS.S_WAITING_COORDINATOR).length || 0}</span>}
-                </button>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 12, height: 12 }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+                </a>
               )}
               {canUseCoachDecisionView && (
-                <button onClick={() => switchView('ceo')} disabled={coordinatorInteractionLocked} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1 ${viewMode === 'ceo' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                <a href={`/work/issues?projectId=${urlProjectId ?? ''}&type=需决策`} onClick={(e) => { e.preventDefault(); window.location.href = `/work/issues${urlProjectId ? '?projectId=' + urlProjectId + '&type=需决策' : '?type=需决策'}` }} className="px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 bg-white text-slate-500 hover:bg-slate-50">
                   待我决策
-                  {items.length > 0 && viewMode !== 'ceo' && <span className="px-1.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">{items.filter(i => SS.normalize(i.confirm_status) === SS.S_WAITING_CEO).length || 0}</span>}
-                </button>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 12, height: 12 }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+                </a>
               )}
             </div>
 
@@ -1403,15 +1404,15 @@ export function ConfirmPage() {
                         <button type="button" onClick={() => { setPendingAction(null); setActionNote(''); void handleTaskCardDecision('confirm') }} disabled={acting || projectArchived || cardWaitingCoordinator} className="h-10 w-full rounded-lg bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50">确认当前任务卡入库</button>
                         <button type="button" onClick={() => { setPendingAction('return'); setActionNote('') }} disabled={acting || projectArchived || cardWaitingCoordinator} className="h-10 w-full rounded-lg border border-orange-300 bg-white text-sm font-semibold text-orange-600 transition hover:bg-orange-50 disabled:opacity-50">退回当前任务卡</button>
                         {!cardWaitingCoordinator && activeCard.confirmationStatus !== 'coordinator_given' && (
-                          <button type="button" onClick={() => { setPendingAction('transfer'); setActionNote('') }} disabled={acting || projectArchived} className="h-10 w-full rounded-lg border border-violet-300 bg-white text-sm font-semibold text-violet-600 transition hover:bg-violet-50 disabled:opacity-50">转交统筹人</button>
+                          <button type="button" onClick={() => { setPendingAction('transfer'); setActionNote('') }} disabled={acting || projectArchived} className="h-10 w-full rounded-lg border border-violet-300 bg-white text-sm font-semibold text-violet-600 transition hover:bg-violet-50 disabled:opacity-50">转问题中心（待协调）</button>
                         )}
-                        <button type="button" onClick={() => { setPendingAction('ceo'); setActionNote('') }} disabled={acting || projectArchived || cardWaitingCoordinator} className="h-10 w-full rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50">转交企业教练</button>
+                        <button type="button" onClick={() => { setPendingAction('ceo'); setActionNote('') }} disabled={acting || projectArchived || cardWaitingCoordinator} className="h-10 w-full rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50">转问题中心（需决策）</button>
                       </div>
 
                       {pendingAction && (
                         <div data-confirm-action-note className="mt-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
                           <p className="text-xs font-bold text-slate-700">
-                            {pendingAction === 'return' ? '退回原因' : pendingAction === 'transfer' ? '转交统筹说明' : '转交企业教练说明'}
+                            {pendingAction === 'return' ? '退回原因' : pendingAction === 'transfer' ? '转问题中心说明（待协调）' : '转问题中心说明（需决策）'}
                             <span className="ml-1 text-red-500">*</span>
                           </p>
                           <textarea value={actionNote} onChange={(event) => setActionNote(event.target.value)} placeholder={pendingAction === 'return' ? '请说明需要提交人修改的内容…' : pendingAction === 'transfer' ? '请说明需要统筹人反馈或协调的事项…' : '请说明需要企业教练决策的事项…'} disabled={acting} className="mt-2 min-h-20 w-full resize-none rounded-lg border border-slate-200 bg-white p-3 text-sm focus:border-blue-300 focus:outline-none" />
@@ -1441,12 +1442,12 @@ export function ConfirmPage() {
                         <div className="space-y-2">
                           <button type="button" onClick={handleConfirm} disabled={submissionActionsLocked} className="h-10 w-full rounded-lg bg-blue-600 text-sm font-semibold text-white disabled:opacity-50">确认入库</button>
                           <button type="button" onClick={() => { setPendingAction('return'); setActionNote('') }} disabled={submissionActionsLocked} className="h-10 w-full rounded-lg border border-orange-200 bg-white text-sm font-semibold text-orange-600 disabled:opacity-50">退回提交人</button>
-                          <button type="button" onClick={() => { setPendingAction('transfer'); setActionNote('') }} disabled={submissionActionsLocked || !SS.TRANSFERABLE_TO_COORDINATOR.has(selectedStatus)} className="h-10 w-full rounded-lg border border-violet-200 bg-white text-sm font-semibold text-violet-600 disabled:opacity-50">转交统筹人</button>
-                          <button type="button" onClick={() => { setPendingAction('ceo'); setActionNote('') }} disabled={submissionActionsLocked || !SS.ESCALATABLE_TO_CEO.has(selectedStatus)} className="h-10 w-full rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-600 disabled:opacity-50">转交企业教练</button>
+                          <button type="button" onClick={() => { setPendingAction('transfer'); setActionNote('') }} disabled={submissionActionsLocked || !SS.TRANSFERABLE_TO_COORDINATOR.has(selectedStatus)} className="h-10 w-full rounded-lg border border-violet-200 bg-white text-sm font-semibold text-violet-600 disabled:opacity-50">转问题中心（待协调）</button>
+                          <button type="button" onClick={() => { setPendingAction('ceo'); setActionNote('') }} disabled={submissionActionsLocked || !SS.ESCALATABLE_TO_CEO.has(selectedStatus)} className="h-10 w-full rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-600 disabled:opacity-50">转问题中心（需决策）</button>
                         </div>
                         {pendingAction && (
                           <div className="mt-3 rounded-xl border border-slate-200 p-3">
-                            <p className="text-xs font-bold text-slate-700">{pendingAction === 'return' ? '退回原因' : pendingAction === 'transfer' ? '转交统筹说明' : '转交企业教练说明'}<span className="ml-1 text-red-500">*</span></p>
+                            <p className="text-xs font-bold text-slate-700">{pendingAction === 'return' ? '退回原因' : pendingAction === 'transfer' ? '转问题中心说明（待协调）' : '转问题中心说明（需决策）'}<span className="ml-1 text-red-500">*</span></p>
                             <textarea value={actionNote} onChange={(event) => setActionNote(event.target.value)} disabled={acting} className="mt-2 min-h-20 w-full resize-none rounded-lg border border-slate-200 p-3 text-sm" />
                             <div className="mt-3 flex gap-2"><button type="button" onClick={() => { setPendingAction(null); setActionNote('') }} className="h-9 flex-1 rounded-lg border border-slate-200">取消</button><button type="button" onClick={() => handleDecision(pendingAction)} disabled={acting || !actionNote.trim()} className="h-9 flex-1 rounded-lg bg-blue-600 text-white disabled:opacity-50">确认提交</button></div>
                           </div>

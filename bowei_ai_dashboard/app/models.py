@@ -179,6 +179,8 @@ class Issue(Base, TimestampMixin):
     source_type = Column(String(40), default="人工录入")
     confirmed_by = Column(String(50), default="")
     source_submission_id = Column(Integer, nullable=True, index=True)
+    source_card_index = Column(Integer, nullable=True)
+    opinion = Column(Text, default="")
     edit_count = Column(Integer, default=0)
     reporter = Column(String(50), default="", index=True)
     handler_reply = Column(Text, default="")

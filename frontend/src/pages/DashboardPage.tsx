@@ -389,7 +389,7 @@ export function DashboardPage() {
             className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30"
           >
             {canViewGlobalDashboard && <option value="global">全部项目</option>}
-            {canViewMyDashboard && <option value="my">我的项目</option>}
+            {!canViewGlobalDashboard && canViewMyDashboard && <option value="my">我的项目</option>}
             {projects.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}

@@ -51,6 +51,17 @@ class AccountResetPasswordRequest(BaseModel):
         return v.strip()
 
 
+class AccountUpdateRequest(BaseModel):
+    username: str
+
+    @field_validator("username")
+    @classmethod
+    def not_blank(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("账号名不能为空")
+        return v.strip()
+
+
 class AccountStatusRequest(BaseModel):
     status: str
 
@@ -222,6 +233,43 @@ def patch_status(
     row.status = payload.status
     crud.log(db, current_user, "update_status", "account", row.id, before=before, after=_account_to_dict(row))
     db.commit()
+    return _account_to_dict(row, db.get(models.Person, row.person_id) if row.person_id else None)
+
+
+@router.patch("/{account_id}")
+def update_account(
+    account_id: int,
+    payload: AccountUpdateRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """更新账号基本信息（如 username）。"""
+    _require_admin(current_user, db)
+    row = db.get(models.Account, account_id)
+    if not row:
+        raise HTTPException(404, "account not found")
+    new_username = payload.username.strip()
+    if len(new_username) > 100:
+        raise HTTPException(400, "账号名不能超过100个字符")
+    # 唯一性校验
+    dup = db.query(models.Account).filter(
+        models.Account.username == new_username,
+        models.Account.id != account_id,
+    ).first()
+    if dup:
+        raise HTTPException(400, f"账号名 '{new_username}' 已存在")
+    if row.username == new_username:
+        # unchanged, just return current state
+        return _account_to_dict(row, db.get(models.Person, row.person_id) if row.person_id else None)
+    before = _account_to_dict(row, db.get(models.Person, row.person_id) if row.person_id else None)
+    old_username = row.username
+    row.username = new_username
+    crud.log(db, current_user, "update_username", "account", row.id,
+             before=before, after=_account_to_dict(row))
+    db.commit()
+    db.refresh(row)
+    # 清除被改名账号的所有 session
+    invalidate_user_sessions(old_username)
     return _account_to_dict(row, db.get(models.Person, row.person_id) if row.person_id else None)
 
 

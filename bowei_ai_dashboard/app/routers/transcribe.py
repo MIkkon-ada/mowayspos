@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import tempfile
 
@@ -15,6 +16,8 @@ from ..auth import get_session_user
 from ..settings import get_settings
 
 router = APIRouter(prefix="/api/transcribe", tags=["transcribe"])
+
+logger = logging.getLogger(__name__)
 
 _SUPPORTED_FORMATS = {
     ".mp3", ".mp4", ".wav", ".flac", ".aac", ".ogg",
@@ -124,34 +127,57 @@ async def transcribe_stream(websocket: WebSocket):
         return
 
     loop = asyncio.get_event_loop()
-    q: asyncio.Queue = asyncio.Queue()
+    result_q: asyncio.Queue = asyncio.Queue()
+    audio_q: asyncio.Queue = asyncio.Queue(maxsize=200)  # 音频帧队列，缓冲 200 帧 ≈ 1.6s
 
-    def _on_result(result, *args, **kwargs):
-        if result.status_code == 200:
-            sentence = (result.output or {}).get("sentence") or {}
-            text = (sentence.get("text") or "").strip()
-            if text:
-                asyncio.run_coroutine_threadsafe(
-                    q.put({"text": text, "final": bool(sentence.get("sentence_end", False))}),
-                    loop,
-                )
+    class _ASRCallback:
+        """Dashscope 实时语音识别回调 — SDK 要求回调对象有 on_open/on_event 等方法，不能传裸函数。"""
+
+        def on_open(self) -> None:
+            pass
+
+        def on_close(self) -> None:
+            pass
+
+        def on_complete(self) -> None:
+            pass
+
+        def on_error(self, result: Any) -> None:
+            pass
+
+        def on_event(self, result: Any) -> None:
+            if result.status_code == 200:
+                sentence = (result.output or {}).get("sentence") or {}
+                text = (sentence.get("text") or "").strip()
+                if text:
+                    asyncio.run_coroutine_threadsafe(
+                        result_q.put({"text": text, "final": bool(sentence.get("sentence_end", False))}),
+                        loop,
+                    )
 
     import dashscope  # noqa: PLC0415
     from dashscope.audio.asr import Recognition  # noqa: PLC0415
 
     dashscope.api_key = api_key
-    rec = Recognition(
-        model="paraformer-realtime-v2",
-        format="pcm",
-        sample_rate=16000,
-        language_hints=["zh", "en"],
-        callback=_on_result,
-    )
-    await asyncio.to_thread(rec.start)
+    try:
+        rec = Recognition(
+            model="paraformer-realtime-v2",
+            format="pcm",
+            sample_rate=16000,
+            language_hints=["zh", "en"],
+            callback=_ASRCallback(),
+        )
+        await asyncio.to_thread(rec.start)
+    except Exception as exc:
+        logger.exception("Dashscope recognition start failed")
+        await websocket.send_json({"error": f"语音识别服务启动失败：{exc}"})
+        await websocket.close(code=4003)
+        return
 
-    async def _sender():
+    async def _result_sender():
+        """持续从结果队列取出识别结果发送给前端"""
         while True:
-            item = await q.get()
+            item = await result_q.get()
             if item is None:
                 break
             try:
@@ -159,7 +185,16 @@ async def transcribe_stream(websocket: WebSocket):
             except Exception:
                 break
 
-    sender = asyncio.create_task(_sender())
+    async def _audio_sender():
+        """从音频队列取出 PCM 帧发送给 Dashscope，与 WebSocket 接收解耦"""
+        while True:
+            data = await audio_q.get()
+            if data is None:
+                break
+            await asyncio.to_thread(rec.send_audio_frame, data)
+
+    result_task = asyncio.create_task(_result_sender())
+    audio_task = asyncio.create_task(_audio_sender())
 
     try:
         while True:
@@ -170,14 +205,16 @@ async def transcribe_stream(websocket: WebSocket):
             if msg["type"] == "websocket.disconnect":
                 break
             if msg.get("bytes"):
-                await asyncio.to_thread(rec.send_audio_frame, msg["bytes"])
+                await audio_q.put(msg["bytes"])  # 非阻塞入队，不等待 Dashscope 响应
             elif msg.get("text") == "stop":
                 break
     finally:
+        await audio_q.put(None)
+        await audio_task
         await asyncio.to_thread(rec.stop)
         await asyncio.sleep(0.8)  # 等待最后一批回调触发
-        await q.put(None)
-        await sender
+        await result_q.put(None)
+        await result_task
         try:
             await websocket.close()
         except Exception:

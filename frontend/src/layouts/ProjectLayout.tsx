@@ -18,6 +18,7 @@ type PageSegment =
   | 'org'
   | 'submit'
   | 'meeting'
+  | 'meetings'
   | 'settings'
   | 'mytasks'
   | 'notifications'
@@ -34,6 +35,7 @@ const PATH_TO_PAGE: Record<PageSegment, AppPage> = {
   org: 'coordinate',
   submit: 'voice',
   meeting: 'meeting',
+  meetings: 'meeting',
   settings: 'settings',
   mytasks: 'mytasks',
   notifications: 'notifications',

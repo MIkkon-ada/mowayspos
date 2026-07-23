@@ -193,6 +193,7 @@ class Project(Base, TimestampMixin):
     name = Column(String(100), nullable=False, unique=True, index=True)
     code = Column(String(50), default="")
     description = Column(Text, default="")
+    objectives = Column(Text, default="")
     status = Column(String(20), default="draft", index=True)
     start_date = Column(String(20), default="")
     end_date = Column(String(20), default="")

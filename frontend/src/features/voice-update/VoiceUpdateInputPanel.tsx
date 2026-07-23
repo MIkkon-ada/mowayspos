@@ -14,6 +14,7 @@ type VoiceUpdateInputPanelProps = {
   controlsLocked: boolean
   extractDisabled: boolean
   recording: boolean
+  transcribing: boolean
   timerLabel: string
   text: string
   onTextChange: (value: string) => void
@@ -42,6 +43,7 @@ export function VoiceUpdateInputPanel({
   controlsLocked,
   extractDisabled,
   recording,
+  transcribing,
   timerLabel,
   text,
   onTextChange,
@@ -97,18 +99,42 @@ export function VoiceUpdateInputPanel({
       )}
 
       {mode === 'voice' && (
-        <div className="voice-update-audio-zone">
-          <strong>{recording ? '正在录音（实时转写中）' : '录音输入'}</strong>
-          <span>{timerLabel}</span>
-          <button type="button" className="voice-update-task-detail-button" onClick={recording ? onStopRecording : onStartRecording}>
-            {recording ? '停止录音' : '开始录音'}
-          </button>
-          {text && <p>{text}</p>}
+        <div className="voice-update-voice-panel">
+          <div className="voice-update-recorder-bar">
+            <div className="voice-update-recorder-info">
+              <strong>
+                {recording ? (
+                  <>
+                    <span className="voice-update-recording-dot" />
+                    正在录音
+                  </>
+                ) : (
+                  '录音输入'
+                )}
+              </strong>
+              <span>{recording ? timerLabel : '点击开始录音，边说边出字'}</span>
+            </div>
+            <button
+              type="button"
+              className={recording ? 'voice-update-stop-button' : 'voice-update-record-button'}
+              onClick={recording ? onStopRecording : onStartRecording}
+            >
+              {recording ? '停止录音' : '开始录音'}
+            </button>
+          </div>
+          <textarea
+            className="voice-update-textarea"
+            value={text}
+            onChange={(event) => onTextChange(event.target.value)}
+            placeholder={recording ? '识别结果会实时显示在这里…' : '开始录音后，文字将实时显示在这里，也可以直接输入或修改…'}
+            maxLength={5000}
+          />
+          <div className="voice-update-character-count">{text.length}/5000</div>
         </div>
       )}
 
       {mode === 'upload' && (
-        <div className="voice-update-audio-zone">
+        <div className="voice-update-voice-panel">
           <input
             ref={uploadInputRef}
             type="file"
@@ -116,12 +142,28 @@ export function VoiceUpdateInputPanel({
             hidden
             onChange={(event) => { const file = event.target.files?.[0]; if (file) onUploadFile(file) }}
           />
-          <strong>{uploading ? `正在转写「${uploadFileName}」` : '上传音频文件'}</strong>
-          <span>支持 MP3、WAV、M4A 等常见音频格式</span>
-          <button type="button" className="voice-update-task-detail-button" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
-            选择音频
-          </button>
-          {text && <p>{text}</p>}
+          <div className="voice-update-recorder-bar">
+            <div className="voice-update-recorder-info">
+              <strong>{uploading ? `正在转写「${uploadFileName}」` : '上传音频文件'}</strong>
+              <span>{uploading ? '请稍候…' : '支持 MP3、WAV、M4A 等常见音频格式'}</span>
+            </div>
+            <button
+              type="button"
+              className="voice-update-record-button"
+              disabled={uploading}
+              onClick={() => uploadInputRef.current?.click()}
+            >
+              {uploading ? '转写中' : '选择音频'}
+            </button>
+          </div>
+          <textarea
+            className="voice-update-textarea"
+            value={text}
+            onChange={(event) => onTextChange(event.target.value)}
+            placeholder="选择音频文件后，转写结果将显示在这里…"
+            maxLength={5000}
+          />
+          <div className="voice-update-character-count">{text.length}/5000</div>
         </div>
       )}
 

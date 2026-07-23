@@ -311,49 +311,8 @@ export function ConfirmPage() {
     hasReviewerRoleInAnyProject
   )
 
-  const canUseCoachDecisionView = Boolean(
-    currentUser?.is_tech_admin ||
-    globalUserRoles.includes('project_ceo') ||
-    projects.some((project) =>
-      (project.user_roles ?? []).includes('project_ceo'),
-    )
-  )
-
-  const canUseCoordinatorView = Boolean(
-    currentUser?.is_tech_admin ||
-    globalUserRoles.includes('coordinator') ||
-    projects.some((project) =>
-      (project.user_roles ?? []).includes('coordinator'),
-    )
-  )
-
-  const initialRedirectDone = useRef(false)
-  const initialViewResolved = useRef(false)
-  const defaultViewMode: ConfirmViewMode = 'all'
-
-  // 从 URL 解析初始视图
-  const resolveInitialView = (): ConfirmViewMode => {
-    const urlView = searchParams.get('view')
-    if (urlView === 'ceo' && canUseCoachDecisionView) return 'ceo'
-    if (urlView === 'coordinator' && canUseCoordinatorView) return 'coordinator'
-    if (urlView === 'all' && isReviewer) return 'all'
-    return defaultViewMode
-  }
-  const [viewMode, setViewMode] = useState<ConfirmViewMode>(defaultViewMode)
-  useEffect(() => {
-    if (!initialRedirectDone.current) {
-      initialRedirectDone.current = true
-      if (!initialViewResolved.current) {
-        initialViewResolved.current = true
-        setViewMode(resolveInitialView())
-      } else {
-        setViewMode(defaultViewMode)
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isReviewer, canUseCoachDecisionView])
-
-  const [filterStatus, setFilterStatus] = useState(defaultViewMode === 'all' ? 'owner_actionable' : '')
+  const viewMode: ConfirmViewMode = 'all'
+  const [filterStatus, setFilterStatus] = useState('owner_actionable')
   const [filterProject, setFilterProject] = useState('')
   const [filterSubmitter, setFilterSubmitter] = useState('')
   const [search, setSearch] = useState('')
@@ -375,47 +334,7 @@ export function ConfirmPage() {
     return Number.isFinite(idx) && idx >= 0 ? idx : undefined
   }, [searchParams])
 
-  // 统一 effect：深链初始化及手动切换时同步 filterStatus
-  useEffect(() => {
-    if (viewMode === 'ceo' || viewMode === 'coordinator') {
-      setFilterStatus('')
-    } else if (viewMode === 'all') {
-      setFilterStatus('owner_actionable')
-    } else {
-      setFilterStatus('')
-    }
-  }, [viewMode])
 
-  function switchView(nextView: ConfirmViewMode) {
-    if (isCoordinatorView && coordinatorActing) return
-    setViewMode(nextView)
-    setSelected(null)
-    setWriteToAchievements(true)
-    setWriteToIssues(true)
-    setActionNote('')
-    setPendingAction(null)
-    setActionError(null)
-    setActionSuccess(null)
-    setCoachNote('')
-    setCoachActing(false)
-    setCoordinatorNote('')
-    setCoordinatorCardNote('')
-    if (nextView === 'all') {
-      setFilterStatus('owner_actionable')
-    } else {
-      setFilterStatus('')
-    }
-    // 同步 URL：保留 projectId，清除 submissionId 和 cardIndex
-    const nextParams = new URLSearchParams(searchParams)
-    nextParams.set('view', nextView)
-    nextParams.delete('submissionId')
-    nextParams.delete('cardIndex')
-    const rawProjectId = searchParams.get('projectId')
-    if (rawProjectId) {
-      nextParams.set('projectId', rawProjectId)
-    }
-    setSearchParams(nextParams, { replace: true })
-  }
 
   const [writeMode, setWriteMode] = useState<WriteMode>('task_new')
   const [targetSubtaskId, setTargetSubtaskId] = useState<number | null>(null)
@@ -924,7 +843,6 @@ export function ConfirmPage() {
       .catch(() => {})
   }
 
-  const pendingCount = items.filter(i => SS.OWNER_ACTIONABLE.has(SS.normalize(i.confirm_status))).length
   const allProjects = [...new Set(items.map((i) => String(projectNameFromConfirmation(i, projects) || '')).filter(Boolean))]
   const allSubmitters = [...new Set(items.map((i) => i.submitter).filter(Boolean))]
 
@@ -1052,28 +970,6 @@ export function ConfirmPage() {
         <div className="flex items-center gap-2">
           <h1 className="mr-2 whitespace-nowrap text-lg font-bold text-slate-900">AI 确认中心</h1>
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            {/* Tab buttons */}
-            <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: '#E9EFF6' }}>
-              {isReviewer && (
-                <button onClick={() => switchView('all')} disabled={coordinatorInteractionLocked} className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1 ${viewMode === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
-                  待确认
-                  {pendingCount > 0 && <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${viewMode === 'all' ? 'bg-white/20 text-white' : 'bg-orange-100 text-orange-600'}`}>{pendingCount}</span>}
-                </button>
-              )}
-              {canUseCoordinatorView && (
-                <a href={`/work/issues?projectId=${urlProjectId ?? ''}&type=待协调`} onClick={(e) => { e.preventDefault(); window.location.href = `/work/issues${urlProjectId ? '?projectId=' + urlProjectId + '&type=待协调' : '?type=待协调'}` }} className="px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 bg-white text-slate-500 hover:bg-slate-50">
-                  待我统筹
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 12, height: 12 }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
-                </a>
-              )}
-              {canUseCoachDecisionView && (
-                <a href={`/work/issues?projectId=${urlProjectId ?? ''}&type=需决策`} onClick={(e) => { e.preventDefault(); window.location.href = `/work/issues${urlProjectId ? '?projectId=' + urlProjectId + '&type=需决策' : '?type=需决策'}` }} className="px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 bg-white text-slate-500 hover:bg-slate-50">
-                  待我决策
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style={{ width: 12, height: 12 }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
-                </a>
-              )}
-            </div>
-
             {/* Filters & search - all views consistent */}
             <select value={filterProject} onChange={(e) => setFilterProject(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none min-w-[110px]">
               <option value="">全部项目</option>

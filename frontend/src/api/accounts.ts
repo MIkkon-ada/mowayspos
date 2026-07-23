@@ -48,6 +48,29 @@ export function unbindAccountWecom(id: number): Promise<AccountItem> {
   return apiDelete<AccountItem>(`/api/accounts/${id}/wecom`)
 }
 
+export type WecomUserItem = {
+  wecom_userid: string
+  wecom_name: string
+  department_ids: number[]
+  bound_account_id: number | null
+  bound_username: string
+  preselect_account_id: number | null
+  preselect_username: string
+}
+
+export function fetchWecomUsers(): Promise<WecomUserItem[]> {
+  return apiGet<WecomUserItem[]>('/api/accounts/wecom-users')
+}
+
+export type WecomBatchBindItem = {
+  account_id: number
+  wecom_userid: string
+}
+
+export function batchBindWecom(items: WecomBatchBindItem[]): Promise<AccountItem[]> {
+  return apiPost<AccountItem[]>('/api/accounts/wecom-bind-batch', { items })
+}
+
 export function changeMyPassword(oldPassword: string, newPassword: string): Promise<{ ok: boolean }> {
   return apiPost<{ ok: boolean }>('/api/auth/change-password', {
     old_password: oldPassword,

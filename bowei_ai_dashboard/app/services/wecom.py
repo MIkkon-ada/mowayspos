@@ -100,3 +100,34 @@ def get_userid_by_code(code: str) -> str:
         raise WecomError(f"wecom getuserinfo failed: {data}")
     # 企业成员返回 userid；非企业成员返回 openid（这里不处理非企业成员场景）
     return data.get("userid") or ""
+
+
+def list_department_users(department_id: int = 1, fetch_child: bool = True) -> list[dict]:
+    """拉取企业微信通讯录成员（精简列表）。
+
+    Args:
+        department_id: 部门 ID，默认 1（根部门）
+        fetch_child: 是否递归拉子部门成员，默认 True（一次拿全员）
+
+    Returns:
+        [{"userid": "zhangsan", "name": "张三", "department": [1, 2]}, ...]
+
+    需要应用有「通讯录」权限（管理后台 → 应用 → API 接收消息 → 通讯录权限）。
+    """
+    token = get_access_token()
+    data = _http_get_json(
+        f"{_WECOM_API_BASE}/user/simplelist",
+        params={
+            "access_token": token,
+            "department_id": department_id,
+            "fetch_child": 1 if fetch_child else 0,
+        },
+    )
+    if data.get("errcode") != 0:
+        # 60011 表示无通讯录权限，给个明确提示
+        if data.get("errcode") == 60011:
+            raise WecomError(
+                "wecom no contact permission: 请在企业微信管理后台给应用授予通讯录读取权限"
+            )
+        raise WecomError(f"wecom simplelist failed: {data}")
+    return data.get("userlist") or []

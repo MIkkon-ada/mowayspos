@@ -248,18 +248,25 @@ def _person_name(member: models.ProjectMember, db: Session) -> str:
 
 
 def _rebuild_person_duties(db: Session):
-    projects = db.query(models.Project).filter(models.Project.status != "archived").all()
-    person_projects: dict[str, set[str]] = {}
-    for p in projects:
-        for name in [
-            *_split_names(p.coordinator),
-            *_split_names(p.owners),
-            *_split_names(p.collaborators),
-        ]:
-            if name:
-                person_projects.setdefault(name, set()).add(p.name)
+    # 从 project_members 正规表读取，而非旧字符串字段（单源真相）
+    members = (
+        db.query(models.ProjectMember)
+        .join(models.Project, models.ProjectMember.project_id == models.Project.id)
+        .filter(models.Project.status != "archived")
+        .all()
+    )
+    person_projects: dict[int, set[str]] = {}
+    project_cache: dict[int, str] = {}
+    for m in members:
+        if m.project_id not in project_cache:
+            proj = db.get(models.Project, m.project_id)
+            project_cache[m.project_id] = proj.name if proj else ""
+        proj_name = project_cache[m.project_id]
+        if proj_name:
+            person_projects.setdefault(m.person_id, set()).add(proj_name)
+
     for person in db.query(models.Person).all():
-        assigned = sorted(person_projects.get(person.name, set()))
+        assigned = sorted(person_projects.get(person.id, set()))
         person.special_project_duty = "、".join(assigned) if assigned else ""
 
 

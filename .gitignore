@@ -102,3 +102,10 @@ pw-qa3/
 .claude/
 
 .worktrees/
+
+# Playwright CLI temporary page dumps
+.playwright-cli/
+
+# Local password reset helper
+reset_pw.py
+

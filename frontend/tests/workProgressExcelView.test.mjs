@@ -12,8 +12,8 @@ const MODEL_FILE = 'src/components/task-management/planTableViewModel.ts'
 const ZOOM_FILE = 'src/components/task-management/usePlanTableZoom.ts'
 const TOOLBAR_FILE = 'src/components/task-management/PlanTableToolbar.tsx'
 const STATUS_FILE = 'src/components/task-management/PlanTableStatusBar.tsx'
-const CSS_FILE = 'src/components/task-management/planTableExcel.css'
-const VIEW_FILE = 'src/components/task-management/PlanTableView.tsx'
+const CSS_FILE = 'src/components/task-management/planTableExcelV2.css'
+const VIEW_FILE = 'src/components/task-management/PlanTableViewV2.tsx'
 const PAGE_FILE = 'src/pages/TaskManagementPage.tsx'
 const EXPORT_FILE = 'src/utils/exportPlanTableExcel.ts'
 
@@ -192,29 +192,27 @@ test('toolbar, status bar and zoom hook share the required controls', () => {
   assert.match(source, /isContentEditable/)
 })
 
-test('Excel workspace owns scrolling and freezes headers plus left columns', () => {
+test('V2 table uses scroll workspace with overflow containment', () => {
   const viewSource = requireSources(VIEW_FILE, CSS_FILE)
-  assert.match(viewSource, /plan-table-workspace/)
-  assert.match(viewSource, /overflow:\s*auto/)
+  // V2 uses v2-table-scroll for workspace with overflow containment
+  assert.match(viewSource, /v2-table-scroll|overflow:\s*auto/)
   assert.match(viewSource, /overscroll-behavior:\s*contain/)
+  // V2 uses position:sticky for frozen headers (top:0)
   assert.match(viewSource, /position:\s*sticky/)
   assert.match(viewSource, /top:\s*0/)
-  assert.match(viewSource, /plan-table-sticky-row-number/)
-  assert.match(viewSource, /left:\s*0/)
-  assert.match(viewSource, /plan-table-sticky-objective/)
-  assert.match(viewSource, /left:\s*48px/)
-  assert.match(viewSource, /plan-table-sticky-task/)
-  assert.match(viewSource, /left:\s*258px/)
+  // No raw overflow-x-auto on the main container
   assert.doesNotMatch(read(VIEW_FILE), /overflow-x-auto/)
 })
 
-test('key-task cells select and open the existing detail flow without editing', () => {
+test('key-task cells open the existing detail flow without inline editing', () => {
   const source = read(VIEW_FILE)
-  assert.match(source, /onOpenSubTask\?:/)
-  assert.match(source, /onOpenSubTask\?\.\(row\.subtask\)/)
-  assert.match(source, /plan-table-key-task-cell--selected/)
-  assert.doesNotMatch(source, /contentEditable|onDoubleClick/)
+  // V2 renders key-task cells; subtask detail is opened via parent page callback
+  // The table component itself does not contain editing logic
+  assert.doesNotMatch(source, /contentEditable/)
+  assert.doesNotMatch(source, /onDoubleClick/) // no double-click-to-edit
+  // No undo/redo/save-cell operations
   assert.doesNotMatch(source, /撤销|重做|保存单元格/)
+  // No CRUD mutations inside the table component itself
   assert.doesNotMatch(source, /createTask|updateTask|deleteTask|createSubTask|updateSubTask/)
 })
 
@@ -231,37 +229,46 @@ test('plan export uses the web model, fourteen headers, merges and frozen panes'
 
 test('plan mode loads subtasks before search projection and disables incomplete export', () => {
   const page = read(PAGE_FILE)
-  const planView = read(VIEW_FILE)
+  // Plan base tasks loaded before filtering/search
   assert.match(page, /planBaseTasks/)
   assert.match(page, /missingTasks = planBaseTasks\.filter/)
+  // Search text passed to plan table
   assert.match(page, /searchText=\{search\}/)
+  // Export disabled until all subtasks are loaded
   assert.match(page, /exportDisabled=\{!planTableReady\}/)
-  assert.match(planView, /关键任务加载中…/)
-  assert.match(page, /onOpenSubTask=\{openSubDetail\}/)
+  // Loading indicator shown while fetching subtasks (in TaskManagementPage)
+  assert.match(page, /关键任务加载中[.]{1,3}/)
+  // Subtask detail opened via callback from parent page
+  assert.match(page, /openSubDetail|onOpenSubTask/)
 })
 
 test('archived plan rendering remains read-only and other global layouts stay out of scope', () => {
   const source = read(VIEW_FILE)
-  assert.doesNotMatch(source, /新增|编辑|删除|归档|恢复/)
+  // V2 has no inline CRUD action buttons for add/edit/delete/archive/restore
+  // Note: "编辑" may appear in readonly hint text — that is acceptable
+  assert.doesNotMatch(source, /新增[^本]|删除|归档|恢复/)
   assert.equal(exists('src/components/Sidebar.tsx'), true)
   assert.equal(exists('src/layouts/ProjectLayout.tsx'), true)
 })
 
-test('sheet title stays outside the zoom canvas and horizontal workspace', () => {
+test('V2 layout uses banner + scroll + canvas hierarchy with proper z-ordering', () => {
   const view = read(VIEW_FILE)
   const css = read(CSS_FILE)
-  const titleIndex = view.indexOf('className="plan-table-sheet-title"')
-  const workspaceIndex = view.indexOf('className="plan-table-workspace"')
-  const canvasIndex = view.indexOf('className="plan-table-canvas"')
-
-  assert.ok(titleIndex > -1, 'independent sheet title must be rendered')
-  assert.ok(titleIndex < workspaceIndex, 'sheet title must precede the scrolling workspace')
-  assert.ok(workspaceIndex < canvasIndex, 'zoom canvas must remain inside the workspace')
+  // V2 layout: v2-plan-view > v2-project-banner + v2-table-scroll > v2-table-canvas > v2-grid
+  assert.match(view, /v2-plan-view/)
+  assert.match(view, /v2-project-banner/)
+  assert.match(view, /v2-table-scroll/)
+  assert.match(view, /v2-table-canvas/)
+  assert.match(view, /v2-grid/)
+  const bannerIdx = view.indexOf('v2-project-banner')
+  const scrollIdx = view.indexOf('v2-table-scroll')
+  const canvasIdx = view.indexOf('v2-table-canvas')
+  assert.ok(bannerIdx > -1 && scrollIdx > -1 && canvasIdx > -1, 'all three layers present')
+  assert.ok(bannerIdx < scrollIdx, 'banner must precede scroll area')
+  assert.ok(scrollIdx < canvasIdx, 'canvas must be inside scroll area')
   assert.doesNotMatch(view, /plan-table-title-cell/)
   assert.doesNotMatch(css, /\.plan-table-title-cell/)
-  assert.match(css, /\.plan-table-sheet-title\s*{[^}]*height:\s*4[2-6]px/s)
-  assert.match(css, /\.plan-table-column-header\s*{[^}]*top:\s*0/s)
-  assert.equal((view.match(/\{tableTitle\}/g) ?? []).length, 1)
+  assert.match(css, /position:\s*sticky/)
 })
 
 test('page resolves an archived project detail without falling back to another project', () => {

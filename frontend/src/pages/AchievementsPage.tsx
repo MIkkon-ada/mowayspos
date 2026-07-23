@@ -434,35 +434,52 @@ export function AchievementsPage() {
     return (
       <div className="flex-1 overflow-y-auto bg-[#f7f9fc]">
         <div className="mx-auto max-w-[1500px] px-6 py-6">
-          <div className="mb-7 flex items-center justify-between gap-6">
-            <div>
-              <h1 className="text-2xl font-black tracking-tight text-slate-950">项目成果库</h1>
-              <p className="mt-1 text-sm text-slate-500">查看项目沉淀成果</p>
-            </div>
-            <div className="flex items-center gap-4">
-              <label className="flex h-11 w-[300px] items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 shadow-sm">
-                <span className="text-lg text-slate-400">⌕</span>
-                <input value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="搜索项目名称" className="min-w-0 flex-1 border-0 bg-transparent text-sm font-medium text-slate-800 outline-none placeholder:text-slate-400" />
-              </label>
-              <button type="button" onClick={openRegisterModal} className="h-11 rounded-lg bg-blue-600 px-5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700">⊕&nbsp; 登记成果</button>
-            </div>
-          </div>
-
-          <div className="achievement-stat-bar mb-5 grid grid-cols-4 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="mb-5 flex items-center gap-4">
             {[
-              ['项目', projects.length],
-              ['已入库成果', overviewLoading ? '…' : overviewStats.total],
-              ['本月新增成果', overviewLoading ? '…' : overviewStats.month],
-              ['最近更新', overviewLoading ? '…' : overviewStats.latestProject],
-            ].map(([label, value], index) => (
-              <div key={label} className={`px-4 py-3 text-center ${index ? 'border-l border-slate-200' : ''}`}>
-                <p className="text-xs font-semibold text-slate-500">{label}</p>
-                <p className="mt-1 truncate text-xl font-black tabular-nums text-blue-600">{value}</p>
+              ['项目', projects.length, 'bg-indigo-50 text-indigo-600', 'text-2xl'],
+              ['已入库成果', overviewLoading ? '…' : overviewStats.total, 'bg-emerald-50 text-emerald-600', 'text-2xl'],
+              ['本月新增成果', overviewLoading ? '…' : overviewStats.month, 'bg-amber-50 text-amber-600', 'text-2xl'],
+              ['最近更新', overviewLoading ? '…' : overviewStats.latestProject, 'bg-sky-50 text-sky-600', 'text-sm'],
+            ].map(([label, value, iconColorClass, valueSize]) => (
+              <div key={label} className="flex flex-1 items-center gap-3 rounded border border-slate-200 bg-white p-4 shadow-sm">
+                <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${iconColorClass}`}>
+                  {label === '项目' && (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+                  )}
+                  {label === '已入库成果' && (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  )}
+                  {label === '本月新增成果' && (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  )}
+                  {label === '最近更新' && (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">{label}</p>
+                  <p className={`mt-0.5 truncate font-black tabular-nums text-slate-950 ${valueSize}`}>{value}</p>
+                </div>
               </div>
             ))}
+
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <input value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} placeholder="搜索项目名称" className="w-52 rounded border border-slate-300 bg-white pl-3 pr-8 py-1.5 text-xs outline-none focus:border-sky-500" />
+                <svg className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              </div>
+              <button type="button" className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+                筛选
+              </button>
+              <button type="button" onClick={openRegisterModal} className="inline-flex items-center gap-1 rounded bg-sky-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-sky-700">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                新增
+              </button>
+            </div>
           </div>
 
-          <div className="achievement-project-picker-card overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="achievement-project-picker-card overflow-hidden rounded border border-slate-200 bg-white shadow-sm">
             <div className="overflow-auto">
               <table className="w-full min-w-[980px] text-left text-sm">
                 <thead className="border-b border-slate-200 bg-slate-50/70 text-sm font-bold text-slate-500">
@@ -508,84 +525,122 @@ export function AchievementsPage() {
   }
 
   return (
-    <div className="flex-1 overflow-hidden bg-[#f6f8fb]">
-      <div className="mx-auto flex h-full max-w-[1440px] flex-col px-5 py-5">
-        <header className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-[11px] font-extrabold uppercase tracking-[0.24em] text-sky-600">PROJECT ACHIEVEMENT LIBRARY</p>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950">{currentProject?.name || '未识别项目'} 项目成果库</h1>
-                <span className="mt-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">{projectStatusLabel(currentProject)}</span>
+    <div className="flex-1 overflow-hidden bg-slate-50">
+      <div className="mx-auto flex h-full max-w-[1600px] flex-col px-6 py-5">
+        <header className="mb-5 shrink-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-sky-600">项目成果库</span>
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-black text-emerald-700">{projectStatusLabel(currentProject)}</span>
               </div>
-              <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-500">
-                <span>项目负责人：{ownerText(currentProject)}</span>
-                <span>Coach / 企业教练：{coachText(currentProject)}</span>
-                <span>项目编号：{currentProject?.code || `#${projectId}`}</span>
+              <h1 className="mt-2 truncate text-xl font-black tracking-tight text-slate-950">{currentProject?.name || '未识别项目'}</h1>
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                <span>负责人：{ownerText(currentProject)}</span>
+                <span>Coach：{coachText(currentProject)}</span>
+                <span>编号：{currentProject?.code || `#${projectId}`}</span>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => navigate('/work/achievements')} className="rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs font-black text-sky-700 hover:bg-sky-50">切换项目</button>
-              <button type="button" onClick={reloadCurrentProject} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-600 hover:bg-slate-50">刷新</button>
-              <button type="button" disabled className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-400">导出清单</button>
-              <button type="button" onClick={openRegisterModal} disabled={projectArchived} className="rounded-xl bg-sky-600 px-4 py-2 text-xs font-black text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50">登记成果</button>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <button type="button" onClick={() => navigate('/work/achievements')} className="rounded-lg border border-sky-200 bg-white px-3 py-2 text-xs font-black text-sky-700 shadow-sm hover:bg-sky-50">切换项目</button>
+              <button type="button" onClick={reloadCurrentProject} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-600 shadow-sm hover:bg-slate-50">刷新</button>
+              <button type="button" disabled className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-400">导出清单</button>
+              <button type="button" onClick={openRegisterModal} disabled={projectArchived} className="rounded-lg bg-sky-600 px-4 py-2 text-xs font-black text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50">登记成果</button>
             </div>
-          </div>
-
-          <div className="achievement-stat-bar mt-4 grid grid-cols-5 overflow-hidden rounded-lg border border-slate-200 bg-white">
-            {[
-              ['成果总数', stats.total],
-              ['本月新增', stats.month],
-              ['AI确认入库', stats.ai],
-              ['手动登记', stats.manual],
-              ['关联重点工作数', stats.taskCount],
-            ].map(([label, value]) => (
-              <div key={label} className="border-r border-slate-200 px-4 py-2 last:border-r-0">
-                <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">{label}</p>
-                <p className="mt-1 text-xl font-black tabular-nums text-slate-950">{value}</p>
-              </div>
-            ))}
           </div>
         </header>
 
-        <div className="achievement-workbench-grid grid min-h-0 flex-1 gap-4 pt-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(380px,1fr)]">
-          <main className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="achievement-filter-bar flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50/90 px-4 py-2">
-              <select value={filterType} onChange={(event) => setFilterType(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700">
-                <option>全部</option>
-                {ACHIEVEMENT_TYPES.map((type) => <option key={type}>{type}</option>)}
-              </select>
-              <select value={filterTaskId} onChange={(event) => setFilterTaskId(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700">
-                <option value="">重点工作</option>
-                {tasks.map((task) => <option key={task.id} value={task.id}>{task.key_task}</option>)}
-              </select>
-              <select disabled className="rounded-lg border border-slate-200 bg-slate-100 px-2 py-1.5 text-xs text-slate-400" title="关键任务筛选">
-                <option>关键任务</option>
-              </select>
-              <select value={filterSource} onChange={(event) => setFilterSource(event.target.value as (typeof SOURCE_OPTIONS)[number])} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700">
-                {SOURCE_OPTIONS.map((source) => <option key={source}>{source}</option>)}
-              </select>
-              <select value={filterDate} onChange={(event) => setFilterDate(event.target.value as (typeof DATE_OPTIONS)[number])} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700">
-                {DATE_OPTIONS.map((option) => <option key={option}>{option}</option>)}
-              </select>
-              <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索成果名称" className="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-sky-400" />
+        <div className="mb-5 grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+            </div>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">成果总数</p>
+              <p className="mt-0.5 text-lg font-black tabular-nums text-slate-950">{stats.total}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" /></svg>
+            </div>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">本月新增</p>
+              <p className="mt-0.5 text-lg font-black tabular-nums text-slate-950">{stats.month}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-50 text-purple-600">
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" /></svg>
+            </div>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">AI确认入库</p>
+              <p className="mt-0.5 text-lg font-black tabular-nums text-slate-950">{stats.ai}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>
+            </div>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">手动登记</p>
+              <p className="mt-0.5 text-lg font-black tabular-nums text-slate-950">{stats.manual}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-rose-50 text-rose-600">
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V19.5a2.25 2.25 0 002.25 2.25h.75m0-3H12" /></svg>
+            </div>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">关联重点工作数</p>
+              <p className="mt-0.5 text-lg font-black tabular-nums text-slate-950">{stats.taskCount}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid min-h-0 flex-1 gap-5 lg:grid-cols-[1fr_420px]">
+          <main className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-white px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <select value={filterType} onChange={(event) => setFilterType(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
+                  <option>全部</option>
+                  {ACHIEVEMENT_TYPES.map((type) => <option key={type}>{type}</option>)}
+                </select>
+                <select value={filterTaskId} onChange={(event) => setFilterTaskId(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
+                  <option value="">重点工作</option>
+                  {tasks.map((task) => <option key={task.id} value={task.id}>{task.key_task}</option>)}
+                </select>
+                <select disabled className="rounded-lg border border-slate-200 bg-slate-100 px-2 py-1.5 text-xs font-semibold text-slate-400" title="关键任务筛选">
+                  <option>关键任务</option>
+                </select>
+                <select value={filterSource} onChange={(event) => setFilterSource(event.target.value as (typeof SOURCE_OPTIONS)[number])} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
+                  {SOURCE_OPTIONS.map((source) => <option key={source}>{source}</option>)}
+                </select>
+                <select value={filterDate} onChange={(event) => setFilterDate(event.target.value as (typeof DATE_OPTIONS)[number])} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
+                  {DATE_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+                </select>
+              </div>
+              <div className="relative w-full sm:w-auto">
+                <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索成果名称" className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-9 pr-3 text-xs text-slate-700 outline-none focus:border-sky-400 sm:w-[220px]" />
+                <svg className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
+              </div>
             </div>
 
             {loadError && <div className="mx-4 mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{loadError}</div>}
 
             <div className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full min-w-[1120px] text-left text-sm">
-                <thead className="sticky top-0 bg-slate-100/90 text-xs font-bold uppercase tracking-wide text-slate-500">
+              <table className="w-full min-w-[1000px] text-left text-sm">
+                <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th className="px-4 py-2">成果名称</th>
-                    <th className="px-3 py-2">成果类型</th>
-                    <th className="px-3 py-2">关联重点工作 / 关键任务</th>
-                    <th className="px-3 py-2">来源</th>
-                    <th className="px-3 py-2">提交/登记人</th>
-                    <th className="px-3 py-2">确认/入库人</th>
-                    <th className="px-3 py-2 text-right">入库时间</th>
-                    <th className="px-3 py-2">版本</th>
-                    <th className="px-3 py-2 text-center">操作</th>
+                    <th className="px-4 py-3 font-semibold">成果名称</th>
+                    <th className="px-3 py-3 font-semibold">成果类型</th>
+                    <th className="px-3 py-3 font-semibold">关联重点工作 / 关键任务</th>
+                    <th className="px-3 py-3 font-semibold">来源</th>
+                    <th className="px-3 py-3 font-semibold">提交/登记人</th>
+                    <th className="px-3 py-3 font-semibold">确认/入库人</th>
+                    <th className="px-3 py-3 text-right font-semibold">入库时间</th>
+                    <th className="px-3 py-3 font-semibold">版本</th>
+                    <th className="px-3 py-3 text-center font-semibold">操作</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -598,18 +653,18 @@ export function AchievementsPage() {
                     const source = sourceLabel(item)
                     return (
                       <tr key={item.id} onClick={() => { setSelected(item); setEditMode(false) }} className={`cursor-pointer transition hover:bg-sky-50 ${active ? 'border-l-2 border-sky-500 bg-sky-50 ring-1 ring-inset ring-sky-200' : 'border-l-2 border-transparent'}`}>
-                        <td className="px-4 py-2 font-semibold text-slate-900">{item.name || '未命名成果'}</td>
-                        <td className="px-3 py-2"><span className={`rounded-md border px-2 py-0.5 text-xs font-bold ${typeBadgeClass(item.achievement_type)}`}>{item.achievement_type || '文档'}</span></td>
-                        <td className="max-w-[240px] px-3 py-2 text-slate-600">
+                        <td className="px-4 py-3 font-semibold text-slate-900">{item.name || '未命名成果'}</td>
+                        <td className="px-3 py-3"><span className={`rounded-md border px-2 py-0.5 text-xs font-bold ${typeBadgeClass(item.achievement_type)}`}>{item.achievement_type || '文档'}</span></td>
+                        <td className="max-w-[260px] px-3 py-3 text-slate-600">
                           <p className="truncate">{taskName(tasks, item.related_task_id)}</p>
                           <p className="text-xs text-slate-400">关键任务：{keyTaskLabelForAchievement(item, subtaskById)}</p>
                         </td>
-                        <td className="px-3 py-2"><span className={`rounded-full border px-2 py-0.5 text-xs font-black ${source === 'AI确认入库' ? 'border-purple-100 bg-purple-50 text-purple-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>{source}</span></td>
-                        <td className="px-3 py-2 text-slate-600">{item.owner || '—'}</td>
-                        <td className="px-3 py-2 text-slate-600">{item.confirmed_by || item.owner || '—'}</td>
-                        <td className="px-3 py-2 text-right font-mono text-xs text-slate-500">{formatDate(item.confirmed_at || item.updated_at || item.created_at)}</td>
-                        <td className="px-3 py-2 font-mono text-xs text-slate-500">{item.version || 'V0.1'}</td>
-                        <td className="px-3 py-2 text-center">
+                        <td className="px-3 py-3"><span className={`rounded-full border px-2 py-0.5 text-xs font-black ${source === 'AI确认入库' ? 'border-purple-100 bg-purple-50 text-purple-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>{source}</span></td>
+                        <td className="px-3 py-3 text-slate-600">{item.owner || '—'}</td>
+                        <td className="px-3 py-3 text-slate-600">{item.confirmed_by || item.owner || '—'}</td>
+                        <td className="px-3 py-3 text-right font-mono text-xs text-slate-500">{formatDate(item.confirmed_at || item.updated_at || item.created_at)}</td>
+                        <td className="px-3 py-3 font-mono text-xs text-slate-500">{item.version || 'V0.1'}</td>
+                        <td className="px-3 py-3 text-center">
                           <button type="button" onClick={(event) => { event.stopPropagation(); setSelected(item) }} className="rounded-md px-2 py-1 text-xs font-bold text-sky-700 hover:bg-sky-100">查看</button>
                         </td>
                       </tr>
@@ -620,71 +675,88 @@ export function AchievementsPage() {
             </div>
           </main>
 
-          <aside className="achievement-detail-panel min-h-0 overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <aside className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             {!selected ? (
-              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-400">选择左侧成果查看详情</div>
+              <div className="m-4 flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-400">
+                <svg className="mb-2 h-8 w-8 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
+                选择左侧成果查看详情
+              </div>
             ) : (
-              <div className="space-y-3">
-                <section className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-                  <p className="text-xs font-black uppercase tracking-wider text-sky-600">详情查看</p>
-                  <p className="mt-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">当前选中</p>
+              <div className="flex h-full flex-col">
+                <div className="border-b border-slate-100 px-5 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-sky-600">成果详情</p>
+                      <h2 className="mt-1 text-lg font-bold leading-tight text-slate-900">{selected.name || '未命名成果'}</h2>
+                    </div>
+                    <span className={`shrink-0 rounded-md border px-2 py-0.5 text-xs font-bold ${typeBadgeClass(selected.achievement_type)}`}>{selected.achievement_type || '文档'}</span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-semibold text-slate-600">{selected.version || 'V0.1'}</span>
+                    {selected.reuse_tag && <span className="rounded-md border border-sky-100 bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-700">{selected.reuse_tag}</span>}
+                    <span className={`rounded-full border px-2 py-0.5 text-[11px] font-black ${sourceLabel(selected) === 'AI确认入库' ? 'border-purple-100 bg-purple-50 text-purple-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>{sourceLabel(selected)}</span>
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-5 py-4">
                   {editMode ? (
-                    <div className="mt-3 space-y-3">
+                    <div className="space-y-3">
                       {editError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{editError}</div>}
-                      <input value={editDraft.name} onChange={(event) => setEditDraft((prev) => ({ ...prev, name: event.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400" />
-                      <input value={editDraft.version} onChange={(event) => setEditDraft((prev) => ({ ...prev, version: event.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400" />
+                      <div className="grid grid-cols-2 gap-3">
+                        <input value={editDraft.name} onChange={(event) => setEditDraft((prev) => ({ ...prev, name: event.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400" placeholder="成果名称" />
+                        <input value={editDraft.version} onChange={(event) => setEditDraft((prev) => ({ ...prev, version: event.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400" placeholder="版本" />
+                      </div>
                       <input value={editDraft.reuse_tag} onChange={(event) => setEditDraft((prev) => ({ ...prev, reuse_tag: event.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400" placeholder="标签" />
-                      <textarea value={editDraft.scenario} onChange={(event) => setEditDraft((prev) => ({ ...prev, scenario: event.target.value }))} rows={4} className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400" />
+                      <textarea value={editDraft.scenario} onChange={(event) => setEditDraft((prev) => ({ ...prev, scenario: event.target.value }))} rows={5} className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400" placeholder="成果描述" />
                       <input value={editDraft.file_link} onChange={(event) => setEditDraft((prev) => ({ ...prev, file_link: event.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400" placeholder="文件链接/存储地址" />
                       <div className="flex gap-2">
                         <button type="button" onClick={saveEditAchievement} disabled={editSaving} className="flex-1 rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">保存</button>
-                        <button type="button" onClick={() => setEditMode(false)} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600">取消</button>
+                        <button type="button" onClick={() => setEditMode(false)} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">取消</button>
                       </div>
                     </div>
                   ) : (
-                    <>
-                      <h2 className="mt-2 text-lg font-bold text-slate-900">{selected.name || '未命名成果'}</h2>
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        <span className={`rounded-md border px-2 py-0.5 text-xs font-bold ${typeBadgeClass(selected.achievement_type)}`}>{selected.achievement_type || '文档'}</span>
-                        <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-600">{selected.version || 'V0.1'}</span>
-                        {selected.reuse_tag && <span className="rounded-md border border-sky-100 bg-sky-50 px-2 py-0.5 text-xs text-sky-700">{selected.reuse_tag}</span>}
-                      </div>
-                    </>
+                    <div className="space-y-5">
+                      <section>
+                        <h3 className="mb-2 text-xs font-black uppercase tracking-wide text-slate-400">摘要与追溯</h3>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-sm">
+                          <Info label="所属项目" value={currentProject?.name || selected.special_project || '—'} />
+                          <Info label="来源" value={sourceLabel(selected)} />
+                          <Info label="关联重点工作" value={selectedTaskName} span />
+                          <Info label="关联关键任务" value={keyTaskLabelForAchievement(selected, subtaskById)} span />
+                          <Info label="提交人" value={selected.owner || '—'} />
+                          <Info label="确认/入库人" value={selected.confirmed_by || selected.owner || '—'} />
+                          <div className="col-span-2">
+                            {selected.source_submission_id ? (
+                              <button type="button" className="text-xs font-bold text-sky-700 hover:underline">查看原始提交 #{selected.source_submission_id}</button>
+                            ) : (
+                              <span className="text-xs text-slate-400">查看原始提交：手动登记无原始提交</span>
+                            )}
+                          </div>
+                        </div>
+                      </section>
+
+                      <section>
+                        <h3 className="mb-2 text-xs font-black uppercase tracking-wide text-slate-400">成果描述</h3>
+                        <p className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-sm leading-relaxed text-slate-700 whitespace-pre-wrap">{selected.scenario || '暂无成果说明'}</p>
+                      </section>
+
+                      <section>
+                        <h3 className="mb-2 text-xs font-black uppercase tracking-wide text-slate-400">附件与链接</h3>
+                        {selected.file_link ? (
+                          <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                            <p className="break-all text-xs text-slate-600">{selected.file_link}</p>
+                            <button type="button" onClick={() => openAchievementLink(selected)} className="mt-2 rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-xs font-bold text-sky-700 hover:bg-sky-50">打开成果</button>
+                          </div>
+                        ) : <p className="text-sm text-slate-400">暂无附件与链接</p>}
+                      </section>
+                    </div>
                   )}
-                </section>
+                </div>
 
-                <section className="rounded-lg border border-slate-200 bg-white p-3">
-                  <h3 className="mb-2 border-b border-slate-100 pb-1.5 text-xs font-black text-slate-600">摘要与追溯</h3>
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <Info label="所属项目" value={currentProject?.name || selected.special_project || '—'} />
-                    <Info label="来源" value={sourceLabel(selected)} />
-                    <Info label="关联重点工作" value={selectedTaskName} span />
-                    <Info label="关联关键任务" value={keyTaskLabelForAchievement(selected, subtaskById)} span />
-                    <Info label="提交人" value={selected.owner || '—'} />
-                    <Info label="确认/入库人" value={selected.confirmed_by || selected.owner || '—'} />
-                    <div className="col-span-2">
-                      {selected.source_submission_id ? (
-                        <button type="button" className="text-xs font-bold text-sky-700 hover:underline">查看原始提交 #{selected.source_submission_id}</button>
-                      ) : (
-                        <span className="text-xs text-slate-400">查看原始提交：手动登记无原始提交</span>
-                      )}
-                    </div>
-                  </div>
-                </section>
-
-                <DetailSection title="成果描述">{selected.scenario || '暂无成果说明'}</DetailSection>
-                <section className="rounded-lg border border-slate-200 bg-white p-3">
-                  <h3 className="mb-2 border-b border-slate-100 pb-1.5 text-xs font-black text-slate-600">附件与链接</h3>
-                  {selected.file_link ? (
-                    <div className="space-y-2">
-                      <p className="break-all rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{selected.file_link}</p>
-                      <button type="button" onClick={() => openAchievementLink(selected)} className="rounded-lg border border-sky-200 px-3 py-2 text-xs font-bold text-sky-700 hover:bg-sky-50">打开成果</button>
-                    </div>
-                  ) : <p className="text-sm text-slate-400">暂无附件与链接</p>}
-                </section>
-                <DetailSection title="使用场景与备注">{selected.reuse_tag || selected.scenario || '暂无备注'}</DetailSection>
                 {!editMode && (
-                  <button type="button" onClick={beginEditAchievement} disabled={projectArchived} className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">编辑成果信息</button>
+                  <div className="border-t border-slate-100 px-5 py-3">
+                    <button type="button" onClick={beginEditAchievement} disabled={projectArchived} className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">编辑成果信息</button>
+                  </div>
                 )}
               </div>
             )}

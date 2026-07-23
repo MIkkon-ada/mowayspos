@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 const source = readFileSync(new URL('../src/pages/AchievementsPage.tsx', import.meta.url), 'utf8')
 
 test('achievement library overview matches the full project table information architecture', () => {
-  for (const label of ['项目成果库', '查看项目沉淀成果', '搜索项目名称', '登记成果']) assert.match(source, new RegExp(label))
+  for (const label of ['项目成果库', '搜索项目名称', '登记成果', '查看成果']) assert.match(source, new RegExp(label))
   for (const label of ['项目', '已入库成果', '本月新增成果', '最近更新']) assert.match(source, new RegExp(label))
   for (const label of ['项目名称', '状态', '项目负责人', '企业教练', '成果数量', '最近更新', '操作']) assert.match(source, new RegExp(label))
   assert.match(source, /fetchAchievements\(project\.id\)/)

@@ -187,6 +187,7 @@ export function buildPlanRows({
   const projectManagers = project?.owners?.filter(Boolean).join('、') || ''
   const query = searchText.trim()
   const groupedRows: Array<Omit<PlanTableRow, 'sequence' | 'objectiveRowSpan' | 'showObjective'>> = []
+  let globalSubtaskIndex = 0
 
   tasks.forEach((task) => {
     const allSubtasks = taskSubMap[task.id] ?? []
@@ -202,7 +203,8 @@ export function buildPlanRows({
     const taskRowSpan = taskRows.length
 
     taskRows.forEach((subtask, taskIndex) => {
-      const subtaskIndex = subtask ? taskIndex + 1 : 0
+      if (subtask) globalSubtaskIndex += 1
+      const subtaskIndex = subtask ? globalSubtaskIndex : 0
       const parsedNotes = parseAssistingPerson(subtask?.notes)
       const planTime = parsePlanTimeRange(subtask?.plan_time || task.plan_time)
       const status = getPlanStatusLabel(subtask?.status || task.status)

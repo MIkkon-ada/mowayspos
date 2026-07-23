@@ -489,6 +489,12 @@ export function TaskManagementPage() {
     ensurePlanTableSubTasksLoaded()
   }, [viewMode, planBaseTasks, planTableLoading, taskSubMap])
 
+  // 进入计划视图时预加载项目成员列表（用于责任人下拉）
+  useEffect(() => {
+    if (viewMode !== 'plan' || !focusedProject) return
+    ensureProjectMembersLoaded(focusedProject.id)
+  }, [viewMode, focusedProject])
+
   const planTableReady = !planTableLoading && planBaseTasks.every((task) => task.id in taskSubMap)
 
   function assignmentMembers(projectId: number | null | undefined) {
@@ -871,6 +877,13 @@ function handleFormSave(payload: TaskPayload) {
           projectId={selectedTask.project_id ?? currentProjectId}
           editingSubTask={editingSubTask}
           projectMembers={assignmentMembers(selectedTask.project_id ?? currentProjectId)}
+          extraNames={(() => {
+            const pid = selectedTask.project_id ?? currentProjectId
+            const names = new Set<string>()
+            tasks.forEach((t) => { if (t.project_id === pid && t.owner?.trim()) names.add(t.owner.trim()) })
+            subTasks.forEach((s) => { if (s.project_id === pid && s.assignee?.trim()) names.add(s.assignee.trim()) })
+            return [...names]
+          })()}
           onSave={(st) => {
             setSubTasks((prev) => {
               const exists = prev.some((item) => item.id === st.id)
@@ -1082,7 +1095,30 @@ function handleFormSave(payload: TaskPayload) {
               loading={planTableLoading}
               exportDisabled={!planTableReady}
               onExport={handlePlanExport}
-              onOpenSubTask={openSubDetail}
+              currentUserName={currentUser?.name}
+              projectRoles={currentProjectRoles ?? []}
+              isTechAdmin={currentUser?.is_tech_admin ?? false}
+              projectMembers={projectMembersByProject[focusedProject?.id ?? 0] ?? []}
+              onUpdateSubTask={async (id, payload) => {
+                const updated = await updateSubTask(id, {
+                  ...payload,
+                  project_id: focusedProject!.id,
+                })
+                setTaskSubMap((prev) => {
+                  const next = { ...prev }
+                  for (const tid of Object.keys(next)) {
+                    const list = next[Number(tid)]
+                    const idx = list.findIndex((s) => s.id === id)
+                    if (idx >= 0) {
+                      next[Number(tid)] = [...list]
+                      next[Number(tid)][idx] = updated
+                      break
+                    }
+                  }
+                  return next
+                })
+                return updated
+              }}
             />
           ) : loading ? (
             <div className="h-40 flex items-center justify-center text-slate-400 text-sm">加载中...</div>
@@ -1236,7 +1272,6 @@ function handleFormSave(payload: TaskPayload) {
                                 >
                                   <span className="flex-shrink-0 w-4" />
                                   <span className="text-xs font-semibold flex-shrink-0 mr-2" style={{ color: groupColor, minWidth: 30 }}>{i+1}.{subIdx+1}</span>
-                                  <span className="inline-flex items-center px-1 py-0.5 rounded text-xs font-semibold flex-shrink-0 mr-2" style={{ background: '#EDE9FE', color: '#7C3AED' }}>子</span>
                                   <span className="text-sm text-slate-700 truncate flex-1">{st.title}</span>
                                   <div className="flex-shrink-0" style={{ width: 136 }}><OwnerCell name={st.assignee} /></div>
                                   <div className="text-xs text-slate-500 flex-shrink-0" style={{ width: 108 }}>{shortDate(st.plan_time)}</div>
@@ -1971,22 +2006,24 @@ function buildNotesWithAssistingPerson(assistingPerson: string, noteText: string
   return lines.join('\n')
 }
 
-function uniqueProjectMemberNames(projectMembers: ProjectMember[], currentName?: string | null) {
+function uniqueProjectMemberNames(projectMembers: ProjectMember[], currentName?: string | null, extraNames?: string[]) {
   const names = projectMembers.map((member) => member.person_name_snapshot).filter(Boolean)
   if (currentName?.trim()) names.push(currentName.trim())
+  extraNames?.forEach((n) => { if (n?.trim()) names.push(n.trim()) })
   return [...new Set(names)]
 }
 
-function SubTaskAssignmentModal({ taskId, projectId, editingSubTask, projectMembers, onSave, onClose }: {
+function SubTaskAssignmentModal({ taskId, projectId, editingSubTask, projectMembers, extraNames, onSave, onClose }: {
   taskId: number
   projectId: number | null
   editingSubTask: SubTaskItem | SubTaskDetail | null
   projectMembers: ProjectMember[]
+  extraNames?: string[]
   onSave: (st: SubTaskItem) => void
   onClose: () => void
 }) {
   const parsedNotes = splitAssistingPersonFromNotes(editingSubTask?.notes)
-  const memberNames = uniqueProjectMemberNames(projectMembers, editingSubTask?.assignee)
+  const memberNames = uniqueProjectMemberNames(projectMembers, editingSubTask?.assignee, extraNames)
   const [title, setTitle] = useState(editingSubTask?.title ?? '')
   const [assignee, setAssignee] = useState(editingSubTask?.assignee ?? memberNames[0] ?? '')
   const [assistingPerson, setAssistingPerson] = useState(parsedNotes.assistingPerson)

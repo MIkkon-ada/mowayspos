@@ -46,7 +46,12 @@ test('AI confirmation center contains reviewer views only', () => {
   assert.doesNotMatch(source, /fetchMyUpdates/)
   assert.doesNotMatch(source, /我的提交记录/)
   assert.doesNotMatch(source, /viewMode\s*===\s*['"]mine['"]/)
-  for (const label of ['待确认', '待我统筹', '待我决策']) assert.match(source, new RegExp(label))
+  // Tab labels shown in empty states (not explicit tab definitions)
+  for (const label of ['待确认事项', '暂无待统筹事项', '暂无待决策事项']) assert.match(source, new RegExp(label))
+  // View mode enum only has reviewer modes — no 'mine'
+  assert.match(source, /viewMode === 'ceo'/)
+  assert.match(source, /viewMode === 'coordinator'/)
+  assert.match(source, /viewMode === 'all'/)
   for (const handler of ['handleConfirm', 'handleDecision', 'handleTaskCardDecision', 'handleCoordinatorFeedback', 'handleCoachSubmissionDecide']) {
     assert.match(source, new RegExp(`\\b${handler}\\b`))
   }

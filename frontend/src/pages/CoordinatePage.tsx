@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { fetchPeople } from '../api/people'
 import { getProjectMembers } from '../api/projects'
+import { fetchTasks } from '../api/tasks'
+import { fetchSubTasksBatch } from '../api/subtasks'
 import { getOverview } from '../api/dashboard'
 import { useProject } from '../context/ProjectContext'
 import { getProjectRoleLabel } from '../domain/roleLabels'
-import type { Person, Project, ProjectMember } from '../types'
+import type { Person, Project, ProjectMember, TaskItem, SubTaskItem } from '../types'
 
 
 const PROJ_ROLE_ORDER: Record<string, number> = {
@@ -29,6 +31,36 @@ function avaColor(name?: string) {
   return AVATAR_COLORS[((name?.charCodeAt(0) ?? 0)) % AVATAR_COLORS.length]
 }
 
+/** 从任务/子任务中推断出的人员，补充到角色图中（不影响正式项目成员） */
+function addInferredRole(
+  roleMap: Map<number, PersonRole[]>,
+  membersMap: Map<number, ProjectMember[]>,
+  peopleByName: Map<string, Person>,
+  project: Project,
+  rawName: string,
+  role: string,
+) {
+  const person = peopleByName.get(rawName.trim())
+  if (!person) return
+  // 如果已有正式角色，不再用推断的 member 覆盖
+  const existing = roleMap.get(person.id) ?? []
+  if (existing.some((r) => r.project.id === project.id)) return
+  existing.push({ project, role })
+  roleMap.set(person.id, existing)
+
+  const members = membersMap.get(project.id) ?? []
+  members.push({
+    id: -person.id,
+    project_id: project.id,
+    person_id: person.id,
+    person_name_snapshot: person.name,
+    role,
+    note: null,
+    joined_at: '',
+  } as unknown as ProjectMember)
+  membersMap.set(project.id, members)
+}
+
 type PersonRole = { project: Project; role: string }
 type ViewMode = 'project' | 'people'
 
@@ -51,11 +83,18 @@ export function CoordinatePage() {
     Promise.all([
       fetchPeople(),
       ...projects.map((p) => getProjectMembers(p.id).catch(() => [] as ProjectMember[])),
+      fetchTasks(null).catch(() => [] as TaskItem[]),
       getOverview(null).catch(() => null),
-    ]).then(([peopleList, ...rest]) => {
+    ]).then(async ([peopleList, ...rest]) => {
       if (cancelled) return
       const overviewData = rest[rest.length - 1] as any
       const allMembersArr = rest.slice(0, projects.length) as ProjectMember[][]
+      const allTasks = rest[projects.length] as TaskItem[]
+
+      const taskIds = allTasks.map((t) => t.id)
+      const subTaskMap = taskIds.length
+        ? await fetchSubTasksBatch(taskIds).catch(() => ({} as Record<string, SubTaskItem[]>))
+        : ({} as Record<string, SubTaskItem[]>)
 
       const roleMap   = new Map<number, PersonRole[]>()
       const membersMap = new Map<number, ProjectMember[]>()
@@ -67,6 +106,36 @@ export function CoordinatePage() {
           const list = roleMap.get(m.person_id) ?? []
           list.push({ project, role: m.role })
           roleMap.set(m.person_id, list)
+        })
+      })
+
+      // 从任务/子任务中推断项目参与人员（未在项目成员表中的）
+      const peopleByName = new Map<string, Person>()
+      ;(peopleList as Person[]).forEach((p) => { peopleByName.set(p.name, p) })
+
+      allTasks.forEach((task) => {
+        const project = projects.find((p) => p.id === task.project_id)
+        if (!project) return
+        if (task.owner) addInferredRole(roleMap, membersMap, peopleByName, project, task.owner, 'member')
+      })
+
+      Object.entries(subTaskMap).forEach(([taskId, subs]) => {
+        const task = allTasks.find((t) => String(t.id) === taskId)
+        const project = task ? projects.find((p) => p.id === task.project_id) : undefined
+        if (!project) return
+        subs.forEach((sub) => {
+          if (sub.assignee) addInferredRole(roleMap, membersMap, peopleByName, project, sub.assignee, 'member')
+          if (sub.notes) {
+            // 协同人格式：姓名1、姓名2，或 协同人：姓名1/姓名2
+            const cleaned = sub.notes.replace(/^协同人[：:]\s*/, '')
+            const collaborators = cleaned.split(/[、/\\,，;；\\s]+/)
+            collaborators.forEach((name) => {
+              const trimmed = name.replace(/[（(].*?[）)]/g, '').trim()
+              if (trimmed && !trimmed.includes('全员') && !trimmed.includes('待指定') && !trimmed.includes('项目经理')) {
+                addInferredRole(roleMap, membersMap, peopleByName, project, trimmed, 'member')
+              }
+            })
+          }
         })
       })
 

@@ -39,8 +39,7 @@ export function VoiceUpdateTaskBindingBar({
 }: VoiceUpdateTaskBindingBarProps) {
   return (
     <section className="voice-update-binding" aria-label="汇报任务绑定">
-      <label className="voice-update-binding-field">
-        <span>汇报范围</span>
+      <label className="voice-update-binding-field is-scope">
         <select value={scope} disabled={controlsLocked} onChange={(event) => onScopeChange(event.target.value as VoiceReportScope)}>
           <option value="all">我的全部工作</option>
           <option value="project">指定项目</option>

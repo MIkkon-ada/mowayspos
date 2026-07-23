@@ -1,0 +1,35 @@
+- generic [ref=e5]:
+  - banner [ref=e6]
+  - main [ref=e8]:
+    - region "系统介绍" [ref=e9]:
+      - heading "Moways-SOP" [level=1] [ref=e10]
+      - heading "Moways 项目协同平台" [level=2] [ref=e11]
+      - paragraph [ref=e13]: 内部协同平台
+    - region "登录表单" [ref=e14]:
+      - generic [ref=e15]:
+        - heading "welcome" [level=2] [ref=e16]
+        - paragraph [ref=e17]: 请输入您的系统账号与密码以访问管理平台。
+        - generic [ref=e18]:
+          - generic [ref=e19]: 系统账号
+          - textbox "系统账号" [ref=e20]:
+            - /placeholder: 请输入系统账号
+            - text: 杨宇帆
+        - generic [ref=e21]:
+          - generic [ref=e22]:
+            - generic [ref=e23]: 密码
+            - button "忘记密码？" [ref=e24] [cursor=pointer]
+          - textbox "密码" [ref=e25]:
+            - /placeholder: 请输入密码
+            - text: "123456"
+        - generic [ref=e35]: 账号或密码错误
+        - button "进入系统" [ref=e26] [cursor=pointer]
+        - generic [ref=e27]: 或
+        - button "企业微信登录" [ref=e29] [cursor=pointer]
+        - generic [ref=e32]:
+          - text: 本系统仅供授权人员内部使用。登录即表示您已同意
+          - link "服务条款" [ref=e33] [cursor=pointer]:
+            - /url: "#"
+          - text: 与
+          - link "数据隐私协议" [ref=e34] [cursor=pointer]:
+            - /url: "#"
+          - text: 。

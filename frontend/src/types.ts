@@ -342,6 +342,8 @@ export type SubTaskItem = {
   id: number
   /** 关联的上级重点工作(Workstream) ID */
   task_id: number
+  /** 所属项目 ID（冗余字段，便于按项目筛选） */
+  project_id?: number | null
   title: string
   assignee: string
   plan_time: string
@@ -361,6 +363,14 @@ export type SubTaskItem = {
 
 /** alias：SubTaskItem 即 KeyTaskItem */
 export type KeyTaskItem = SubTaskItem
+
+/** SubTaskItem + 父级任务上下文（用于项目详情页展示） */
+export type SubTaskWithParent = SubTaskItem & {
+  parent_key_task: string
+  parent_task_id: number
+  parent_project_id: number | null
+  parent_special_project: string
+}
 
 // GET /api/confirmations/pending?project_id=X 列表项（crud.to_dict + 注入字段）
 export type ConfirmationItem = {

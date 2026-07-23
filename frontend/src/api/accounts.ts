@@ -40,6 +40,10 @@ export function updateAccountStatus(id: number, status: AccountItem['status']): 
   return apiPatch<AccountItem>(`/api/accounts/${id}/status`, { status })
 }
 
+export function updateAccount(id: number, payload: { username: string }): Promise<AccountItem> {
+  return apiPatch<AccountItem>(`/api/accounts/${id}`, payload)
+}
+
 export function bindAccountWecom(id: number, wecomUserid: string): Promise<AccountItem> {
   return apiPut<AccountItem>(`/api/accounts/${id}/wecom`, { wecom_userid: wecomUserid })
 }

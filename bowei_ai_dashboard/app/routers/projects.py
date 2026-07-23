@@ -972,7 +972,10 @@ def list_members(
         .order_by(models.ProjectMember.joined_at)
         .all()
     )
-    return [_member_to_dict(m) for m in members]
+    return [
+        {**_member_to_dict(m), "person_name_snapshot": _person_name(m, db)}
+        for m in members
+    ]
 
 
 @router.post("/{project_id}/members")

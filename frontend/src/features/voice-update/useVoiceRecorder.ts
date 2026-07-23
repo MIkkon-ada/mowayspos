@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 
 type UseVoiceRecorderArgs = {
   setText: (updater: string | ((prev: string) => string)) => void
   setError: (value: string | null) => void
 }
 
-/** AudioWorklet 返回消息类型 */
 type WorkletMessage =
   | { type: 'pcm'; buffer: ArrayBuffer }
   | { type: 'silence'; duration: number }
@@ -14,204 +13,265 @@ export function useVoiceRecorder({ setText, setError }: UseVoiceRecorderArgs) {
   const [recording, setRecording] = useState(false)
   const [timer, setTimer] = useState(0)
 
-  const timerRef = useRef<number | null>(null)
+  const stoppingRef = useRef(false)
+  const recordingRef = useRef(false)
+  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
-  const workletRef = useRef<AudioWorkletNode | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const committedRef = useRef('')
-  const partialRef = useRef('')
-  /** 防止 stopRecording 和 VAD 自动停止并发调用 */
-  const stoppingRef = useRef(false)
 
-  // 组件卸载时清理
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
-      cleanup()
+  const clearTimer = useCallback(() => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current)
+      timerIntervalRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  /** 上次更新 DOM 的时间戳，用于平滑渲染 */
+  const lastRenderRef = useRef(0)
+  const pendingTextRef = useRef('')
+
+  /** 将识别结果平滑更新到 UI：每 ~50ms 刷新一次，避免高频 setState 造成的卡顿 */
+  const smoothSetText = useCallback(
+    (text: string, final: boolean) => {
+      pendingTextRef.current = text
+      const now = performance.now()
+      // final 结果立即刷新；非 final 结果节流到 50ms 一次
+      if (final || now - lastRenderRef.current >= 50) {
+        lastRenderRef.current = now
+        setText(() => {
+          const lines = pendingTextRef.current.split('\n')
+          return lines.join('\n')
+        })
+      }
+    },
+    [setText],
+  )
+
+  /** 提交最后一次待渲染的文本 */
+  const flushPendingText = useCallback(() => {
+    if (pendingTextRef.current) {
+      setText(() => {
+        const lines = pendingTextRef.current.split('\n')
+        return lines.join('\n')
+      })
+      pendingTextRef.current = ''
+    }
+  }, [setText])
 
   const cleanup = useCallback(() => {
     stoppingRef.current = true
-    // 先通知 worklet 停止
-    if (workletRef.current) {
-      try { workletRef.current.port.postMessage({ type: 'stop' }) } catch { /* ignore */ }
-      workletRef.current.disconnect()
-      workletRef.current = null
+    recordingRef.current = false
+    clearTimer()
+
+    const ws = wsRef.current
+    if (ws) {
+      try {
+        if (ws.readyState === WebSocket.OPEN) ws.send('stop')
+        ws.close(1000)
+      } catch {
+        /* ignore */
+      }
+      wsRef.current = null
     }
-    if (audioCtxRef.current) {
-      audioCtxRef.current.close().catch(() => {})
+
+    const ctx = audioCtxRef.current
+    if (ctx && ctx.state !== 'closed') {
+      try {
+        ctx.close()
+      } catch {
+        /* ignore */
+      }
       audioCtxRef.current = null
     }
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop())
+      streamRef.current = null
+    }
+
+    lastRenderRef.current = 0
+  }, [clearTimer])
+
+  const stopRecording = useCallback(async () => {
+    if (stoppingRef.current) return
+    stoppingRef.current = true
+    recordingRef.current = false
+    clearTimer()
+
+    const ws = wsRef.current
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send('stop')
+    }
+
+    // 等待后端返回最后一批结果
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+
+    if (ws && ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
+      ws.close(1000)
+    }
+    wsRef.current = null
+
+    audioCtxRef.current?.close()
+    audioCtxRef.current = null
+
     streamRef.current?.getTracks().forEach((t) => t.stop())
     streamRef.current = null
-    const ws = wsRef.current
-    wsRef.current = null
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send('stop')
-      // 给服务端时间发送最后结果
-      setTimeout(() => {
-        if (ws.readyState !== WebSocket.CLOSED) ws.close()
-      }, 3000)
-    }
-  }, [])
+
+    flushPendingText()
+    setRecording(false)
+  }, [clearTimer, flushPendingText])
 
   const startRecording = useCallback(async () => {
     setError(null)
+    setText('')
+    cleanup()
     stoppingRef.current = false
+    pendingTextRef.current = ''
+    lastRenderRef.current = 0
 
-    // 1. 获取麦克风权限
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError('当前浏览器不支持录音，请使用 Chrome 或 Edge 最新版')
+      return
+    }
+
+    // 16kHz AudioContext — 浏览器内置重采样器有专业抗混叠滤波
+    let audioCtx: AudioContext
+    try {
+      audioCtx = new AudioContext({ sampleRate: 16000 })
+    } catch {
+      setError('当前浏览器不支持 16kHz 录音，请升级 Chrome 或 Edge 到最新版')
+      return
+    }
+    audioCtxRef.current = audioCtx
+
+    // 加载 AudioWorklet
+    try {
+      await audioCtx.audioWorklet.addModule('/worklets/pcm-audio-processor.js')
+    } catch {
+      audioCtx.close()
+      audioCtxRef.current = null
+      setError('浏览器不支持语音处理，请使用 Chrome 或 Edge 最新版')
+      return
+    }
+
+    // 获取麦克风
     let stream: MediaStream
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    } catch {
-      setError('麦克风权限被拒绝，请在浏览器地址栏左侧点击锁形图标允许麦克风访问')
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      })
+    } catch (err) {
+      audioCtx.close()
+      audioCtxRef.current = null
+      if (err instanceof DOMException && err.name === 'NotAllowedError') {
+        setError('麦克风权限被拒绝，请在浏览器设置中允许使用麦克风')
+      } else {
+        setError('启动录音失败，请重试')
+      }
       return
     }
     streamRef.current = stream
 
-    committedRef.current = ''
-    partialRef.current = ''
-
-    // 2. 建立 WebSocket 连接
+    // WebSocket 连接
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const ws = new WebSocket(`${proto}//${window.location.host}/api/transcribe/stream`)
+    ws.binaryType = 'arraybuffer'
     wsRef.current = ws
 
-    let serverError: string | null = null
-    const opened = await new Promise<boolean>((resolve) => {
-      const t = setTimeout(() => resolve(false), 6000)
-      ws.addEventListener('open', () => { clearTimeout(t); resolve(true) }, { once: true })
-      ws.addEventListener('close', (e) => {
-        clearTimeout(t)
-        if (!serverError) {
-          if (e.code === 4001) serverError = '未登录，请重新登录后重试'
-          else if (e.code === 4002) serverError = '未配置语音识别服务，请联系管理员配置 Dashscope API Key'
-          else if (e.code === 1006) serverError = '语音服务连接异常，请检查网络后重试'
-          else if (!e.wasClean) serverError = '语音服务连接异常，请重试'
+    // 等待握手完成
+    let preOpenServerError = ''
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('语音服务连接超时，请重试')), 6000)
+
+      ws.onopen = () => {
+        clearTimeout(timeout)
+        ws.onmessage = null
+        resolve()
+      }
+
+      ws.onclose = (e) => {
+        clearTimeout(timeout)
+        let msg = ''
+        if (preOpenServerError) {
+          msg = preOpenServerError
+        } else if (e.code === 4001) {
+          msg = '未登录，请重新登录后重试'
+        } else if (e.code === 4002) {
+          msg = '未配置语音识别服务，请联系管理员配置 Dashscope API Key'
+        } else if (e.code === 4003) {
+          msg = '语音识别服务启动失败，请检查 Dashscope API Key 是否有效'
+        } else if (e.code === 1006 || !e.wasClean) {
+          msg = '语音服务连接异常，请检查网络后重试'
         }
-        resolve(false)
-      }, { once: true })
-      ws.addEventListener('error', () => { clearTimeout(t); resolve(false) }, { once: true })
+        reject(new Error(msg || '语音服务连接失败'))
+      }
+
+      ws.onerror = () => {
+        clearTimeout(timeout)
+        reject(new Error('语音服务连接失败，请重试'))
+      }
+
+      ws.onmessage = (e) => {
+        if (typeof e.data === 'string') {
+          try {
+            const msg = JSON.parse(e.data)
+            if (msg.error) preOpenServerError = msg.error
+          } catch {
+            /* ignore */
+          }
+        }
+      }
     })
 
-    // 收第一条消息，判断是否为错误
-    if (opened && ws.readyState === WebSocket.OPEN) {
-      const firstMsg = await new Promise<string | null>((resolve) => {
-        const t = setTimeout(() => resolve(null), 3000)
-        ws.addEventListener('message', (e) => { clearTimeout(t); resolve(e.data as string) }, { once: true })
-        ws.addEventListener('close', () => { clearTimeout(t); resolve(null) }, { once: true })
-      })
-      if (firstMsg) {
-        try {
-          const parsed = JSON.parse(firstMsg) as { text?: string; final?: boolean; error?: string }
-          if (parsed.error) {
-            serverError = parsed.error
-            ws.close()
-          }
-          if (parsed.text && parsed.final) {
-            committedRef.current += parsed.text
-            setText(committedRef.current)
-          } else if (parsed.text) {
-            partialRef.current = parsed.text
-            setText(committedRef.current + partialRef.current)
-          }
-        } catch { /* ignore */ }
+    // 处理识别结果 — 用节流避免高频 setState 导致 UI 卡顿
+    ws.onmessage = (e) => {
+      if (typeof e.data !== 'string') return
+      try {
+        const msg = JSON.parse(e.data)
+        if (!msg.text) return
+
+        smoothSetText(msg.text, Boolean(msg.final))
+      } catch {
+        /* ignore */
       }
     }
 
-    if (serverError || !opened || ws.readyState !== WebSocket.OPEN) {
-      setError(serverError || '实时转写连接失败，请检查网络')
-      stream.getTracks().forEach((t) => t.stop())
-      streamRef.current = null
-      try { ws.close() } catch { /* ignore */ }
-      wsRef.current = null
-      return
-    }
-
-    // 3. 设置 WebSocket 消息处理
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data as string) as { text?: string; final?: boolean; error?: string }
-        if (data.error) { setError(data.error); return }
-        if (data.text) {
-          if (data.final) {
-            committedRef.current += data.text
-            partialRef.current = ''
-          } else {
-            partialRef.current = data.text
-          }
-          setText(committedRef.current + partialRef.current)
-        }
-      } catch { /* ignore */ }
-    }
-
     ws.onclose = () => {
-      // 连接断开时如果不是主动停止，提示用户
-      if (!stoppingRef.current && recording) {
+      if (!stoppingRef.current && recordingRef.current) {
         setError('语音服务连接中断，请重新录音')
       }
     }
 
-    ws.onerror = () => {
-      if (!stoppingRef.current) setError('实时转写出错，请重试')
-    }
-
-    // 4. 创建 AudioContext + AudioWorklet（替代废弃的 ScriptProcessorNode）
-    const audioCtx = new AudioContext()
-    audioCtxRef.current = audioCtx
-
+    // 连接 AudioWorklet → PCM 帧立刻转发到 WebSocket（不积攒缓冲）
+    let frameCount = 0
     try {
-      await audioCtx.audioWorklet.addModule('/worklets/pcm-audio-processor.js')
-    } catch (err) {
-      setError('浏览器不支持语音处理，请使用 Chrome 或 Edge 最新版')
+      const workletNode = new AudioWorkletNode(audioCtx, 'pcm-audio-processor')
+      workletNode.port.onmessage = (e: MessageEvent<WorkletMessage>) => {
+        const msg = e.data
+        if (msg.type === 'pcm') {
+          frameCount++
+          const w = wsRef.current
+          if (w?.readyState === WebSocket.OPEN) {
+            w.send(msg.buffer)
+          }
+        } else if (msg.type === 'silence') {
+          void stopRecording()
+        }
+      }
+      const source = audioCtx.createMediaStreamSource(stream)
+      source.connect(workletNode)
+    } catch {
       cleanup()
+      setError('音频处理模块加载失败，请重试')
       return
     }
 
-    const workletNode = new AudioWorkletNode(audioCtx, 'pcm-audio-processor')
-    workletRef.current = workletNode
-
-    // 接收 worklet 消息：PCM 数据 → 发送 WebSocket；静音检测 → 自动停止
-    workletNode.port.onmessage = (e: MessageEvent<WorkletMessage>) => {
-      const msg = e.data
-      if (msg.type === 'pcm') {
-        // 发送 PCM 数据到后端
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(msg.buffer)
-        }
-      } else if (msg.type === 'silence') {
-        // 连续静音超过阈值，自动停止录音
-        if (!stoppingRef.current) {
-          setError(null) // 静音停止不是错误
-          stopRecording()
-        }
-      }
-    }
-
-    // 连接音频管线：source → worklet（不需要 connect 到 destination，不需要监听）
-    const source = audioCtx.createMediaStreamSource(stream)
-    source.connect(workletNode)
-    // AudioWorklet 不需要 connect 到 destination（我们不做本地回放）
-
-    // 5. 开始录音
+    recordingRef.current = true
     setRecording(true)
     setTimer(0)
-    timerRef.current = window.setInterval(() => setTimer((t) => t + 1), 1000)
-  }, [setText, setError, cleanup])
+    timerIntervalRef.current = setInterval(() => setTimer((prev) => prev + 1), 1000)
+  }, [setText, setError, cleanup, smoothSetText, stopRecording])
 
-  const stopRecording = useCallback(() => {
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-    cleanup()
-    setRecording(false)
-  }, [cleanup])
-
-  return {
-    recording,
-    timer,
-    startRecording,
-    stopRecording,
-  }
+  return { recording, transcribing: false, timer, startRecording, stopRecording }
 }

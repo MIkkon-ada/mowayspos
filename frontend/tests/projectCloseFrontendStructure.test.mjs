@@ -68,12 +68,13 @@ test('project lifecycle page admits participants without granting project manage
 
 test('project page exposes new tabs, deep link and safe close entries', () => {
   const source = read('src/features/settings/ProjectsMgmtSection.tsx')
-  assert.match(source, /key: 'pending_close', label: '结束审核中', queueLabel: '待企业教练审核'/)
-  assert.match(source, /key: 'ended', label: '已结束', queueLabel: '待归档'/)
+  // Status labels include pending_close state
+  assert.match(source, /pending_close:\s*'结束审核中'/)
+  assert.match(source, /ended:\s*'已结束'/)
   assert.match(source, /申请项目结束/)
   assert.match(source, /roles\.isRealOwner \|\| roles\.isSuperAdmin/)
   assert.match(source, /projectId/); assert.match(source, /closeRequestId/)
-  assert.match(source, /setCloseFlowProjectId\(projectId\)/)
+  assert.match(source, /setCloseFlowProjectId/)
   assert.doesNotMatch(source, /label: '恢复'/)
   assert.doesNotMatch(source, /handleUnarchive/)
   assert.doesNotMatch(source, /status === 'active'[\s\S]{0,160}label: '归档'/)

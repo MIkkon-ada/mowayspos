@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
-import { createAccount, fetchAccounts, resetAccountPassword, updateAccountStatus, bindAccountWecom, unbindAccountWecom, fetchWecomUsers, batchBindWecom, type AccountItem, type WecomUserItem } from '../../api/accounts'
+import { createAccount, fetchAccounts, resetAccountPassword, updateAccountStatus, updateAccount, bindAccountWecom, unbindAccountWecom, fetchWecomUsers, batchBindWecom, type AccountItem, type WecomUserItem } from '../../api/accounts'
 import { fetchPeople, createPerson, updatePerson, deletePerson } from '../../api/people'
 import type { Person } from '../../types'
 import { Card, SectionTitle } from './settingsShared'
 import { SYSTEM_ROLE_SUPER_ADMIN, SYSTEM_ROLE_NORMAL, SYSTEM_ROLE_OPTIONS, systemRoleLabel, normalizeSystemRole } from '../../domain/roles'
 import { PeopleBatchImportModal } from './PeopleBatchImportModal'
 import { toast } from '../../utils/toast'
+import {
+  FaEdit, FaCheck, FaTimes, FaTrash, FaKey, FaPowerOff,
+  FaLink, FaUnlink, FaUser, FaBuilding, FaShieldAlt, FaPlus,
+} from 'react-icons/fa'
 
 export function AccountPeopleMgmtSection() {
   const [people, setPeople] = useState<Person[]>([])
@@ -30,6 +34,8 @@ export function AccountPeopleMgmtSection() {
   const [wecomLoading, setWecomLoading] = useState(false)
   const [wecomSelected, setWecomSelected] = useState<Record<string, number | null>>({})
   const [wecomSaving, setWecomSaving] = useState(false)
+  const [editingUsernameId, setEditingUsernameId] = useState<number | null>(null)
+  const [usernameDraft, setUsernameDraft] = useState('')
   const [message, setMessage] = useState('')
 
   function loadAll() {
@@ -158,6 +164,22 @@ export function AccountPeopleMgmtSection() {
       showMessage('企业微信 ID 已解绑')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '解绑失败')
+    }
+  }
+
+  async function handleUpdateUsername(account: AccountItem) {
+    const newUsername = usernameDraft.trim()
+    if (!newUsername) {
+      toast.error('账号名不能为空')
+      return
+    }
+    try {
+      const updated = await updateAccount(account.id, { username: newUsername })
+      setAccounts((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+      setEditingUsernameId(null)
+      showMessage('账号名已修改')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '修改失败')
     }
   }
 
@@ -386,102 +408,222 @@ export function AccountPeopleMgmtSection() {
         {people.length === 0 ? (
           <p className="text-sm text-slate-400 py-8 text-center">暂无人员</p>
         ) : (
-          <div className="divide-y">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {people.map((person) => {
               const account = accountForPerson(person.id)
               const draft = accountDraft[person.id] || { username: String(person.name || ''), password: '' }
-              return (
-                <div key={person.id} className="py-4">
-                  <div className="flex items-start gap-3">
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
-                      style={{ background: person.is_active === false ? '#CBD5E1' : 'linear-gradient(135deg,#3B82F6,#0369A1)' }}>
-                      {String(person.name || '?').slice(0, 1)}
-                    </div>
+              const isEditing = editingId === person.id
 
-                    {editingId === person.id ? (
-                      <div className="flex-1 flex items-center gap-2 flex-wrap">
-                        <input value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
-                          className="w-24 border border-sky-400 rounded-lg px-2 py-1 text-sm focus:outline-none" />
-                        <select value={editForm.system_role} onChange={e => setEditForm(f => ({ ...f, system_role: e.target.value }))}
-                          className="w-28 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none">
-                          {SYSTEM_ROLE_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
-                        </select>
-                        <input value={editForm.department} onChange={e => setEditForm(f => ({ ...f, department: e.target.value }))}
-                          placeholder="部门" className="w-28 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none" />
-                        <button type="button" onClick={() => handleSaveEdit(person.id)}
-                          className="cursor-pointer px-3 py-1 rounded-lg text-white text-xs font-semibold" style={{ background: '#0369A1' }}>保存</button>
-                        <button type="button" onClick={() => setEditingId(null)}
-                          className="cursor-pointer px-2 py-1 rounded-lg border border-slate-200 text-slate-500 text-xs">取消</button>
+              return (
+                <div key={person.id}
+                  className="rounded-xl border border-slate-200 bg-white hover:shadow-md hover:border-slate-300 transition-all duration-200 flex flex-col overflow-hidden">
+
+                  {/* === 头部：头像 + 基本信息 === */}
+                  <div className="p-4 pb-3">
+                    <div className="flex items-start gap-3">
+                      {/* 头像 */}
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold flex-shrink-0 shadow-sm"
+                        style={{ background: person.is_active === false ? '#CBD5E1' : 'linear-gradient(135deg,#3B82F6,#0369A1)' }}>
+                        {String(person.name || '?').slice(0, 1)}
                       </div>
-                    ) : (
-                      <>
+
+                      {isEditing ? (
+                        /* 编辑模式 */
+                        <div className="flex-1 space-y-2">
+                          <input value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+                            className="w-full border border-sky-400 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-200" />
+                          <div className="flex gap-2">
+                            <select value={editForm.system_role} onChange={e => setEditForm(f => ({ ...f, system_role: e.target.value }))}
+                              className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-sky-200">
+                              {SYSTEM_ROLE_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
+                            </select>
+                            <input value={editForm.department} onChange={e => setEditForm(f => ({ ...f, department: e.target.value }))}
+                              placeholder="部门" className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-sky-200" />
+                          </div>
+                          <div className="flex gap-2">
+                            <button type="button" onClick={() => handleSaveEdit(person.id)}
+                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-white text-xs font-semibold hover:opacity-90 transition"
+                              style={{ background: '#0369A1' }}>
+                              <FaCheck size={10} />保存
+                            </button>
+                            <button type="button" onClick={() => setEditingId(null)}
+                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-500 text-xs hover:bg-slate-50 transition">
+                              <FaTimes size={10} />取消
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        /* 展示模式 */
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-semibold text-slate-800">{person.name as string}</span>
-                            {person.department && <span className="text-xs text-slate-400">{person.department as string}</span>}
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">{systemRoleLabel(person.system_role)}</span>
-                            {person.is_active === false && <span className="text-xs text-slate-400">已停用</span>}
+                            <span className="text-sm font-bold text-slate-800 truncate">{person.name as string}</span>
+                            {person.is_active === false && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-400 font-medium">已停用</span>
+                            )}
                           </div>
-
-                          {!account ? (
-                            <div className="flex items-center gap-2 mt-2 flex-wrap">
-                              <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">未创建登录账号</span>
-                              <input value={draft.username} onChange={e => setAccountDraft(prev => ({ ...prev, [person.id]: { ...draft, username: e.target.value } }))}
-                                placeholder="账号名" className="w-28 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none" />
-                              <input type="password" value={draft.password} onChange={e => setAccountDraft(prev => ({ ...prev, [person.id]: { ...draft, password: e.target.value } }))}
-                                placeholder="初始密码" className="w-28 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none" />
-                              <button type="button" onClick={() => handleCreateAccount(person)}
-                                className="px-2 py-1 rounded-lg text-xs font-semibold text-white" style={{ background: '#0369A1' }}>创建账号</button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2 mt-2 flex-wrap">
-                              <span className="text-xs text-slate-500">账号：{account.username}</span>
-                              <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: account.status === 'active' ? '#DCFCE7' : '#F1F5F9', color: account.status === 'active' ? '#047857' : '#64748B' }}>
-                                {account.status === 'active' ? '可登录' : '已禁用'}
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            {person.department && (
+                              <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+                                <FaBuilding size={10} />{person.department as string}
                               </span>
-                              <input type="password" value={resetDraft[account.id] || ''} onChange={e => setResetDraft(prev => ({ ...prev, [account.id]: e.target.value }))}
-                                placeholder="新密码" className="w-24 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none" />
-                              <button type="button" onClick={() => handleResetPassword(account)}
-                                className="px-2 py-1 rounded-lg text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50">重置密码</button>
-                              <button type="button" onClick={() => handleToggleAccount(account)}
-                                className="px-2 py-1 rounded-lg text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50">
-                                {account.status === 'active' ? '禁用账号' : '启用账号'}
-                              </button>
-                            </div>
-                          )}
+                            )}
+                            <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium"
+                              style={{
+                                background: person.system_role === SYSTEM_ROLE_SUPER_ADMIN ? '#EFF6FF' : '#F8FAFC',
+                                color: person.system_role === SYSTEM_ROLE_SUPER_ADMIN ? '#1D4ED8' : '#64748B',
+                              }}>
+                              <FaShieldAlt size={9} />{systemRoleLabel(person.system_role)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
 
-                          {account && (
-                            <div className="flex items-center gap-2 mt-2 flex-wrap">
-                              <span className="text-xs text-slate-500">企微：</span>
-                              {account.wecom_userid ? (
-                                <>
-                                  <span className="text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">{account.wecom_userid}</span>
-                                  <button type="button" onClick={() => handleUnbindWecom(account)}
-                                    className="px-2 py-1 rounded-lg text-xs font-semibold border border-slate-200 text-slate-600 hover:bg-slate-50">解绑</button>
-                                </>
-                              ) : (
-                                <>
-                                  <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">未绑定</span>
-                                  <input value={wecomDraft[account.id] || ''} onChange={e => setWecomDraft(prev => ({ ...prev, [account.id]: e.target.value }))}
-                                    placeholder="输入企业微信 ID" className="w-32 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none" />
-                                  <button type="button" onClick={() => handleBindWecom(account)}
-                                    className="px-2 py-1 rounded-lg text-xs font-semibold border border-emerald-200 text-emerald-600 bg-emerald-50 hover:bg-emerald-100">绑定</button>
-                                </>
-                              )}
-                            </div>
-                          )}
+                  {/* === 分隔线 === */}
+                  <div className="border-t border-slate-100" />
+
+                  {/* === 账号区域 === */}
+                  <div className="p-4 pt-3 space-y-2">
+                    {!account ? (
+                      /* 无账号：创建账号表单 */
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-1.5 text-[11px] text-amber-600 font-medium">
+                          <div className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                          未创建登录账号
+                        </div>
+                        <div className="flex gap-1.5">
+                          <input value={draft.username} onChange={e => setAccountDraft(prev => ({ ...prev, [person.id]: { ...draft, username: e.target.value } }))}
+                            placeholder="账号名" className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-sky-200" />
+                          <input type="password" value={draft.password} onChange={e => setAccountDraft(prev => ({ ...prev, [person.id]: { ...draft, password: e.target.value } }))}
+                            placeholder="密码≥6位" className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-sky-200" />
+                        </div>
+                        <button type="button" onClick={() => handleCreateAccount(person)}
+                          className="w-full flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white hover:opacity-90 transition"
+                          style={{ background: '#0369A1' }}>
+                          <FaPlus size={10} />创建登录账号
+                        </button>
+                      </div>
+                    ) : (
+                      /* 有账号：账号管理 */
+                      <div className="space-y-2">
+                        {/* 账号名行 */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <FaUser size={10} className="text-slate-400" />
+                            {editingUsernameId === account.id ? (
+                              <span className="flex items-center gap-1">
+                                <input
+                                  className="border border-blue-400 rounded px-2 py-0.5 text-[11px] w-28 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                  value={usernameDraft}
+                                  onChange={(e) => setUsernameDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleUpdateUsername(account)
+                                    if (e.key === 'Escape') setEditingUsernameId(null)
+                                  }}
+                                  autoFocus
+                                />
+                                <button className="text-green-600 hover:text-green-700" onClick={() => handleUpdateUsername(account)} title="保存">
+                                  <FaCheck size={11} />
+                                </button>
+                                <button className="text-slate-400 hover:text-slate-600" onClick={() => setEditingUsernameId(null)} title="取消">
+                                  <FaTimes size={11} />
+                                </button>
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1 text-[11px] text-slate-600">
+                                <span className="font-medium">{account.username}</span>
+                                <button className="text-slate-400 hover:text-blue-500 transition" onClick={() => { setEditingUsernameId(account.id); setUsernameDraft(account.username) }} title="修改账号名">
+                                  <FaEdit size={10} />
+                                </button>
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+                            style={{ background: account.status === 'active' ? '#DCFCE7' : '#FEE2E2', color: account.status === 'active' ? '#047857' : '#991B1B' }}>
+                            {account.status === 'active' ? '正常' : '已禁用'}
+                          </span>
                         </div>
 
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          <button type="button"
-                            onClick={() => { setEditingId(person.id); setEditForm({ name: person.name as string, system_role: normalizeSystemRole(person.system_role as string), department: (person.department as string) || '' }) }}
-                            className="cursor-pointer px-2 py-1 rounded-lg text-xs text-blue-600 hover:bg-blue-50">编辑</button>
-                          <button type="button" onClick={() => handleDelete(person.id, person.name as string)}
-                            className="cursor-pointer px-2 py-1 rounded-lg text-xs text-red-500 hover:bg-red-50">删除</button>
+                        {/* 密码重置行 */}
+                        <div className="flex items-center gap-1.5">
+                          <FaKey size={10} className="text-slate-400 flex-shrink-0" />
+                          <input type="password" value={resetDraft[account.id] || ''} onChange={e => setResetDraft(prev => ({ ...prev, [account.id]: e.target.value }))}
+                            placeholder="新密码" className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-sky-200" />
+                          <button type="button" onClick={() => handleResetPassword(account)}
+                            className="flex-shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition">
+                            重置
+                          </button>
                         </div>
-                      </>
+
+                        {/* 启/禁用按钮 */}
+                        <button type="button" onClick={() => handleToggleAccount(account)}
+                          className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium transition border"
+                          style={{
+                            color: account.status === 'active' ? '#991B1B' : '#047857',
+                            borderColor: account.status === 'active' ? '#FECACA' : '#BBF7D0',
+                            background: account.status === 'active' ? '#FFF5F5' : '#F0FDF4',
+                          }}>
+                          <FaPowerOff size={10} />
+                          {account.status === 'active' ? '禁用账号' : '启用账号'}
+                        </button>
+                      </div>
                     )}
                   </div>
+
+                  {/* === 企业微信号区域 === */}
+                  {account && (
+                    <>
+                      <div className="border-t border-slate-100" />
+                      <div className="p-4 pt-3 space-y-2">
+                        {account.wecom_userid ? (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <FaLink size={10} className="text-emerald-500" />
+                              <span className="text-[11px] text-emerald-700 font-medium">{account.wecom_userid}</span>
+                            </div>
+                            <button type="button" onClick={() => handleUnbindWecom(account)}
+                              className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-slate-400 hover:text-red-500 hover:bg-red-50 transition">
+                              <FaUnlink size={9} />解绑
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-1.5 text-[11px] text-amber-600 font-medium">
+                              <div className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                              未绑定企业微信
+                            </div>
+                            <div className="flex gap-1.5">
+                              <input value={wecomDraft[account.id] || ''} onChange={e => setWecomDraft(prev => ({ ...prev, [account.id]: e.target.value }))}
+                                placeholder="企业微信 ID" className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-sky-200" />
+                              <button type="button" onClick={() => handleBindWecom(account)}
+                                className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border border-emerald-200 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition">
+                                <FaLink size={9} />绑定
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {/* === 底部操作栏 === */}
+                  {!isEditing && (
+                    <>
+                      <div className="border-t border-slate-100" />
+                      <div className="flex items-center divide-x divide-slate-100">
+                        <button type="button"
+                          onClick={() => { setEditingId(person.id); setEditForm({ name: person.name as string, system_role: normalizeSystemRole(person.system_role as string), department: (person.department as string) || '' }) }}
+                          className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[11px] font-medium text-slate-500 hover:text-blue-600 hover:bg-blue-50/50 transition">
+                          <FaEdit size={10} />编辑资料
+                        </button>
+                        <button type="button" onClick={() => handleDelete(person.id, person.name as string)}
+                          className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[11px] font-medium text-slate-400 hover:text-red-500 hover:bg-red-50/50 transition">
+                          <FaTrash size={10} />删除人员
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               )
             })}

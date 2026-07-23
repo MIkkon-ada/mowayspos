@@ -44,7 +44,7 @@ export function canViewIssues(user: CurrentUserLike, roles: readonly string[] | 
 }
 
 export function canViewMeetings(user: CurrentUserLike, roles: readonly string[] | null | undefined): boolean {
-  return hasProjectAccess(user, roles)
+  return isSuperAdmin(user) || Boolean(user?.is_ceo) || hasAnyProjectRole(roles)
 }
 
 export function canSubmitUpdate(user: CurrentUserLike, roles: readonly string[] | null | undefined): boolean {

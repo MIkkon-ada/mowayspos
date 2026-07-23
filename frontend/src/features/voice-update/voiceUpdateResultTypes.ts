@@ -55,7 +55,6 @@ export function canExtractVoiceUpdate({
   text,
   projectActive,
   recording,
-  transcribing,
   uploading,
   phase,
 }: {
@@ -66,7 +65,6 @@ export function canExtractVoiceUpdate({
   text: string
   projectActive: boolean
   recording: boolean
-  transcribing: boolean
   uploading: boolean
   phase: Phase
 }): boolean {
@@ -77,7 +75,6 @@ export function canExtractVoiceUpdate({
     && text.trim()
     && projectActive
     && !recording
-    && !transcribing
     && !uploading
     && phase !== 'extracting'
     && phase !== 'submitting',

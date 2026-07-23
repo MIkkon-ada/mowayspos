@@ -1,0 +1,207 @@
+- generic [ref=f8e5]:
+  - complementary [ref=f8e6]:
+    - generic [ref=f8e7]:
+      - img "logo" [ref=f8e8]
+      - button "通知" [ref=f8e10] [cursor=pointer]
+    - navigation [ref=f8e13]:
+      - button "驾驶舱" [ref=f8e15] [cursor=pointer]
+      - button "工作推进表" [ref=f8e21] [cursor=pointer]
+      - button "我的任务" [ref=f8e27] [cursor=pointer]
+      - button "AI 确认中心 1" [ref=f8e32] [cursor=pointer]:
+        - generic [ref=f8e36]: AI 确认中心
+        - generic [ref=f8e37]: "1"
+      - button "工作汇报" [ref=f8e39] [cursor=pointer]
+      - button "会议纪要" [ref=f8e44] [cursor=pointer]
+      - button "成果库" [ref=f8e50] [cursor=pointer]
+      - button "问题中心" [ref=f8e55] [cursor=pointer]
+      - button "组织管理" [ref=f8e61] [cursor=pointer]
+      - button "项目管理" [ref=f8e66] [cursor=pointer]
+      - button "通知中心" [ref=f8e71] [cursor=pointer]
+      - button "系统设置" [ref=f8e77] [cursor=pointer]
+    - generic [ref=f8e83]:
+      - generic [ref=f8e84]: m
+      - generic [ref=f8e85]:
+        - generic [ref=f8e86]: moways
+        - generic [ref=f8e87]: 超级管理员
+      - button "修改密码" [ref=f8e88] [cursor=pointer]
+      - button "退出登录" [ref=f8e91] [cursor=pointer]
+  - generic [ref=f8e96]:
+    - banner [ref=f8e97]:
+      - generic [ref=f8e98]:
+        - generic [ref=f8e99]:
+          - heading "AI 确认中心" [level=1] [ref=f8e100]
+          - paragraph [ref=f8e101]: 负责人确认 AI 提取结果后，正式写入工作推进表、成果库和问题中心。
+        - generic [ref=f8e102]:
+          - button "我的提交记录" [ref=f8e103] [cursor=pointer]
+          - button "待确认 1" [ref=f8e104] [cursor=pointer]:
+            - text: 待确认
+            - generic [ref=f8e105]: "1"
+          - button "待我统筹" [ref=f8e106] [cursor=pointer]
+          - button "待我决策" [ref=f8e107] [cursor=pointer]
+        - combobox [ref=f8e108] [cursor=pointer]:
+          - option "全部状态"
+          - option "待负责人处理" [selected]
+          - option "已退回"
+          - option "已转交统筹"
+          - option "待企业教练决策"
+          - option "已入库"
+        - combobox [ref=f8e109] [cursor=pointer]:
+          - option "全部项目" [selected]
+          - option "博维咨询AI升级转型2026"
+        - combobox [ref=f8e110] [cursor=pointer]:
+          - option "全部提交人" [selected]
+          - option "moways"
+          - option "冯海林"
+        - textbox "搜索记录/任务…" [ref=f8e114]
+    - generic [ref=f8e116]:
+      - generic [ref=f8e117]:
+        - generic [ref=f8e118]:
+          - generic [ref=f8e119]:
+            - generic [ref=f8e120]: 待确认事项
+            - generic [ref=f8e121]: (1)
+          - generic [ref=f8e122]:
+            - button "排序" [ref=f8e123] [cursor=pointer]
+            - button "筛选" [ref=f8e126] [cursor=pointer]
+        - generic [ref=f8e130] [cursor=pointer]:
+          - generic [ref=f8e131]:
+            - generic [ref=f8e132]:
+              - generic [ref=f8e133]: m
+              - generic [ref=f8e134]: unknown
+            - generic [ref=f8e135]: 待确认
+          - paragraph [ref=f8e136]: 工作汇报
+          - generic [ref=f8e137]:
+            - generic [ref=f8e138]: 2026/7/21 11:48
+            - generic [ref=f8e139]: "-"
+      - generic [ref=f8e140]:
+        - generic [ref=f8e141]:
+          - generic [ref=f8e142]:
+            - generic [ref=f8e143]:
+              - generic [ref=f8e144]: 记录详情
+              - generic [ref=f8e145]: 待确认
+            - generic [ref=f8e146]: 记录ID：2
+          - generic [ref=f8e147]:
+            - generic [ref=f8e148]:
+              - generic [ref=f8e149]: unknown
+              - generic [ref=f8e150]: moways
+              - generic [ref=f8e151]: "|"
+              - generic [ref=f8e152]: 2026/7/21 11:48
+              - generic [ref=f8e153]: "|"
+              - generic [ref=f8e154]: 置信度：-
+            - button "查看原始内容" [ref=f8e155] [cursor=pointer]
+        - generic [ref=f8e157]:
+          - generic [ref=f8e158]:
+            - generic [ref=f8e159]:
+              - paragraph [ref=f8e160]: 任务卡牌总览
+              - paragraph [ref=f8e161]: 先看清本次提交包含哪些任务，再逐张判断
+            - generic [ref=f8e162]: 1 张卡
+          - button "任务卡 1 - 未判断 博维咨询AI升级转型2026 / - 完成 0 成果 0 事项 0 下一步 0" [ref=f8e164] [cursor=pointer]:
+            - generic [ref=f8e165]:
+              - generic [ref=f8e166]:
+                - paragraph [ref=f8e167]: 任务卡 1
+                - heading "-" [level=2] [ref=f8e168]
+              - generic [ref=f8e169]: 未判断
+            - paragraph [ref=f8e170]: 博维咨询AI升级转型2026 / -
+            - generic [ref=f8e171]:
+              - generic [ref=f8e172]: 完成 0
+              - generic [ref=f8e173]: 成果 0
+              - generic [ref=f8e174]: 事项 0
+              - generic [ref=f8e175]: 下一步 0
+        - generic [ref=f8e176]:
+          - generic [ref=f8e178]:
+            - generic [ref=f8e179]:
+              - generic [ref=f8e180]: 任务卡 1/1
+              - generic [ref=f8e181]: 进行中
+            - heading "-" [level=2] [ref=f8e182]
+            - generic [ref=f8e183]:
+              - generic [ref=f8e184]: 项目：博维咨询AI升级转型2026
+              - generic [ref=f8e185]: "|"
+              - generic [ref=f8e186]: 任务：-
+          - paragraph [ref=f8e191]: 本卡重点：请审核本次提交内容是否可写入工作推进表。
+          - generic [ref=f8e192]:
+            - generic [ref=f8e193]:
+              - generic [ref=f8e194]:
+                - generic [ref=f8e195]: ✓
+                - paragraph [ref=f8e196]: 本周完成
+              - paragraph [ref=f8e198]: 暂无本周完成内容
+            - generic [ref=f8e199]:
+              - generic [ref=f8e200]:
+                - generic [ref=f8e201]: "!"
+                - paragraph [ref=f8e202]: 需处理事项
+              - paragraph [ref=f8e204]: 暂无需处理事项
+            - generic [ref=f8e205]:
+              - generic [ref=f8e206]:
+                - generic [ref=f8e207]: →
+                - paragraph [ref=f8e208]: 下一步计划
+              - paragraph [ref=f8e210]: 暂无下一步计划
+            - generic [ref=f8e211]:
+              - generic [ref=f8e212]:
+                - generic [ref=f8e213]: ♕
+                - paragraph [ref=f8e214]: 成果
+              - paragraph [ref=f8e216]: 暂无可入库成果
+          - generic [ref=f8e217]:
+            - paragraph [ref=f8e218]: 归属修正
+            - generic [ref=f8e219]:
+              - generic [ref=f8e220]:
+                - generic [ref=f8e221]: 归属项目
+                - combobox [ref=f8e222]:
+                  - option "不修改" [selected]
+                  - option "博维咨询AI升级转型2026"
+                  - option "twe1"
+              - generic [ref=f8e223]:
+                - generic [ref=f8e224]: 重点工作
+                - textbox "输入重点工作名称（继承默认值）" [ref=f8e225]
+              - generic [ref=f8e226]:
+                - generic [ref=f8e227]: 关键任务
+                - textbox "输入关键任务名称（继承默认值）" [ref=f8e228]
+        - button "操作日志 1" [ref=f8e230] [cursor=pointer]:
+          - generic [ref=f8e231]:
+            - generic [ref=f8e232]: 操作日志
+            - generic [ref=f8e233]: "1"
+      - complementary [ref=f8e236]:
+        - generic [ref=f8e237]: 判断与入库
+        - generic [ref=f8e239]:
+          - generic [ref=f8e240]:
+            - paragraph [ref=f8e241]: 当前记录
+            - generic [ref=f8e242]:
+              - generic [ref=f8e243]:
+                - generic [ref=f8e244]: 项目
+                - generic [ref=f8e245]: 博维咨询AI升级转型2026
+              - generic [ref=f8e246]:
+                - generic [ref=f8e247]: 提交人
+                - generic [ref=f8e248]: moways
+              - generic [ref=f8e249]:
+                - generic [ref=f8e250]: 状态
+                - generic [ref=f8e251]: 待确认
+              - generic [ref=f8e252]:
+                - generic [ref=f8e253]: 来源
+                - generic [ref=f8e254]: unknown
+              - generic [ref=f8e255]:
+                - generic [ref=f8e256]: 提交时间
+                - generic [ref=f8e257]: 2026/7/21 11:48
+          - generic [ref=f8e258]:
+            - button "当前任务卡" [ref=f8e259] [cursor=pointer]
+            - button "整条提交" [active] [ref=f8e260] [cursor=pointer]
+          - generic [ref=f8e261]:
+            - generic [ref=f8e272]:
+              - paragraph [ref=f8e273]: 入库范围
+              - generic [ref=f8e274]:
+                - generic [ref=f8e275]:
+                  - generic [ref=f8e276]:
+                    - paragraph [ref=f8e277]: 工作推进表
+                    - paragraph [ref=f8e278]: 本次确认始终写入工作推进记录
+                  - generic [ref=f8e279]: 必写
+                - switch "成果库 将本次已审核成果写入成果库 已开启" [checked] [ref=f8e280] [cursor=pointer]:
+                  - generic [ref=f8e281]:
+                    - paragraph [ref=f8e282]: 成果库
+                    - paragraph [ref=f8e283]: 将本次已审核成果写入成果库
+                  - generic [ref=f8e284]: 已开启
+                - switch "问题中心 将本次已审核问题写入问题中心 已开启" [checked] [ref=f8e289] [cursor=pointer]:
+                  - generic [ref=f8e290]:
+                    - paragraph [ref=f8e291]: 问题中心
+                    - paragraph [ref=f8e292]: 将本次已审核问题写入问题中心
+                  - generic [ref=f8e293]: 已开启
+            - generic [ref=f8e298]:
+              - button "确认入库" [ref=f8e299] [cursor=pointer]
+              - button "退回提交人" [ref=f8e300] [cursor=pointer]
+              - button "转交统筹人" [ref=f8e301] [cursor=pointer]
+              - button "转交企业教练" [ref=f8e302] [cursor=pointer]

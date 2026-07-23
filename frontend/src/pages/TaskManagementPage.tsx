@@ -14,7 +14,7 @@ import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } fro
 import type { TaskItem, SubTaskItem, Project, ProjectMember } from '../types'
 import { getProjectById, getProjectDisplayName, getProjectIdFromRecord } from '../domain/projectDisplay'
 import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
-import { PlanTableView } from '../components/task-management/PlanTableView'
+import { PlanTableViewV2 } from '../components/task-management/PlanTableViewV2'
 import { toast } from '../utils/toast'
 
 const NOT_STARTED = new Set(['未开始', 'not_started', 'notstarted'])
@@ -917,46 +917,37 @@ function handleFormSave(payload: TaskPayload) {
 
         {/* Filters */}
         <div className="flex flex-1 items-center justify-end gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-500 font-medium">专项</span>
-            <select
-              value={String(effectiveTaskProjectId ?? '')}
-              onChange={(event) => {
-                handleProjectFilter(event.target.value)
-                setAutoSelectedTaskProjectId(null)
-              }}
-              className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none"
-            >
-              <option value="">请选择项目</option>
-              {availableTaskProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-500 font-medium">状态</span>
-            <select
-              value={filterStatus}
-              onChange={(event) => setFilterStatus(event.target.value)}
-              className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none"
-            >
-              <option value="">全部状态</option>
-              <option value="未开始">未开始</option>
-              <option value="进行中">进行中</option>
-              <option value="已完成">已完成</option>
-              <option value="延期">延期</option>
-              <option value="暂缓">暂缓</option>
-            </select>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-500 font-medium">专项负责人</span>
-            <select
-              value={filterOwner}
-              onChange={(e) => setFilterOwner(e.target.value)}
-              className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none"
-            >
-              <option value="">全部专项负责人</option>
-              {ownerNames.map((o) => <option key={o}>{o}</option>)}
-            </select>
-          </div>
+          <select
+            value={String(effectiveTaskProjectId ?? '')}
+            onChange={(event) => {
+              handleProjectFilter(event.target.value)
+              setAutoSelectedTaskProjectId(null)
+            }}
+            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 cursor-pointer focus:outline-none font-medium"
+          >
+            <option value="">请选择项目</option>
+            {availableTaskProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <select
+            value={filterStatus}
+            onChange={(event) => setFilterStatus(event.target.value)}
+            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 cursor-pointer focus:outline-none font-medium"
+          >
+            <option value="">全部状态</option>
+            <option value="未开始">未开始</option>
+            <option value="进行中">进行中</option>
+            <option value="已完成">已完成</option>
+            <option value="延期">延期</option>
+            <option value="暂缓">暂缓</option>
+          </select>
+          <select
+            value={filterOwner}
+            onChange={(e) => setFilterOwner(e.target.value)}
+            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 cursor-pointer focus:outline-none font-medium"
+          >
+            <option value="">全部负责人</option>
+            {ownerNames.map((o) => <option key={o}>{o}</option>)}
+          </select>
           <div className="relative">
             <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" style={{ width: 13, height: 13 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
             <input
@@ -1063,7 +1054,7 @@ function handleFormSave(payload: TaskPayload) {
       {/* Main */}
       <div className="flex-1 min-w-0 min-h-0 flex overflow-hidden" style={{ background: viewMode === 'plan' ? '#F8FAFC' : '#F1F5F9' }}>
         <div
-          className={viewMode === 'plan' ? 'work-progress-plan-shell flex-1' : 'flex-1 overflow-y-auto'}
+          className={viewMode === 'plan' ? 'work-progress-plan-shell flex-1 min-w-0 overflow-hidden flex flex-col' : 'flex-1 overflow-y-auto'}
           style={viewMode === 'plan'
             ? { background: '#F8FAFC' }
             : { background: '#F1F5F9', padding: '16px 20px 20px', paddingRight: 20 }}
@@ -1083,7 +1074,7 @@ function handleFormSave(payload: TaskPayload) {
               </div>
             </div>
           ) : viewMode === 'plan' ? (
-            <PlanTableView
+            <PlanTableViewV2
               project={focusedProject}
               tasks={planBaseTasks}
               taskSubMap={taskSubMap}
@@ -1320,10 +1311,10 @@ function handleFormSave(payload: TaskPayload) {
                 assignee: selectedSubTask.assignee,
               })
               return (
-                <div className="flex flex-col h-full overflow-hidden">
-                  {/* 顶部：返回按钮 + 标题 + 关闭 */}
-                  <div className="px-5 pt-4 pb-3 border-b flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-                    <div className="flex items-center justify-between mb-2">
+                <div className="flex flex-col h-full overflow-hidden bg-white">
+                  {/* 顶部：返回 + 标题 + 关闭 */}
+                  <div className="px-4 pt-3 pb-2 border-b flex-shrink-0" style={{ borderColor: '#E2E8F0', background: '#F8FAFC' }}>
+                    <div className="flex items-center justify-between mb-1">
                       <button
                         onClick={() => { setSelectedSubTask(null); setSubDetailLoading(false); setSubEditField(null) }}
                         className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-blue-600 transition-colors"
@@ -1342,89 +1333,106 @@ function handleFormSave(payload: TaskPayload) {
                         </svg>
                       </button>
                     </div>
-                    <p className="text-xs text-slate-400 font-semibold">关键任务详情</p>
-                    <h2 className="text-sm font-bold text-slate-900 mt-0.5 leading-snug">{selectedSubTask?.title ?? '加载中...'}</h2>
+                    <p className="text-xs font-semibold" style={{ color: '#94A3B8' }}>关键任务详情</p>
+                    <h2 className="text-sm font-bold mt-0.5 leading-snug" style={{ color: '#1E293B' }}>{selectedSubTask?.title ?? '加载中...'}</h2>
                   </div>
 
-                  {/* 滚动区 */}
-                  <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                  {/* 滚动区 — 精简紧凑 */}
+                  <div className="flex-1 overflow-y-auto p-3 space-y-2">
                     {subDetailLoading && !selectedSubTask ? (
-                      <p className="text-xs text-slate-400 text-center py-8">加载中…</p>
+                      <p className="text-xs text-center py-8" style={{ color: '#94A3B8' }}>加载中…</p>
                     ) : selectedSubTask ? (
                       <>
+                        {/* 状态 + 责任人 + 计划时间 */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold whitespace-nowrap"
+                            style={{
+                              background: badge.label === '已完成' ? '#DCFCE7' : badge.label === '进行中' ? '#DBEAFE' : badge.label === '暂缓' ? '#FEF3C7' : '#F1F5F9',
+                              color: badge.label === '已完成' ? '#15803D' : badge.label === '进行中' ? '#2563EB' : badge.label === '暂缓' ? '#B45309' : '#64748B'
+                            }}>
+                            <span className="w-1.5 h-1.5 rounded-full" style={{
+                              background: badge.label === '已完成' ? '#22C55E' : badge.label === '进行中' ? '#3B82F6' : badge.label === '暂缓' ? '#F59E0B' : '#94A3B8'
+                            }} />{badge.label}
+                          </span>
+                          {selectedSubTask.assignee && (
+                            <span className="text-xs font-semibold" style={{ color: '#475569' }}>责任人：{selectedSubTask.assignee}</span>
+                          )}
+                          {selectedSubTask.plan_time && (
+                            <span className="text-xs" style={{ color: '#94A3B8' }}>{selectedSubTask.plan_time}</span>
+                          )}
+                        </div>
+
                         {/* 基本信息 */}
-                        <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#E9EFF6' }}>
+                        <div className="rounded border overflow-hidden" style={{ borderColor: '#E2E8F0', background: '#FFF' }}>
                           {([
                             { label: '所属项目', value: selectedSubProject?.name },
                             { label: '重点工作', value: subParent?.key_task ?? selectedSubTask.parent_task?.key_task },
                             { label: '负责人', value: selectedSubTask.assignee },
-                            { label: '计划时间', value: selectedSubTask.plan_time },
                           ] as { label: string; value?: string }[]).filter((r) => r.value).map((row) => (
-                            <div key={row.label} className="flex gap-3 px-4 py-2.5 border-b last:border-b-0" style={{ borderColor: '#F1F5F9' }}>
-                              <span className="w-16 shrink-0 text-xs font-semibold text-slate-400">{row.label}</span>
-                              <span className="flex-1 text-xs font-semibold text-slate-700">{row.value || '—'}</span>
+                            <div key={row.label} className="flex gap-2 px-2.5 py-1.5 border-b last:border-b-0" style={{ borderColor: '#F1F5F9' }}>
+                              <span className="w-14 shrink-0 text-xs font-semibold" style={{ color: '#94A3B8' }}>{row.label}</span>
+                              <span className="flex-1 text-xs font-medium" style={{ color: '#334155' }}>{row.value || '—'}</span>
                             </div>
                           ))}
                         </div>
 
                         {/* 当前状态 */}
-                        <div>
-                          <p className="text-xs font-bold text-slate-500 mb-1.5">当前状态</p>
-                          {subCanEdit ? (
+                        {subCanEdit ? (
+                          <div>
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>当前状态</p>
                             <select
                               value={selectedSubTask.status ?? ''}
                               onChange={(e) => handleSubStatusUpdate(e.target.value)}
                               disabled={subSaving || selectedTaskArchived}
-                              className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold focus:outline-none focus:border-indigo-300"
+                              className="w-full rounded border px-2.5 py-1 text-xs font-bold focus:outline-none"
+                              style={{ borderColor: '#E2E8F0', background: '#FFF', color: '#334155' }}
                             >
                               {['未开始', '进行中', '已完成', '暂缓'].map((s) => <option key={s}>{s}</option>)}
                             </select>
-                          ) : (
-                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${badge.cls}`}>
-                              <span className="w-1.5 h-1.5 rounded-full" style={{ background: badge.dot }} />{badge.label}
-                            </span>
-                          )}
-                        </div>
+                          </div>
+                        ) : null}
 
                         {/* 完成标准 */}
                         {selectedSubTask.completion_criteria && (
                           <div>
-                            <p className="text-xs font-bold text-slate-500 mb-1.5">完成标准</p>
-                            <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2.5 text-xs text-indigo-900 leading-relaxed">
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>评价标准</p>
+                            <div className="rounded px-2.5 py-1.5 text-xs leading-relaxed" style={{ background: '#EEF2FF', color: '#3730A3', border: '1px solid #C7D2FE' }}>
                               {selectedSubTask.completion_criteria}
                             </div>
                           </div>
                         )}
 
-                        {/* 进展记录 */}
+                        {/* 最新进展 */}
                         <div>
-                          <p className="text-xs font-bold text-slate-500 mb-1.5">进展记录</p>
+                          <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>最新进展</p>
                           {parseProgressTimeline(selectedSubTask.notes).length > 0 ? (
-                            <div className="space-y-2">
+                            <div className="space-y-1">
                               {parseProgressTimeline(selectedSubTask.notes).map((entry, idx) => (
-                                <div key={`${entry.date}-${idx}`} className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
-                                  {entry.date && <p className="text-xs font-semibold text-slate-400 mb-0.5">{entry.date}</p>}
-                                  <p className="text-xs text-slate-700 leading-relaxed">{entry.text}</p>
+                                <div key={`${entry.date}-${idx}`} className="rounded px-2.5 py-1.5" style={{ background: '#F8FAFC', border: '1px solid #F1F5F9' }}>
+                                  <span className="text-xs" style={{ color: '#334155' }}>
+                                    {entry.date && <span style={{ color: '#94A3B8', fontSize: '11px', marginRight: '6px' }}>[{entry.date}]</span>}
+                                    {entry.text}
+                                  </span>
                                 </div>
                               ))}
                             </div>
                           ) : (
-                            <p className="text-xs text-slate-400">暂无进展记录</p>
+                            <p className="text-xs" style={{ color: '#CBD5E1' }}>暂无进展记录</p>
                           )}
                         </div>
 
                         {/* 来源信息 */}
                         {selectedSubTask.source_submission && (
                           <div>
-                            <p className="text-xs font-bold text-slate-500 mb-1.5">来源</p>
-                            <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
-                              <div className="flex items-center gap-2 flex-wrap mb-1">
-                                <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs font-semibold">{selectedSubTask.source_submission.source_type}</span>
-                                <span className="text-xs text-slate-500">{selectedSubTask.source_submission.submitter}</span>
-                                <span className="text-xs text-slate-400">{selectedSubTask.source_submission.created_at?.slice(0, 10)}</span>
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>来源</p>
+                            <div className="rounded px-2.5 py-1.5" style={{ background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="px-1.5 py-0.5 rounded text-xs font-bold" style={{ background: '#DBEAFE', color: '#1D4ED8' }}>{selectedSubTask.source_submission.source_type}</span>
+                                <span className="text-xs" style={{ color: '#64748B' }}>{selectedSubTask.source_submission.submitter}</span>
+                                <span className="text-xs" style={{ color: '#94A3B8' }}>{selectedSubTask.source_submission.created_at?.slice(0, 10)}</span>
                               </div>
                               {selectedSubTask.source_submission.title && (
-                                <p className="text-xs text-slate-700 font-medium">{selectedSubTask.source_submission.title}</p>
+                                <p className="text-xs font-medium mt-0.5" style={{ color: '#334155' }}>{selectedSubTask.source_submission.title}</p>
                               )}
                             </div>
                           </div>
@@ -1433,12 +1441,12 @@ function handleFormSave(payload: TaskPayload) {
                         {/* 关联成果 */}
                         {selectedSubTask.related_achievements && selectedSubTask.related_achievements.length > 0 && (
                           <div>
-                            <p className="text-xs font-bold text-slate-500 mb-1.5">关联成果（{selectedSubTask.related_achievements.length}）</p>
-                            <div className="space-y-1.5">
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>关联成果（{selectedSubTask.related_achievements.length}）</p>
+                            <div className="space-y-1">
                               {selectedSubTask.related_achievements.map((ach) => (
-                                <div key={ach.id} className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
-                                  <p className="text-xs font-semibold text-amber-900">{ach.name}</p>
-                                  <p className="text-xs text-amber-600 mt-0.5">{ach.achievement_type} · {ach.status}</p>
+                                <div key={ach.id} className="rounded px-2.5 py-1.5" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+                                  <p className="text-xs font-semibold" style={{ color: '#92400E' }}>{ach.name}</p>
+                                  <p className="text-xs" style={{ color: '#B45309' }}>{ach.achievement_type} · {ach.status}</p>
                                 </div>
                               ))}
                             </div>
@@ -1448,12 +1456,12 @@ function handleFormSave(payload: TaskPayload) {
                         {/* 关联问题 */}
                         {selectedSubTask.related_issues && selectedSubTask.related_issues.length > 0 && (
                           <div>
-                            <p className="text-xs font-bold text-slate-500 mb-1.5">关联问题（{selectedSubTask.related_issues.length}）</p>
-                            <div className="space-y-1.5">
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>关键问题（{selectedSubTask.related_issues.length}）</p>
+                            <div className="space-y-1">
                               {selectedSubTask.related_issues.map((issue) => (
-                                <div key={issue.id} className="rounded-lg border border-red-100 bg-red-50 px-3 py-2">
-                                  <p className="text-xs text-red-800 leading-relaxed">{issue.description}</p>
-                                  <p className="text-xs text-red-500 mt-0.5">{issue.issue_type} · {issue.priority} · {issue.status}</p>
+                                <div key={issue.id} className="rounded px-2.5 py-1.5" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+                                  <p className="text-xs leading-relaxed" style={{ color: '#991B1B' }}>{issue.description}</p>
+                                  <p className="text-xs" style={{ color: '#DC2626' }}>{issue.issue_type} · {issue.priority} · {issue.status}</p>
                                 </div>
                               ))}
                             </div>

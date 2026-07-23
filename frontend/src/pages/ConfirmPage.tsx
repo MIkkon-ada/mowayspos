@@ -1290,16 +1290,60 @@ export function ConfirmPage() {
                           <div className="grid grid-cols-2 gap-3">
                             {activeCard.coordinatorNote && (
                               <section className="min-h-[96px] rounded-xl border border-indigo-100 bg-indigo-50/30 p-4">
-                                <h3 className="text-xs font-bold text-indigo-800">统筹反馈</h3>
+                                <h3 className="text-xs font-bold text-indigo-800">协调人建议</h3>
                                 <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{activeCard.coordinatorNote}</p>
                               </section>
                             )}
                             {activeCard.ceoNote && (
                               <section className="min-h-[96px] rounded-xl border border-violet-100 bg-violet-50/30 p-4">
-                                <h3 className="text-xs font-bold text-violet-800">企业教练批示</h3>
+                                <h3 className="text-xs font-bold text-violet-800">企业教练决策</h3>
                                 <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{activeCard.ceoNote}</p>
                               </section>
                             )}
+                          </div>
+                        )}
+
+                        {/* 最终处理结果（与状态流转分开展示） */}
+                        {(activeCard.finalResult || activeCard.handlerReply) && (
+                          <div className="rounded-xl border border-emerald-100 bg-emerald-50/30 p-4">
+                            <h3 className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                              <span>最终处理结果</span>
+                              <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-500 text-[8px] font-bold text-white">终</span>
+                            </h3>
+                            {activeCard.finalResult && (
+                              <div className="mt-2">
+                                <p className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wide mb-1">处理结论</p>
+                                <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">{activeCard.finalResult}</p>
+                              </div>
+                            )}
+                            {activeCard.handlerReply && (
+                              <div className="mt-2 pt-2 border-t border-emerald-200/50">
+                                <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1">负责人回复</p>
+                                <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">{activeCard.handlerReply}</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* 状态流转记录 */}
+                        {activeCard.escalationHistory?.length > 0 && (
+                          <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4">
+                            <h3 className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
+                              <span>状态流转</span>
+                            </h3>
+                            <div className="mt-2 space-y-2">
+                              {activeCard.escalationHistory.map((ev: Record<string, unknown>, idx: number) => (
+                                <div key={idx} className="flex items-start gap-2 text-xs text-slate-500">
+                                  <span className="mt-0.5 w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
+                                  <span>
+                                    <b className="text-slate-700">{ev.target === 'coordinator' ? '转统筹协调' : ev.target === 'coach' ? '转企业教练决策' : String(ev.target)}</b>
+                                    {ev.at ? <span className="ml-1 text-[10px] text-slate-400">{String(ev.at).slice(0, 16).replace('T', ' ')}</span> : null}
+                                    {ev.operator ? <span className="ml-1 text-slate-400">· {String(ev.operator)}</span> : null}
+                                    {ev.note ? <p className="mt-0.5 text-[11px] text-slate-400">{String(ev.note)}</p> : null}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         )}
                       </div>

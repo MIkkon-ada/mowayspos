@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiPost, apiUpload } from './client'
+import { apiGet, apiPatch, apiPost, apiPut, apiUpload } from './client'
 import type { MeetingItem } from '../types'
 
 export function fetchMeetings(projectId: number): Promise<MeetingItem[]> {
@@ -29,8 +29,10 @@ export type MeetingAnalyzeResult = {
 export function analyzeMeeting(
   text: string,
   project_id: number,
+  mode?: 'kickoff' | 'progress',
+  member_names?: string[],
 ): Promise<MeetingAnalyzeResult> {
-  return apiPost<MeetingAnalyzeResult>('/api/meetings/analyze', { text, project_id })
+  return apiPost<MeetingAnalyzeResult>('/api/meetings/analyze', { text, project_id, mode, member_names })
 }
 
 export function transcribeAudio(file: File): Promise<{ text: string }> {
@@ -105,4 +107,23 @@ export function createMeeting(payload: {
   transcript_text: string
 }): Promise<MeetingItem> {
   return apiPost<MeetingItem>('/api/meetings', payload)
+}
+
+export function updateMeeting(
+  id: number,
+  payload: {
+    project_id: number
+    title: string
+    meeting_type: string
+    meeting_date: string
+    host: string
+    participants: string
+    summary: string
+    task_list_json: string
+    decision_items_json: string
+    risk_items_json: string
+    transcript_text: string
+  },
+): Promise<MeetingItem> {
+  return apiPut<MeetingItem>(`/api/meetings/${id}`, payload)
 }

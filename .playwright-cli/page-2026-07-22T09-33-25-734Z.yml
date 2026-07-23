@@ -1,0 +1,159 @@
+- generic [ref=f3e3]:
+  - complementary [ref=f3e4]:
+    - generic [ref=f3e5]:
+      - img "logo" [ref=f3e6]
+      - button "通知" [ref=f3e8] [cursor=pointer]
+    - navigation [ref=f3e11]:
+      - button "驾驶舱" [ref=f3e13] [cursor=pointer]
+      - button "工作推进表" [ref=f3e19] [cursor=pointer]
+      - button "我的任务" [ref=f3e25] [cursor=pointer]
+      - button "AI 确认中心" [ref=f3e30] [cursor=pointer]
+      - button "工作汇报" [active] [ref=f3e36] [cursor=pointer]
+      - button "会议纪要" [ref=f3e41] [cursor=pointer]
+      - button "成果库" [ref=f3e47] [cursor=pointer]
+      - button "问题中心" [ref=f3e52] [cursor=pointer]
+      - button "组织管理" [ref=f3e58] [cursor=pointer]
+      - button "项目管理" [ref=f3e63] [cursor=pointer]
+      - button "通知中心" [ref=f3e68] [cursor=pointer]
+      - button "系统设置" [ref=f3e74] [cursor=pointer]
+    - generic [ref=f3e80]:
+      - generic [ref=f3e81]: m
+      - generic [ref=f3e82]:
+        - generic [ref=f3e83]: moways
+        - generic [ref=f3e84]: 超级管理员
+      - button "修改密码" [ref=f3e85] [cursor=pointer]
+      - button "退出登录" [ref=f3e88] [cursor=pointer]
+  - generic [ref=f3e129]:
+    - banner [ref=f3e130]:
+      - generic [ref=f3e131]:
+        - heading "工作汇报" [level=1] [ref=f3e132]
+        - paragraph [ref=f3e133]: 汇报工作进展，AI 提取结构化内容并提交确认
+      - button "历史提交" [ref=f3e134] [cursor=pointer]
+    - navigation "工作汇报流程" [ref=f3e135]:
+      - generic [ref=f3e136]:
+        - generic [ref=f3e137]: "1"
+        - generic [ref=f3e138]: 选择任务
+      - generic [ref=f3e140]:
+        - generic [ref=f3e141]: "2"
+        - generic [ref=f3e142]: 输入内容
+      - generic [ref=f3e144]:
+        - generic [ref=f3e145]: "3"
+        - generic [ref=f3e146]: AI 提取
+      - generic [ref=f3e148]:
+        - generic [ref=f3e149]: "4"
+        - generic [ref=f3e150]: 人工检查
+      - generic [ref=f3e152]:
+        - generic [ref=f3e153]: "5"
+        - generic [ref=f3e154]: 提交确认
+    - region "汇报任务绑定" [ref=f3e155]:
+      - generic [ref=f3e156]:
+        - generic [ref=f3e157]: 所属项目 *
+        - combobox "所属项目" [ref=f3e158]:
+          - option "请选择所属项目" [selected]
+          - option "博维咨询AI升级转型2026"
+          - option "P7验收-A项目"
+          - option "P7验收-B项目"
+          - option "P7验收-C项目"
+      - generic [ref=f3e159]:
+        - generic [ref=f3e160]: 关键任务 *
+        - combobox "关键任务" [disabled] [ref=f3e161]:
+          - option "请选择关键任务" [selected]
+      - generic [ref=f3e162]:
+        - generic [ref=f3e163]: 计划时间
+        - strong [ref=f3e164]: —
+      - button "查看任务详情" [disabled] [ref=f3e165]
+    - main [ref=f3e166]:
+      - generic [ref=f3e167]:
+        - region "输入汇报内容" [ref=f3e168]:
+          - generic [ref=f3e170]:
+            - generic [ref=f3e171]: "2"
+            - generic [ref=f3e172]:
+              - heading "输入内容" [level=2] [ref=f3e173]
+              - paragraph [ref=f3e174]: 支持文本、录音、音频文件三种方式
+          - tablist "输入方式" [ref=f3e175]:
+            - tab "文本输入" [selected] [ref=f3e176] [cursor=pointer]
+            - tab "录音输入" [ref=f3e179] [cursor=pointer]
+            - tab "上传音频" [ref=f3e182] [cursor=pointer]
+          - generic [ref=f3e185]:
+            - heading "原始汇报内容" [level=2] [ref=f3e186]:
+              - text: 原始汇报内容
+              - emphasis [ref=f3e187]: "*"
+            - generic [ref=f3e188]: 提交前可继续修改
+          - textbox "请输入本次完成、下一步计划、遇到的问题和形成的成果…" [ref=f3e189]
+          - generic [ref=f3e190]: 0/5000
+          - generic [ref=f3e191]:
+            - generic [ref=f3e192]: 建议包含：本次完成、下一步计划、问题、成果
+            - generic [ref=f3e193]: 内容越完整，AI 提取结果越准确
+          - generic [ref=f3e194]:
+            - generic [ref=f3e195]:
+              - generic [ref=f3e196]: 提取模型
+              - generic [ref=f3e197]:
+                - combobox "提取模型 推荐" [ref=f3e198]
+                - emphasis [ref=f3e199]: 推荐
+            - button "AI 提取" [disabled] [ref=f3e200]
+        - region "AI 提取结果预览" [ref=f3e201]:
+          - generic [ref=f3e203]:
+            - generic [ref=f3e204]: "3"
+            - generic [ref=f3e205]:
+              - heading "AI 提取结果（预览）" [level=2] [ref=f3e206]
+              - paragraph [ref=f3e207]: AI 已提取以下结构化内容，请检查并完善
+          - generic "待提取的结构化汇报字段" [ref=f3e209]:
+            - article [ref=f3e210]:
+              - generic [ref=f3e211]:
+                - generic [ref=f3e212]:
+                  - generic [ref=f3e213]:
+                    - generic [ref=f3e214]: ✓
+                    - text: 本次完成
+                  - generic [ref=f3e215]:
+                    - textbox "AI 提取后将在此展示本次完成的工作" [disabled] [ref=f3e216]
+                    - generic: 0/1000
+                - generic [ref=f3e217]:
+                  - generic [ref=f3e218]:
+                    - generic [ref=f3e219]: →
+                    - text: 下一步计划
+                  - generic [ref=f3e220]:
+                    - textbox "AI 提取后将在此展示下一步计划" [disabled] [ref=f3e221]
+                    - generic: 0/1000
+                - generic [ref=f3e222]:
+                  - generic [ref=f3e223]:
+                    - generic [ref=f3e224]: "!"
+                    - text: 问题与风险
+                  - generic [ref=f3e225]:
+                    - textbox "AI 提取后将在此展示问题与风险" [disabled] [ref=f3e226]
+                    - generic: 0/1000
+                - generic [ref=f3e227]:
+                  - generic [ref=f3e228]:
+                    - generic [ref=f3e229]: ★
+                    - text: 取得的成果
+                  - generic [ref=f3e230]:
+                    - textbox "AI 提取后将在此展示取得的成果" [disabled] [ref=f3e231]
+                    - generic: 0/1000
+                - generic [ref=f3e232]:
+                  - generic [ref=f3e233]:
+                    - generic [ref=f3e234]: ⚑
+                    - text: 任务状态建议
+                  - radiogroup "任务状态建议" [ref=f3e235]:
+                    - generic [ref=f3e236] [cursor=pointer]:
+                      - radio "未开始" [disabled] [ref=f3e237]
+                      - generic [ref=f3e238]: 未开始
+                    - generic [ref=f3e239] [cursor=pointer]:
+                      - radio "进行中" [disabled] [ref=f3e240]
+                      - generic [ref=f3e241]: 进行中
+                    - generic [ref=f3e242] [cursor=pointer]:
+                      - radio "延期" [disabled] [ref=f3e243]
+                      - generic [ref=f3e244]: 延期
+                    - generic [ref=f3e245] [cursor=pointer]:
+                      - radio "已完成" [disabled] [ref=f3e246]
+                      - generic [ref=f3e247]: 已完成
+                    - generic [ref=f3e248] [cursor=pointer]:
+                      - radio "暂缓" [disabled] [ref=f3e249]
+                      - generic [ref=f3e250]: 暂缓
+    - contentinfo [ref=f3e251]:
+      - generic [ref=f3e252]:
+        - generic [ref=f3e253]:
+          - button "保存草稿" [ref=f3e254] [cursor=pointer]
+          - button "清空内容" [ref=f3e255] [cursor=pointer]
+        - generic [ref=f3e256]:
+          - generic [ref=f3e257]: 请先选择所属项目。
+          - button "提交至 AI 确认中心" [disabled] [ref=f3e258]
+      - generic [ref=f3e259]: 提交后将进入 AI 确认中心，由项目负责人审核确认后写入工作推进表

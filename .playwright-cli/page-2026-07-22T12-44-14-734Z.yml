@@ -1,0 +1,248 @@
+- generic [ref=f1e28]:
+  - complementary [ref=f1e29]:
+    - generic [ref=f1e30]:
+      - img "logo" [ref=f1e31]
+      - button "通知" [ref=f1e33] [cursor=pointer]
+    - navigation [ref=f1e36]:
+      - button "驾驶舱" [ref=f1e38] [cursor=pointer]
+      - button "工作推进表" [ref=f1e44] [cursor=pointer]
+      - button "我的任务" [ref=f1e50] [cursor=pointer]
+      - button "AI 确认中心" [ref=f1e55] [cursor=pointer]
+      - button "工作汇报" [ref=f1e61] [cursor=pointer]
+      - button "会议纪要" [ref=f1e66] [cursor=pointer]
+      - button "成果库" [ref=f1e72] [cursor=pointer]
+      - button "问题中心" [ref=f1e77] [cursor=pointer]
+      - button "组织管理" [ref=f1e83] [cursor=pointer]
+      - button "项目管理" [ref=f1e88] [cursor=pointer]
+      - button "通知中心" [ref=f1e93] [cursor=pointer]
+      - button "系统设置" [ref=f1e99] [cursor=pointer]
+    - generic [ref=f1e105]:
+      - generic [ref=f1e106]: m
+      - generic [ref=f1e107]:
+        - generic [ref=f1e108]: moways
+        - generic [ref=f1e109]: 超级管理员
+      - button "修改密码" [ref=f1e110] [cursor=pointer]
+      - button "退出登录" [ref=f1e113] [cursor=pointer]
+  - generic [ref=f1e370]:
+    - generic [ref=f1e955]:
+      - generic [ref=f1e956]:
+        - generic [ref=f1e957]:
+          - heading "新增关键任务" [level=2] [ref=f1e958]
+          - paragraph [ref=f1e959]: 执行期关键任务派发：责任人与协助人仅来自当前项目成员。
+        - button [ref=f1e960] [cursor=pointer]
+      - generic [ref=f1e963]:
+        - generic [ref=f1e964]:
+          - generic [ref=f1e965]: 关键任务名称 *
+          - textbox "描述具体要做什么" [ref=f1e966]
+        - generic [ref=f1e967]:
+          - generic [ref=f1e968]:
+            - generic [ref=f1e969]: 责任人 *
+            - combobox [ref=f1e970]:
+              - option "请选择责任人"
+              - option "moways" [selected]
+              - option "冯海林"
+              - option "刘万超"
+              - option "杨宇帆"
+              - option "邹奇敏"
+              - option "许明良"
+              - option "温会林"
+              - option "郭熠彬"
+              - option "吴肖"
+          - generic [ref=f1e971]:
+            - generic [ref=f1e972]: 协助人
+            - combobox [ref=f1e973]:
+              - option "可不指定" [selected]
+              - option "moways"
+              - option "冯海林"
+              - option "刘万超"
+              - option "杨宇帆"
+              - option "邹奇敏"
+              - option "许明良"
+              - option "温会林"
+              - option "郭熠彬"
+              - option "吴肖"
+        - generic [ref=f1e974]:
+          - generic [ref=f1e975]: 时间段
+          - textbox "如：2026年6月 或 2026年6月~2026年8月" [ref=f1e976]
+        - generic [ref=f1e977]:
+          - generic [ref=f1e978]: 当前状态
+          - combobox [ref=f1e979]:
+            - option "未开始" [selected]
+            - option "进行中"
+            - option "已完成"
+            - option "暂缓"
+        - generic [ref=f1e980]:
+          - generic [ref=f1e981]: 备注 / 标准
+          - textbox "可填写完成标准、验收口径或交付说明" [ref=f1e982]
+        - generic [ref=f1e983]:
+          - generic [ref=f1e984]: 补充说明
+          - textbox "可选；保存到现有备注字段" [ref=f1e985]
+      - generic [ref=f1e986]:
+        - button "取消" [ref=f1e987] [cursor=pointer]
+        - button "创建关键任务" [ref=f1e988] [cursor=pointer]
+    - banner [ref=f1e371]:
+      - generic [ref=f1e372]:
+        - heading "工作推进表" [level=1] [ref=f1e373]
+        - paragraph [ref=f1e816]: 按项目、重点工作、关键任务追踪真实推进状态
+      - generic [ref=f1e374]:
+        - button "表格视图" [ref=f1e375] [cursor=pointer]
+        - button "执行详情" [ref=f1e376] [cursor=pointer]
+      - generic [ref=f1e377]:
+        - generic [ref=f1e378]:
+          - generic [ref=f1e379]: 专项
+          - combobox [ref=f1e380] [cursor=pointer]:
+            - option "请选择项目"
+            - option "博维咨询AI升级转型2026" [selected]
+        - generic [ref=f1e381]:
+          - generic [ref=f1e382]: 状态
+          - combobox [ref=f1e383] [cursor=pointer]:
+            - option "全部状态" [selected]
+            - option "未开始"
+            - option "进行中"
+            - option "已完成"
+            - option "延期"
+            - option "暂缓"
+        - generic [ref=f1e384]:
+          - generic [ref=f1e385]: 专项负责人
+          - combobox [ref=f1e386] [cursor=pointer]:
+            - option "全部专项负责人" [selected]
+            - option "冯海林"
+            - option "杨宇帆"
+        - textbox "搜索重点工作…" [ref=f1e817]
+      - generic [ref=f1e818]:
+        - generic [ref=f1e819]:
+          - button "在办" [ref=f1e820] [cursor=pointer]
+          - button "回收站" [ref=f1e821] [cursor=pointer]
+        - combobox [ref=f1e822] [cursor=pointer]:
+          - option "操作" [disabled] [selected]
+          - option "导出表格"
+          - option "新增重点工作"
+    - generic [ref=f1e824]:
+      - generic [ref=f1e830] [cursor=pointer]:
+        - paragraph [ref=f1e831]: 未启动
+        - paragraph [ref=f1e832]: "0"
+      - generic [ref=f1e838] [cursor=pointer]:
+        - paragraph [ref=f1e839]: 进行中
+        - paragraph [ref=f1e840]: "1"
+      - generic [ref=f1e845] [cursor=pointer]:
+        - paragraph [ref=f1e846]: 已完成
+        - paragraph [ref=f1e847]: "0"
+      - generic [ref=f1e852] [cursor=pointer]:
+        - paragraph [ref=f1e853]: 延期
+        - paragraph [ref=f1e854]: "0"
+      - generic [ref=f1e859] [cursor=pointer]:
+        - paragraph [ref=f1e860]: 暂缓
+        - paragraph [ref=f1e861]: "0"
+    - generic [ref=f1e391]:
+      - generic [ref=f1e862]:
+        - generic [ref=f1e863]:
+          - generic [ref=f1e864]: 层级 / 名称
+          - generic [ref=f1e865]: 负责人
+          - generic [ref=f1e866]: 计划时间
+          - generic [ref=f1e867]: 状态
+          - generic [ref=f1e868]: 关键任务
+          - generic [ref=f1e869]: 风险
+          - generic [ref=f1e870]: 操作
+        - generic [ref=f1e871]:
+          - generic [ref=f1e872] [cursor=pointer]:
+            - button [ref=f1e873]
+            - button "博维咨询AI升级转型2026 负责人：冯海林" [ref=f1e876]:
+              - generic: 博维咨询AI升级转型2026
+              - generic [ref=f1e880]: 负责人：冯海林
+            - generic [ref=f1e881]: 进行中
+            - generic [ref=f1e884]: 1个任务
+          - generic [ref=f1e885]:
+            - generic [ref=f1e886]:
+              - button [ref=f1e887] [cursor=pointer]
+              - generic [ref=f1e890]: "1"
+              - button "联合腾讯WorkBuddy开拓AI相关业务"
+              - generic [ref=f1e892]:
+                - generic [ref=f1e893]: 冯
+                - generic [ref=f1e894]: 冯海林
+              - generic [ref=f1e895]: "-"
+              - generic [ref=f1e896]: 进行中
+              - generic [ref=f1e899]: 0/3
+              - generic [ref=f1e904]:
+                - button "新增关键任务" [active] [ref=f1e905] [cursor=pointer]
+                - button "查看" [ref=f1e906] [cursor=pointer]
+            - generic [ref=f1e907] [cursor=pointer]:
+              - generic [ref=f1e908]: "1.1"
+              - generic [ref=f1e909]: 子
+              - generic: 明确联合拓展方案与目标客户范围
+              - generic [ref=f1e911]:
+                - generic [ref=f1e912]: 杨
+                - generic [ref=f1e913]: 杨宇帆
+              - generic [ref=f1e914]: 7.1-7.5
+              - combobox [ref=f1e916]:
+                - option "未开始"
+                - option "进行中" [selected]
+                - option "已完成"
+                - option "暂缓"
+              - generic [ref=f1e917]:
+                - button "编辑" [ref=f1e918]
+                - button "详情" [ref=f1e919]
+            - generic [ref=f1e920] [cursor=pointer]:
+              - generic [ref=f1e921]: "1.2"
+              - generic [ref=f1e922]: 子
+              - generic: 策划并执行联合市场活动
+              - generic [ref=f1e924]:
+                - generic [ref=f1e925]: 邹
+                - generic [ref=f1e926]: 邹奇敏
+              - generic [ref=f1e927]: 7.1-7.5
+              - combobox [ref=f1e929]:
+                - option "未开始"
+                - option "进行中" [selected]
+                - option "已完成"
+                - option "暂缓"
+              - generic [ref=f1e930]:
+                - button "编辑" [ref=f1e931]
+                - button "详情" [ref=f1e932]
+            - generic [ref=f1e933] [cursor=pointer]:
+              - generic [ref=f1e934]: "1.3"
+              - generic [ref=f1e935]: 子
+              - generic: 整理客户现有 SOP 资料清单
+              - generic [ref=f1e937]:
+                - generic [ref=f1e938]: 冯
+                - generic [ref=f1e939]: 冯海林
+              - generic [ref=f1e940]: "-"
+              - combobox [ref=f1e942]:
+                - option "未开始"
+                - option "进行中" [selected]
+                - option "已完成"
+                - option "暂缓"
+              - generic [ref=f1e943]:
+                - button "编辑" [ref=f1e944]
+                - button "详情" [ref=f1e945]
+      - complementary [ref=f1e946]:
+        - generic [ref=f1e947]:
+          - generic [ref=f1e948]:
+            - generic [ref=f1e949]:
+              - paragraph [ref=f1e989]: 重点工作详情
+              - heading "联合腾讯WorkBuddy开拓AI相关业务" [level=2] [ref=f1e990]
+            - button [ref=f1e991] [cursor=pointer]
+          - generic [ref=f1e994]:
+            - generic [ref=f1e995]: 进行中
+            - generic [ref=f1e998]:
+              - generic [ref=f1e999]:
+                - generic [ref=f1e1000]: 所属项目
+                - generic [ref=f1e1001]: 博维咨询AI升级转型2026
+              - generic [ref=f1e1002]:
+                - generic [ref=f1e1003]: 项目负责人
+                - generic [ref=f1e1004]: 冯海林
+              - generic [ref=f1e1005]:
+                - generic [ref=f1e1006]: 统筹人
+                - generic [ref=f1e1007]: —
+              - generic [ref=f1e1008]:
+                - generic [ref=f1e1009]: 协助人
+                - generic [ref=f1e1010]: —
+              - generic [ref=f1e1011]:
+                - generic [ref=f1e1012]: 计划时间
+                - generic [ref=f1e1013]: "-"
+            - generic [ref=f1e1014]:
+              - paragraph [ref=f1e1015]: 完成标准
+              - generic [ref=f1e1016]: 1.AI相关业务收入占比达到10%； 2.形成联合拓客机制； 3.达成阶段性客户转化目标。
+          - generic [ref=f1e1017]:
+            - button "编辑" [ref=f1e1018] [cursor=pointer]
+            - button "更新进展" [ref=f1e1019] [cursor=pointer]
+            - button "新增关键任务" [ref=f1e1020] [cursor=pointer]
+            - button "删除" [ref=f1e1021] [cursor=pointer]

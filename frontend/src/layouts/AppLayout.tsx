@@ -20,6 +20,7 @@ function LoginPanel() {
   const [password, setPassword] = useState('')
   const [searchParams] = useSearchParams()
   const [wecomLoading, setWecomLoading] = useState(false)
+  const [showWecomGuide, setShowWecomGuide] = useState(false)
 
   // 企业微信回调失败时的提示
   const wecomReason = searchParams.get('reason')
@@ -106,9 +107,9 @@ function LoginPanel() {
                 <label className="login-field-label" htmlFor="login-password">
                   密码
                 </label>
-                <a href="#" className="login-forgot" onClick={(e) => e.preventDefault()}>
+                <button type="button" className="login-forgot" onClick={() => setShowWecomGuide(prev => !prev)}>
                   忘记密码？
-                </a>
+                </button>
               </div>
               <input
                 id="login-password"
@@ -148,6 +149,21 @@ function LoginPanel() {
                   />
                 </svg>
                 <span>{wecomError}</span>
+              </div>
+            )}
+
+            {showWecomGuide && (
+              <div className="login-info">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span>忘记密码或账号被锁定？请使用下方<strong>企业微信扫码登录</strong>，登录后在侧边栏点击锁形图标即可修改密码。如企业微信未绑定，请联系管理员在账号管理页绑定。</span>
               </div>
             )}
 

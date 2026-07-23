@@ -249,6 +249,12 @@ def write_back_to_card(
     # 清除 escalated_issue_id 锁定标记（但保留 escalation_history 历史）
     card.pop("escalated_issue_id", None)
 
+    # 最终结果：与状态流转分开展示（留痕）
+    if issue.resolution:
+        card["final_result"] = issue.resolution
+    if issue.handler_reply:
+        card["handler_reply"] = issue.handler_reply
+
     submission.human_result_json = json.dumps(data, ensure_ascii=False)
     db.flush()
     return submission

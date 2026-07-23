@@ -653,7 +653,7 @@ def submit_opinion(
         raise HTTPException(400, "请填写意见")
 
     # 状态校验：只能在 待协调/待决策 状态提交意见
-    if row.status not in {IF.STATUS_COORDINATING, IF.STATUS_PENDING_DECISION, IF.STATUS_IN_PROGRESS}:
+    if row.status not in {IF.STATUS_COORDINATING, IF.STATUS_PENDING_DECISION}:
         raise HTTPException(409, f"当前状态「{row.status}」不能提交意见")
 
     before = crud.to_dict(row)
@@ -724,7 +724,7 @@ def owner_confirm_opinion(
         row.edit_count = (row.edit_count or 0) + 1
         crud.log(db, current_user, "issue_owner_accept_opinion", "issue", row.id, before, crud.to_dict(row), project_id=project_id)
 
-        # 回写任务卡
+        # 回写任务卡（将最终结果写入提交记录，与状态流分开展示）
         if row.source_type == "ai_confirmation" and row.source_submission_id is not None:
             try:
                 from ..services import escalation as ESC
@@ -733,9 +733,24 @@ def owner_confirm_opinion(
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error("write_back_to_card failed for issue %s: %s", row.id, e)
+
+        # 通知提交者：问题已解决，附最终结果
+        if (row.reporter or "").strip() and row.reporter != current_user:
+            from ..services.notify import send as _notify, person_id_for_account
+            reply_text = row.resolution or "已解决"
+            _notify(db, recipient_id=person_id_for_account(row.reporter, db),
+                    recipient=row.reporter, ntype="issue_resolved",
+                    title=f"你提交的问题已解决：{row.description[:40]}",
+                    body=f"处理结果：{reply_text}",
+                    link=f"/home/mytasks",
+                    project_id=project_id)
     else:
-        # 拒绝接受 → 退回处理中，等统筹/教练补充
-        row.status = IF.STATUS_IN_PROGRESS
+        # 拒绝接受 → 退回原提交人（统筹/教练），继续完善
+        if row.issue_type == IT.TYPE_DECISION:
+            row.status = IF.STATUS_PENDING_DECISION
+        else:
+            row.status = IF.STATUS_COORDINATING
+        row.opinion = (row.opinion or "") + f"\n负责人退回意见：{payload.note}" if payload.note else row.opinion
         if payload.note:
             row.resolution = f"负责人要求补充：{payload.note}"
         row.edit_count = (row.edit_count or 0) + 1

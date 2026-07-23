@@ -5,11 +5,17 @@
 - GET /api/auth/wecom/callback: 企业微信回调入口，拿 code 换 userid 建会话
 
 两个接口都在 /api/auth/ 前缀下，已被 _PUBLIC_PREFIXES 放行，无需登录态。
+
+安全机制：
+- 扫码登录：生成随机 state 并缓存，回调时验证，防 CSRF
+- 工作台免登：企微自建应用入口回调不带 state，直接放行
 """
 
 from __future__ import annotations
 
 import logging
+import secrets
+import time
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,6 +31,19 @@ from ..settings import get_settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth/wecom", tags=["wecom-auth"])
+
+# 内存缓存：扫码登录的 state → 过期时间戳（秒），用于防 CSRF
+# state 有效期 10 分钟，过期自动清理
+_pending_states: dict[str, float] = {}
+_STATE_TTL = 600  # 10 分钟
+
+
+def _cleanup_expired_states() -> None:
+    """清理过期的 state 条目。"""
+    now = time.time()
+    expired = [s for s, exp in _pending_states.items() if exp <= now]
+    for s in expired:
+        del _pending_states[s]
 
 
 def _frontend_url(path: str, params: dict | None = None) -> str:
@@ -48,12 +67,17 @@ def wecom_qrcode():
 
     前端调这个接口拿到 url 后，用 window.location.href 跳转过去，
     用户在企业微信扫码确认后，企业微信会回调 /api/auth/wecom/callback。
+
+    同时生成随机 state 存入内存缓存，回调时验证以防御 CSRF。
     """
     settings = get_settings()
     if not settings.wecom_enabled:
         raise HTTPException(status_code=503, detail="wecom_login_disabled")
-    url = wecom.build_qrcode_url()
-    return {"url": url}
+    _cleanup_expired_states()
+    state = secrets.token_hex(16)  # 128 位随机值
+    _pending_states[state] = time.time() + _STATE_TTL
+    url = wecom.build_qrcode_url(state=state)
+    return {"url": url, "state": state}
 
 
 @router.get("/callback")
@@ -64,11 +88,16 @@ def wecom_callback(
 ):
     """企业微信 OAuth 回调入口。
 
+    支持两种入口：
+    - 扫码登录：state 非空 → 验证 state 防 CSRF
+    - 工作台免登：企微自建应用入口只带 code，不带 state → 直接放行
+
     流程：
-    1. 用 code 调企业微信 API 换 userid
-    2. 用 userid 查 Account.wecom_userid
-    3. 找到 → 创建会话，重定向回前端首页
-    4. 没找到 → 重定向回登录页，带 reason=wecom_unbound
+    1. 验证 state（扫码登录场景）
+    2. 用 code 调企业微信 API 换 userid
+    3. 用 userid 查 Account.wecom_userid
+    4. 找到 → 创建会话，重定向回前端首页
+    5. 没找到 → 重定向回登录页，带 reason=wecom_unbound
 
     任何异常都重定向回登录页，带 reason=wecom_error，不向前端暴露错误细节。
     """
@@ -79,6 +108,14 @@ def wecom_callback(
     if not code:
         logger.warning("wecom callback missing code")
         return RedirectResponse(_frontend_url("/login", {"reason": "wecom_error"}))
+
+    # 0. 验证 state（扫码登录场景；工作台免登不传 state，跳过验证）
+    if state:
+        _cleanup_expired_states()
+        if state not in _pending_states:
+            logger.warning("wecom callback invalid or expired state: %s", state[:16])
+            return RedirectResponse(_frontend_url("/login", {"reason": "wecom_error"}))
+        del _pending_states[state]
 
     # 1. 用 code 换 userid
     try:
@@ -107,9 +144,11 @@ def wecom_callback(
     record_login_attempt(account.username, success=True, ip_address="", user_agent="wecom")
     logger.info("wecom login success: %s", account.username)
 
-    # 更新最后登录时间
+    # 清除锁定状态并更新最后登录时间（企业微信已验证身份，不再需要密码锁定）
     try:
         from ..time_utils import utc_now
+        account.failed_login_count = 0
+        account.locked_until = None
         account.last_login_at = utc_now()
         db.commit()
     except Exception:

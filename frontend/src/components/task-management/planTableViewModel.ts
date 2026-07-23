@@ -45,6 +45,7 @@ export type PlanTableRow = {
   task: TaskItem
   subtask: SubTaskItem | null
   sequence: number
+  subtaskIndex: number
   objective: string
   objectiveRowSpan: number
   showObjective: boolean
@@ -201,12 +202,14 @@ export function buildPlanRows({
     const taskRowSpan = taskRows.length
 
     taskRows.forEach((subtask, taskIndex) => {
+      const subtaskIndex = subtask ? taskIndex + 1 : 0
       const parsedNotes = parseAssistingPerson(subtask?.notes)
       const planTime = parsePlanTimeRange(subtask?.plan_time || task.plan_time)
       const status = getPlanStatusLabel(subtask?.status || task.status)
       groupedRows.push({
         task,
         subtask,
+        subtaskIndex,
         objective,
         taskRowSpan,
         showTaskCells: taskIndex === 0,

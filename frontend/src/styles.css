@@ -389,6 +389,28 @@ select:focus {
   margin-top: 2px;
 }
 
+.login-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(14, 165, 233, 0.2);
+  background: rgba(240, 249, 255, 0.92);
+  color: #0369a1;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.login-info svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #0ea5e9;
+}
+
 .login-submit {
   width: 100%;
   height: 52px;

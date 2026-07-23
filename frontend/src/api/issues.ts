@@ -6,6 +6,10 @@ export function fetchIssues(projectId?: number | null): Promise<IssueItem[]> {
   return apiGet<IssueItem[]>(`/api/issues${query}`)
 }
 
+export function fetchIssueById(id: number): Promise<IssueItem> {
+  return apiGet<IssueItem>(`/api/issues/${id}`)
+}
+
 export function fetchMyIssues(): Promise<IssueItem[]> {
   return apiGet<IssueItem[]>('/api/issues/mine')
 }

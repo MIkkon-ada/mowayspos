@@ -23,8 +23,15 @@ class _RejectingWebSocket:
     def __init__(self):
         self.cookies = _TrackingCookies()
         self.closed: tuple[int, str] | None = None
+        self._sent: list[dict] = []
 
-    async def close(self, *, code: int, reason: str):
+    async def accept(self):
+        pass
+
+    async def send_json(self, data: dict):
+        self._sent.append(data)
+
+    async def close(self, *, code: int, reason: str = ""):
         self.closed = (code, reason)
 
 

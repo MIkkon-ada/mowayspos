@@ -30,10 +30,14 @@ _PROFILE_COLUMNS = (
 
 
 def upgrade() -> None:
-    for column in _PROFILE_COLUMNS:
-        op.add_column("projects", column)
-
     bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_columns = {col["name"] for col in inspector.get_columns("projects")}
+
+    for column in _PROFILE_COLUMNS:
+        if column.name not in existing_columns:
+            op.add_column("projects", column)
+
     active_predicate = "is_active IS TRUE" if bind.dialect.name == "postgresql" else "is_active = 1"
     op.execute(
         sa.text(

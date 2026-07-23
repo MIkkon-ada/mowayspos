@@ -187,15 +187,33 @@ export function CoordinatePage() {
     return (personRoles.get(p.id) ?? []).map((r) => r.project.name)
   }
 
-  // 当前用户可见的人员：管理员看全部，普通用户只看同项目成员
-  const visiblePeople = (() => {
-    if (currentUser?.can_view_all) return people
+  // 管理员 person_id 集合（系统管理员/超级管理员不显示在成员列表中）
+  const adminPersonIds = (() => {
     const ids = new Set<number>()
-    const names = new Set<string>()
-    projectMembers.forEach((members) => {
-      members.forEach((m) => { ids.add(m.person_id); names.add(m.person_name_snapshot) })
+    // 当前用户如果是 tech_admin，其 person_id 也应被排除
+    if ((currentUser as any)?.person_id) ids.add((currentUser as any).person_id)
+    // 从 people 列表中排除 is_admin 的用户
+    people.forEach((p) => {
+      if ((p as any).is_admin === true || (p as any).system_role === 'super_admin') ids.add(p.id)
     })
-    return people.filter((p) => ids.has(p.id) || names.has(p.name))
+    return ids
+  })()
+
+  // 当前用户可见的人员：管理员看全部，普通用户只看同项目成员；但系统管理员本人不显示在成员列表中
+  const visiblePeople = (() => {
+    let result: Person[]
+    if (currentUser?.can_view_all) {
+      result = people
+    } else {
+      const ids = new Set<number>()
+      const names = new Set<string>()
+      projectMembers.forEach((members) => {
+        members.forEach((m) => { ids.add(m.person_id); names.add(m.person_name_snapshot) })
+      })
+      result = people.filter((p) => ids.has(p.id) || names.has(p.name))
+    }
+    // 过滤掉系统管理员（super_admin / is_admin）
+    return result.filter((p) => !adminPersonIds.has(p.id))
   })()
 
   // 不过滤，用高亮代替——所有可见人员都显示
@@ -222,12 +240,17 @@ export function CoordinatePage() {
     return highlightedProjectIds.has(projId)
   }
 
-  // 人在选中项目里的角色
-  function getRoleInProject(p: Person, projectId: number): { label: string; cls: string } | null {
+  // 人在选中项目里的所有角色（支持一人多角色）
+  function getRolesInProject(p: Person, projectId: number): { label: string; cls: string }[] {
     const members = projectMembers.get(projectId) ?? []
-    const m = members.find((x) => x.person_id === p.id || x.person_name_snapshot === p.name)
-    if (!m) return null
-    return { label: PROJ_ROLE_LABEL[m.role] ?? m.role, cls: PROJ_ROLE_CLS[m.role] ?? 'bg-amber-100 text-amber-700' }
+    const matches = members.filter((x) => x.person_id === p.id || x.person_name_snapshot === p.name)
+    if (!matches.length) return []
+    // 去重（同一角色只显示一次）
+    const seen = new Set<string>()
+    return matches
+      .map((m) => ({ label: PROJ_ROLE_LABEL[m.role] ?? m.role, cls: PROJ_ROLE_CLS[m.role] ?? 'bg-amber-100 text-amber-700', role: m.role }))
+      .filter((r) => { if (seen.has(r.role)) return false; seen.add(r.role); return true })
+      .sort((a, b) => (PROJ_ROLE_ORDER[a.role as string] ?? 9) - (PROJ_ROLE_ORDER[b.role as string] ?? 9))
   }
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId)
@@ -338,8 +361,10 @@ export function CoordinatePage() {
               </h2>
               <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
                 {displayPeople.map((p) => {
-                  const roleInProject = selectedProjectId ? getRoleInProject(p, selectedProjectId) : null
-                  const { label: roleLabel, cls: roleCls } = roleInProject ?? getBestRole(p)
+                  const rolesInProject = selectedProjectId ? getRolesInProject(p, selectedProjectId) : []
+                  const { label: roleLabel, cls: roleCls } = rolesInProject.length > 0
+                    ? rolesInProject[0]
+                    : getBestRole(p)
                   const duties = getProjectDuties(p)
                   const isPersonSelected = selectedPersonId === p.id
                   const lit = isPersonLit(p)
@@ -363,9 +388,16 @@ export function CoordinatePage() {
                           {p.name?.slice(0, 1)}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-sm font-bold text-slate-800">{p.name}</span>
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold ${roleCls}`}>{roleLabel}</span>
+                            {/* 多角色标签 */}
+                            {rolesInProject.length > 1 ? (
+                              rolesInProject.map((r, idx) => (
+                                <span key={idx} className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold ${r.cls}`}>{r.label}</span>
+                              ))
+                            ) : (
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold ${roleCls}`}>{roleLabel}</span>
+                            )}
                           </div>
                           {duties.length > 0 && (
                             <p className="text-xs text-slate-400 mt-0.5 truncate">

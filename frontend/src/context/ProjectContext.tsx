@@ -14,6 +14,34 @@ function parseProjectIdFromPath(pathname: string): number | null {
   return m ? Number(m[1]) : null
 }
 
+function projectsFromAuthMe(user: CurrentUser | null): Project[] {
+  const source = user?.projects
+  if (!Array.isArray(source)) return []
+  return source
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const id = Number(item.id)
+      const name = String(item.name ?? '').trim()
+      if (!Number.isFinite(id) || !name) return null
+      return {
+        id,
+        name,
+        code: '',
+        description: '',
+        status: 'active',
+        lifecycle_status: 'active',
+        is_active: true,
+        user_roles: [],
+        member_counts: {},
+        coordinator: '',
+        owners: [],
+        collaborators: [],
+        coaches: [],
+      } as Project
+    })
+    .filter((project): project is Project => Boolean(project))
+}
+
 type ProjectContextValue = {
   authState: 'loading' | 'unauthenticated' | 'authenticated'
   currentUser: CurrentUser | null
@@ -72,10 +100,10 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     [navigate, location.pathname],
   )
 
-  const reloadProjects = useCallback(async () => {
+  const reloadProjects = useCallback(async (fallbackUser: CurrentUser | null = currentUser) => {
     const list = await getProjects()
-    setProjects(list)
-  }, [])
+    setProjects(list.length > 0 ? list : projectsFromAuthMe(fallbackUser))
+  }, [currentUser])
 
   const getPreferredProjectId = useCallback((): number | null => {
     if (projects.length === 0) return null
@@ -92,7 +120,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         const user = await getCurrentUser()
         if (cancelled) return
         setCurrentUser(user)
-        await reloadProjects()
+        await reloadProjects(user)
         if (!cancelled) setAuthState('authenticated')
       } catch (err) {
         if (cancelled) return
@@ -115,7 +143,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       await apiLogin(username, password)
       const user = await getCurrentUser()
       setCurrentUser(user)
-      await reloadProjects()
+      await reloadProjects(user)
       setAuthState('authenticated')
       } catch (err) {
         setError(normalizeLoginError(err))

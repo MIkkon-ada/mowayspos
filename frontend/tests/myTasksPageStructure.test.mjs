@@ -221,7 +221,7 @@ test('each task row exposes a dedicated detail action beside the overflow menu',
 test('task detail page shows structure, deadline, closed-loop timeline, outcomes and issues', () => {
   const detail = read('src/pages/MyTaskDetailPage.tsx')
   const css = read('src/features/my-tasks/myTasks.css')
-  for (const token of ['my-task-detail-page', 'my-task-structure-card', 'my-task-loop-timeline', 'my-task-assets-card', 'my-task-issues-card']) {
+  for (const token of ['my-task-detail-page', 'my-task-structure-card', 'my-task-structure-chain', 'my-task-structure-node', 'my-task-structure-deadline', 'my-task-loop-timeline', 'my-task-assets-card', 'my-task-issues-card']) {
     assert.match(detail, new RegExp(token))
   }
   for (const label of ['任务结构', '项目', '重点工作', '关键任务', '截止日期', '闭环过程线', '提交内容', '处理结果', '成果', '问题']) {
@@ -229,7 +229,9 @@ test('task detail page shows structure, deadline, closed-loop timeline, outcomes
   }
   assert.doesNotMatch(detail, /负责人|贡献者/)
   assert.match(css, /\.my-task-loop-card\s*\{[\s\S]*?font-size:\s*13px/s)
-  assert.match(css, /\.my-task-structure-list\s*\{[\s\S]*?font-size:\s*13px/s)
+  assert.match(css, /\.my-task-structure-chain\s*\{[\s\S]*?font-size:\s*13px/s)
+  assert.match(css, /\.my-task-structure-node::before\s*\{[\s\S]*?content:\s*''/s)
+  assert.match(css, /\.my-task-structure-index\s*\{[\s\S]*?border-radius:\s*50%/s)
 })
 
 test('my tasks page removes bottom metric/support cards and keeps compact labels', () => {

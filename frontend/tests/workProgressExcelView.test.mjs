@@ -242,15 +242,12 @@ test('plan mode loads subtasks before search projection and disables incomplete 
   assert.match(page, /openSubDetail|onOpenSubTask/)
 })
 
-test('plan view exposes create task from the project row instead of the top action menu', () => {
+test('execution view exposes create task from the project summary row instead of the top action menu', () => {
   const page = read(PAGE_FILE)
-  const view = read(VIEW_FILE)
 
-  assert.match(view, /onCreateTask\?:\s*\(\)\s*=>\s*void/)
-  assert.match(view, /canCreateTask\?:\s*boolean/)
-  assert.match(view, /v2-project-banner__create/)
-  assert.match(page, /canCreateTask=\{!showDeleted && !projectArchived && canManageProjectWork/)
-  assert.match(page, /onCreateTask=\{\(\)\s*=>\s*\{\s*setFormTask\(null\);\s*setFormOpen\(true\)\s*\}\}/)
+  assert.match(page, /openTaskCreateForProject\(projectId\?:\s*number \| null\)/)
+  assert.match(page, /defaultProjectId=\{formDefaultProjectId \?\? effectiveTaskProjectId\}/)
+  assert.match(page, /groupTasks\.length\}个任务[\s\S]*openTaskCreateForProject\(groupProject\.id\)[\s\S]*新增重点工作/)
   assert.doesNotMatch(page, /<option value="create">/)
   assert.doesNotMatch(page, /action === 'create'/)
 })

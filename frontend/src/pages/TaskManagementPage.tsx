@@ -253,6 +253,7 @@ export function TaskManagementPage() {
   const [progressSubmitState, setProgressSubmitState] = useState<'idle' | 'submitting' | 'done'>('idle')
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null)
   const [resolvedProjectDetail, setResolvedProjectDetail] = useState<Project | null>(null)
+  const [formDefaultProjectId, setFormDefaultProjectId] = useState<number | null>(null)
   const effectiveTaskProjectId = viewProjectId ?? currentProjectId ?? autoSelectedTaskProjectId
   const projectFromContext = useMemo(
     () => projects.find((project) => project.id === effectiveTaskProjectId) ?? null,
@@ -833,6 +834,12 @@ export function TaskManagementPage() {
     })
   }
 
+  function openTaskCreateForProject(projectId?: number | null) {
+    setFormDefaultProjectId(projectId ?? effectiveTaskProjectId ?? null)
+    setFormTask(null)
+    setFormOpen(true)
+  }
+
 function handleFormSave(payload: TaskPayload) {
     const pid = payload.project_id ?? viewProjectId ?? currentProjectId
     if (!pid) {
@@ -846,6 +853,7 @@ function handleFormSave(payload: TaskPayload) {
     req.then(() => {
       setFormOpen(false)
       setFormTask(null)
+      setFormDefaultProjectId(null)
       loadTasks(false)
     }).catch(() => toast.error('保存失败，请重试'))
   }
@@ -856,8 +864,9 @@ function handleFormSave(payload: TaskPayload) {
         <TaskFormModal
           task={formTask}
           projects={resolvedTaskProjects}
+          defaultProjectId={formDefaultProjectId ?? effectiveTaskProjectId}
           onSave={handleFormSave}
-          onClose={() => { setFormOpen(false); setFormTask(null) }}
+          onClose={() => { setFormOpen(false); setFormTask(null); setFormDefaultProjectId(null) }}
         />
       )}
       {importOpen && currentProjectId && (
@@ -1094,7 +1103,7 @@ function handleFormSave(payload: TaskPayload) {
               exportDisabled={!planTableReady}
               onExport={handlePlanExport}
               canCreateTask={!showDeleted && !projectArchived && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProjectRoles })}
-              onCreateTask={() => { setFormTask(null); setFormOpen(true) }}
+              onCreateTask={() => openTaskCreateForProject(focusedProject?.id)}
               currentUserName={currentUser?.name}
               projectRoles={currentProjectRoles ?? []}
               isTechAdmin={currentUser?.is_tech_admin ?? false}
@@ -1186,7 +1195,18 @@ function handleFormSave(payload: TaskPayload) {
                         </span>
                       </div>
                       <div className="text-xs text-slate-400 flex-shrink-0" style={{ width: 108 }}>{groupTasks.length}个任务</div>
-                      <div style={{ width: 96 }} /><div style={{ width: 68 }} /><div style={{ width: 60 }} /><div style={{ width: 68 }} />
+                      <div style={{ width: 96 }} /><div style={{ width: 68 }} /><div style={{ width: 60 }} />
+                      <div className="flex-shrink-0 flex justify-end" style={{ width: 120 }}>
+                        {!showDeleted && groupProject && !isProjectArchived(groupProject) && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: groupProject.user_roles ?? currentProjectRoles }) && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); openTaskCreateForProject(groupProject.id) }}
+                            className="text-xs text-indigo-600 font-semibold hover:text-indigo-700"
+                          >
+                            新增重点工作
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {/* 重点工作行 */}
@@ -2176,14 +2196,18 @@ function formatPlanTime(sy: number, sm: number, ey: number, em: number) {
   return `${sy}年${sm}月~${ey}年${em}月`
 }
 
-function TaskFormModal({ task, projects, onSave, onClose }: {
+function TaskFormModal({ task, projects, defaultProjectId, onSave, onClose }: {
   task: TaskItem | null
   projects: Project[]
+  defaultProjectId?: number | null
   onSave: (p: TaskPayload) => void
   onClose: () => void
 }) {
   const parsed = parsePlanTime(task?.plan_time ?? '')
-  const initialProject = projectForTask(projects, task) ?? projects[0] ?? null
+  const initialProject = projectForTask(projects, task)
+    ?? projects.find((project) => project.id === defaultProjectId)
+    ?? projects[0]
+    ?? null
   const [form, setForm] = useState<TaskPayload>({
     project_id: initialProject?.id ?? projects[0]?.id ?? 0,
     key_task:        task?.key_task ?? '',

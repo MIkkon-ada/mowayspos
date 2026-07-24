@@ -138,10 +138,18 @@
 .my-task-loop-fields dd { margin: 0; color: #334155; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .my-task-loop-fields dd span { display: block; }
 .my-task-side-card { padding: 16px; }
-.my-task-structure-list { display: grid; gap: 12px; margin: 14px 0 0; font-size: 13px; }
-.my-task-structure-list div { display: grid; gap: 4px; }
-.my-task-structure-list dt { color: #64748b; font-weight: 700; }
-.my-task-structure-list dd { margin: 0; color: #0f172a; line-height: 1.5; overflow-wrap: anywhere; }
+.my-task-structure-chain { display: grid; gap: 0; margin: 16px 0 0; font-size: 13px; }
+.my-task-structure-node { position: relative; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; padding: 0 0 18px; }
+.my-task-structure-node:last-child { padding-bottom: 0; }
+.my-task-structure-node::before { position: absolute; top: 30px; bottom: 2px; left: 15px; width: 1px; background: #cfe0f3; content: ''; }
+.my-task-structure-node:last-child::before { display: none; }
+.my-task-structure-index { position: relative; z-index: 1; display: grid; width: 30px; height: 30px; border: 1px solid #b7d7ff; border-radius: 50%; background: #eff6ff; color: #075bbb; font-size: 10px; font-weight: 800; place-items: center; }
+.my-task-structure-node div { min-width: 0; padding: 1px 0 0; }
+.my-task-structure-node span:not(.my-task-structure-index) { display: block; margin-bottom: 4px; color: #64748b; font-size: 12px; font-weight: 800; }
+.my-task-structure-node strong { display: block; color: #0f172a; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.my-task-structure-deadline { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding: 10px 12px; border-radius: 8px; background: #f8fafc; }
+.my-task-structure-deadline span { color: #64748b; font-size: 12px; font-weight: 800; }
+.my-task-structure-deadline strong { color: #0f172a; font-size: 13px; line-height: 1.4; text-align: right; overflow-wrap: anywhere; }
 .my-task-assets-card article, .my-task-issues-card article { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid #edf2f7; }
 .my-task-assets-card h2 + article, .my-task-issues-card h2 + article { margin-top: 10px; }
 .my-task-assets-card strong, .my-task-issues-card strong { color: #0f172a; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }

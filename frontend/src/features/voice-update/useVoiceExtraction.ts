@@ -31,6 +31,7 @@ export function useVoiceExtraction({
   selectedProvider,
   setText,
 }: UseVoiceExtractionArgs) {
+  const reportScope = scope
   const [phase, setPhase] = useState<Phase>('input')
   const [result, setResult] = useState<Record<string, unknown> | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -109,23 +110,23 @@ export function useVoiceExtraction({
     }
 
     // "我的全部工作"模式下不需要预选项目和关键任务
-    if (scope !== 'all' && !selectedProjectId) {
+    if (reportScope !== 'all' && !selectedProjectId) {
       submitLock.current = false
       setError('请先选择所属项目，再进行 AI 提取。')
       return
     }
-    if (scope === 'task' && !selectedTaskContext) {
+    if (reportScope === 'task' && !selectedTaskContext) {
       submitLock.current = false
       setError('请先选择本次汇报对应的关键任务。')
       return
     }
-    if (scope !== 'all' && !selectedProjectIsActive) {
+    if (reportScope !== 'all' && !selectedProjectIsActive) {
       submitLock.current = false
       setError('项目尚未进入执行阶段，暂不能进行 AI 提取。')
       return
     }
 
-    const projectId = selectedProjectId ?? undefined
+    const projectId = reportScope === 'all' ? undefined : selectedProjectId ?? undefined
     setPhase('extracting')
     setError(null)
     setResult(null)
@@ -139,13 +140,13 @@ export function useVoiceExtraction({
 
     try {
       const res = await extractOnly({
-        project_id: projectId,
-        report_scope: scope,
+        ...(projectId ? { project_id: projectId } : {}),
+        report_scope: reportScope,
         source_type: mode === 'voice' ? '语音更新' : '文字更新',
         transcript_text: content,
         submitter: currentUser?.name,
         llm_provider: selectedProvider,
-        user_subtasks: selectedTaskContext ? [selectedTaskContext] : undefined,
+        ...(reportScope === 'task' && selectedTaskContext ? { user_subtasks: [selectedTaskContext] } : {}),
       })
       const suggestion = res.suggestion ?? {}
       setResult(suggestion)

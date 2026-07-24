@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { createUpdate } from '../../api/updates'
+import { createUpdate, createUpdateBatch } from '../../api/updates'
 import { createDrafts } from '../../api/subtaskDrafts'
 import type { Project } from '../../types'
 import type { KeyTaskIssue, TaskReport, UserSubtaskContext } from '../../api/updates'
@@ -30,6 +30,7 @@ type UseVoiceSubmissionArgs = {
 }
 
 export function useVoiceSubmission({
+  reportScope,
   selectedProjectId,
   selectedSubtaskId,
   selectedTaskContext,
@@ -56,12 +57,12 @@ export function useVoiceSubmission({
     if (submitLock.current) return
     submitLock.current = true
     const projectId = selectedProjectId
-    if (!projectId) {
+    if (reportScope === 'task' && !projectId) {
       submitLock.current = false
       setError('请先选择所属项目，再提交至 AI 确认中心。')
       return
     }
-    if (!selectedSubtaskId || !selectedTaskContext) {
+    if (reportScope === 'task' && (!selectedSubtaskId || !selectedTaskContext)) {
       submitLock.current = false
       setError('请先选择本次汇报对应的关键任务。')
       return
@@ -93,7 +94,9 @@ export function useVoiceSubmission({
       return
     }
 
-    const defaultBoundTaskReports = bindProgressReportsToTask(taskReports, selectedTaskContext)
+    const defaultBoundTaskReports = reportScope !== 'task' || !selectedTaskContext
+      ? taskReports
+      : bindProgressReportsToTask(taskReports, selectedTaskContext)
     const patchedTaskReports = defaultBoundTaskReports.map((r, i) => {
       const e = cardEdits[i]
       if (!e?.modified) return r

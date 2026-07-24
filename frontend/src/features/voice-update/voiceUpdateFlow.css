@@ -15,7 +15,7 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
-  height: 76px;
+  min-height: 72px;
   padding: 0 28px;
   border-bottom: 1px solid #e5ebf3;
   background: #fff;
@@ -86,7 +86,7 @@
 
 .voice-update-editor-shell { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; margin: 0 20px 14px; overflow: hidden; border: 1px solid #e1e7ef; border-radius: 10px; background: #fff; box-shadow: 0 1px 3px rgb(15 23 42 / 4%); }
 .voice-update-main-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0; }
-.voice-update-workspace { display: grid; grid-template-columns: minmax(360px, 42fr) minmax(540px, 58fr); align-items: stretch; gap: 0; min-width: 0; min-height: 100%; }
+.voice-update-workspace { display: grid; grid-template-columns: minmax(0, 40fr) minmax(0, 60fr); align-items: start; gap: 0; min-width: 0; }
 .voice-update-input-panel,
 .voice-update-result-panel { min-width: 0; border: 0; border-radius: 0; background: #fff; box-shadow: none; }
 .voice-update-result-panel { border-left: 1px solid #e2e8f0; }
@@ -102,7 +102,7 @@
 .voice-update-panel-heading p { margin: 3px 0 0; color: #94a3b8; font-size: 11px; }
 
 .voice-update-mode-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 22px; }
-.voice-update-mode-tabs button { display: flex; height: 42px; align-items: center; justify-content: center; gap: 8px; border: 1px solid #d7dee8; border-radius: 8px; background: #fff; color: #334155; font-size: 13px; font-weight: 800; cursor: pointer; }
+.voice-update-mode-tabs button { display: flex; height: 40px; align-items: center; justify-content: center; gap: 8px; border: 1px solid #d7dee8; border-radius: 8px; background: #fff; color: #334155; font-size: 13px; font-weight: 800; cursor: pointer; }
 .voice-update-mode-tabs button.is-active { border-color: #7aaef2; background: #f4f9ff; color: #096dd9; box-shadow: 0 0 0 3px rgb(22 119 255 / 8%); }
 .voice-update-mode-tabs button:disabled { cursor: not-allowed; opacity: .55; }
 .voice-update-mode-tabs svg { width: 17px; height: 17px; }
@@ -110,7 +110,7 @@
 .voice-update-input-heading h2 { margin: 0; color: #111827; font-size: 15px; font-weight: 800; }
 .voice-update-input-heading h2 em { color: #ef4444; font-style: normal; }
 .voice-update-input-heading span { color: #94a3b8; font-size: 11px; }
-.voice-update-textarea { width: 100%; height: 250px; min-height: 250px; resize: vertical; border: 1px solid #d7dee8; border-radius: 8px; padding: 14px; color: #334155; font: inherit; line-height: 1.6; outline: none; }
+.voice-update-textarea { width: 100%; height: 240px; min-height: 240px; resize: vertical; border: 1px solid #d7dee8; border-radius: 8px; padding: 14px; color: #334155; font: inherit; line-height: 1.6; outline: none; }
 .voice-update-textarea:focus { border-color: #38bdf8; box-shadow: 0 0 0 3px rgb(56 189 248 / 12%); }
 .voice-update-character-count { margin-top: 6px; color: #64748b; font-size: 12px; font-weight: 700; text-align: right; }
 .voice-update-input-hints { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 10px 0 0; border: 0; padding: 0; color: #64748b; font-size: 11px; }
@@ -212,7 +212,7 @@
 .voice-update-achievement-link input { height: 34px; min-width: 0; border: 1px solid #cbd5e1; border-radius: 7px; padding: 0 9px; }
 
 .voice-update-footer { display: flex; flex: 0 0 auto; flex-direction: column; margin: 0; border: 0; border-top: 1px solid #e2e8f0; border-radius: 0; background: #fff; box-shadow: none; }
-.voice-update-footer-bar { display: flex; width: 100%; height: 72px; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 16px; padding: 0 24px; }
+.voice-update-footer-bar { display: flex; width: 100%; height: 56px; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 16px; padding: 0 24px; }
 .voice-update-footer-note { min-width: 0; flex: 1 1 auto; overflow: hidden; color: #94a3b8; font-size: 11px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .voice-update-footer-actions { display: flex; align-items: center; gap: 10px; }
 .voice-update-footer button { min-height: 42px; border-radius: 8px; padding: 0 20px; font-size: 14px; font-weight: 800; cursor: pointer; }

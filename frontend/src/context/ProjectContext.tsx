@@ -101,8 +101,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   )
 
   const reloadProjects = useCallback(async (fallbackUser: CurrentUser | null = null) => {
-    const list = await getProjects()
-    setProjects(list.length > 0 ? list : projectsFromAuthMe(fallbackUser))
+    try {
+      const list = await getProjects()
+      setProjects(list.length > 0 ? list : projectsFromAuthMe(fallbackUser))
+    } catch {
+      const fallbackProjects = projectsFromAuthMe(fallbackUser)
+      if (fallbackProjects.length === 0) throw new Error('Unable to load projects')
+      setProjects(fallbackProjects)
+    }
   }, [])
 
   const getPreferredProjectId = useCallback((): number | null => {

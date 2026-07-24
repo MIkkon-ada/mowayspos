@@ -23,7 +23,7 @@ _access_token: Optional[str] = None
 _access_token_expires_at: float = 0
 
 _WECOM_API_BASE = "https://qyapi.weixin.qq.com/cgi-bin"
-_WECOM_LOGIN_BASE = "https://login.work.weixin.qq.com/wwlogin/sso/login"
+_WECOM_LOGIN_BASE = "https://open.work.weixin.qq.com/wwopen/sso/qrConnect"
 
 
 class WecomError(RuntimeError):

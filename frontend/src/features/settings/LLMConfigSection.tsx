@@ -8,6 +8,7 @@ export function LLMConfigSection() {
   const [editingProvider, setEditingProvider] = useState<string | null>(null)
   const [editForm, setEditForm] = useState({ api_key: '', base_url: '', model: '' })
   const [saving, setSaving] = useState<string | null>(null)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     getLLMConfigs().then(setConfigs).catch(() => setConfigs([])).finally(() => setLoading(false))
@@ -15,19 +16,24 @@ export function LLMConfigSection() {
 
   async function handleToggle(cfg: LLMProviderConfig) {
     setSaving(cfg.provider)
+    setError('')
     try {
       await saveLLMConfig(cfg.provider, { enabled: !cfg.enabled, model: cfg.model, base_url: cfg.base_url })
       setConfigs(prev => prev.map(c => c.provider === cfg.provider ? { ...c, enabled: !cfg.enabled } : c))
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : '操作失败')
     } finally { setSaving(null) }
   }
 
   function startEdit(cfg: LLMProviderConfig) {
     setEditingProvider(cfg.provider)
     setEditForm({ api_key: '', base_url: cfg.base_url, model: cfg.model })
+    setError('')
   }
 
   async function handleSaveEdit(cfg: LLMProviderConfig) {
     setSaving(cfg.provider)
+    setError('')
     try {
       await saveLLMConfig(cfg.provider, {
         enabled: cfg.enabled,
@@ -39,12 +45,19 @@ export function LLMConfigSection() {
         ? { ...c, model: editForm.model || c.default_model, base_url: editForm.base_url || c.default_base_url, api_key_set: editForm.api_key ? true : c.api_key_set }
         : c))
       setEditingProvider(null)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : '保存失败')
     } finally { setSaving(null) }
   }
 
   return (
     <Card>
       <SectionTitle>大模型配置</SectionTitle>
+      {error && (
+        <div className="mb-3 px-3 py-2 rounded-lg text-xs font-medium" style={{ background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA' }}>
+          {error}
+        </div>
+      )}
       {loading
         ? <p className="text-sm text-slate-400 py-4 text-center">加载中…</p>
         : configs.map(cfg => (

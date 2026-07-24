@@ -33,6 +33,7 @@ export function MyTasksPage() {
   const [pageSize, setPageSize] = useState(10)
   const [selectedRow, setSelectedRow] = useState<MyTaskRow | null>(null)
   const urlProjectApplied = useRef(false)
+  const defaultProjectApplied = useRef(false)
 
   const counts = useMemo(() => countMyTaskStatuses(rows), [rows])
   const projectOptions = useMemo(() => getMyTaskProjectOptions(rows), [rows])
@@ -45,6 +46,12 @@ export function MyTasksPage() {
     const requested = Number(searchParams.get('projectId'))
     if (Number.isInteger(requested) && projectOptions.some((project) => project.id === requested)) setProjectId(requested)
   }, [loading, projectOptions, searchParams])
+
+  useEffect(() => {
+    if (loading || defaultProjectApplied.current || projectId !== null || projectOptions.length === 0) return
+    defaultProjectApplied.current = true
+    setProjectId(projectOptions[0].id)
+  }, [loading, projectOptions, projectId])
 
   useEffect(() => { setPage(1) }, [status, projectId, search, pageSize])
   useEffect(() => { if (page !== pagination.page) setPage(pagination.page) }, [page, pagination.page])

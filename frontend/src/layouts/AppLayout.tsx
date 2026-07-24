@@ -39,9 +39,15 @@ function LoginPanel() {
     const ua = navigator.userAgent.toLowerCase()
     const isWxWork = /wxwork/i.test(ua) || /microMessenger/i.test(ua)
     if (!isWxWork) return
+    // 防重入：如果本次会话已尝试过静默授权，不再重复触发，避免死循环闪烁
+    if (sessionStorage.getItem('wecom_silent_auth_attempted')) return
+    sessionStorage.setItem('wecom_silent_auth_attempted', '1')
     getWecomSilentAuthUrl()
       .then(({ url }) => { if (url) window.location.href = url })
-      .catch(() => {}) // 静默失败时仍显示正常登录页
+      .catch(() => {
+        // 失败时清除标记，允许用户手动重试
+        sessionStorage.removeItem('wecom_silent_auth_attempted')
+      })
   }, [isWecomUnbound])
 
   const wecomMessages: Record<string, string> = {
@@ -331,6 +337,13 @@ function LoginPanel() {
 
 export function LoginRoute() {
   const { authState, currentUser, getPreferredProjectId, projects } = useProject()
+
+  // 登录成功后清除静默授权防重入标记
+  useEffect(() => {
+    if (authState === 'authenticated') {
+      sessionStorage.removeItem('wecom_silent_auth_attempted')
+    }
+  }, [authState])
 
   if (authState === 'authenticated') {
     return <Navigate to={getPostLoginDestination(currentUser, projects, getPreferredProjectId())} replace />

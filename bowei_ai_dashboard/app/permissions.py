@@ -350,7 +350,7 @@ def get_user_context_from_db(name: str, db) -> dict:
     try:
         account_row = db.execute(
             text(
-                "SELECT a.person_id, COALESCE(a.is_tech_admin, 0), p.name, p.system_role, COALESCE(p.is_admin, 0) "
+                "SELECT a.person_id, COALESCE(a.is_tech_admin, FALSE), p.name, p.system_role, COALESCE(p.is_admin, FALSE) "
                 "FROM accounts a LEFT JOIN people p ON p.id = a.person_id "
                 "WHERE a.username=:name AND a.status='active'"
             ),

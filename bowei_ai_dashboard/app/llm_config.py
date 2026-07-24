@@ -45,15 +45,19 @@ def save_configs(configs: dict) -> None:
 
 
 def get_provider_config(provider: str) -> dict:
-    """Return provider config with env precedence and file fallback in dev."""
+    """Return provider config with env precedence and file fallback.
+
+    In production (ALLOW_FILE_SECRET_FALLBACK=false), the file-based config
+    saved via the web UI is still used as the base — only env vars can override it.
+    """
     meta = PROVIDERS.get(provider, {})
     stored = load_configs().get(provider, {})
     effective = get_llm_effective_config(
         provider,
         {
-            "api_key": "",
-            "base_url": meta.get("default_base_url", ""),
-            "model": meta.get("default_model", ""),
+            "api_key": stored.get("api_key", ""),
+            "base_url": stored.get("base_url") or meta.get("default_base_url", ""),
+            "model": stored.get("model") or meta.get("default_model", ""),
         },
     )
     return {

@@ -239,10 +239,17 @@ function SubTaskEditModal({
     setError('')
     setSaving(true)
     try {
+      // 校验计划时间：placeholder 文本或无法识别的格式存为空
+      const rawPlanTime = planTime.trim()
+      const isValidPlanTime = !rawPlanTime
+        || rawPlanTime === '持续'
+        || /[a-df-zA-DF-Z]/.test(rawPlanTime) // 含字母视为 placeholder
+        || /\d{4}/.test(rawPlanTime) // 至少包含4位数字（年份）
+        || /月/.test(rawPlanTime)   // 或含"月"
       await onSave(subtask.id, {
         title: title.trim() || subtask.title,
         assignee,
-        plan_time: planTime.trim(),
+        plan_time: isValidPlanTime ? rawPlanTime : '',
         status,
         completion_criteria: subtask.completion_criteria || '',
         notes: notes.trim(),

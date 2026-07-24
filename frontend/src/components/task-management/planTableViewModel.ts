@@ -98,6 +98,9 @@ export function parsePlanTimeRange(value?: string | null): ParsedPlanTime {
   if (!raw) return { start: EMPTY_PLAN_CELL, end: EMPTY_PLAN_CELL }
   if (raw === '持续') return { start: '持续', end: EMPTY_PLAN_CELL }
 
+  // 过滤：包含字母（除 y/m/d 外）的 placeholder 文本视为无效
+  if (/[a-df-zA-DF-Z]/.test(raw)) return { start: EMPTY_PLAN_CELL, end: EMPTY_PLAN_CELL }
+
   const fullDateRange = raw.match(/(\d{4}-\d{1,2}-\d{1,2})\s*(?:~|～|至|到|—|–)\s*(\d{4}-\d{1,2}-\d{1,2})/)
   if (fullDateRange) return { start: fullDateRange[1], end: fullDateRange[2] }
 
@@ -107,7 +110,12 @@ export function parsePlanTimeRange(value?: string | null): ParsedPlanTime {
   const yearMonthRange = raw.match(/(\d{4}(?:年|-)?\d{1,2}月?)\s*(?:~|～|至|到|—|–)\s*(\d{4}(?:年|-)?\d{1,2}月?)/)
   if (yearMonthRange) return { start: yearMonthRange[1], end: yearMonthRange[2] }
 
-  return { start: raw, end: EMPTY_PLAN_CELL }
+  // 单个年月：2026-07 或 2026年7月
+  const singleYearMonth = raw.match(/^(\d{4}(?:年|-)?\d{1,2}月?)$/)
+  if (singleYearMonth) return { start: singleYearMonth[1], end: EMPTY_PLAN_CELL }
+
+  // 无法识别的格式 → 视为空，不再原样返回非法字符串
+  return { start: EMPTY_PLAN_CELL, end: EMPTY_PLAN_CELL }
 }
 
 export function parseAssistingPerson(notes?: string | null): ParsedAssistingPerson {

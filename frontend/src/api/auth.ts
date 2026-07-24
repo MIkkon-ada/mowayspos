@@ -26,3 +26,15 @@ export function getCurrentUser(): Promise<CurrentUser> {
 export function getWecomQrcodeUrl(): Promise<{ url: string }> {
   return apiGet<{ url: string }>('/api/auth/wecom/qrcode')
 }
+
+/**
+ * 企微自助绑定：用户扫码后未绑定，输入账号密码验证身份后绑定企微 userid。
+ * 绑定成功后后端通过 Set-Cookie 设置会话，前端直接跳转首页即可。
+ */
+export function bindWecomAccount(
+  wecomUserid: string,
+  username: string,
+  password: string,
+): Promise<{ ok: boolean; user: string }> {
+  return apiPost('/api/auth/wecom/bind', { wecom_userid: wecomUserid, username, password })
+}

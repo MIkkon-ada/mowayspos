@@ -208,7 +208,7 @@ def migrate(sqlite_path):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print(f"用法: {sys.argv][0]} <sqlite_db_path>")
+        print(f"用法: {sys.argv[0]} <sqlite_db_path>")
         print(f"示例: {sys.argv][0]} /tmp/local.db")
         sys.exit(1)
 

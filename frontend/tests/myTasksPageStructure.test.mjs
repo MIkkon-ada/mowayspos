@@ -45,8 +45,10 @@ function task(id, projectId, status, overrides = {}) {
 test('member routes preserve projects and add the personal task center', () => {
   const routes = read('src/app/routes.tsx')
   assert.match(routes, /const MyTasksPage = lazy\(/)
+  assert.match(routes, /const MyTaskDetailPage = lazy\(/)
   assert.match(routes, /path="\/member"[\s\S]*?<Route index element=\{<Navigate to="\/member\/tasks" replace \/>\}/)
   assert.match(routes, /path="tasks" element=\{<MyTasksPage \/>\}/)
+  assert.match(routes, /path="tasks\/:taskId" element=\{<MyTaskDetailPage \/>\}/)
   assert.match(routes, /path="projects" element=\{<MemberProjectsPage \/>\}/)
   assert.match(routes, /path="projects\/:projectId" element=\{<MemberProjectTasksPage \/>\}/)
 })
@@ -170,15 +172,16 @@ test('data hook queries each active project with the fixed current user name', (
   assert.doesNotMatch(hook, /fetchSubtasksByAssignee\([^,]+,\s*null\)/)
 })
 
-test('details load only inside the drawer and expose no write operation', () => {
+test('task detail opens as a full page instead of the old right drawer', () => {
   const hook = read('src/features/my-tasks/useMyTasks.ts')
   const page = read('src/pages/MyTasksPage.tsx')
-  const drawer = read('src/features/my-tasks/MyTaskDetailDrawer.tsx')
+  const detail = read('src/pages/MyTaskDetailPage.tsx')
   assert.doesNotMatch(hook, /fetchSubtaskDetail/)
   assert.doesNotMatch(page, /fetchSubtaskDetail/)
-  assert.match(drawer, /fetchSubtaskDetail\(row\.id\)/)
-  assert.doesNotMatch(drawer, /patchSubTaskStatus|updateSubTask|deleteSubTask|createUpdate/)
-  assert.doesNotMatch(drawer, />\s*(?:编辑|删除|修改状态)\s*</)
+  assert.doesNotMatch(page, /MyTaskDetailDrawer|selectedRow|setSelectedRow/)
+  assert.match(page, /navigate\(`\/member\/tasks\/\$\{row\.id\}/)
+  assert.match(detail, /fetchSubtaskDetail\(taskId\)/)
+  assert.doesNotMatch(detail, /patchSubTaskStatus|updateSubTask|deleteSubTask|createUpdate/)
 })
 
 test('table keeps the exact personal-task columns and no unsupported metrics', () => {
@@ -197,13 +200,12 @@ test('page has no calendar shortcut and member projects use localized roles', ()
   assert.match(projectsPage, /getProjectRoleLabel\(role\)/)
 })
 
-test('responsive CSS constrains body overflow and drawer widths', () => {
+test('responsive CSS constrains body overflow and detail page columns', () => {
   const css = read('src/features/my-tasks/myTasks.css')
   assert.match(css, /\.my-tasks-page\s*\{[^}]*overflow-x:\s*hidden/s)
   assert.match(css, /\.my-task-table-scroll\s*\{[^}]*overflow-x:\s*auto/s)
-  assert.match(css, /\.my-task-drawer\s*\{[^}]*width:\s*420px/s)
-  assert.match(css, /@media \(max-width:\s*1279px\)[\s\S]*?\.my-task-drawer\s*\{[^}]*width:\s*380px/s)
-  assert.match(css, /@media \(max-width:\s*899px\)[\s\S]*?\.my-task-drawer\s*\{[^}]*width:\s*100%/s)
+  assert.match(css, /\.my-task-detail-layout\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) 320px/s)
+  assert.match(css, /@media \(max-width:\s*1024px\)[\s\S]*?\.my-task-detail-layout\s*\{[^}]*grid-template-columns:\s*1fr/s)
 })
 
 test('each task row exposes a dedicated detail action beside the overflow menu', () => {
@@ -216,42 +218,27 @@ test('each task row exposes a dedicated detail action beside the overflow menu',
   assert.doesNotMatch(menu, /查看详情/)
 })
 
-test('drawer renders complete plan dates and clamps the accessible task title to two lines', () => {
-  const drawer = read('src/features/my-tasks/MyTaskDetailDrawer.tsx')
+test('task detail page shows structure, deadline, closed-loop timeline, outcomes and issues', () => {
+  const detail = read('src/pages/MyTaskDetailPage.tsx')
   const css = read('src/features/my-tasks/myTasks.css')
-  assert.match(drawer, /className="my-task-detail-plan"/)
-  assert.match(drawer, /<span>\{row\.planStart\}<\/span>\s*<span>～<\/span>\s*<span>\{row\.planEnd\}<\/span>/)
-  assert.match(drawer, /id="my-task-detail-title"[\s\S]*?title=\{row\.title\}/)
-  assert.match(css, /\.my-task-detail-plan\s*\{[^}]*white-space:\s*normal[^}]*overflow-wrap:\s*anywhere/s)
-  assert.doesNotMatch(css, /\.my-task-detail-plan\s*\{[^}]*text-overflow:\s*ellipsis/s)
-  assert.doesNotMatch(css, /\.my-task-detail-plan\s*\{[^}]*white-space:\s*nowrap/s)
-  assert.match(css, /\.my-task-drawer-header h2\s*\{[^}]*-webkit-line-clamp:\s*2/s)
+  for (const token of ['my-task-detail-page', 'my-task-structure-card', 'my-task-loop-timeline', 'my-task-assets-card', 'my-task-issues-card']) {
+    assert.match(detail, new RegExp(token))
+  }
+  for (const label of ['任务结构', '项目', '重点工作', '关键任务', '截止日期', '闭环过程线', '提交内容', '处理结果', '成果', '问题']) {
+    assert.match(detail, new RegExp(label))
+  }
+  assert.doesNotMatch(detail, /负责人|贡献者/)
+  assert.match(css, /\.my-task-loop-card\s*\{[\s\S]*?font-size:\s*13px/s)
+  assert.match(css, /\.my-task-structure-list\s*\{[\s\S]*?font-size:\s*13px/s)
 })
 
-test('bottom support area contains three compact panels with the exact help copy', () => {
+test('my tasks page removes bottom metric/support cards and keeps compact labels', () => {
   const page = read('src/pages/MyTasksPage.tsx')
-  const panel = read('src/features/my-tasks/MyTasksHelpPanel.tsx')
   const css = read('src/features/my-tasks/myTasks.css')
-  assert.match(page, /<MyTasksHelpPanel\s*\/>/)
-  assert.match(panel, />使用说明</)
-  for (const copy of [
-    '仅展示本人作为责任人的关键任务',
-    '协助任务将在后续结构化版本中支持',
-    '点击“查看详情”查看任务完整信息',
-    '工作汇报请使用“工作汇报”入口',
-  ]) assert.match(panel, new RegExp(copy))
-  assert.match(css, /\.my-task-bottom-grid\s*\{[^}]*grid-template-columns:\s*1fr 1fr 1fr/s)
-  assert.match(css, /@media \(max-width:\s*1279px\)[\s\S]*?\.my-task-bottom-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s)
-  assert.match(css, /@media \(max-width:\s*899px\)[\s\S]*?\.my-task-bottom-grid\s*\{[^}]*grid-template-columns:\s*1fr/s)
-})
-
-test('personal task center uses Chinese feature labels only', () => {
-  const page = read('src/pages/MyTasksPage.tsx')
+  assert.doesNotMatch(page, /MyTasksHelpPanel|MyTasksStatusSummary|my-task-stats-row|my-task-stat-card|my-task-fab/)
   assert.doesNotMatch(page, /PERSONAL WORKSPACE|QUICK ACTIONS/)
-  assert.match(page, />个人工作</)
-  assert.match(page, />快捷入口</)
+  assert.doesNotMatch(css, /\.my-task-stats-row|\.my-task-stat-card|\.my-task-fab/)
 })
-
 test('legacy inline write workflow stays removed from the page and feature modules', () => {
   const featureFiles = fs.readdirSync(path.join(root, 'src/features/my-tasks'))
     .filter((name) => /\.(?:ts|tsx)$/.test(name))
@@ -259,4 +246,20 @@ test('legacy inline write workflow stays removed from the page and feature modul
   const source = [read('src/pages/MyTasksPage.tsx'), ...featureFiles].join('\n')
   assert.doesNotMatch(source, /createUpdate|patchSubTaskStatus|isPendingConfirmation|fetchMyUpdates|TaskUpdateModal/)
   assert.doesNotMatch(source, /<form\b|<textarea\b|更新进展|提交完成|上报问题/)
+})
+
+test('my tasks page keeps the compact report-style header and filters', () => {
+  const page = read('src/pages/MyTasksPage.tsx')
+  const css = read('src/features/my-tasks/myTasks.css')
+  assert.doesNotMatch(page, /my-task-stats-row|my-task-stat-card|my-task-fab/)
+  assert.doesNotMatch(css, /\.my-task-stats-row|\.my-task-stat-card|\.my-task-fab/)
+  assert.match(css, /\.my-tasks-header\s*\{[^}]*height:\s*64px/s)
+  assert.match(css, /\.my-tasks-header h1\s*\{[^}]*font-size:\s*16px/s)
+  assert.match(css, /\.my-task-toolbar\s*\{[^}]*grid-template-columns:\s*minmax\(112px,\s*150px\) minmax\(112px,\s*150px\) minmax\(240px,\s*1fr\)/s)
+  assert.match(css, /\.my-task-project-filter,\s*\.my-task-status-filter,\s*\.my-task-search\s*\{[^}]*height:\s*32px/s)
+  assert.match(css, /\.my-task-filter-label\s*\{[^}]*position:\s*absolute[^}]*width:\s*1px/s)
+  assert.match(css, /\.my-task-page-size select,\s*\.my-task-pagination nav button\s*\{[^}]*height:\s*24px/s)
+  assert.match(css, /\.my-task-state h2\s*\{[^}]*font-size:\s*18px/s)
+  assert.match(css, /\.my-task-state p\s*\{[^}]*font-size:\s*13px/s)
+  assert.doesNotMatch(css, /\.my-task-state\s*\{[^}]*height:\s*clamp/)
 })

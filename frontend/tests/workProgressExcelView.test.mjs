@@ -242,11 +242,24 @@ test('plan mode loads subtasks before search projection and disables incomplete 
   assert.match(page, /openSubDetail|onOpenSubTask/)
 })
 
+test('plan view exposes create task from the project row instead of the top action menu', () => {
+  const page = read(PAGE_FILE)
+  const view = read(VIEW_FILE)
+
+  assert.match(view, /onCreateTask\?:\s*\(\)\s*=>\s*void/)
+  assert.match(view, /canCreateTask\?:\s*boolean/)
+  assert.match(view, /v2-project-banner__create/)
+  assert.match(page, /canCreateTask=\{!showDeleted && !projectArchived && canManageProjectWork/)
+  assert.match(page, /onCreateTask=\{\(\)\s*=>\s*\{\s*setFormTask\(null\);\s*setFormOpen\(true\)\s*\}\}/)
+  assert.doesNotMatch(page, /<option value="create">/)
+  assert.doesNotMatch(page, /action === 'create'/)
+})
+
 test('archived plan rendering remains read-only and other global layouts stay out of scope', () => {
   const source = read(VIEW_FILE)
-  // V2 has no inline CRUD action buttons for add/edit/delete/archive/restore
+  // V2 has no inline destructive CRUD action buttons for delete/archive/restore.
   // Note: "编辑" may appear in readonly hint text — that is acceptable
-  assert.doesNotMatch(source, /新增[^本]|删除|归档|恢复/)
+  assert.doesNotMatch(source, /删除|归档|恢复/)
   assert.equal(exists('src/components/Sidebar.tsx'), true)
   assert.equal(exists('src/layouts/ProjectLayout.tsx'), true)
 })

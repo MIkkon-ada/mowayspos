@@ -36,6 +36,7 @@ const ClientPortalPlaceholderPage = lazy(() => import('../pages/ClientPortalPlac
 const MemberProjectsPage = lazy(() => import('../pages/MemberProjectsPage').then((m) => ({ default: m.MemberProjectsPage })))
 const MemberProjectTasksPage = lazy(() => import('../pages/MemberProjectTasksPage').then((m) => ({ default: m.MemberProjectTasksPage })))
 const MyTasksPage = lazy(() => import('../pages/MyTasksPage').then((m) => ({ default: m.MyTasksPage })))
+const MyTaskDetailPage = lazy(() => import('../pages/MyTaskDetailPage').then((m) => ({ default: m.MyTaskDetailPage })))
 
 function HomeIndex() {
   const { currentUser, globalUserRoles } = useProject()
@@ -213,6 +214,7 @@ export function AppRoutes() {
         >
           <Route index element={<Navigate to="/member/tasks" replace />} />
           <Route path="tasks" element={<MyTasksPage />} />
+          <Route path="tasks/:taskId" element={<MyTaskDetailPage />} />
           <Route path="projects" element={<MemberProjectsPage />} />
           <Route path="projects/:projectId" element={<MemberProjectTasksPage />} />
         </Route>

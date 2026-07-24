@@ -1004,7 +1004,6 @@ function handleFormSave(payload: TaskPayload) {
               if (!action) return
               if (action === 'export') handleExport()
               if (action === 'import') setImportOpen(true)
-              if (action === 'create') { setFormTask(null); setFormOpen(true) }
               e.currentTarget.value = ''
             }}
             className="cursor-pointer min-w-[220px] px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-semibold focus:outline-none hover:bg-slate-50"
@@ -1014,7 +1013,6 @@ function handleFormSave(payload: TaskPayload) {
             {!showDeleted && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProjectRoles }) && currentProjectId && !projectArchived && (
               <option value="import">从大纲导入</option>
             )}
-            {!showDeleted && !projectArchived && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProjectRoles }) && <option value="create">新增重点工作</option>}
           </select>
         </div>
         )}
@@ -1095,6 +1093,8 @@ function handleFormSave(payload: TaskPayload) {
               loading={planTableLoading}
               exportDisabled={!planTableReady}
               onExport={handlePlanExport}
+              canCreateTask={!showDeleted && !projectArchived && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProjectRoles })}
+              onCreateTask={() => { setFormTask(null); setFormOpen(true) }}
               currentUserName={currentUser?.name}
               projectRoles={currentProjectRoles ?? []}
               isTechAdmin={currentUser?.is_tech_admin ?? false}

@@ -114,7 +114,7 @@ def _supported_values(values: list, evidence: str, markers: tuple[str, ...]) -> 
 def _sanitize_fragment(fragment: dict, evidence: str) -> dict:
     """Fail closed when the LLM adds content not supported by this report fragment."""
     completed = str(fragment.get("completed") or "").strip()
-    completed_markers = ("完成", "上线", "交付", "发布", "落地", "解决", "整理")
+    completed_markers = ("完成", "上线", "交付", "发布", "落地", "解决", "整理", "修复")
     status_update = str(fragment.get("status_update") or "").strip()
     return {
         "evidence": evidence,
@@ -161,24 +161,134 @@ def _make_card(fragment: dict, match: dict) -> dict:
     }
 
 
+def _candidate_by_subtask_id(candidates: list[dict]) -> dict[int, dict]:
+    result = {}
+    for item in candidates:
+        subtask_id = item.get("subtask_id") or item.get("id")
+        if subtask_id is not None:
+            result[int(subtask_id)] = item
+    return result
+
+
+def _normalize_agent_status(value: str) -> str:
+    return value if value in {MATCHED, NEEDS_CONFIRMATION, UNMATCHED} else UNMATCHED
+
+
+def _agent_evidence_fragments(report: dict, transcript_text: str) -> list[str]:
+    """Return verbatim evidence clauses emitted for one task-level report."""
+    raw_evidence = report.get("evidence")
+    values = raw_evidence if isinstance(raw_evidence, list) else [raw_evidence]
+    evidence = _dedupe([str(value).strip() for value in values if str(value or "").strip()])
+    if not evidence or any(value not in transcript_text for value in evidence):
+        raise ValueError("evidence must be verbatim substrings of transcript_text")
+    return evidence
+
+
+def _agent_business_fields(report: dict) -> dict:
+    """Keep agent summaries separate from verbatim evidence validation."""
+    def values(field: str) -> list[str]:
+        raw = report.get(field) or []
+        if not isinstance(raw, list):
+            raw = [raw]
+        return _dedupe([str(value).strip() for value in raw if str(value or "").strip()])
+
+    return {
+        "completed": str(report.get("completed") or "").strip(),
+        "achievements": values("achievements"),
+        "subtask_issues": values("subtask_issues"),
+        "next_steps": values("next_steps"),
+        "status_update": str(report.get("status_update") or "").strip(),
+    }
+
+
+def _make_ai_card(report: dict, candidates: list[dict], transcript_text: str) -> dict:
+    evidence = _agent_evidence_fragments(report, transcript_text)
+
+    candidate_map = _candidate_by_subtask_id(candidates)
+    requested_id = report.get("matched_subtask_id")
+    matched = candidate_map.get(int(requested_id)) if requested_id is not None else None
+    status = _normalize_agent_status(str(report.get("match_status") or ""))
+    invalid_explicit_id = requested_id is not None and matched is None
+    if matched is None and not invalid_explicit_id and len(candidates) == 1:
+        matched = candidates[0]
+        status = MATCHED
+    if status == MATCHED and matched is None:
+        status = UNMATCHED
+
+    candidate_ids = report.get("match_candidate_ids") or []
+    public_candidates = [
+        _public_candidate(candidate_map[int(item_id)])
+        for item_id in candidate_ids
+        if item_id is not None and int(item_id) in candidate_map
+    ]
+    if status == MATCHED and matched is not None and not public_candidates:
+        public_candidates = [_public_candidate(matched)]
+
+    fields = _agent_business_fields(report)
+    return {
+        "type": "progress",
+        "project_id": matched.get("project_id") if matched else None,
+        "project_name": matched.get("project_name", "") if matched else "",
+        "parent_task_id": matched.get("parent_task_id") if matched else None,
+        "parent_key_task": matched.get("parent_key_task", "") if matched else "",
+        "matched_subtask_id": matched.get("subtask_id") if matched else None,
+        "matched_subtask_title": matched.get("subtask_title", "") if matched else "",
+        "match_status": status,
+        "match_confidence": round(float(report.get("match_confidence") or (0.9 if matched else 0.0)), 3),
+        "match_reason": "当前候选池只有一个可汇报任务，已自动归属到该任务。" if len(candidates) == 1 else str(report.get("match_reason") or "").strip(),
+        "match_candidates": public_candidates if status != UNMATCHED else [],
+        "evidence": evidence,
+        "completed": fields["completed"],
+        "achievements": fields["achievements"],
+        "subtask_issues": fields["subtask_issues"],
+        "next_steps": fields["next_steps"],
+        "status_update": fields["status_update"],
+    }
+
+
+def build_ai_work_report_draft(transcript_text: str, candidates: list[dict], agent_reports: list[dict]) -> dict:
+    cards = [_make_ai_card(report, candidates, transcript_text) for report in agent_reports]
+    task_reports = merge_task_cards(cards)
+    return {"summary": f"AI 已识别 {len(task_reports)} 项工作", "task_reports": task_reports,
+            "agent_steps": ["context", "agent_match", "evidence", "sanitize", "merge", "draft"]}
+
+
+def _merge_card_content(target: dict, card: dict) -> None:
+    target["evidence"] = _dedupe(target["evidence"] + card["evidence"])
+    target["completed"] = "\n".join(_dedupe([value for value in [target["completed"], card["completed"]] if value]))
+    for field in ("achievements", "subtask_issues", "next_steps"):
+        target[field] = _dedupe(target[field] + card[field])
+    if card.get("status_update"):
+        target["status_update"] = card["status_update"]
+
+
+def _is_followup_plan_only(card: dict) -> bool:
+    return (
+        card.get("match_status") != MATCHED
+        and bool(card.get("next_steps"))
+        and not card.get("completed")
+        and not card.get("achievements")
+        and not card.get("subtask_issues")
+        and not card.get("status_update")
+    )
+
+
 def merge_task_cards(cards: list[dict]) -> list[dict]:
-    """Merge only cards already matched to the same real key task."""
+    """Merge cards that belong to the same real work item."""
     merged: list[dict] = []
     positions: dict[int, int] = {}
     for card in cards:
         subtask_id = card.get("matched_subtask_id") if card.get("match_status") == MATCHED else None
+        if _is_followup_plan_only(card) and merged and merged[-1].get("match_status") == MATCHED:
+            _merge_card_content(merged[-1], card)
+            continue
         if not subtask_id or subtask_id not in positions:
             if subtask_id:
                 positions[subtask_id] = len(merged)
             merged.append(card)
             continue
         target = merged[positions[subtask_id]]
-        target["evidence"] = _dedupe(target["evidence"] + card["evidence"])
-        target["completed"] = "\n".join(_dedupe([value for value in [target["completed"], card["completed"]] if value]))
-        for field in ("achievements", "subtask_issues", "next_steps"):
-            target[field] = _dedupe(target[field] + card[field])
-        if card.get("status_update"):
-            target["status_update"] = card["status_update"]
+        _merge_card_content(target, card)
     return merged
 
 
@@ -195,14 +305,48 @@ def build_work_report_draft(transcript_text: str, candidates: list[dict], extrac
             "agent_steps": ["split", "match", "evidence", "extract", "merge", "mark_uncertain", "draft"]}
 
 
+def build_legacy_fragment_draft(transcript_text: str, candidates: list[dict], fragments: list[dict]) -> dict:
+    """Handle old LLM fragment-only responses without falling back to title scoring."""
+    cards = []
+    candidate_ids = [item.get("subtask_id") or item.get("id") for item in candidates]
+    for fragment in fragments:
+        evidence = str(fragment.get("evidence") or "").strip()
+        if not evidence or evidence not in transcript_text:
+            raise ValueError("evidence must be a verbatim substring of transcript_text")
+        report = {
+            **fragment,
+            "match_status": NEEDS_CONFIRMATION if candidates else UNMATCHED,
+            "matched_subtask_id": None,
+            "match_candidate_ids": candidate_ids,
+            "match_confidence": 0.0,
+            "match_reason": "AI returned content without an explicit task decision; candidates are shown for confirmation.",
+        }
+        cards.append(_make_ai_card(report, candidates, transcript_text))
+    task_reports = merge_task_cards(cards)
+    return {"summary": f"AI 已识别 {len(task_reports)} 项工作", "task_reports": task_reports,
+            "agent_steps": ["context", "legacy_fragment", "evidence", "candidate_confirmation", "draft"]}
+
+
 def _agent_prompt(text: str, candidates: list[dict]) -> str:
     context = json.dumps([_public_candidate(item) for item in candidates], ensure_ascii=False)
-    return f"""你是跨项目工作汇报 Agent。只拆分用户实际提到的工作，不得为未提及任务生成卡片，不得因未提及推断无进展或延期。
-候选任务仅用于理解语义，不要输出或选择任务 ID；归属由后续安全匹配器处理。
-请将原文拆成语义片段，每个片段必须给出原文逐字证据 evidence，并仅提取明确提到的 completed、achievements、subtask_issues、next_steps、status_update。
-候选上下文：{context}
-原文：{text}
-只输出 JSON：{{"fragments":[{{"evidence":"原文逐字片段","completed":"","achievements":[],"subtask_issues":[],"next_steps":[],"status_update":""}}]}}"""
+    return f"""你是工作汇报提交理解 Agent。候选上下文已经按当前登录用户的权限、项目成员关系和任务责任范围筛选；只能在这些候选任务中判断归属。
+
+先完整理解这一次提交，先按真实任务聚合，再决定它实际涉及几项真实任务。不要按句号、逗号或单个动作机械拆卡：同一任务的完成、计划、风险和成果必须归入同一张 task_report。只有工作对象、交付物或候选任务语义明显变化时，才输出多张卡。
+
+对每个真实任务输出一张 task_report：
+- evidence 是原文逐字片段数组，每一项都必须能在原文中找到；它用于审核追溯。
+- completed、achievements、subtask_issues、next_steps、status_update 是业务化归纳，可以把口语原文改写成清晰完整的工作表达，但不得添加原文不支持的事实、成果、风险或承诺。
+- matched：结合候选任务的标题、所属重点工作、责任关系、完成标准和本次原文，能合理归属到某任务；matched_subtask_id 必须填写候选中的 ID。
+- needs_confirmation：存在多个同等合理的候选；matched_subtask_id 为 null，match_candidate_ids 填候选 ID。
+- unmatched：确实与任何候选任务都无法建立合理关联；matched_subtask_id 为 null。
+- 若候选池只有一项，且原文描述的是该用户的正常工作进展，应优先归属到该任务，不要因为原文未复述任务标题而要求确认。
+
+只报告用户实际提到的工作，不得为未提及任务生成“无进展”或“延期”等卡片。不得编造候选池外的 subtask_id。
+
+候选任务上下文：{context}
+本次提交原文：{text}
+
+只输出 JSON：{{"task_reports":[{{"evidence":["原文逐字片段"],"match_status":"matched","matched_subtask_id":123,"match_candidate_ids":[],"match_confidence":0.9,"match_reason":"简要说明归属判断理由","completed":"清晰的完成内容归纳","achievements":["业务化成果归纳"],"subtask_issues":["业务化风险或问题归纳"],"next_steps":["清晰的下一步计划归纳"],"status_update":"业务化进度说明"}}]}}"""
 
 
 def _call_agent_llm(prompt: str, provider: str) -> dict:
@@ -224,11 +368,13 @@ def _call_agent_llm(prompt: str, provider: str) -> dict:
 
 def extract_work_report_agent(transcript_text: str, candidates: list[dict], provider: str,
                               llm_call: Callable[[str, str], dict] = _call_agent_llm) -> dict:
-    """Run the full Agent pipeline with one LLM call and deterministic matching."""
+    """Run the full Agent pipeline with one LLM call and server-side ID validation."""
     if not transcript_text.strip():
-        return build_work_report_draft(transcript_text, candidates, [])
+        return build_ai_work_report_draft(transcript_text, candidates, [])
     parsed = llm_call(_agent_prompt(transcript_text, candidates), provider)
+    if isinstance(parsed.get("task_reports"), list):
+        return build_ai_work_report_draft(transcript_text, candidates, parsed["task_reports"])
     fragments = parsed.get("fragments") or []
     if not isinstance(fragments, list):
         raise RuntimeError("AI Agent 返回的 fragments 格式无效")
-    return build_work_report_draft(transcript_text, candidates, fragments)
+    return build_legacy_fragment_draft(transcript_text, candidates, fragments)

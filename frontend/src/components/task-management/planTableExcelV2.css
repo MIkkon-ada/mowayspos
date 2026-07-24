@@ -55,6 +55,7 @@
   flex: 0 0 auto;
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 
 .v2-project-banner__right {
@@ -86,6 +87,27 @@
 
 .v2-project-banner__toggle:hover {
   background: #eff6ff;
+}
+
+.v2-project-banner__create {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid #2563eb;
+  border-radius: 4px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.v2-project-banner__create:hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
 }
 
 .v2-project-banner__arrow {

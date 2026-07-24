@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.work_report_agent import build_work_report_draft
+from app.services.work_report_agent import _agent_prompt, build_work_report_draft, extract_work_report_agent
 
 
 def candidate(subtask_id: int, project: str, key_task: str, title: str) -> dict:
@@ -52,6 +52,202 @@ def test_no_reliable_candidate_is_unmatched():
     assert card["match_status"] == "unmatched"
     assert card["matched_subtask_id"] is None
     assert card["match_candidates"] == []
+
+
+def test_agent_can_assign_generic_bugfix_to_candidate_task():
+    candidates = [candidate(81, "AI升级计划", "开发并应用项目运营系统", "完成系统模块梳理与迭代")]
+
+    def fake_llm(prompt: str, provider: str) -> dict:
+        return {
+            "task_reports": [
+                {
+                    "evidence": "这次修复了一个BUG",
+                    "match_status": "matched",
+                    "matched_subtask_id": 81,
+                    "match_reason": "当前候选任务与系统迭代开发直接相关，BUG 修复属于该任务推进内容。",
+                    "completed": "这次修复了一个BUG",
+                    "achievements": [],
+                    "subtask_issues": [],
+                    "next_steps": [],
+                    "status_update": "",
+                }
+            ]
+        }
+
+    card = extract_work_report_agent("这次修复了一个BUG", candidates, "deepseek", llm_call=fake_llm)["task_reports"][0]
+    assert card["match_status"] == "matched"
+    assert card["matched_subtask_id"] == 81
+    assert card["matched_subtask_title"] == "完成系统模块梳理与迭代"
+    assert card["completed"] == "这次修复了一个BUG"
+
+
+def test_agent_returned_subtask_id_must_be_in_candidate_pool():
+    candidates = [candidate(81, "AI升级计划", "开发并应用项目运营系统", "完成系统模块梳理与迭代")]
+
+    def fake_llm(prompt: str, provider: str) -> dict:
+        return {
+            "task_reports": [
+                {
+                    "evidence": "这次修复了一个BUG",
+                    "match_status": "matched",
+                    "matched_subtask_id": 999,
+                    "match_reason": "模型误选了候选池外的任务。",
+                    "completed": "这次修复了一个BUG",
+                    "achievements": [],
+                    "subtask_issues": [],
+                    "next_steps": [],
+                    "status_update": "",
+                }
+            ]
+        }
+
+    card = extract_work_report_agent("这次修复了一个BUG", candidates, "deepseek", llm_call=fake_llm)["task_reports"][0]
+    assert card["match_status"] == "unmatched"
+    assert card["matched_subtask_id"] is None
+    assert card["match_candidates"] == []
+
+
+def test_single_candidate_is_matched_even_when_agent_is_overcautious():
+    candidates = [candidate(81, "AI升级计划", "开发并应用项目运营系统", "完成系统模块梳理与迭代")]
+
+    def fake_llm(prompt: str, provider: str) -> dict:
+        return {
+            "task_reports": [
+                {
+                    "evidence": "本周提交了一个BUG",
+                    "match_status": "unmatched",
+                    "matched_subtask_id": None,
+                    "match_reason": "模型过度谨慎，没有选择唯一候选任务。",
+                    "completed": "本周提交了一个BUG",
+                    "achievements": [],
+                    "subtask_issues": [],
+                    "next_steps": [],
+                    "status_update": "",
+                }
+            ]
+        }
+
+    card = extract_work_report_agent("本周提交了一个BUG", candidates, "deepseek", llm_call=fake_llm)["task_reports"][0]
+    assert card["match_status"] == "matched"
+    assert card["matched_subtask_id"] == 81
+    assert card["matched_subtask_title"] == "完成系统模块梳理与迭代"
+
+
+def test_followup_plan_fragment_stays_with_previous_matched_task():
+    candidates = [
+        candidate(81, "AI升级计划", "开发并应用项目运营系统", "完成系统模块梳理与迭代"),
+        candidate(91, "AI升级计划", "开发并应用项目运营系统", "导入系统运行"),
+        candidate(101, "AI升级计划", "开发并应用项目运营系统", "梳理流程"),
+    ]
+
+    def fake_llm(prompt: str, provider: str) -> dict:
+        assert "先按真实任务聚合" in prompt
+        return {
+            "task_reports": [
+                {
+                    "evidence": "本周完成了系统模块梳理",
+                    "match_status": "matched",
+                    "matched_subtask_id": 81,
+                    "match_reason": "明确命中系统模块梳理任务。",
+                    "completed": "本周完成了系统模块梳理",
+                    "achievements": [],
+                    "subtask_issues": [],
+                    "next_steps": [],
+                    "status_update": "",
+                },
+                {
+                    "evidence": "下一周计划继续做最小POS",
+                    "match_status": "needs_confirmation",
+                    "matched_subtask_id": None,
+                    "match_candidate_ids": [91, 101],
+                    "match_reason": "最小POS可能关联多个候选。",
+                    "completed": "",
+                    "achievements": [],
+                    "subtask_issues": [],
+                    "next_steps": ["继续做最小POS"],
+                    "status_update": "",
+                },
+            ]
+        }
+
+    result = extract_work_report_agent(
+        "本周完成了系统模块梳理，下一周计划继续做最小POS",
+        candidates,
+        "deepseek",
+        llm_call=fake_llm,
+    )
+
+    assert len(result["task_reports"]) == 1
+    card = result["task_reports"][0]
+    assert card["match_status"] == "matched"
+    assert card["matched_subtask_id"] == 81
+    assert card["completed"] == "本周完成了系统模块梳理"
+    assert card["next_steps"] == ["继续做最小POS"]
+    assert card["evidence"] == ["本周完成了系统模块梳理", "下一周计划继续做最小POS"]
+
+
+def test_agent_groups_a_submission_and_rewrites_business_progress_fields():
+    candidates = [candidate(81, "AI升级计划", "开发并应用项目运营系统", "完成系统模块梳理与迭代")]
+    text = "本周完成了系统模块梳理，下一周计划继续做最小POS"
+
+    def fake_llm(prompt: str, provider: str) -> dict:
+        return {
+            "task_reports": [
+                {
+                    "evidence": ["本周完成了系统模块梳理", "下一周计划继续做最小POS"],
+                    "match_status": "matched",
+                    "matched_subtask_id": 81,
+                    "match_reason": "两段内容都在同一项系统迭代任务的连续进展中。",
+                    "completed": "完成系统模块梳理，明确后续迭代范围。",
+                    "achievements": [],
+                    "subtask_issues": [],
+                    "next_steps": ["推进最小POS方案开发与验证。"],
+                    "status_update": "任务持续推进中。",
+                }
+            ]
+        }
+
+    result = extract_work_report_agent(text, candidates, "deepseek", llm_call=fake_llm)
+
+    assert len(result["task_reports"]) == 1
+    card = result["task_reports"][0]
+    assert card["matched_subtask_id"] == 81
+    assert card["evidence"] == ["本周完成了系统模块梳理", "下一周计划继续做最小POS"]
+    assert card["completed"] == "完成系统模块梳理，明确后续迭代范围。"
+    assert card["next_steps"] == ["推进最小POS方案开发与验证。"]
+    assert card["status_update"] == "任务持续推进中。"
+
+
+def test_agent_prompt_requires_whole_submission_grouping_and_business_summaries():
+    prompt = _agent_prompt("完成系统梳理，继续做最小POS", [candidate(81, "AI升级计划", "系统建设", "系统模块梳理")])
+
+    assert "完整理解这一次提交" in prompt
+    assert "按真实任务聚合" in prompt
+    assert "业务化归纳" in prompt
+    assert '"evidence":["原文逐字片段"]' in prompt
+
+
+def test_legacy_fragments_response_no_longer_uses_fixed_title_matching():
+    candidates = [candidate(81, "AI升级计划", "开发并应用项目运营系统", "完成系统模块梳理与迭代")]
+
+    def fake_llm(prompt: str, provider: str) -> dict:
+        return {
+            "fragments": [
+                {
+                    "evidence": "这次修复了一个BUG",
+                    "completed": "这次修复了一个BUG",
+                    "achievements": [],
+                    "subtask_issues": [],
+                    "next_steps": [],
+                    "status_update": "",
+                }
+            ]
+        }
+
+    card = extract_work_report_agent("这次修复了一个BUG", candidates, "deepseek", llm_call=fake_llm)["task_reports"][0]
+    assert card["match_status"] == "matched"
+    assert card["matched_subtask_id"] == 81
+    assert card["matched_subtask_title"] == "完成系统模块梳理与迭代"
 
 
 def test_evidence_must_be_verbatim_from_transcript():

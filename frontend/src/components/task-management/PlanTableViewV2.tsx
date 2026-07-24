@@ -20,6 +20,8 @@ type Props = {
   loading?: boolean
   exportDisabled?: boolean
   onExport?: () => void
+  canCreateTask?: boolean
+  onCreateTask?: () => void
   currentUserName?: string
   projectRoles?: string[]
   isTechAdmin?: boolean
@@ -452,6 +454,8 @@ export function PlanTableViewV2({
   loading = false,
   exportDisabled = false,
   onExport,
+  canCreateTask = false,
+  onCreateTask,
   currentUserName,
   projectRoles,
   isTechAdmin,
@@ -535,6 +539,11 @@ export function PlanTableViewV2({
           <button type="button" className="v2-project-banner__toggle" onClick={() => setShowProjectStandard(true)}>
             评价标准
           </button>
+          {canCreateTask && onCreateTask && (
+            <button type="button" className="v2-project-banner__create" onClick={onCreateTask}>
+              新增重点工作
+            </button>
+          )}
         </div>
         <div className="v2-project-banner__right">
           <span className="v2-project-banner__role">企业教练：{projectCoaches}</span>

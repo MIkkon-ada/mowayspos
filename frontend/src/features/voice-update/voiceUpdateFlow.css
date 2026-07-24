@@ -14,15 +14,15 @@
   flex: 0 0 auto;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 24px;
-  min-height: 72px;
-  padding: 12px 24px;
+  gap: 16px;
+  height: 64px;
+  padding: 0 24px;
   border-bottom: 1px solid #e2e8f0;
   background: #fff;
 }
 
 .voice-update-title { white-space: nowrap; }
-.voice-update-header h1 { margin: 0; font-size: 22px; line-height: 1.3; letter-spacing: -.02em; }
+.voice-update-header h1 { margin: 0; color: #1e293b; font-size: 16px; font-weight: 700; line-height: 1.25; letter-spacing: 0; }
 .voice-update-history-button,
 .voice-update-task-detail-button {
   height: 40px;

@@ -137,15 +137,7 @@ def _request_origin(request: Request) -> str:
     return _origin_from_referer(request.headers.get("referer")).rstrip("/")
 
 
-def _is_account_forced_to_change_password(username: str) -> bool:
-    with SessionLocal() as db:
-        account = db.query(models.Account).filter(models.Account.username == username).first()
-        return bool(account and account.must_change_password)
-
-
 def _default_route(account: models.Account | None, context: dict) -> str:
-    if account and account.must_change_password:
-        return "/change-password"
     if account and account.status != "active":
         return "/login?reason=account"
     # tech_admin / CEO / can_view_all 统一默认进入 dashboard（与前端 authFlow 保持一致）
@@ -281,12 +273,6 @@ async def auth_middleware(request: Request, call_next):
         if path.startswith("/api/"):
             return JSONResponse({"detail": "unauthorized"}, status_code=401)
         return RedirectResponse("/login", status_code=302)
-    if (
-        path.startswith("/api/")
-        and not any(path == prefix or path.startswith(prefix) for prefix in _FORCE_PASSWORD_ALLOWED_PREFIXES)
-        and _is_account_forced_to_change_password(user)
-    ):
-        return JSONResponse({"detail": "must_change_password"}, status_code=403)
     return await call_next(request)
 
 

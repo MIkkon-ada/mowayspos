@@ -161,7 +161,6 @@ export function SettingsPage() {
       <header className="h-16 flex items-center px-6 gap-3 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
         <div className="flex-1">
           <h1 className="text-base font-bold text-slate-800">系统设置</h1>
-          <p className="text-xs text-slate-400 mt-0.5">配置平台基础信息、通知、AI 能力、安全与集成</p>
         </div>
         <button
           type="button"

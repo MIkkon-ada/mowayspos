@@ -206,7 +206,7 @@ def reset_password(
     row.password_hash = hash_password(payload.password)
     row.failed_login_count = 0
     row.locked_until = None
-    row.must_change_password = True  # 管理员重置后要求用户下次登录改密
+    row.must_change_password = False  # 不再强制改密
     row.status = "active"
     row.last_password_changed_at = utc_now()
     crud.log(db, current_user, "reset_password", "account", row.id, before=before, after=_account_to_dict(row))

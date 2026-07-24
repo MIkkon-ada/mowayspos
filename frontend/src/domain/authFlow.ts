@@ -56,8 +56,6 @@ export function getPostLoginDestination(
   }
 
   const currentUser = currentUserOrProjects
-  // 强制改密码优先级最高，跳过项目列表加载（后端中间件会 403 拦截）
-  if (currentUser?.must_change_password) return '/change-password'
   const projects = Array.isArray(projectsOrPreferred) ? projectsOrPreferred : []
   if (projects.length === 0) return '/home/dashboard'
   if (currentUser?.is_tech_admin || currentUser?.is_ceo || currentUser?.can_view_all) return '/home/dashboard'

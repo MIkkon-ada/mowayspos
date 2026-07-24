@@ -234,16 +234,9 @@ export function CoordinatePage() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <header className="h-14 flex items-center px-6 gap-3 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
+      <header className="h-16 flex items-center px-6 gap-3 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
         <div className="flex-1">
           <h1 className="text-base font-bold text-slate-800">组织与分工</h1>
-          <p className="text-xs text-slate-400 mt-0.5">
-            {selectedProjectId
-              ? '已选专项 — 相关人员高亮，再次点击取消'
-              : selectedPersonId
-              ? '已选人员 — 所属专项高亮，再次点击取消'
-              : '点击专项高亮相关人员；点击人员高亮其所属专项'}
-          </p>
         </div>
         {/* 视角切换 */}
         <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: '#E9EFF6' }}>

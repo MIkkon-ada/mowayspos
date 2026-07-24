@@ -966,9 +966,9 @@ export function ConfirmPage() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <header data-confirm-header="compact" className="flex-shrink-0 bg-white border-b px-5 py-3" style={{ borderColor: '#E9EFF6' }}>
+      <header data-confirm-header="compact" className="h-16 flex-shrink-0 bg-white border-b px-6 flex items-center" style={{ borderColor: '#E9EFF6' }}>
         <div className="flex items-center gap-2">
-          <h1 className="mr-2 whitespace-nowrap text-lg font-bold text-slate-900">AI 确认中心</h1>
+          <h1 className="mr-2 whitespace-nowrap text-base font-bold text-slate-900">AI 确认中心</h1>
           <div className="flex items-center gap-2 flex-1 min-w-0">
             {/* Filters & search - all views consistent */}
             <select value={filterProject} onChange={(e) => setFilterProject(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none min-w-[110px]">

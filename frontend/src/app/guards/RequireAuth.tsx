@@ -19,9 +19,5 @@ export function RequireAuth({ children }: RequireAuthProps) {
     return <Navigate to="/login?reason=session_expired" replace />
   }
 
-  if (currentUser?.must_change_password && location.pathname !== '/change-password') {
-    return <Navigate to="/change-password" replace />
-  }
-
   return <>{children}</>
 }

@@ -912,10 +912,9 @@ function handleFormSave(payload: TaskPayload) {
       )}
 
       {/* Top Bar */}
-      <header className={`${viewMode === 'plan' ? 'min-h-12 px-5 py-1.5 gap-2' : 'min-h-16 px-6 py-2 gap-3'} flex items-center flex-shrink-0 bg-white border-b flex-wrap`} style={{ borderColor: '#E9EFF6' }}>
+      <header className="h-16 px-6 gap-3 flex items-center flex-shrink-0 bg-white border-b overflow-x-auto" style={{ borderColor: '#E9EFF6' }}>
         <div className="min-w-[260px] flex-shrink-0">
           <h1 className="text-base font-bold text-slate-800">工作推进表</h1>
-          {viewMode === 'execution' && <p className="text-xs text-slate-400 mt-0.5">按项目、重点工作、关键任务追踪真实推进状态</p>}
         </div>
         <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
           <button
@@ -1705,7 +1704,7 @@ function handleFormSave(payload: TaskPayload) {
                   {/* 操作栏 */}
                   {!selectedTaskArchived && (
                     <div className="border-t px-4 py-3 flex gap-2 flex-wrap flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-                      <button onClick={() => { setFormTask(selectedTask); setFormOpen(true) }} className="px-3 py-1.5 rounded-lg text-white text-xs font-bold" style={{ background: '#0284C7' }}>编辑</button>
+                      {canOwn && <button onClick={() => { setFormTask(selectedTask); setFormOpen(true) }} className="px-3 py-1.5 rounded-lg text-white text-xs font-bold" style={{ background: '#0284C7' }}>编辑</button>}
                       <button onClick={() => setProgressOpen(true)} className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 text-xs font-semibold">更新进展</button>
                       {canAssignSelectedTask && <button onClick={() => openSubTaskAssignment(selectedTask)} className="px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 text-xs font-semibold disabled:opacity-50">新增关键任务</button>}
                       {canOwn && !selectedTaskActive && (

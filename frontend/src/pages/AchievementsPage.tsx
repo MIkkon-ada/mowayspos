@@ -432,7 +432,13 @@ export function AchievementsPage() {
 
   if (!projectId) {
     return (
-      <div className="flex-1 overflow-y-auto bg-[#f7f9fc]">
+      <div className="flex-1 overflow-hidden bg-[#f7f9fc] flex flex-col">
+        <header className="h-16 flex items-center px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-base font-bold text-slate-800">成果库</h1>
+          </div>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[1500px] px-6 py-6">
           <div className="mb-5 flex items-center gap-4">
             {[
@@ -520,35 +526,25 @@ export function AchievementsPage() {
             </div>
           </div>
         </div>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="flex-1 overflow-hidden bg-slate-50">
-      <div className="mx-auto flex h-full max-w-[1600px] flex-col px-6 py-5">
-        <header className="mb-5 shrink-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-sky-600">项目成果库</span>
-                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-black text-emerald-700">{projectStatusLabel(currentProject)}</span>
-              </div>
-              <h1 className="mt-2 truncate text-xl font-black tracking-tight text-slate-950">{currentProject?.name || '未识别项目'}</h1>
-              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                <span>负责人：{ownerText(currentProject)}</span>
-                <span>Coach：{coachText(currentProject)}</span>
-                <span>编号：{currentProject?.code || `#${projectId}`}</span>
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <button type="button" onClick={() => navigate('/work/achievements')} className="rounded-lg border border-sky-200 bg-white px-3 py-2 text-xs font-black text-sky-700 shadow-sm hover:bg-sky-50">切换项目</button>
-              <button type="button" onClick={reloadCurrentProject} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-600 shadow-sm hover:bg-slate-50">刷新</button>
-              <button type="button" disabled className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-400">导出清单</button>
-              <button type="button" onClick={openRegisterModal} disabled={projectArchived} className="rounded-lg bg-sky-600 px-4 py-2 text-xs font-black text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50">登记成果</button>
-            </div>
-          </div>
-        </header>
+    <div className="flex-1 overflow-hidden bg-slate-50 flex flex-col">
+      <header className="h-16 flex items-center px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-base font-bold text-slate-800">成果库</h1>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <button type="button" onClick={() => navigate('/work/achievements')} className="rounded-lg border border-sky-200 bg-white px-3 py-2 text-xs font-black text-sky-700 shadow-sm hover:bg-sky-50">切换项目</button>
+          <button type="button" onClick={reloadCurrentProject} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-600 shadow-sm hover:bg-slate-50">刷新</button>
+          <button type="button" disabled className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-400">导出清单</button>
+          <button type="button" onClick={openRegisterModal} disabled={projectArchived} className="rounded-lg bg-sky-600 px-4 py-2 text-xs font-black text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50">登记成果</button>
+        </div>
+      </header>
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col px-6 py-5">
 
         <div className="mb-5 grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">

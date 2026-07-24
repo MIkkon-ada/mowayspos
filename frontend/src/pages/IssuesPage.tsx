@@ -339,13 +339,12 @@ export function IssuesPage() {
     // N4-P2-N: 普通成员无任何管理角色时，显示简化项目选择页
     if (!hasAnyManagementRole) {
       return (
-        <div className="flex-1 overflow-y-auto bg-[#f6f8fb]">
+        <div className="flex-1 overflow-hidden bg-[#f6f8fb] flex flex-col">
+          <header className="h-16 flex-shrink-0 bg-white px-6 flex items-center border-b" style={{ borderColor: '#E9EFF6' }}>
+            <h1 className="text-base font-bold text-slate-800">问题中心</h1>
+          </header>
+          <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-[1440px] px-6 py-6">
-            <div className="mb-6">
-              <p className="text-[11px] font-extrabold uppercase tracking-[0.24em] text-purple-600">ISSUE CENTER</p>
-              <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">与我相关的问题</h1>
-              <p className="mt-2 text-sm text-slate-500">选择项目，查看你上报、负责或协助处理的问题。</p>
-            </div>
 
             <div className="mb-6 max-w-xs">
               <div className="rounded border border-slate-200 bg-white px-4 py-2.5 shadow-sm">
@@ -410,13 +409,18 @@ export function IssuesPage() {
               </div>
             </div>
           </div>
+          </div>
         </div>
       )
     }
 
     // 管理角色：原项目选择页
     return (
-      <div className="flex-1 overflow-y-auto bg-[#f6f8fb]">
+      <div className="flex-1 overflow-hidden bg-[#f6f8fb] flex flex-col">
+        <header className="h-16 flex-shrink-0 bg-white px-6 flex items-center border-b" style={{ borderColor: '#E9EFF6' }}>
+          <h1 className="text-base font-bold text-slate-800">问题中心</h1>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[1440px] px-6 py-6">
           <div className="mb-6 flex items-center gap-4">
             {[
@@ -527,6 +531,7 @@ export function IssuesPage() {
             </div>
           </div>
         </div>
+        </div>
       </div>
     )
   }
@@ -539,25 +544,20 @@ export function IssuesPage() {
       <>
       <div className="flex-1 overflow-hidden bg-[#f6f8fb] flex flex-col">
         {/* Header */}
-        <header className="flex-shrink-0 rounded-xl border border-slate-200 bg-white mx-5 mt-5 px-4 py-4 shadow-sm">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-[11px] font-extrabold uppercase tracking-[0.24em] text-purple-600">ISSUE CENTER</p>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-950">与我相关的问题</h1>
-                <span className="mt-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">{projectStatusLabel(currentProject)}</span>
-              </div>
-              <p className="mt-2 text-xs text-slate-500">查看你在 {currentProject?.name || '当前项目'} 中上报、负责或协助处理的问题。</p>
+        <header className="h-16 flex-shrink-0 bg-white px-6 flex items-center justify-between gap-4 border-b" style={{ borderColor: '#E9EFF6' }}>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-base font-bold text-slate-800">问题中心</h1>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" onClick={() => navigate('/work/issues')} className="rounded border border-purple-200 bg-white px-3 py-2 text-xs font-bold text-purple-700 hover:bg-purple-50">切换项目</button>
               <button type="button" onClick={reloadIssues} className="rounded border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">刷新</button>
               <button type="button" onClick={() => setAddOpen(true)} disabled={projectArchived} className="rounded bg-purple-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50">新增问题</button>
             </div>
-          </div>
+        </header>
 
+        <div className="flex-shrink-0 rounded-xl border border-slate-200 bg-white mx-5 mt-5 px-4 py-4 shadow-sm">
           {/* Filter bar */}
-          <div className="mt-4 flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <select value={memberStatusFilter} onChange={(e) => setMemberStatusFilter(e.target.value)} className="rounded border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700">
               <option value="全部">全部状态</option>
               <option value="待处理">待处理</option>
@@ -569,7 +569,7 @@ export function IssuesPage() {
             </select>
             <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索问题摘要" className="min-w-[200px] flex-1 rounded border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-purple-400" />
           </div>
-        </header>
+        </div>
 
         {/* Table + Detail Panel */}
         <div className="min-h-0 flex-1 flex gap-4 px-5 py-4 overflow-hidden">
@@ -702,27 +702,18 @@ export function IssuesPage() {
     <>
     <div className="flex-1 overflow-hidden bg-[#f6f8fb] flex flex-col">
       {/* Header */}
-      <header className="flex-shrink-0 rounded-xl border border-slate-200 bg-white mx-5 mt-5 px-4 py-4 shadow-sm">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-extrabold uppercase tracking-[0.24em] text-purple-600">ISSUE CENTER</p>
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-950">{currentProject?.name || '项目'} 项目问题中心</h1>
-              <span className="mt-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">{projectStatusLabel(currentProject)}</span>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-500">
-              <span>项目负责人：{ownerText(currentProject)}</span>
-              <span>Coach / 企业教练：{coachText(currentProject)}</span>
-              <span>项目编号：{currentProject?.code || `#${projectId}`}</span>
-            </div>
+      <header className="h-16 flex-shrink-0 bg-white px-6 flex items-center justify-between gap-4 border-b" style={{ borderColor: '#E9EFF6' }}>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-base font-bold text-slate-800">问题中心</h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => navigate('/work/issues')} className="rounded border border-purple-200 bg-white px-3 py-2 text-xs font-bold text-purple-700 hover:bg-purple-50">切换项目</button>
             <button type="button" onClick={reloadIssues} className="rounded border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">刷新</button>
             <button type="button" onClick={() => setAddOpen(true)} disabled={projectArchived} className="rounded bg-purple-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50">新增问题</button>
           </div>
-        </div>
+      </header>
 
+      <div className="flex-shrink-0 rounded-xl border border-slate-200 bg-white mx-5 mt-5 px-4 py-4 shadow-sm">
         {/* Stats bar */}
         <div className="mt-4 grid grid-cols-6 overflow-hidden rounded-lg border border-slate-200 bg-white">
           {[
@@ -768,7 +759,7 @@ export function IssuesPage() {
           <input value={filterHelper} onChange={(e) => setFilterHelper(e.target.value)} placeholder="协助人" className="w-24 rounded border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 outline-none focus:border-purple-400" />
           <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索问题摘要" className="min-w-[200px] flex-1 rounded border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-purple-400" />
         </div>
-      </header>
+      </div>
 
       {/* Issue List + Detail Panel */}
       <div className="min-h-0 flex-1 flex gap-4 px-5 py-4 overflow-hidden">

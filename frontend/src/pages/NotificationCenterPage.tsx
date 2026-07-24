@@ -476,27 +476,19 @@ export function NotificationCenterPage() {
       <div className="flex min-h-full w-full flex-col" style={{ maxWidth: 1280, padding: '0 28px' }}>
 
         {/* ── 紧凑 Toolbar ── */}
-        <div
-          className="flex items-center justify-between gap-4 border-b"
-          style={{ height: 64, borderColor: '#E2E8F0', background: '#F4F7FB', position: 'sticky', top: 0, zIndex: 10 }}
+        <header
+          className="flex h-16 shrink-0 items-center justify-between gap-4 border-b bg-white px-6"
+          style={{ borderColor: '#E9EFF6', position: 'sticky', top: 0, zIndex: 10, margin: '0 -28px' }}
         >
           {/* 左：图标 + 标题 + 副标题 */}
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg" style={{ background: '#EFF6FF', color: '#2563EB' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-              </svg>
-            </div>
             <div className="flex items-baseline gap-2 min-w-0">
-              <h1 className="text-base font-bold text-slate-900 whitespace-nowrap">
-                {filter === 'action' ? '待我处理' : filter === 'info' ? '仅通知' : '全部通知'}
-              </h1>
+              <h1 className="text-base font-bold text-slate-900 whitespace-nowrap">通知中心</h1>
               {unreadCount > 0 && (
                 <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
                   {unreadCount}
                 </span>
               )}
-              <span className="hidden sm:inline text-xs text-slate-400 truncate">查看与你相关的项目动作、待处理事项和系统提醒</span>
             </div>
           </div>
           {/* 右：操作按钮 */}
@@ -518,7 +510,7 @@ export function NotificationCenterPage() {
               ✓ 全部标为已读
             </button>
           </div>
-        </div>
+        </header>
 
         {/* ── Tabs ── */}
         <div className="flex items-end gap-5 border-b" style={{ borderColor: '#E2E8F0', height: 40 }}>

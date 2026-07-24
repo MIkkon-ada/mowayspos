@@ -15,6 +15,13 @@ def test_work_tasks_sidebar_entry_carries_current_project_context():
     assert "`/work/tasks?projectId=${currentProjectId}`" in source
 
 
+def test_work_tasks_sidebar_entry_visible_to_project_members_not_only_privileged_roles():
+    source = _frontend_source("components/Sidebar.tsx")
+
+    assert "showParticipantModules && hasActiveProject" in source
+    assert "isPrivileged && hasActiveProject" not in source
+
+
 def test_work_tasks_without_project_context_does_not_fetch_global_task_list():
     source = _frontend_source("pages/TaskManagementPage.tsx")
 

@@ -24,6 +24,7 @@ export function useVoiceExtraction({
   selectedProjectId,
   selectedTaskContext,
   selectedProjectIsActive,
+  voiceCandidates,
   currentUser,
   text,
   mode,
@@ -129,9 +130,11 @@ export function useVoiceExtraction({
     setError(null)
     setResult(null)
 
-    // "我的全部工作"模式下不预设子任务上下文
+    // 设置子任务上下文：有预选任务时用预选，否则用全部候选任务供手动选择归属
     if (selectedTaskContext) {
       setVoiceSubtasksContext([selectedTaskContext])
+    } else if (voiceCandidates.length > 0) {
+      setVoiceSubtasksContext(voiceCandidates)
     }
 
     try {
@@ -150,10 +153,10 @@ export function useVoiceExtraction({
       setEditingField(null)
       const rawProposed = (suggestion.proposed_subtasks as ProposedSubTask[] | undefined) ?? []
       setProposedSubtasks(rawProposed.filter((s) => s.title?.trim()))
-      const nextTaskReports = bindProgressReportsToTask(
-        (suggestion.task_reports as TaskReport[] | undefined) ?? [],
-        selectedTaskContext,
-      )
+      const rawTaskReports = (suggestion.task_reports as TaskReport[] | undefined) ?? []
+      const nextTaskReports = selectedTaskContext
+        ? bindProgressReportsToTask(rawTaskReports, selectedTaskContext)
+        : rawTaskReports
       setTaskReports(nextTaskReports)
       const initEdits: Record<number, CardEdit> = {}
       nextTaskReports.forEach((r, idx) => {

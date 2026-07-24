@@ -640,11 +640,8 @@ def _load_account_identity(current_user, db) -> dict:
     if not account:
         raise HTTPException(status_code=401, detail="unauthorized")
 
-    now = models.now()
     if account.status != "active":
         raise HTTPException(status_code=403, detail="account_disabled")
-    if account.locked_until and account.locked_until > now:
-        raise HTTPException(status_code=423, detail="account_locked")
 
     person = None
     if account.person_id:

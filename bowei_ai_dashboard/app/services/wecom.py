@@ -86,6 +86,27 @@ def build_qrcode_url(state: str = "") -> str:
     return f"{_WECOM_LOGIN_BASE}?{urllib.parse.urlencode(params)}"
 
 
+def build_silent_auth_url(state: str = "wecom-silent") -> str:
+    """生成网页静默授权 URL（snsapi_base）。
+
+    用户从企业微信客户端内打开此 URL 时，企微会自动带上 code 回调，
+    无需用户手动扫码。适用于工作台应用入口免登场景。
+
+    授权域：https://open.weixin.qq.com/connect/oauth2/authorize
+    scope=snsapi_base：静默授权，不弹窗，自动获取 userid
+    """
+    s = get_settings()
+    redirect_uri = urllib.parse.quote(s.wecom_redirect_uri, safe="")
+    params = {
+        "appid": s.wecom_corpid,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "snsapi_base",
+        "state": state,
+    }
+    return f"https://open.weixin.qq.com/connect/oauth2/authorize?{urllib.parse.urlencode(params)}#wechat_redirect"
+
+
 def get_userid_by_code(code: str) -> str:
     """用 OAuth code 换企业微信 userid。
 

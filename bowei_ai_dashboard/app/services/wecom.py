@@ -96,10 +96,9 @@ def build_silent_auth_url() -> str:
     scope=snsapi_base：静默授权，不弹窗，自动获取 userid
     """
     s = get_settings()
-    redirect_uri = urllib.parse.quote(s.wecom_redirect_uri, safe="")
     params = {
         "appid": s.wecom_corpid,
-        "redirect_uri": redirect_uri,
+        "redirect_uri": s.wecom_redirect_uri,
         "response_type": "code",
         "scope": "snsapi_base",
     }

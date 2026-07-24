@@ -18,8 +18,6 @@ from .time_utils import utc_now
 from .settings import get_auth_passwords, get_settings, legacy_password_login_enabled
 
 IMPERSONATE_ALLOWED = {"mowasyadmin"}
-_MAX_FAILED_ATTEMPTS = 5
-_LOCKOUT_MINUTES = 15
 
 
 def _now() -> datetime:
@@ -48,7 +46,8 @@ def _bcrypt_verify(raw: str, hashed: str) -> bool:
 def _check_password(raw: str, stored_hash: str) -> bool:
     if _is_bcrypt(stored_hash):
         return _bcrypt_verify(raw, stored_hash)
-    return secrets.compare_digest(stored_hash, _sha256(raw))
+    # 兼容旧 SHA-256 哈希 + 新明文存储
+    return secrets.compare_digest(stored_hash, _sha256(raw)) or secrets.compare_digest(stored_hash, raw)
 
 
 def verify_password(username: str, password: str) -> bool:
@@ -58,22 +57,14 @@ def verify_password(username: str, password: str) -> bool:
         if account:
             if account.status != "active":
                 return False
-            # 锁定检查
-            if account.locked_until and account.locked_until > now:
-                return False
             ok = _check_password(password, account.password_hash or "")
             if ok:
                 account.failed_login_count = 0
                 account.locked_until = None
                 account.last_login_at = now
-                # 旧 SHA-256 哈希透明升级到 bcrypt
+                # 旧 SHA-256 哈希透明升级为明文存储
                 if not _is_bcrypt(account.password_hash or ""):
                     account.password_hash = hash_password(password)
-            else:
-                count = (account.failed_login_count or 0) + 1
-                account.failed_login_count = count
-                if count >= _MAX_FAILED_ATTEMPTS:
-                    account.locked_until = now + timedelta(minutes=_LOCKOUT_MINUTES)
             db.commit()
             return ok
 
@@ -112,15 +103,12 @@ def record_login_attempt(
 
 
 def login_block_reason(username: str) -> tuple[int, str] | None:
-    now = _now()
     with SessionLocal() as db:
         account = db.query(Account).filter(Account.username == username).first()
         if not account:
             return None
         if account.status != "active":
             return 403, "账号已禁用，请联系管理员"
-        if account.locked_until and account.locked_until > now:
-            return 423, "密码错误次数过多，请稍后再试"
     return None
 
 
@@ -216,7 +204,8 @@ def invalidate_user_sessions(username: str, except_session_id: str | None = None
 
 
 def hash_password(raw: str) -> str:
-    return bcrypt.hashpw(raw.encode(), bcrypt.gensalt()).decode()
+    """存储密码：明文存储（内部系统，便于管理员查看）。"""
+    return raw
 
 
 def validate_password_policy(username: str, password: str, *, old_password: str | None = None) -> None:

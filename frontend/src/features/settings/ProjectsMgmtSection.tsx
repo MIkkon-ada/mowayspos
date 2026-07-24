@@ -15,7 +15,7 @@ import {
   batchImportProjects,
 } from '../../api/projects'
 import type { BatchImportRow, ProjectProfilePayload } from '../../api/projects'
-import type { Person, Project, ProjectMember, TaskItem } from '../../types'
+import type { CurrentUser, Person, Project, ProjectMember, TaskItem } from '../../types'
 import type { SubTaskWithParent } from '../../api/subtasks'
 import { fetchPeople } from '../../api/people'
 import { fetchTasks } from '../../api/tasks'
@@ -129,6 +129,33 @@ function buildProjectForm(project: Project): NewProjectForm {
     start_date: project.start_date ?? '',
     end_date: project.end_date ?? '',
   }
+}
+
+function buildProjectsFromCurrentUser(user: CurrentUser | null): Project[] {
+  if (!user?.projects?.length) return []
+  const projects: Project[] = []
+  user.projects.forEach((item) => {
+    if (typeof item === 'number' || typeof item === 'string') return
+    const id = Number(item.id)
+    const name = String(item.name ?? '').trim()
+    if (!Number.isFinite(id) || !name) return
+    projects.push({
+      id,
+      name,
+      code: '',
+      description: '',
+      status: 'active',
+      lifecycle_status: 'active',
+      is_active: true,
+      user_roles: [],
+      member_counts: {},
+      coordinator: '',
+      owners: [],
+      collaborators: [],
+      coaches: [],
+    })
+  })
+  return projects
 }
 
 function buildTeamMapFromMembers(projectMembers: ProjectMember[]): TeamMap {
@@ -326,10 +353,11 @@ export function ProjectsMgmtSection() {
       try {
         const [projectRows, peopleRows] = await Promise.all([getProjects(true), fetchPeople()])
         if (cancelled) return
-        setProjects(projectRows)
+        const effectiveProjects = projectRows.length > 0 ? projectRows : buildProjectsFromCurrentUser(currentUser)
+        setProjects(effectiveProjects)
         setPeople(peopleRows)
         const memberResults = await Promise.allSettled(
-          projectRows.map(async (p) => [p.id, await getProjectMembers(p.id)] as const),
+          effectiveProjects.map(async (p) => [p.id, await getProjectMembers(p.id)] as const),
         )
         if (cancelled) return
         const nextMembers: Record<number, ProjectMember[]> = {}
@@ -341,7 +369,7 @@ export function ProjectsMgmtSection() {
     }
     void loadInitialData()
     return () => { cancelled = true }
-  }, [])
+  }, [currentUser])
 
   // ── 加载推进表雏形数据（tasks + subtasks）──
   useEffect(() => {

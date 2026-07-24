@@ -135,17 +135,24 @@ def migrate(sqlite_path):
             # 获取 SQLite 表结构
             sqlite_cur.execute(f'PRAGMA table_info("{table_name}")')
             columns_info = sqlite_cur.fetchall()
-            col_names = [col[1] for col in columns_info]
+            sqlite_cols = [col[1] for col in columns_info]
             col_types = {col[1]: col[2] for col in columns_info}
 
-            # 过滤排除的字段
-            target_cols = [c for c in col_names if c not in exclude_cols and c != "rowid"]
+            # 获取 PostgreSQL 表结构（只插入两边都有的列）
+            pg_cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = %s AND table_schema = 'public'
+            """, (table_name,))
+            pg_cols = {row[0] for row in pg_cur.fetchall()}
+
+            # 过滤：排除字段 + 只保留两边都有的列
+            target_cols = [c for c in sqlite_cols
+                           if c not in exclude_cols and c != "rowid" and c in pg_cols]
             if not target_cols:
                 print("跳过（无有效列）")
                 continue
 
             # 读取所有数据
-            placeholders = ", ".join(["?" for _ in target_cols])
             sqlite_cur.execute(f'SELECT {", ".join(target_cols)} FROM "{table_name}"')
             rows = sqlite_cur.fetchall()
 
@@ -153,7 +160,7 @@ def migrate(sqlite_path):
                 print(f"0 行（空表）")
                 continue
 
-            # 清空目标表（按正确的外键顺序，此时应该安全）
+            # 清空目标表
             pg_cur.execute(f'TRUNCATE TABLE "{table_name}" CASCADE')
 
             # 批量插入
@@ -174,9 +181,13 @@ def migrate(sqlite_path):
                     )
                     inserted += 1
                 except Exception as e:
-                    # 单行失败不中断，记录并继续
+                    # 单行失败：回滚当前事务，重新开始一个新事务
+                    pg_conn.rollback()
                     row_id = row[0] if row else "?"
                     print(f"\n    ⚠ 行 id={row_id} 跳过: {e}")
+                    # 重新 TRUNCATE（因为 rollback 撤销了之前的 TRUNCATE）
+                    pg_cur.execute(f'TRUNCATE TABLE "{table_name}" CASCADE')
+                    continue
 
             # 重置自增序列
             if reset_seq and inserted > 0:

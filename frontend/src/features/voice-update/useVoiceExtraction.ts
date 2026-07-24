@@ -20,6 +20,7 @@ type UseVoiceExtractionArgs = {
 }
 
 export function useVoiceExtraction({
+  reportScope: scope,
   selectedProjectId,
   selectedTaskContext,
   selectedProjectIsActive,
@@ -98,43 +99,50 @@ export function useVoiceExtraction({
   async function handleExtract() {
     if (submitLock.current) return
     submitLock.current = true
-    if (!selectedProjectId) {
-      submitLock.current = false
-      setError('请先选择所属项目，再进行 AI 提取。')
-      return
-    }
-    if (!selectedTaskContext) {
-      submitLock.current = false
-      setError('请先选择本次汇报对应的关键任务。')
-      return
-    }
+
     const content = text.trim()
     if (!content) {
       submitLock.current = false
       setError('请先输入或录制内容')
       return
     }
-    if (!selectedProjectIsActive) {
+
+    // "我的全部工作"模式下不需要预选项目和关键任务
+    if (scope !== 'all' && !selectedProjectId) {
+      submitLock.current = false
+      setError('请先选择所属项目，再进行 AI 提取。')
+      return
+    }
+    if (scope === 'task' && !selectedTaskContext) {
+      submitLock.current = false
+      setError('请先选择本次汇报对应的关键任务。')
+      return
+    }
+    if (scope !== 'all' && !selectedProjectIsActive) {
       submitLock.current = false
       setError('项目尚未进入执行阶段，暂不能进行 AI 提取。')
       return
     }
 
-    const projectId = selectedProjectId
+    const projectId = selectedProjectId ?? undefined
     setPhase('extracting')
     setError(null)
     setResult(null)
 
-    setVoiceSubtasksContext([selectedTaskContext])
+    // "我的全部工作"模式下不预设子任务上下文
+    if (selectedTaskContext) {
+      setVoiceSubtasksContext([selectedTaskContext])
+    }
 
     try {
       const res = await extractOnly({
         project_id: projectId,
+        report_scope: scope,
         source_type: mode === 'voice' ? '语音更新' : '文字更新',
         transcript_text: content,
         submitter: currentUser?.name,
         llm_provider: selectedProvider,
-        user_subtasks: [selectedTaskContext],
+        user_subtasks: selectedTaskContext ? [selectedTaskContext] : undefined,
       })
       const suggestion = res.suggestion ?? {}
       setResult(suggestion)
@@ -149,7 +157,7 @@ export function useVoiceExtraction({
       setTaskReports(nextTaskReports)
       const initEdits: Record<number, CardEdit> = {}
       nextTaskReports.forEach((r, idx) => {
-        if (r.type === 'progress' && r.matched_subtask_id) {
+        if (r.type === 'progress' && r.matched_subtask_id && selectedTaskContext) {
           initEdits[idx] = {
             taskId: selectedTaskContext.parent_task_id ?? null,
             subtaskId: r.matched_subtask_id,

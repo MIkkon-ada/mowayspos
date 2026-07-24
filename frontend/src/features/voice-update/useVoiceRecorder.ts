@@ -29,20 +29,32 @@ export function useVoiceRecorder({ setText, setError }: UseVoiceRecorderArgs) {
 
   /** 上次更新 DOM 的时间戳，用于平滑渲染 */
   const lastRenderRef = useRef(0)
-  const pendingTextRef = useRef('')
+  /** 已完成的句子（final=true 的结果累积） */
+  const finalizedTextRef = useRef('')
+  /** 当前正在识别的句子（final=false 的部分结果） */
+  const currentSentenceRef = useRef('')
 
   /** 将识别结果平滑更新到 UI：每 ~50ms 刷新一次，避免高频 setState 造成的卡顿 */
   const smoothSetText = useCallback(
     (text: string, final: boolean) => {
-      pendingTextRef.current = text
+      if (final) {
+        // 句子识别完成，累积到已完成文本
+        finalizedTextRef.current = (finalizedTextRef.current + text).replace(/\s+/g, ' ').trim()
+        currentSentenceRef.current = ''
+      } else {
+        // 部分结果，更新当前句子
+        currentSentenceRef.current = text
+      }
+
+      const fullText = currentSentenceRef.current
+        ? finalizedTextRef.current + currentSentenceRef.current
+        : finalizedTextRef.current
+
       const now = performance.now()
       // final 结果立即刷新；非 final 结果节流到 50ms 一次
       if (final || now - lastRenderRef.current >= 50) {
         lastRenderRef.current = now
-        setText(() => {
-          const lines = pendingTextRef.current.split('\n')
-          return lines.join('\n')
-        })
+        setText(() => fullText)
       }
     },
     [setText],
@@ -50,12 +62,11 @@ export function useVoiceRecorder({ setText, setError }: UseVoiceRecorderArgs) {
 
   /** 提交最后一次待渲染的文本 */
   const flushPendingText = useCallback(() => {
-    if (pendingTextRef.current) {
-      setText(() => {
-        const lines = pendingTextRef.current.split('\n')
-        return lines.join('\n')
-      })
-      pendingTextRef.current = ''
+    const fullText = currentSentenceRef.current
+      ? finalizedTextRef.current + currentSentenceRef.current
+      : finalizedTextRef.current
+    if (fullText) {
+      setText(() => fullText)
     }
   }, [setText])
 
@@ -127,8 +138,9 @@ export function useVoiceRecorder({ setText, setError }: UseVoiceRecorderArgs) {
     setText('')
     cleanup()
     stoppingRef.current = false
-    pendingTextRef.current = ''
     lastRenderRef.current = 0
+    finalizedTextRef.current = ''
+    currentSentenceRef.current = ''
 
     if (!navigator.mediaDevices?.getUserMedia) {
       setError('当前浏览器不支持录音，请使用 Chrome 或 Edge 最新版')
@@ -255,8 +267,6 @@ export function useVoiceRecorder({ setText, setError }: UseVoiceRecorderArgs) {
           if (w?.readyState === WebSocket.OPEN) {
             w.send(msg.buffer)
           }
-        } else if (msg.type === 'silence') {
-          void stopRecording()
         }
       }
       const source = audioCtx.createMediaStreamSource(stream)

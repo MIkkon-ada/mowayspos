@@ -100,10 +100,10 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     [navigate, location.pathname],
   )
 
-  const reloadProjects = useCallback(async (fallbackUser: CurrentUser | null = currentUser) => {
+  const reloadProjects = useCallback(async (fallbackUser: CurrentUser | null = null) => {
     const list = await getProjects()
     setProjects(list.length > 0 ? list : projectsFromAuthMe(fallbackUser))
-  }, [currentUser])
+  }, [])
 
   const getPreferredProjectId = useCallback((): number | null => {
     if (projects.length === 0) return null

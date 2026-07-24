@@ -100,6 +100,7 @@ export function DashboardPage() {
 
   function initialDashboardScope(): DashboardScope {
     if (urlProjectId !== null) return 'project'
+    if (projects.length === 1) return 'project'
     if (canViewGlobalDashboard) return 'global'
     if (hasProjectDashboardRole) return 'my'
     return 'my'
@@ -147,7 +148,7 @@ export function DashboardPage() {
 
   useEffect(() => {
     const nextScopeMode = initialDashboardScope()
-    const nextScopeId = nextScopeMode === 'project' ? urlProjectId : null
+    const nextScopeId = nextScopeMode === 'project' ? (urlProjectId ?? projects[0]?.id ?? null) : null
     if (nextScopeMode !== scopeMode) {
       setScopeMode(nextScopeMode)
     }

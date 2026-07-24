@@ -19,10 +19,11 @@ import time
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..auth import create_session, record_login_attempt
+from ..auth import create_session, record_login_attempt, verify_password
 from ..database import get_db
 from ..models import Account
 from ..services import wecom
@@ -132,7 +133,7 @@ def wecom_callback(
     account = db.query(Account).filter(Account.wecom_userid == userid).first()
     if not account:
         logger.info("wecom login unbound userid=%s", userid)
-        return RedirectResponse(_frontend_url("/login", {"reason": "wecom_unbound"}))
+        return RedirectResponse(_frontend_url("/login", {"reason": "wecom_unbound", "wecom_userid": userid}))
 
     # 3. 检查账号状态
     if account.status != "active":
@@ -156,6 +157,91 @@ def wecom_callback(
 
     # 5. 重定向回前端首页，带 cookie
     resp = RedirectResponse(_frontend_url("/home/dashboard"))
+    resp.set_cookie(
+        settings.session_cookie_name,
+        sid,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite=settings.session_cookie_samesite,
+        max_age=settings.session_ttl_seconds,
+        path="/",
+    )
+    return resp
+
+
+# ===== 自助绑定 =====
+
+
+class WecomBindRequest(BaseModel):
+    """企微自助绑定请求体。"""
+
+    wecom_userid: str
+    username: str
+    password: str
+
+
+@router.post("/bind")
+def wecom_bind(payload: WecomBindRequest, db: Session = Depends(get_db)):
+    """企微自助绑定：用户输入系统账号+密码验证身份后，绑定企微 userid。
+
+    流程：
+    1. 验证 wecom_userid 格式非空
+    2. 验证账号密码（复用 verify_password，含锁定/禁用检查）
+    3. 检查 wecom_userid 是否已被其他账号绑定
+    4. 写入 Account.wecom_userid
+    5. 创建会话，返回 session token
+
+    安全保证：
+    - 密码验证与正常登录一致，验证失败会累计失败次数
+    - wecom_userid 全局唯一，防止多账号绑同一企微
+    - 不返回密码哈希等敏感信息
+    """
+    settings = get_settings()
+    if not settings.wecom_enabled:
+        raise HTTPException(status_code=503, detail="wecom_login_disabled")
+
+    wecom_userid = (payload.wecom_userid or "").strip()
+    username = (payload.username or "").strip()
+    password = payload.password or ""
+
+    if not wecom_userid:
+        raise HTTPException(status_code=400, detail="缺少企业微信用户标识")
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="请输入账号和密码")
+
+    # 1. 验证账号密码
+    ok = verify_password(username, password)
+    record_login_attempt(username, success=ok, ip_address="", user_agent="wecom-bind")
+    if not ok:
+        raise HTTPException(status_code=401, detail="账号或密码错误")
+
+    # 2. 查账号
+    account = db.query(Account).filter(Account.username == username).first()
+    if not account:
+        raise HTTPException(status_code=401, detail="账号或密码错误")
+    if account.status != "active":
+        raise HTTPException(status_code=403, detail="该账号已被禁用")
+
+    # 3. 检查 wecom_userid 唯一性
+    existing = (
+        db.query(Account)
+        .filter(Account.wecom_userid == wecom_userid, Account.id != account.id)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail=f"该企业微信已绑定到账号 {existing.username}")
+
+    # 4. 绑定
+    account.wecom_userid = wecom_userid
+    account.failed_login_count = 0
+    account.locked_until = None
+    db.commit()
+
+    # 5. 创建会话
+    sid = create_session(account.username)
+    logger.info("wecom self-bind success: %s -> userid=%s", account.username, wecom_userid)
+
+    resp = JSONResponse({"ok": True, "user": account.username})
     resp.set_cookie(
         settings.session_cookie_name,
         sid,

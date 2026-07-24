@@ -1,9 +1,9 @@
-import { useState, type ReactNode } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
 import { useProject } from '../context/ProjectContext'
 import { getPostLoginDestination, getProjectsLandingDestination } from '../domain/authFlow'
 import { SYSTEM_NAME_CN } from '../domain/displayNames'
-import { getWecomQrcodeUrl, bindWecomAccount } from '../api/auth'
+import { getWecomQrcodeUrl, getWecomSilentAuthUrl, bindWecomAccount } from '../api/auth'
 
 export function CenterMessage({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
@@ -32,6 +32,17 @@ function LoginPanel() {
   const [bindPassword, setBindPassword] = useState('')
   const [bindLoading, setBindLoading] = useState(false)
   const [bindError, setBindError] = useState('')
+
+  // 检测企微环境，自动触发静默授权（免扫码登录）
+  useEffect(() => {
+    if (isWecomUnbound) return // 绑定页不触发
+    const ua = navigator.userAgent.toLowerCase()
+    const isWxWork = /wxwork/i.test(ua) || /microMessenger/i.test(ua)
+    if (!isWxWork) return
+    getWecomSilentAuthUrl()
+      .then(({ url }) => { if (url) window.location.href = url })
+      .catch(() => {}) // 静默失败时仍显示正常登录页
+  }, [isWecomUnbound])
 
   const wecomMessages: Record<string, string> = {
     wecom_unbound: '该企业微信账号尚未绑定系统账号，请在下方输入账号密码完成绑定。',

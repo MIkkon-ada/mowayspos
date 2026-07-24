@@ -28,6 +28,16 @@ export function getWecomQrcodeUrl(): Promise<{ url: string }> {
 }
 
 /**
+ * 获取企业微信静默授权 URL（snsapi_base）。
+ * 用户从企微客户端内打开此 URL 时自动带上 code 回调，无需扫码。
+ * 适用于工作台应用入口免登场景：前端检测到在企微内置浏览器中且未登录时，
+ * 调用此接口获取 URL 并跳转，实现无感登录。
+ */
+export function getWecomSilentAuthUrl(): Promise<{ url: string }> {
+  return apiGet<{ url: string }>('/api/auth/wecom/silent-auth')
+}
+
+/**
  * 企微自助绑定：用户扫码后未绑定，输入账号密码验证身份后绑定企微 userid。
  * 绑定成功后后端通过 Set-Cookie 设置会话，前端直接跳转首页即可。
  */

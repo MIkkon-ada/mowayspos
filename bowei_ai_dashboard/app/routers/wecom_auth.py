@@ -81,6 +81,23 @@ def wecom_qrcode():
     return {"url": url, "state": state}
 
 
+@router.get("/silent-auth")
+def wecom_silent_auth():
+    """返回网页静默授权 URL（snsapi_base）。
+
+    用户从企业微信客户端内打开此 URL 时，企微自动带上 code 回调，
+    无需手动扫码。适用于工作台应用入口免登场景。
+
+    前端检测到在企微内置浏览器中且未登录时，调用此接口获取 URL 并跳转。
+    回调逻辑复用 /callback 接口（state 为空时跳过 CSRF 验证）。
+    """
+    settings = get_settings()
+    if not settings.wecom_enabled:
+        raise HTTPException(status_code=503, detail="wecom_login_disabled")
+    url = wecom.build_silent_auth_url()
+    return {"url": url}
+
+
 @router.get("/callback")
 def wecom_callback(
     code: str = "",

@@ -283,6 +283,7 @@ async def extract(
                 payload.transcript_text,
                 candidates,
                 payload.llm_provider or "deepseek",
+                payload.submitter or current_user,
             )
             return {"suggestion": result}
         result = await asyncio.to_thread(

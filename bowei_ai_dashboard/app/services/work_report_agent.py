@@ -174,6 +174,28 @@ def _normalize_agent_status(value: str) -> str:
     return value if value in {MATCHED, NEEDS_CONFIRMATION, UNMATCHED} else UNMATCHED
 
 
+def _owner_priority(candidate: dict, submitter: str | None = None) -> int:
+    submitter_name = str(submitter or "").strip()
+    assignee = str(candidate.get("assignee") or "").strip()
+    relation = str(candidate.get("user_relation") or "").strip()
+    if submitter_name and assignee == submitter_name:
+        return 0
+    if relation == "subtask_assignee":
+        return 0
+    if relation == "task_owner":
+        return 1
+    return 2
+
+
+def _unique_owner_preferred_candidate(candidates: list[dict], submitter: str | None = None) -> dict | None:
+    if not candidates:
+        return None
+    ranked = sorted(candidates, key=lambda item: _owner_priority(item, submitter))
+    best_priority = _owner_priority(ranked[0], submitter)
+    best = [item for item in ranked if _owner_priority(item, submitter) == best_priority]
+    return best[0] if len(best) == 1 else None
+
+
 def _agent_evidence_fragments(report: dict, transcript_text: str) -> list[str]:
     """Return verbatim evidence clauses emitted for one task-level report."""
     raw_evidence = report.get("evidence")
@@ -201,7 +223,7 @@ def _agent_business_fields(report: dict) -> dict:
     }
 
 
-def _make_ai_card(report: dict, candidates: list[dict], transcript_text: str) -> dict:
+def _make_ai_card(report: dict, candidates: list[dict], transcript_text: str, submitter: str | None = None) -> dict:
     evidence = _agent_evidence_fragments(report, transcript_text)
 
     candidate_map = _candidate_by_subtask_id(candidates)
@@ -216,11 +238,18 @@ def _make_ai_card(report: dict, candidates: list[dict], transcript_text: str) ->
         status = UNMATCHED
 
     candidate_ids = report.get("match_candidate_ids") or []
-    public_candidates = [
-        _public_candidate(candidate_map[int(item_id)])
+    actual_candidates = [
+        candidate_map[int(item_id)]
         for item_id in candidate_ids
         if item_id is not None and int(item_id) in candidate_map
     ]
+    public_candidates = [_public_candidate(candidate) for candidate in actual_candidates]
+    if status == NEEDS_CONFIRMATION and matched is None:
+        preferred = _unique_owner_preferred_candidate(actual_candidates or candidates, submitter)
+        if preferred is not None:
+            matched = preferred
+            status = MATCHED
+            public_candidates = [_public_candidate(matched)]
     if status == MATCHED and matched is not None and not public_candidates:
         public_candidates = [_public_candidate(matched)]
 
@@ -246,8 +275,8 @@ def _make_ai_card(report: dict, candidates: list[dict], transcript_text: str) ->
     }
 
 
-def build_ai_work_report_draft(transcript_text: str, candidates: list[dict], agent_reports: list[dict]) -> dict:
-    cards = [_make_ai_card(report, candidates, transcript_text) for report in agent_reports]
+def build_ai_work_report_draft(transcript_text: str, candidates: list[dict], agent_reports: list[dict], submitter: str | None = None) -> dict:
+    cards = [_make_ai_card(report, candidates, transcript_text, submitter) for report in agent_reports]
     task_reports = merge_task_cards(cards)
     return {"summary": f"AI 已识别 {len(task_reports)} 项工作", "task_reports": task_reports,
             "agent_steps": ["context", "agent_match", "evidence", "sanitize", "merge", "draft"]}
@@ -366,14 +395,14 @@ def _call_agent_llm(prompt: str, provider: str) -> dict:
     return _extract_json_blob(raw)
 
 
-def extract_work_report_agent(transcript_text: str, candidates: list[dict], provider: str,
+def extract_work_report_agent(transcript_text: str, candidates: list[dict], provider: str, submitter: str | None = None,
                               llm_call: Callable[[str, str], dict] = _call_agent_llm) -> dict:
     """Run the full Agent pipeline with one LLM call and server-side ID validation."""
     if not transcript_text.strip():
-        return build_ai_work_report_draft(transcript_text, candidates, [])
+        return build_ai_work_report_draft(transcript_text, candidates, [], submitter)
     parsed = llm_call(_agent_prompt(transcript_text, candidates), provider)
     if isinstance(parsed.get("task_reports"), list):
-        return build_ai_work_report_draft(transcript_text, candidates, parsed["task_reports"])
+        return build_ai_work_report_draft(transcript_text, candidates, parsed["task_reports"], submitter)
     fragments = parsed.get("fragments") or []
     if not isinstance(fragments, list):
         raise RuntimeError("AI Agent 返回的 fragments 格式无效")

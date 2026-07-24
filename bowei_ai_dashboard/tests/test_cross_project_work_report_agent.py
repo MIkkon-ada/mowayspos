@@ -319,3 +319,35 @@ def test_project_scope_uses_agent_even_when_only_one_candidate_exists():
     assert "report_scope" in schemas
     assert "payload.report_scope in" in router
     assert '"all", "project"' in router
+
+
+def test_agent_prefers_submitter_owned_candidate_when_candidates_are_ambiguous():
+    candidates = [
+        {**candidate(81, "AI", "Ops", "Task A"), "assignee": "Wu Xiao", "user_relation": "subtask_assignee"},
+        {**candidate(91, "AI", "Ops", "Task B"), "assignee": "Liu Wanchao", "user_relation": "coordinator"},
+        {**candidate(101, "AI", "Ops", "Task C"), "assignee": "PM", "user_relation": "owner"},
+    ]
+
+    def fake_llm(prompt: str, provider: str) -> dict:
+        return {
+            "task_reports": [
+                {
+                    "evidence": "done task",
+                    "match_status": "needs_confirmation",
+                    "matched_subtask_id": None,
+                    "match_candidate_ids": [81, 91, 101],
+                    "match_reason": "multiple candidates",
+                    "completed": "done task",
+                    "achievements": [],
+                    "subtask_issues": [],
+                    "next_steps": [],
+                    "status_update": "",
+                }
+            ]
+        }
+
+    card = extract_work_report_agent("done task", candidates, "deepseek", submitter="Wu Xiao", llm_call=fake_llm)["task_reports"][0]
+
+    assert card["match_status"] == "matched"
+    assert card["matched_subtask_id"] == 81
+    assert card["matched_subtask_title"] == "Task A"

@@ -6,6 +6,7 @@ import { useProject } from '../context/ProjectContext'
 import { VoiceUpdateDetailDrawer } from '../features/voice-update/VoiceUpdateDetailDrawer'
 import { VoiceUpdateHistoryDrawer } from '../features/voice-update/VoiceUpdateHistoryDrawer'
 import { VoiceUpdateInputPanel, type VoiceInputMode } from '../features/voice-update/VoiceUpdateInputPanel'
+import { VoiceUpdateOwnershipReviewPanel } from '../features/voice-update/VoiceUpdateOwnershipReviewPanel'
 import { VoiceUpdateResultPanel } from '../features/voice-update/VoiceUpdateResultPanel'
 import { VoiceUpdateSubmitPanel } from '../features/voice-update/VoiceUpdateSubmitPanel'
 import { VoiceUpdateTaskBindingBar } from '../features/voice-update/VoiceUpdateTaskBindingBar'
@@ -264,28 +265,36 @@ export function VoiceUpdatePage() {
         <div className="voice-update-editor-shell">
           <main className="voice-update-main-scroll">
             <div className="voice-update-workspace">
-              <VoiceUpdateInputPanel
-                mode={mode}
-                onModeChange={setMode}
-                providers={providers}
-                selectedProvider={selectedProvider}
-                onSelectedProviderChange={setSelectedProvider}
-                phase={phase}
-                controlsLocked={controlsLocked}
-                extractDisabled={extractDisabled}
-                recording={recording}
-                transcribing={transcribing}
-                timerLabel={formatTime(timer)}
-                text={text}
-                onTextChange={setText}
-                uploading={uploading}
-                uploadFileName={uploadFileName}
-                uploadInputRef={uploadInputRef}
-                onUploadFile={handleUploadFile}
-                onStartRecording={startRecording}
-                onStopRecording={stopRecording}
-                onExtract={handleExtract}
-              />
+              <div className="voice-update-left-column">
+                <VoiceUpdateInputPanel
+                  mode={mode}
+                  onModeChange={setMode}
+                  providers={providers}
+                  selectedProvider={selectedProvider}
+                  onSelectedProviderChange={setSelectedProvider}
+                  phase={phase}
+                  controlsLocked={controlsLocked}
+                  extractDisabled={extractDisabled}
+                  recording={recording}
+                  transcribing={transcribing}
+                  timerLabel={formatTime(timer)}
+                  text={text}
+                  onTextChange={setText}
+                  uploading={uploading}
+                  uploadFileName={uploadFileName}
+                  uploadInputRef={uploadInputRef}
+                  onUploadFile={handleUploadFile}
+                  onStartRecording={startRecording}
+                  onStopRecording={stopRecording}
+                  onExtract={handleExtract}
+                />
+                <VoiceUpdateOwnershipReviewPanel
+                  phase={phase}
+                  taskReports={taskReports}
+                  setTaskReports={setTaskReports}
+                  voiceSubtasksContext={voiceSubtasksContext}
+                />
+              </div>
               <VoiceUpdateResultPanel
                 result={result}
                 error={extractionError}

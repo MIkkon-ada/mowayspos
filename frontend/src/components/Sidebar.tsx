@@ -79,7 +79,7 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
   ]
 
   const executionItems: NavItem[] = [
-    ...(isPrivileged && hasActiveProject
+    ...(showParticipantModules && hasActiveProject
       ? [{ page: 'table' as const, label: '工作推进表', icon: <IconTable /> }]
       : []),
   ]

@@ -114,7 +114,7 @@ def _supported_values(values: list, evidence: str, markers: tuple[str, ...]) -> 
 def _sanitize_fragment(fragment: dict, evidence: str) -> dict:
     """Fail closed when the LLM adds content not supported by this report fragment."""
     completed = str(fragment.get("completed") or "").strip()
-    completed_markers = ("完成", "上线", "交付", "发布", "落地", "解决", "整理")
+    completed_markers = ("完成", "上线", "交付", "发布", "落地", "解决", "整理", "修复")
     status_update = str(fragment.get("status_update") or "").strip()
     return {
         "evidence": evidence,
@@ -161,6 +161,73 @@ def _make_card(fragment: dict, match: dict) -> dict:
     }
 
 
+def _candidate_by_subtask_id(candidates: list[dict]) -> dict[int, dict]:
+    result = {}
+    for item in candidates:
+        subtask_id = item.get("subtask_id") or item.get("id")
+        if subtask_id is not None:
+            result[int(subtask_id)] = item
+    return result
+
+
+def _normalize_agent_status(value: str) -> str:
+    return value if value in {MATCHED, NEEDS_CONFIRMATION, UNMATCHED} else UNMATCHED
+
+
+def _make_ai_card(report: dict, candidates: list[dict], transcript_text: str) -> dict:
+    evidence = str(report.get("evidence") or "").strip()
+    if not evidence or evidence not in transcript_text:
+        raise ValueError("evidence must be a verbatim substring of transcript_text")
+
+    candidate_map = _candidate_by_subtask_id(candidates)
+    requested_id = report.get("matched_subtask_id")
+    matched = candidate_map.get(int(requested_id)) if requested_id is not None else None
+    status = _normalize_agent_status(str(report.get("match_status") or ""))
+    invalid_explicit_id = requested_id is not None and matched is None
+    if matched is None and not invalid_explicit_id and len(candidates) == 1:
+        matched = candidates[0]
+        status = MATCHED
+    if status == MATCHED and matched is None:
+        status = UNMATCHED
+
+    candidate_ids = report.get("match_candidate_ids") or []
+    public_candidates = [
+        _public_candidate(candidate_map[int(item_id)])
+        for item_id in candidate_ids
+        if item_id is not None and int(item_id) in candidate_map
+    ]
+    if status == MATCHED and matched is not None and not public_candidates:
+        public_candidates = [_public_candidate(matched)]
+
+    fragment = _sanitize_fragment(report, evidence)
+    return {
+        "type": "progress",
+        "project_id": matched.get("project_id") if matched else None,
+        "project_name": matched.get("project_name", "") if matched else "",
+        "parent_task_id": matched.get("parent_task_id") if matched else None,
+        "parent_key_task": matched.get("parent_key_task", "") if matched else "",
+        "matched_subtask_id": matched.get("subtask_id") if matched else None,
+        "matched_subtask_title": matched.get("subtask_title", "") if matched else "",
+        "match_status": status,
+        "match_confidence": round(float(report.get("match_confidence") or (0.9 if matched else 0.0)), 3),
+        "match_reason": "当前候选池只有一个可汇报任务，已自动归属到该任务。" if len(candidates) == 1 else str(report.get("match_reason") or "").strip(),
+        "match_candidates": public_candidates if status != UNMATCHED else [],
+        "evidence": [evidence],
+        "completed": str(fragment.get("completed") or "").strip(),
+        "achievements": list(fragment.get("achievements") or []),
+        "subtask_issues": list(fragment.get("subtask_issues") or []),
+        "next_steps": list(fragment.get("next_steps") or []),
+        "status_update": str(fragment.get("status_update") or "").strip(),
+    }
+
+
+def build_ai_work_report_draft(transcript_text: str, candidates: list[dict], agent_reports: list[dict]) -> dict:
+    cards = [_make_ai_card(report, candidates, transcript_text) for report in agent_reports]
+    task_reports = merge_task_cards(cards)
+    return {"summary": f"AI 已识别 {len(task_reports)} 项工作", "task_reports": task_reports,
+            "agent_steps": ["context", "agent_match", "evidence", "sanitize", "merge", "draft"]}
+
+
 def merge_task_cards(cards: list[dict]) -> list[dict]:
     """Merge only cards already matched to the same real key task."""
     merged: list[dict] = []
@@ -195,14 +262,41 @@ def build_work_report_draft(transcript_text: str, candidates: list[dict], extrac
             "agent_steps": ["split", "match", "evidence", "extract", "merge", "mark_uncertain", "draft"]}
 
 
+def build_legacy_fragment_draft(transcript_text: str, candidates: list[dict], fragments: list[dict]) -> dict:
+    """Handle old LLM fragment-only responses without falling back to title scoring."""
+    cards = []
+    candidate_ids = [item.get("subtask_id") or item.get("id") for item in candidates]
+    for fragment in fragments:
+        evidence = str(fragment.get("evidence") or "").strip()
+        if not evidence or evidence not in transcript_text:
+            raise ValueError("evidence must be a verbatim substring of transcript_text")
+        report = {
+            **fragment,
+            "match_status": NEEDS_CONFIRMATION if candidates else UNMATCHED,
+            "matched_subtask_id": None,
+            "match_candidate_ids": candidate_ids,
+            "match_confidence": 0.0,
+            "match_reason": "AI returned content without an explicit task decision; candidates are shown for confirmation.",
+        }
+        cards.append(_make_ai_card(report, candidates, transcript_text))
+    task_reports = merge_task_cards(cards)
+    return {"summary": f"AI 已识别 {len(task_reports)} 项工作", "task_reports": task_reports,
+            "agent_steps": ["context", "legacy_fragment", "evidence", "candidate_confirmation", "draft"]}
+
+
 def _agent_prompt(text: str, candidates: list[dict]) -> str:
     context = json.dumps([_public_candidate(item) for item in candidates], ensure_ascii=False)
-    return f"""你是跨项目工作汇报 Agent。只拆分用户实际提到的工作，不得为未提及任务生成卡片，不得因未提及推断无进展或延期。
-候选任务仅用于理解语义，不要输出或选择任务 ID；归属由后续安全匹配器处理。
+    return f"""你是跨项目工作汇报 Agent。请同时完成内容拆分和任务归属判断。
+只拆分用户实际提到的工作，不得为未提及任务生成卡片，不得因未提及推断无进展或延期。
+只能使用候选上下文里的 subtask_id，不得编造或输出候选池外的 ID。
+每个 task_report 必须给出 match_status：matched / needs_confirmation / unmatched。
+- matched：能根据候选任务上下文、用户身份、工作性质和原文推断属于某个任务，matched_subtask_id 填候选 ID。
+- needs_confirmation：多个候选都可能，matched_subtask_id 填 null，match_candidate_ids 填候选 ID 列表。
+- unmatched：确实无法归属，matched_subtask_id 填 null。
 请将原文拆成语义片段，每个片段必须给出原文逐字证据 evidence，并仅提取明确提到的 completed、achievements、subtask_issues、next_steps、status_update。
 候选上下文：{context}
 原文：{text}
-只输出 JSON：{{"fragments":[{{"evidence":"原文逐字片段","completed":"","achievements":[],"subtask_issues":[],"next_steps":[],"status_update":""}}]}}"""
+只输出 JSON：{{"task_reports":[{{"evidence":"原文逐字片段","match_status":"matched","matched_subtask_id":123,"match_candidate_ids":[],"match_confidence":0.9,"match_reason":"简要说明归属判断理由","completed":"","achievements":[],"subtask_issues":[],"next_steps":[],"status_update":""}}]}}"""
 
 
 def _call_agent_llm(prompt: str, provider: str) -> dict:
@@ -224,11 +318,13 @@ def _call_agent_llm(prompt: str, provider: str) -> dict:
 
 def extract_work_report_agent(transcript_text: str, candidates: list[dict], provider: str,
                               llm_call: Callable[[str, str], dict] = _call_agent_llm) -> dict:
-    """Run the full Agent pipeline with one LLM call and deterministic matching."""
+    """Run the full Agent pipeline with one LLM call and server-side ID validation."""
     if not transcript_text.strip():
-        return build_work_report_draft(transcript_text, candidates, [])
+        return build_ai_work_report_draft(transcript_text, candidates, [])
     parsed = llm_call(_agent_prompt(transcript_text, candidates), provider)
+    if isinstance(parsed.get("task_reports"), list):
+        return build_ai_work_report_draft(transcript_text, candidates, parsed["task_reports"])
     fragments = parsed.get("fragments") or []
     if not isinstance(fragments, list):
         raise RuntimeError("AI Agent 返回的 fragments 格式无效")
-    return build_work_report_draft(transcript_text, candidates, fragments)
+    return build_legacy_fragment_draft(transcript_text, candidates, fragments)

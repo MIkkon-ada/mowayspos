@@ -77,9 +77,7 @@ export function MyTasksPage() {
     <div className="my-tasks-page">
       <header className="my-tasks-header">
         <div>
-          <p className="my-task-eyebrow">个人工作</p>
           <h1>我的任务</h1>
-          <p>汇总你在所有进行中项目里的关键任务，快速掌握优先级与当前进展。</p>
         </div>
         <button type="button" className="my-task-refresh" onClick={refresh} disabled={loading}>
           <span className={loading ? 'is-spinning' : ''} aria-hidden="true">↻</span>

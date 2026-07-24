@@ -308,7 +308,7 @@ export function IssueDetailPage() {
   return (
     <div className="min-h-full flex flex-col bg-slate-50">
       {/* ── Top bar ── */}
-      <header className="flex items-center gap-3 px-5 py-3 bg-white border-b border-slate-200 shrink-0">
+      <header className="h-16 flex items-center gap-3 px-6 bg-white border-b border-slate-200 shrink-0">
         <button
           onClick={handleBack}
           className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 font-medium transition-colors"

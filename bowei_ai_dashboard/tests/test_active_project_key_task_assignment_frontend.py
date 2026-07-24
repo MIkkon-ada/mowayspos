@@ -41,6 +41,12 @@ def test_active_work_progress_gates_create_and_edit_by_role_and_project_status()
     assert "canAssignSubTasks" in source
 
 
+def test_work_progress_detail_edit_button_is_manager_only():
+    source = _frontend_source("pages/TaskManagementPage.tsx")
+
+    assert "canOwn && <button onClick={() => { setFormTask(selectedTask); setFormOpen(true) }}" in source
+
+
 def test_key_task_assignment_modal_keeps_existing_subtask_payload_contract():
     source = _frontend_source("pages/TaskManagementPage.tsx")
 

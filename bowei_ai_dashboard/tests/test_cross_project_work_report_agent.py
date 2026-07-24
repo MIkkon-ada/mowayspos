@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.work_report_agent import build_work_report_draft
+from app.services.work_report_agent import build_work_report_draft, extract_work_report_agent
 
 
 def candidate(subtask_id: int, project: str, key_task: str, title: str) -> dict:
@@ -52,6 +52,108 @@ def test_no_reliable_candidate_is_unmatched():
     assert card["match_status"] == "unmatched"
     assert card["matched_subtask_id"] is None
     assert card["match_candidates"] == []
+
+
+def test_agent_can_assign_generic_bugfix_to_candidate_task():
+    candidates = [candidate(81, "AI升级计划", "开发并应用项目运营系统", "完成系统模块梳理与迭代")]
+
+    def fake_llm(prompt: str, provider: str) -> dict:
+        return {
+            "task_reports": [
+                {
+                    "evidence": "这次修复了一个BUG",
+                    "match_status": "matched",
+                    "matched_subtask_id": 81,
+                    "match_reason": "当前候选任务与系统迭代开发直接相关，BUG 修复属于该任务推进内容。",
+                    "completed": "这次修复了一个BUG",
+                    "achievements": [],
+                    "subtask_issues": [],
+                    "next_steps": [],
+                    "status_update": "",
+                }
+            ]
+        }
+
+    card = extract_work_report_agent("这次修复了一个BUG", candidates, "deepseek", llm_call=fake_llm)["task_reports"][0]
+    assert card["match_status"] == "matched"
+    assert card["matched_subtask_id"] == 81
+    assert card["matched_subtask_title"] == "完成系统模块梳理与迭代"
+    assert card["completed"] == "这次修复了一个BUG"
+
+
+def test_agent_returned_subtask_id_must_be_in_candidate_pool():
+    candidates = [candidate(81, "AI升级计划", "开发并应用项目运营系统", "完成系统模块梳理与迭代")]
+
+    def fake_llm(prompt: str, provider: str) -> dict:
+        return {
+            "task_reports": [
+                {
+                    "evidence": "这次修复了一个BUG",
+                    "match_status": "matched",
+                    "matched_subtask_id": 999,
+                    "match_reason": "模型误选了候选池外的任务。",
+                    "completed": "这次修复了一个BUG",
+                    "achievements": [],
+                    "subtask_issues": [],
+                    "next_steps": [],
+                    "status_update": "",
+                }
+            ]
+        }
+
+    card = extract_work_report_agent("这次修复了一个BUG", candidates, "deepseek", llm_call=fake_llm)["task_reports"][0]
+    assert card["match_status"] == "unmatched"
+    assert card["matched_subtask_id"] is None
+    assert card["match_candidates"] == []
+
+
+def test_single_candidate_is_matched_even_when_agent_is_overcautious():
+    candidates = [candidate(81, "AI升级计划", "开发并应用项目运营系统", "完成系统模块梳理与迭代")]
+
+    def fake_llm(prompt: str, provider: str) -> dict:
+        return {
+            "task_reports": [
+                {
+                    "evidence": "本周提交了一个BUG",
+                    "match_status": "unmatched",
+                    "matched_subtask_id": None,
+                    "match_reason": "模型过度谨慎，没有选择唯一候选任务。",
+                    "completed": "本周提交了一个BUG",
+                    "achievements": [],
+                    "subtask_issues": [],
+                    "next_steps": [],
+                    "status_update": "",
+                }
+            ]
+        }
+
+    card = extract_work_report_agent("本周提交了一个BUG", candidates, "deepseek", llm_call=fake_llm)["task_reports"][0]
+    assert card["match_status"] == "matched"
+    assert card["matched_subtask_id"] == 81
+    assert card["matched_subtask_title"] == "完成系统模块梳理与迭代"
+
+
+def test_legacy_fragments_response_no_longer_uses_fixed_title_matching():
+    candidates = [candidate(81, "AI升级计划", "开发并应用项目运营系统", "完成系统模块梳理与迭代")]
+
+    def fake_llm(prompt: str, provider: str) -> dict:
+        return {
+            "fragments": [
+                {
+                    "evidence": "这次修复了一个BUG",
+                    "completed": "这次修复了一个BUG",
+                    "achievements": [],
+                    "subtask_issues": [],
+                    "next_steps": [],
+                    "status_update": "",
+                }
+            ]
+        }
+
+    card = extract_work_report_agent("这次修复了一个BUG", candidates, "deepseek", llm_call=fake_llm)["task_reports"][0]
+    assert card["match_status"] == "matched"
+    assert card["matched_subtask_id"] == 81
+    assert card["matched_subtask_title"] == "完成系统模块梳理与迭代"
 
 
 def test_evidence_must_be_verbatim_from_transcript():

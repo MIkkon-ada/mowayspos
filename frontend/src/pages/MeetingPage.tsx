@@ -92,7 +92,6 @@ export function MeetingPage() {
       <header className="h-16 flex items-center px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
         <div className="flex-1">
           <h1 className="text-base font-bold text-slate-800">会议纪要</h1>
-          <p className="text-xs text-slate-400 mt-0.5">粘贴会议讨论文字，AI 自动提取会议总结和工作计划，一键推送到工作推进</p>
         </div>
 
         <div className="flex items-center gap-2">

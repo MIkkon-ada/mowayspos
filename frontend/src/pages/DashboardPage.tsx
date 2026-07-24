@@ -350,14 +350,8 @@ export function DashboardPage() {
       : (projects.find((p) => p.id === scopeId)?.name ?? '单个项目')
   const dashboardProject = scopeMode === 'project' && scopeId ? (projects.find((p) => p.id === scopeId) ?? currentProject) : currentProject
   const dashboardProjectRoles = dashboardProject?.user_roles ?? currentProjectRoles
-  const currentProjectStatusBadge = scopeMode === 'project' && dashboardProject ? getProjectStatusBadge(dashboardProject) : null
   const isFillableForOwner = canShowProjectSubmitAction(dashboardProject) && dashboardProjectRoles.includes('owner')
   const isPendingReviewForOwner = canShowProjectApproveAction(dashboardProject) && dashboardProjectRoles.includes('owner')
-  const dashboardSubtitle = scopeMode === 'my'
-    ? '实时掌握我参与项目的进度、风险、成果与待决策事项'
-    : scopeMode === 'project'
-      ? `当前视图：${scopeLabel}`
-      : '实时掌握所有专项进度、风险、成果与待决策事项'
   const exportTitle = scopeMode === 'my'
     ? '请选择单个项目后导出周报；多项目周报将在后续聚合导出中支持。'
     : undefined
@@ -369,16 +363,6 @@ export function DashboardPage() {
       <header className="h-16 flex items-center px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
         <div className="flex-1">
           <h1 className="text-base font-bold text-slate-800">首页驾驶舱</h1>
-          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-            <p className="text-xs text-slate-400">
-              {dashboardSubtitle}
-            </p>
-            {currentProjectStatusBadge ? (
-              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${currentProjectStatusBadge.className}`}>
-                {currentProjectStatusBadge.label}
-              </span>
-            ) : null}
-          </div>
         </div>
 
         {/* 专项筛选 —— 这里是仪表盘自己的筛选，与 URL 项目无关 */}

@@ -92,11 +92,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         const user = await getCurrentUser()
         if (cancelled) return
         setCurrentUser(user)
-        // must_change_password 时跳过项目列表加载（后端中间件会 403 拦截）
-        if (user.must_change_password) {
-          if (!cancelled) setAuthState('authenticated')
-          return
-        }
         await reloadProjects()
         if (!cancelled) setAuthState('authenticated')
       } catch (err) {
@@ -120,11 +115,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       await apiLogin(username, password)
       const user = await getCurrentUser()
       setCurrentUser(user)
-      // must_change_password 时跳过项目列表加载（后端中间件会 403 拦截）
-      if (user.must_change_password) {
-        setAuthState('authenticated')
-        return
-      }
       await reloadProjects()
       setAuthState('authenticated')
       } catch (err) {

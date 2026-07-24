@@ -10,10 +10,9 @@ export function MemberProjectsPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col" style={{ background: '#F1F5F9' }}>
-      <header className="flex-shrink-0 border-b bg-white px-8 py-5" style={{ borderColor: '#E2E8F0' }}>
+      <header className="h-16 flex-shrink-0 border-b bg-white px-6 flex items-center" style={{ borderColor: '#E2E8F0' }}>
         <div>
-          <h1 className="text-xl font-bold text-slate-900">我的项目</h1>
-          <p className="mt-1 text-sm text-slate-500">只展示我参与的项目，进入项目后查看工作推进表。</p>
+          <h1 className="text-base font-bold text-slate-900">我的项目</h1>
         </div>
       </header>
 

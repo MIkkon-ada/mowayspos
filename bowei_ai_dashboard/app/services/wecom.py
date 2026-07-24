@@ -86,7 +86,7 @@ def build_qrcode_url(state: str = "") -> str:
     return f"{_WECOM_LOGIN_BASE}?{urllib.parse.urlencode(params)}"
 
 
-def build_silent_auth_url(state: str = "wecom-silent") -> str:
+def build_silent_auth_url() -> str:
     """生成网页静默授权 URL（snsapi_base）。
 
     用户从企业微信客户端内打开此 URL 时，企微会自动带上 code 回调，
@@ -102,7 +102,6 @@ def build_silent_auth_url(state: str = "wecom-silent") -> str:
         "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": "snsapi_base",
-        "state": state,
     }
     return f"https://open.weixin.qq.com/connect/oauth2/authorize?{urllib.parse.urlencode(params)}#wechat_redirect"
 

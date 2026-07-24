@@ -222,7 +222,7 @@ export function buildPlanRows({
       if (subtask) globalSubtaskIndex += 1
       const subtaskIndex = subtask ? globalSubtaskIndex : 0
       const parsedNotes = parseAssistingPerson(subtask?.notes)
-      const planTime = parsePlanTimeRange(subtask?.plan_time || task.plan_time)
+      const planTime = parsePlanTimeRange(subtask?.plan_time)
       const status = getPlanStatusLabel(subtask?.status || task.status)
       groupedRows.push({
         task,

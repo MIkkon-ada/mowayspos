@@ -28,6 +28,7 @@ export function MyTasksPage() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
   const urlProjectApplied = useRef(false)
+  const defaultProjectApplied = useRef(false)
 
   const projectOptions = useMemo(() => getMyTaskProjectOptions(rows), [rows])
   const filteredRows = useMemo(() => filterMyTaskRows(rows, { status, projectId, search }), [rows, status, projectId, search])
@@ -39,6 +40,12 @@ export function MyTasksPage() {
     const requested = Number(searchParams.get('projectId'))
     if (Number.isInteger(requested) && projectOptions.some((project) => project.id === requested)) setProjectId(requested)
   }, [loading, projectOptions, searchParams])
+
+  useEffect(() => {
+    if (loading || defaultProjectApplied.current || projectId !== null || projectOptions.length === 0) return
+    defaultProjectApplied.current = true
+    setProjectId(projectOptions[0].id)
+  }, [loading, projectOptions, projectId])
 
   useEffect(() => { setPage(1) }, [status, projectId, search, pageSize])
   useEffect(() => { if (page !== pagination.page) setPage(pagination.page) }, [page, pagination.page])

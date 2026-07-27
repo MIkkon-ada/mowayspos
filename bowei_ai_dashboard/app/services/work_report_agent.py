@@ -364,7 +364,8 @@ def _agent_prompt(text: str, candidates: list[dict]) -> str:
 
 对每个真实任务输出一张 task_report：
 - evidence 是原文逐字片段数组，每一项都必须能在原文中找到；它用于审核追溯。
-- completed、achievements、subtask_issues、next_steps、status_update 是业务化归纳，可以把口语原文改写成清晰完整的工作表达，但不得添加原文不支持的事实、成果、风险或承诺。
+- completed、achievements、subtask_issues、next_steps 是业务化归纳，可以把口语原文改写成清晰完整的工作表达，但不得添加原文不支持的事实、成果、风险或承诺。
+- status_update 是任务状态标签，必须从以下取值中选择一个：未开始、进行中、已完成、延期、暂缓。根据原文描述的任务实际进展程度判断，不要写成长句描述。
 - matched：结合候选任务的标题、所属重点工作、责任关系、完成标准和本次原文，能合理归属到某任务；matched_subtask_id 必须填写候选中的 ID。
 - needs_confirmation：存在多个同等合理的候选；matched_subtask_id 为 null，match_candidate_ids 填候选 ID。
 - unmatched：确实与任何候选任务都无法建立合理关联；matched_subtask_id 为 null。
@@ -375,7 +376,7 @@ def _agent_prompt(text: str, candidates: list[dict]) -> str:
 候选任务上下文：{context}
 本次提交原文：{text}
 
-只输出 JSON：{{"task_reports":[{{"evidence":["原文逐字片段"],"match_status":"matched","matched_subtask_id":123,"match_candidate_ids":[],"match_confidence":0.9,"match_reason":"简要说明归属判断理由","completed":"清晰的完成内容归纳","achievements":["业务化成果归纳"],"subtask_issues":["业务化风险或问题归纳"],"next_steps":["清晰的下一步计划归纳"],"status_update":"业务化进度说明"}}]}}"""
+只输出 JSON：{{"task_reports":[{{"evidence":["原文逐字片段"],"match_status":"matched","matched_subtask_id":123,"match_candidate_ids":[],"match_confidence":0.9,"match_reason":"简要说明归属判断理由","completed":"清晰的完成内容归纳","achievements":["业务化成果归纳"],"subtask_issues":["业务化风险或问题归纳"],"next_steps":["清晰的下一步计划归纳"],"status_update":"进行中"}}]}}"""
 
 
 def _call_agent_llm(prompt: str, provider: str) -> dict:

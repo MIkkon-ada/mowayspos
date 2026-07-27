@@ -65,7 +65,7 @@ export type CurrentUser = {
   default_route?: string
   locked_until?: string | null
   is_locked?: boolean
-  projects?: Array<number | string | { id?: number; name?: string }>
+  projects?: Array<number | string | { id?: number; name?: string; roles?: string[] }>
   capabilities?: {
     canPreviewClientView?: boolean
     [key: string]: boolean | undefined

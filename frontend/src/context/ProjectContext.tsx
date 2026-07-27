@@ -8,10 +8,23 @@ import { normalizeLoginError } from '../domain/authFlow'
 import type { CurrentUser, Project, ProjectCapabilities } from '../types'
 
 const LS_LAST_PROJECT = 'bowei_last_project_id'
+const AUTH_ME_PROJECT_ROLE_MAP: Record<string, string> = {
+  project_owner: 'owner',
+  project_coordinator: 'coordinator',
+  project_member: 'member',
+}
 
 function parseProjectIdFromPath(pathname: string): number | null {
   const m = pathname.match(/^\/project\/(\d+)/)
   return m ? Number(m[1]) : null
+}
+
+function normalizeAuthMeProjectRoles(rawRoles: unknown): string[] {
+  if (!Array.isArray(rawRoles)) return []
+  return Array.from(new Set(rawRoles
+    .filter((role): role is string => typeof role === 'string')
+    .map((role) => AUTH_ME_PROJECT_ROLE_MAP[role] ?? role)
+    .filter(Boolean)))
 }
 
 function projectsFromAuthMe(user: CurrentUser | null): Project[] {
@@ -31,7 +44,7 @@ function projectsFromAuthMe(user: CurrentUser | null): Project[] {
         status: 'active',
         lifecycle_status: 'active',
         is_active: true,
-        user_roles: [],
+        user_roles: normalizeAuthMeProjectRoles(item.roles),
         member_counts: {},
         coordinator: '',
         owners: [],

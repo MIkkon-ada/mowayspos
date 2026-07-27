@@ -406,17 +406,17 @@ def _read_project_raw(project_id: int, db: Session) -> dict | None:
         return f"{default} AS {name}"
 
     if 'status' in cols:
-        status_expr = "COALESCE(NULLIF(status, ''), CASE WHEN is_active = 1 THEN 'active' ELSE 'archived' END) AS status"
+        status_expr = "COALESCE(NULLIF(status, ''), CASE WHEN is_active IS TRUE THEN 'active' ELSE 'archived' END) AS status"
     else:
-        status_expr = "CASE WHEN is_active = 1 THEN 'active' ELSE 'archived' END AS status"
+        status_expr = "CASE WHEN is_active IS TRUE THEN 'active' ELSE 'archived' END AS status"
 
     if 'lifecycle_status' in cols:
         lifecycle_expr = (
             "COALESCE(NULLIF(lifecycle_status, ''), "
-            "COALESCE(NULLIF(status, ''), CASE WHEN is_active = 1 THEN 'active' ELSE 'archived' END)) AS lifecycle_status"
+            "COALESCE(NULLIF(status, ''), CASE WHEN is_active IS TRUE THEN 'active' ELSE 'archived' END)) AS lifecycle_status"
         )
     else:
-        lifecycle_expr = "COALESCE(NULLIF(status, ''), CASE WHEN is_active = 1 THEN 'active' ELSE 'archived' END) AS lifecycle_status"
+        lifecycle_expr = "COALESCE(NULLIF(status, ''), CASE WHEN is_active IS TRUE THEN 'active' ELSE 'archived' END) AS lifecycle_status"
 
     try:
         row = db.execute(
@@ -447,6 +447,7 @@ def _read_project_raw(project_id: int, db: Session) -> dict | None:
             {"id": project_id},
         ).fetchone()
     except Exception:
+        db.rollback()
         return None
     if not row:
         return None

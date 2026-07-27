@@ -656,9 +656,7 @@ def _write_single_task_report(
         subtask.status = TS.S_COMPLETED
     elif item_rt is None and report.get("status_update"):
         status_value = str(report["status_update"]).strip()
-        if status_value not in {TS.S_NOT_STARTED, TS.S_IN_PROGRESS, TS.S_COMPLETED, TS.S_DELAYED, TS.S_PAUSED}:
-            status_value = status_value[:20]
-        subtask.status = status_value
+        subtask.status = status_value[:20]
 
     subtask.source_submission_id = row.id
     parent = db.get(models.Task, subtask.task_id)

@@ -60,6 +60,19 @@ def _is_meeting_creator(current_user: str, context: dict, row: models.Meeting) -
     return row_host in candidates
 
 
+def _can_view_meeting_draft(row: models.Meeting, current_user: str, context: dict, db: Session) -> bool:
+    if context.get("is_tech_admin") or context.get("is_ceo"):
+        return True
+    account = db.query(models.Account).filter(models.Account.username == current_user).first()
+    if account and account.person_id and row.creator_person_id == account.person_id:
+        return True
+    return bool(row.project_id and db.query(models.ProjectMember).filter(
+        models.ProjectMember.project_id == row.project_id,
+        models.ProjectMember.person_id == (account.person_id if account else None),
+        models.ProjectMember.role == PROJECT_ROLE_OWNER_KEY,
+    ).first())
+
+
 def _row_project_id(row: models.Meeting, db: Session) -> int | None:
     return resolve_project_context(
         db,
@@ -101,13 +114,14 @@ def list_meetings(
     if meeting_type:
         q = q.filter(models.Meeting.meeting_type == meeting_type)
 
-    return [
+    rows = [
         crud.to_dict(r)
         for r in q.order_by(
             models.Meeting.meeting_date.desc(),
             models.Meeting.updated_at.desc(),
         ).all()
     ]
+    return [r for r in rows if r.get("publish_status") == "published" or _can_view_meeting_draft(db.get(models.Meeting, r["id"]), current_user, context, db)]
 
 
 @router.post("")
@@ -144,12 +158,21 @@ def create_meeting(
     }
     row = models.Meeting(**data)
     row.project_id = payload.project_id
+    account = db.query(models.Account).filter(models.Account.username == current_user).first()
+    row.creator_person_id = account.person_id if account else None
     if payload.related_special_project:
         row.related_special_project = payload.related_special_project
     elif project_name:
         row.related_special_project = project_name
     db.add(row)
     db.flush()
+    if row.publish_status == "draft" and row.project_id:
+        from ..services.notify import company_ceo_person_ids, project_strict_owner_ids, send as _notify
+        for recipient_id in set(project_strict_owner_ids(row.project_id, db) + company_ceo_person_ids(db)):
+            _notify(db, recipient_id=recipient_id, ntype="meeting_draft_created",
+                    title=f"会议草稿待查看：{row.title or '未命名会议'}",
+                    body="可查看提交原文与 AI 提取纪要。",
+                    link=f"/project/{row.project_id}/meeting?meetingId={row.id}", project_id=row.project_id)
     crud.log(db, current_user, "meeting_create", "meeting", row.id, {}, crud.to_dict(row))
     db.commit()
     db.refresh(row)
@@ -246,6 +269,8 @@ def get_meeting(
     if not row:
         raise HTTPException(404, "meeting not found")
     project_id = _row_project_id(row, db)
+    if row.publish_status != "published" and not _can_view_meeting_draft(row, current_user, context, db):
+        raise HTTPException(403, "permission denied")
     if project_id is not None:
         require_project_access(current_user, project_id, db)
     elif not (context.get("is_tech_admin") or context.get("is_ceo")):

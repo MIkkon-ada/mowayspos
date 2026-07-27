@@ -15,6 +15,7 @@ export function MeetingPage() {
   const { currentProjectId, projects } = useProject()
   const [searchParams, setSearchParams] = useSearchParams()
   const urlProjectId = searchParams.get('projectId')
+  const urlMeetingId = searchParams.get('meetingId')
   const urlMeetingType = searchParams.get('meeting_type') ?? ''
   const effectiveProjectId = urlProjectId ? Number(urlProjectId) : currentProjectId
   const [meetings, setMeetings] = useState<MeetingItem[]>([])
@@ -39,7 +40,7 @@ export function MeetingPage() {
       .then((d) => {
         if (!cancelled) {
           setMeetings(d)
-          if (d.length > 0) setSelected(d[0])
+          if (d.length > 0) setSelected(d.find((item) => String(item.id) === urlMeetingId) ?? d[0])
         }
       })
       .catch(() => {})
@@ -49,7 +50,7 @@ export function MeetingPage() {
     return () => {
       cancelled = true
     }
-  }, [effectiveProjectId])
+  }, [effectiveProjectId, urlMeetingId])
 
   async function handleStatusChange(status: PublishStatus) {
     if (!selected) return
@@ -169,6 +170,7 @@ export function MeetingPage() {
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusCfg.cls}`}>{statusCfg.label}</span>
               </div>
               <div className="space-y-4">
+                <div className="text-xs font-semibold text-sky-700">AI 提取纪要</div>
                 <MeetingSection title="会议信息">
                   <InfoRow label="会议名称" value={selected.title ?? '-'} />
                   <InfoRow label="日期" value={selected.meeting_date ?? '-'} />
@@ -187,6 +189,13 @@ export function MeetingPage() {
             </div>
 
             <div className="col-span-3 flex flex-col gap-4">
+              <div className="bg-white rounded-2xl border p-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-bold text-slate-800">提交原文</h2>
+                  {selStatus === 'draft' && <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">草稿 · 未进入 AI 确认中心</span>}
+                </div>
+                <p className="whitespace-pre-wrap text-xs leading-6 text-slate-600">{selected.transcript_text || '-'}</p>
+              </div>
               <div className="bg-white rounded-2xl border p-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
                 <h2 className="text-sm font-bold text-slate-800 mb-4">相关信息</h2>
                 <div className="space-y-2 text-xs">

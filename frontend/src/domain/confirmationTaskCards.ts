@@ -22,6 +22,8 @@ export type ConfirmationTaskCard = {
   handlerReply: string
   /** 转出到问题中心的历史记录 */
   escalationHistory: Array<{ issue_id: number; target: string; note: string; at: string; operator: string }>
+  /** 当前任务卡转出的正式问题 ID；尚未转出时为 null。 */
+  escalatedIssueId: number | null
   structure: {
     projectName: string
     keyTaskName: string
@@ -286,6 +288,9 @@ export function buildConfirmationTaskCards(
       const pendingItems = unique(issueTextArray(report.subtask_issues))
       const nextSteps = unique(stringArray(report.next_steps))
       const evidence = unique(stringArray(report.evidence))
+      const history = Array.isArray(report.escalation_history) ? report.escalation_history : []
+      const latestIssueId = history.length > 0 ? Number((history.at(-1) as AnyRecord | undefined)?.issue_id) : NaN
+      const escalatedIssueId = Number(report.escalated_issue_id ?? latestIssueId)
 
       return {
         id: String(report.matched_subtask_id || report.parent_task_id || report.title || index),
@@ -303,7 +308,8 @@ export function buildConfirmationTaskCards(
         coordinatorFeedbackAt: text(report.coordinator_feedback_at),
         finalResult: text(report.final_result),
         handlerReply: text(report.handler_reply),
-        escalationHistory: Array.isArray(report.escalation_history) ? report.escalation_history : [],
+        escalationHistory: history,
+        escalatedIssueId: Number.isFinite(escalatedIssueId) && escalatedIssueId > 0 ? escalatedIssueId : null,
         status: text(report.status_update) || '进行中',
         structure: {
           projectName,
@@ -338,6 +344,7 @@ export function buildConfirmationTaskCards(
     finalResult: '',
     handlerReply: '',
     escalationHistory: [],
+    escalatedIssueId: null,
     status: text(data.status_suggestion) || text(task.status) || '进行中',
     structure: {
       projectName,

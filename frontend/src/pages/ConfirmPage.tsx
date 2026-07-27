@@ -27,6 +27,7 @@ import { isProjectArchived } from '../domain/projectLifecycleStatus'
 import { buildConfirmationTaskCards, normalizeReviewCardData } from '../domain/confirmationTaskCards'
 import { buildConfirmationAssetProjection } from '../domain/confirmationAssets'
 import { getProjectDisplayName } from '../domain/projectDisplay'
+import { AiConfirmationIssueActions } from '../features/confirmations/AiConfirmationIssueActions'
 
 type WriteMode = 'task_new' | 'subtask_update' | 'subtask_new'
 type ConfirmViewMode = 'all' | 'coordinator' | 'ceo'
@@ -933,6 +934,13 @@ export function ConfirmPage() {
   const activeCardBackendIndex = activeCard?.isPersistedTaskCard ? activeCard.backendCardIndex! : null
   const cardWaitingCoordinator =
     activeCard?.confirmationStatus === 'transferred_to_coordinator'
+  const selectedProjectRoles = selectedProject?.user_roles ?? []
+  const canCoordinatorAct = Boolean(
+    currentUser?.is_tech_admin || selectedProjectRoles.includes('coordinator'),
+  )
+  const canCoachAct = Boolean(
+    currentUser?.is_tech_admin || selectedProjectRoles.includes('project_ceo'),
+  )
   const activeReviewCard = activeCard ? normalizeReviewCardData(activeCard, {
     cardIndex: activeCardIndex,
     totalCards: taskCards.length,
@@ -1364,6 +1372,16 @@ export function ConfirmPage() {
                       )}
                       <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-[10px] leading-5 text-slate-500">确认无需填写说明；退回或转交时才填写对应原因。操作仅作用于当前任务卡。</p>
                     </section>
+                  )}
+
+                  {activeCard?.escalatedIssueId != null && (
+                    <AiConfirmationIssueActions
+                      issueId={activeCard.escalatedIssueId}
+                      projectId={selected?.project_id ?? null}
+                      canOwnerAct={canUseOwnerActions}
+                      canCoordinatorAct={canCoordinatorAct}
+                      canCoachAct={canCoachAct}
+                    />
                   )}
 
                   {viewMode === 'all' && canUseOwnerActions && SS.OWNER_ACTIONABLE.has(selectedStatus) && !hasAnyPersistedTaskCard && (

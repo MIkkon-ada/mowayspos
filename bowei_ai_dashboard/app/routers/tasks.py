@@ -19,7 +19,7 @@ from ..permissions import (
 )
 from ..time_utils import utc_now
 from ..services.extractor import extract_tasks as _extract_tasks
-from ..services.notify import person_id_for_name as _pid_for_name
+from ..services.notify import person_id_for_name as _pid_for_name, send as _notify, person_name_for_account
 from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
 
@@ -367,6 +367,20 @@ def update_task(
     row.edit_count = (row.edit_count or 0) + 1
     effective_pid = row.project_id or project_id
     action = "task_close" if closing else "task_update"
+
+    old_status = before.get("status", "")
+    new_status = update_data.get("status", "")
+    if new_status and new_status != old_status and row.owner and row.owner != current_user:
+        owner_id = _pid_for_name(row.owner, db)
+        if owner_id:
+            _notify(
+                db, recipient_id=owner_id, recipient=row.owner,
+                ntype="task_status_changed",
+                title=f"关键任务状态变更：{row.key_task}",
+                body=f"{old_status} → {new_status}（由 {person_name_for_account(current_user, db)} 操作）",
+                project_id=effective_pid,
+            )
+
     crud.log(db, current_user, action, "task", row.id, before, payload.model_dump(), project_id=effective_pid)
     db.commit()
     return crud.to_dict(row)

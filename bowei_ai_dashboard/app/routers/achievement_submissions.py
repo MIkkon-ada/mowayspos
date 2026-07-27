@@ -12,6 +12,7 @@ from ..permissions import (
     is_project_member,
 )
 from ..time_utils import utc_now
+from ..services.notify import project_owner_ids, send as _notify, person_name_for_account
 from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
 
@@ -82,6 +83,19 @@ def create_submission(
     db.flush()
     crud.log(db, current_user, "achievement_submission_create", "achievement_submission", row.id, {}, crud.to_dict(row),
              project_id=payload.project_id)
+
+    owner_ids = project_owner_ids(payload.project_id, db)
+    caller_name = person_name_for_account(current_user, db)
+    for oid in owner_ids:
+        _notify(
+            db, recipient_id=oid,
+            ntype="achievement_submitted",
+            title=f"{caller_name} 提交了新成果：{payload.name}",
+            body=f"项目：{proj_name}",
+            link=f"/work/achievements?project_id={payload.project_id}",
+            project_id=payload.project_id,
+        )
+
     db.commit()
     db.refresh(row)
     return crud.to_dict(row)

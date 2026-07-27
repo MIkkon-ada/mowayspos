@@ -25,10 +25,11 @@ from ..permissions import (
 )
 from ..time_utils import utc_now
 from ..services.notify import (
+    person_name_for_account,
     project_coach_person_ids,
     project_owner_ids,
     project_strict_owner_ids,
-    send,
+    send as _notify,
 )
 from ..services.project_close import (
     PROJECT_CLOSE_FROZEN_MESSAGE,
@@ -1023,6 +1024,18 @@ def add_member(
     db.flush()
     _sync_project_old_fields(project_id, db)
     crud.log(db, current_user, "add_project_member", "project_member", row.id, {}, _member_to_dict(row))
+
+    caller_name = person_name_for_account(current_user, db)
+    if person.name != caller_name:
+        _notify(
+            db, recipient_id=payload.person_id, recipient=person.name,
+            ntype="project_member_added",
+            title=f"你已被加入项目：{project.project_name}",
+            body=f"角色：{payload.role}；操作人：{caller_name}",
+            link=f"/work/tasks?project_id={project_id}",
+            project_id=project_id,
+        )
+
     db.commit()
     db.refresh(row)
     return _member_to_dict(row)
@@ -1104,6 +1117,18 @@ def remove_member(
         exclude_names={person_name} if person_name else None,
     )
     crud.log(db, current_user, "remove_project_member", "project_member", member_id, before, {})
+
+    caller_name = person_name_for_account(current_user, db)
+    if person_name and person_name != caller_name:
+        _notify(
+            db, recipient_id=row.person_id, recipient=person_name,
+            ntype="project_member_removed",
+            title=f"你已被移出项目：{project.project_name}",
+            body=f"操作人：{caller_name}",
+            link=f"/work/tasks?project_id={project_id}",
+            project_id=project_id,
+        )
+
     db.commit()
     return {"ok": True}
 
@@ -1616,7 +1641,7 @@ def _notify_close_people(
         if not recipient_id or recipient_id == operator_person_id or recipient_id in seen:
             continue
         seen.add(recipient_id)
-        send(
+        _notify(
             db,
             recipient_id=recipient_id,
             ntype=ntype,
@@ -1987,7 +2012,7 @@ def _project_members_to_notify(project_id: int, db: Session) -> list[int]:
 
 def _notify_people(db: Session, person_ids: list[int], *, ntype: str, title: str, body: str, link: str, project_id: int) -> None:
     for pid in person_ids:
-        send(db, recipient_id=pid, ntype=ntype, title=title, body=body, link=link, project_id=project_id)
+        _notify(db, recipient_id=pid, ntype=ntype, title=title, body=body, link=link, project_id=project_id)
 
 
 @router.post("/{project_id}/dispatch")

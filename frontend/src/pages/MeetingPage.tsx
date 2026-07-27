@@ -194,7 +194,7 @@ export function MeetingPage() {
                   <h2 className="text-sm font-bold text-slate-800">提交原文</h2>
                   {selStatus === 'draft' && <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">草稿 · 未进入 AI 确认中心</span>}
                 </div>
-                <p className="whitespace-pre-wrap text-xs leading-6 text-slate-600">{selected.transcript_text || '-'}</p>
+                <p className="whitespace-pre-wrap text-xs leading-6 text-slate-600">{String(selected.transcript_text || '-')}</p>
               </div>
               <div className="bg-white rounded-2xl border p-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
                 <h2 className="text-sm font-bold text-slate-800 mb-4">相关信息</h2>

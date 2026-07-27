@@ -29,19 +29,36 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     if (!projectId) return
     setLoading(true)
-    Promise.all([
-      getProject(projectId),
-      getProjectMembers(projectId),
-      fetchTasks(projectId),
-    ])
-      .then(([proj, mems, tasksData]) => {
+    setProject(null)
+    setMembers([])
+    setTasks([])
+    setSubtasks([])
+
+    async function loadProjectDetail() {
+      try {
+        // Only the project request determines whether this project exists. Member
+        // and task data are supplementary and must not hide a valid project.
+        const proj = await getProject(projectId)
         setProject(proj)
-        setMembers(mems)
+
+        const [memberResult, taskResult] = await Promise.allSettled([
+          getProjectMembers(projectId),
+          fetchTasks(projectId),
+        ])
+        if (memberResult.status === 'fulfilled') setMembers(memberResult.value)
+        else console.error('Failed to load project members:', memberResult.reason)
+
+        if (taskResult.status !== 'fulfilled') {
+          console.error('Failed to load project tasks:', taskResult.reason)
+          return
+        }
+
+        const tasksData = taskResult.value
         setTasks(tasksData)
-        // fetch subtasks for all tasks
         const taskIds = tasksData.map((t) => t.id)
         if (taskIds.length > 0) {
-          return fetchSubTasksBatch(taskIds).then((batch) => {
+          try {
+            const batch = await fetchSubTasksBatch(taskIds)
             const allSubs: SubTaskWithParent[] = []
             tasksData.forEach((task) => {
               const subs = batch[String(task.id)] ?? []
@@ -56,13 +73,18 @@ export default function ProjectDetailPage() {
               })
             })
             setSubtasks(allSubs)
-          })
+          } catch (err) {
+            console.error('Failed to load project subtasks:', err)
+          }
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         console.error('Failed to load project detail:', err)
-      })
-      .finally(() => setLoading(false))
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    void loadProjectDetail()
   }, [projectId])
 
   // 角色

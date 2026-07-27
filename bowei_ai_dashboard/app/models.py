@@ -95,6 +95,7 @@ class Meeting(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    creator_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
     meeting_type = Column(String(40), default="")
     title = Column(String(200), default="")
     meeting_date = Column(String(20), default="")

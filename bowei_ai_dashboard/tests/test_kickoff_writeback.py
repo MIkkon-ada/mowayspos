@@ -31,3 +31,11 @@ def test_confirm_start_activates_after_approved_no_change():
     project, meeting = confirm_kickoff_start(1, "Coach", db)
     assert project.status == "active"
     assert meeting.meeting_type == "kickoff"
+
+
+def test_confirm_start_rejects_returned_proposal():
+    db = _db()
+    db.add_all([models.Project(id=1, name="P", status="pending_kickoff"), models.KickoffAgentRun(id=1, project_id=1, status="submitted"), models.KickoffChangeProposal(run_id=1, proposal_type="update", target_type="task", review_status="returned")])
+    db.commit()
+    with pytest.raises(HTTPException, match="退回"):
+        confirm_kickoff_start(1, "Coach", db)

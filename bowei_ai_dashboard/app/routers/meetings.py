@@ -47,8 +47,22 @@ def create_kickoff_run(
     if not project or project.status != "pending_kickoff":
         raise HTTPException(409, "项目不处于待启动会状态")
     account = db.query(models.Account).filter_by(username=current_user).first()
-    run = models.KickoffAgentRun(project_id=project_id, snapshot_json=json.dumps(build_kickoff_snapshot(project_id, db), ensure_ascii=False), result_json=json.dumps(normalize_agent_result({"summary": "", "proposals": []}, build_kickoff_snapshot(project_id, db)), ensure_ascii=False), status="draft", created_by_person_id=account.person_id if account else None)
+    snapshot = build_kickoff_snapshot(project_id, db)
+    package = normalize_agent_result({"summary": "", "proposals": []}, snapshot)
+    run = models.KickoffAgentRun(project_id=project_id, snapshot_json=json.dumps(snapshot, ensure_ascii=False), result_json=json.dumps(package, ensure_ascii=False), status="draft", created_by_person_id=account.person_id if account else None)
     db.add(run)
+    db.flush()
+    for proposal in package["proposals"]:
+        db.add(models.KickoffChangeProposal(
+            run_id=run.id,
+            proposal_type=proposal["proposal_type"],
+            target_type=proposal.get("target_type", ""),
+            target_id=proposal.get("target_id"),
+            before_json=json.dumps(proposal.get("before", {}), ensure_ascii=False),
+            proposed_json=json.dumps(proposal.get("proposed", {}), ensure_ascii=False),
+            evidence_json=json.dumps(proposal.get("evidence", []), ensure_ascii=False),
+            validation_json=json.dumps(proposal.get("validation_errors", []), ensure_ascii=False),
+        ))
     db.commit()
     db.refresh(run)
     return crud.to_dict(run)

@@ -7,6 +7,7 @@ import { InfoRow, MeetingSection, renderJsonList } from '../features/meeting/mee
 import { toast } from '../utils/toast'
 import { SkeletonTableRows } from '../components/Skeleton'
 import { NewMeetingModal } from '../features/meeting/NewMeetingModal'
+import { KickoffAgentWorkspace } from '../features/meeting/KickoffAgentWorkspace'
 import { STATUS_CONFIG, TYPE_STYLE, fmtTime, getStatus, typeLabel, type PublishStatus } from '../features/meeting/meetingUtils'
 import { getProjectDisplayName } from '../domain/projectDisplay'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
@@ -29,6 +30,8 @@ export function MeetingPage() {
   const [editingItem, setEditingItem] = useState<MeetingItem | null>(null)
 
   const currentProject = projects.find((p) => p.id === currentProjectId) ?? null
+  const effectiveProject = projects.find((p) => p.id === effectiveProjectId) ?? null
+  const pending_kickoff = String(effectiveProject?.lifecycle_status ?? effectiveProject?.status ?? '') === 'pending_kickoff'
   const projectArchived = isProjectArchived(currentProject)
   const noProject = !effectiveProjectId
 
@@ -118,7 +121,7 @@ export function MeetingPage() {
             <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
             </svg>
-            新建会议纪要
+            {pending_kickoff ? '发起启动会确认' : '新建会议纪要'}
           </button>
         </div>
       </header>
@@ -149,6 +152,7 @@ export function MeetingPage() {
         )}
         {effectiveProjectId && (
           <>
+            {pending_kickoff && showNewModal && <KickoffAgentWorkspace projectId={effectiveProjectId} onClose={() => setShowNewModal(false)} />}
             {loading && (
               <div className="bg-white rounded-2xl border p-4" style={{ borderColor: '#E9EFF6' }}>
                 <table className="w-full text-sm"><tbody><SkeletonTableRows rows={6} cols={6} /></tbody></table>
@@ -194,7 +198,7 @@ export function MeetingPage() {
                   <h2 className="text-sm font-bold text-slate-800">提交原文</h2>
                   {selStatus === 'draft' && <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">草稿 · 未进入 AI 确认中心</span>}
                 </div>
-                <p className="whitespace-pre-wrap text-xs leading-6 text-slate-600">{selected.transcript_text || '-'}</p>
+                <p className="whitespace-pre-wrap text-xs leading-6 text-slate-600">{String(selected.transcript_text || '-')}</p>
               </div>
               <div className="bg-white rounded-2xl border p-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
                 <h2 className="text-sm font-bold text-slate-800 mb-4">相关信息</h2>
@@ -331,7 +335,7 @@ export function MeetingPage() {
         )}
       </main>
 
-      {showNewModal && effectiveProjectId && <NewMeetingModal projectId={effectiveProjectId} defaultMeetingType={urlMeetingType} onClose={() => setShowNewModal(false)} onCreated={handleCreated} />}
+          {showNewModal && effectiveProjectId && !pending_kickoff && <NewMeetingModal projectId={effectiveProjectId} defaultMeetingType={urlMeetingType} onClose={() => setShowNewModal(false)} onCreated={handleCreated} />}
       {editingItem && effectiveProjectId && <NewMeetingModal projectId={effectiveProjectId} editItem={editingItem} onClose={() => setEditingItem(null)} onCreated={handleCreated} />}
     </div>
   )

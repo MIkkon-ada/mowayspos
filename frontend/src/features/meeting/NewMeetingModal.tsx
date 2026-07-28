@@ -397,7 +397,6 @@ export function NewMeetingModal({
                         onChange={(e) => setField('meeting_type', e.target.value)}
                       >
                         <option value="">请选择</option>
-                        <option value="kickoff">启动会</option>
                         <option value="weekly">周会</option>
                         <option value="monthly">月会</option>
                         <option value="review">评审会</option>

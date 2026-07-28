@@ -391,6 +391,23 @@ class MeetingStatusPatch(BaseModel):
     reject_reason: str = ""
 
 
+class KickoffRunCreatePayload(BaseModel):
+    transcript_text: str = Field(..., min_length=1)
+
+
+class KickoffRunSubmitPayload(BaseModel):
+    summary: str = ""
+
+
+class KickoffProposalReviewPayload(BaseModel):
+    status: str
+    review_comment: str = ""
+
+
+class KickoffStartConfirmPayload(BaseModel):
+    review_comment: str = ""
+
+
 class SubTaskPayload(BaseModel):
     """关键任务(KeyTask)创建/更新参数 — 对应物理表 subtasks"""
     title: str = Field(..., max_length=200)

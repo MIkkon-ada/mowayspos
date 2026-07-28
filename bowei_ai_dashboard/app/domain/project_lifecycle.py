@@ -3,6 +3,7 @@
 S_DRAFT = "draft"
 S_DISPATCHED = "dispatched"
 S_PENDING_REVIEW = "pending_review"
+S_PENDING_KICKOFF = "pending_kickoff"
 S_RETURNED = "returned"
 S_ACTIVE = "active"
 S_PENDING_CLOSE = "pending_close"
@@ -13,6 +14,7 @@ ALL_STATUSES = {
     S_DRAFT,
     S_DISPATCHED,
     S_PENDING_REVIEW,
+    S_PENDING_KICKOFF,
     S_RETURNED,
     S_ACTIVE,
     S_PENDING_CLOSE,

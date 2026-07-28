@@ -15,6 +15,7 @@ from ..llm_config import get_provider_config
 
 logger = logging.getLogger("bowei.meetings")
 from ..permissions import (
+    PROJECT_ROLE_CEO_KEY,
     PROJECT_ROLE_COORD_KEY,
     PROJECT_ROLE_MEMBER_KEY,
     PROJECT_ROLE_OWNER_KEY,
@@ -27,8 +28,47 @@ from ..permissions import (
 )
 from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
+from ..services.kickoff_agent import build_kickoff_snapshot, normalize_agent_result
+from ..services.kickoff_writeback import confirm_kickoff_start
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
+
+
+@router.post("/kickoff-runs")
+def create_kickoff_run(
+    project_id: int,
+    payload: schemas.KickoffRunCreatePayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    require_project_role(current_user, project_id, [PROJECT_ROLE_OWNER_KEY], db)
+    project = db.get(models.Project, project_id)
+    if not project or project.status != "pending_kickoff":
+        raise HTTPException(409, "项目不处于待启动会状态")
+    account = db.query(models.Account).filter_by(username=current_user).first()
+    run = models.KickoffAgentRun(project_id=project_id, snapshot_json=json.dumps(build_kickoff_snapshot(project_id, db), ensure_ascii=False), result_json=json.dumps(normalize_agent_result({"summary": "", "proposals": []}, build_kickoff_snapshot(project_id, db)), ensure_ascii=False), status="draft", created_by_person_id=account.person_id if account else None)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return crud.to_dict(run)
+
+
+@router.post("/kickoff-runs/{run_id}/confirm-start")
+def confirm_kickoff_run(
+    run_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    run = db.get(models.KickoffAgentRun, run_id)
+    if not run:
+        raise HTTPException(404, "启动会审核包不存在")
+    require_project_role(current_user, run.project_id, [PROJECT_ROLE_CEO_KEY], db)
+    context = get_user_context_from_db(current_user, db)
+    project, meeting = confirm_kickoff_start(run_id, context.get("name") or current_user, db)
+    db.commit()
+    return {"project": crud.to_dict(project), "meeting": crud.to_dict(meeting)}
 
 # ── 5C 写权限检查 ─────────────────────────────────────────────
 def _require_global_read_scope(context: dict) -> None:

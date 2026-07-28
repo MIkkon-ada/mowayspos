@@ -84,6 +84,31 @@ def confirm_kickoff_run(
     db.commit()
     return {"project": crud.to_dict(project), "meeting": crud.to_dict(meeting)}
 
+
+@router.patch("/kickoff-runs/{run_id}/proposals/{proposal_id}/review")
+def review_kickoff_proposal(
+    run_id: int,
+    proposal_id: int,
+    payload: schemas.KickoffProposalReviewPayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    run = db.get(models.KickoffAgentRun, run_id)
+    proposal = db.get(models.KickoffChangeProposal, proposal_id)
+    if not run or not proposal or proposal.run_id != run.id:
+        raise HTTPException(404, "启动会提案不存在")
+    require_project_role(current_user, run.project_id, [PROJECT_ROLE_CEO_KEY], db)
+    if payload.status not in {"approved", "returned"}:
+        raise HTTPException(422, "审核状态必须为 approved 或 returned")
+    account = db.query(models.Account).filter_by(username=current_user).first()
+    proposal.review_status = payload.status
+    proposal.review_comment = payload.review_comment.strip()
+    proposal.reviewer_person_id = account.person_id if account else None
+    db.commit()
+    db.refresh(proposal)
+    return crud.to_dict(proposal)
+
 # ── 5C 写权限检查 ─────────────────────────────────────────────
 def _require_global_read_scope(context: dict) -> None:
     if not (context.get("is_tech_admin") or context.get("is_ceo")):

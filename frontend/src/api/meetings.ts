@@ -41,6 +41,10 @@ export function transcribeAudio(file: File): Promise<{ text: string }> {
   return apiUpload<{ text: string }>('/api/transcribe', fd)
 }
 
+export function createKickoffRun(projectId: number, transcriptText: string): Promise<{ id: number }> {
+  return apiPost(`/api/meetings/kickoff-runs?project_id=${projectId}`, { transcript_text: transcriptText })
+}
+
 export type TaskCardAction = 'create' | 'update_status' | 'add_note'
 
 type SubTaskCurrentPayload = {

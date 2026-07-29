@@ -4,11 +4,11 @@ import type { Project, ProjectMember, SubTaskItem, TaskItem } from '../../types'
 import {
   buildPlanRows,
   EMPTY_PLAN_CELL,
-  getPlanStatusLabel,
   getPlanStatusTone,
   type PlanTableRow,
 } from './planTableViewModel'
-import type { SubTaskPayload } from '../../api/subtasks'
+import { fetchSubtaskDetail } from '../../api/subtasks'
+import type { SubTaskDetail, SubTaskPayload } from '../../api/subtasks'
 import './planTableExcelV2.css'
 
 /** ── Props ── */
@@ -97,11 +97,9 @@ function splitNumberedList(text: string): Array<{ num: string; content: string }
 /** 重点工作卡片 */
 function TaskCard({
   task,
-  index,
   onOpenStandard,
 }: {
   task: TaskItem
-  index: number
   onOpenStandard: (task: TaskItem) => void
 }) {
   const hasStandard = Boolean(task.completion_standard || task.key_achievement)
@@ -115,7 +113,6 @@ function TaskCard({
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenStandard(task) }
       }}
     >
-      <div className="v2-task-card__index">{String(index + 1).padStart(2, '0')}</div>
       <div className="v2-task-card__body">
         <div className="v2-task-card__title">{task.key_task || EMPTY_PLAN_CELL}</div>
         {hasStandard && (
@@ -208,6 +205,7 @@ function StandardList({ text }: { text: string }) {
 
 function SubTaskEditModal({
   subtask,
+  detail,
   task,
   project,
   memberNames,
@@ -216,6 +214,7 @@ function SubTaskEditModal({
   onSave,
 }: {
   subtask: SubTaskItem
+  detail: SubTaskDetail | null
   task?: TaskItem
   project?: Project | null
   memberNames: string[]
@@ -263,6 +262,12 @@ function SubTaskEditModal({
   }
 
   const progress = parseProgressTimeline(subtask.notes)
+  const latestReport = useMemo(
+    () => [...(detail?.work_reports ?? [])]
+      .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))[0],
+    [detail],
+  )
+  const reportText = (items?: string[]) => items?.filter(Boolean).join('；') || '暂无'
 
   const infoSection = (
     <div className="v2-info-section">
@@ -339,18 +344,19 @@ function SubTaskEditModal({
     <div className="v2-modal-overlay" onClick={onClose}>
       <div className="v2-modal v2-modal--edit" onClick={(e) => e.stopPropagation()}>
         <div className="v2-modal__header">
-          <h3 className="v2-modal__title">关键任务详情</h3>
+          <div className="v2-edit-form__context">
+            <h3 className="v2-modal__title">关键任务详情</h3>
+            <p>{project?.name || '—'} · {task?.key_task || '—'}</p>
+          </div>
           <div className="v2-modal__header-tags">
+            <span className={`v2-status ${statusClass(getPlanStatusTone(status))}`}>{status || '未开始'}</span>
             {canEditAll && <span className="v2-tag v2-tag--full">全部权限</span>}
             {editLevel === 'self' && <span className="v2-tag v2-tag--self">责任人</span>}
           </div>
           <button type="button" className="v2-modal__close" onClick={onClose} aria-label="关闭">×</button>
         </div>
         <div className="v2-modal__body">
-          {infoSection}
-
           <div className="v2-edit-form v2-edit-form--compact">
-            {/* 关键任务名称 */}
             <label className="v2-edit-form__label">
               关键任务名称
               <input
@@ -362,88 +368,103 @@ function SubTaskEditModal({
               />
             </label>
 
-            {/* 责任人 */}
-            <label className="v2-edit-form__label">
-              责任人
-              {canEditAssignee ? (
+            <div className="v2-edit-form__grid">
+              <label className="v2-edit-form__label">
+                责任人
+                {canEditAssignee ? (
+                  <select
+                    className="v2-edit-form__select"
+                    value={assignee}
+                    onChange={(e) => setAssignee(e.target.value)}
+                    disabled={saving}
+                  >
+                    <option value="">— 请选择 —</option>
+                    {memberNames.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="v2-edit-form__locked">
+                    <input
+                      className="v2-edit-form__input v2-edit-form__input--disabled"
+                      value={assignee}
+                      disabled
+                    />
+                    <span className="v2-edit-form__lock-hint">仅负责人可修改</span>
+                  </div>
+                )}
+              </label>
+
+              <label className="v2-edit-form__label">
+                协同人 / 备注
+                <input
+                  className="v2-edit-form__input"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  disabled={!canEditBasics || saving}
+                  placeholder="协同人姓名，多个用、分隔"
+                />
+              </label>
+
+              <label className="v2-edit-form__label">
+                计划时间
+                <input
+                  className="v2-edit-form__input"
+                  value={planTime}
+                  onChange={(e) => setPlanTime(e.target.value)}
+                  disabled={!canEditBasics || saving}
+                  placeholder="yyyy-mm-dd ~ yyyy-mm-dd"
+                />
+              </label>
+
+              <label className="v2-edit-form__label">
+                当前状态
                 <select
                   className="v2-edit-form__select"
-                  value={assignee}
-                  onChange={(e) => setAssignee(e.target.value)}
-                  disabled={saving}
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value)}
+                  disabled={!canEditBasics || saving}
                 >
-                  <option value="">— 请选择 —</option>
-                  {memberNames.map((name) => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
+                  <option value="未开始">未开始</option>
+                  <option value="进行中">进行中</option>
+                  <option value="已完成">已完成</option>
+                  <option value="已暂停">已暂停</option>
                 </select>
-              ) : (
-                <div className="v2-edit-form__locked">
-                  <input
-                    className="v2-edit-form__input v2-edit-form__input--disabled"
-                    value={assignee}
-                    disabled
-                  />
-                  <span className="v2-edit-form__lock-hint">仅负责人可修改</span>
+              </label>
+            </div>
+
+            {latestReport && (
+              <section className="v2-edit-form__latest-progress" aria-label="最新进度">
+                <div className="v2-edit-form__latest-progress-header">
+                  <strong>最新进度</strong>
+                  <span>
+                    {latestReport.created_at?.replace('T', ' ').slice(0, 16) || '暂无汇报时间'}
+                    {latestReport.submitter ? ` · ${latestReport.submitter}` : ''}
+                  </span>
                 </div>
-              )}
-            </label>
-
-            {/* 计划时间 */}
-            <label className="v2-edit-form__label">
-              计划时间
-              <input
-                className="v2-edit-form__input"
-                value={planTime}
-                onChange={(e) => setPlanTime(e.target.value)}
-                disabled={!canEditBasics || saving}
-                placeholder="yyyy-mm-dd ~ yyyy-mm-dd"
-              />
-            </label>
-
-            {/* 状态 */}
-            <label className="v2-edit-form__label">
-              状态
-              <select
-                className="v2-edit-form__select"
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-                disabled={!canEditBasics || saving}
-              >
-                <option value="未开始">未开始</option>
-                <option value="进行中">进行中</option>
-                <option value="已完成">已完成</option>
-                <option value="已暂停">已暂停</option>
-              </select>
-            </label>
-
-            {/* 协同人 / 备注 */}
-            <label className="v2-edit-form__label">
-              协同人 / 备注
-              <input
-                className="v2-edit-form__input"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                disabled={!canEditBasics || saving}
-                placeholder="协同人姓名，多个用、分隔"
-              />
-            </label>
+                <p className="v2-edit-form__latest-progress-line"><b>已完成：</b>{reportText(latestReport.completed_items)}</p>
+                <p className="v2-edit-form__latest-progress-line v2-edit-form__latest-progress-line--next"><b>下一步：</b>{reportText(latestReport.next_steps)}</p>
+              </section>
+            )}
 
             {error && <p className="v2-edit-form__error">{error}</p>}
+          </div>
+        </div>
 
-            <div className="v2-edit-form__actions">
-              <button type="button" className="v2-btn v2-btn--cancel" onClick={onClose} disabled={saving}>
-                取消
-              </button>
-              <button
-                type="button"
-                className="v2-btn v2-btn--primary"
-                onClick={handleSubmit}
-                disabled={saving || !title.trim()}
-              >
-                {saving ? '保存中...' : '保存'}
-              </button>
-            </div>
+        <div className="v2-modal__footer">
+          <span>修改将同步到工作推进表</span>
+          <div className="v2-edit-form__actions">
+            <button type="button" className="v2-btn v2-btn--cancel" onClick={onClose} disabled={saving}>
+              取消
+            </button>
+            <button
+              type="button"
+              className="v2-btn v2-btn--primary"
+              onClick={handleSubmit}
+              disabled={saving || !title.trim()}
+            >
+              {saving ? '保存中...' : '保存'}
+            </button>
           </div>
         </div>
       </div>
@@ -473,15 +494,12 @@ export function PlanTableViewV2({
   const [showProjectStandard, setShowProjectStandard] = useState(false)
   const [standardTask, setStandardTask] = useState<TaskItem | null>(null)
   const [editingSubTask, setEditingSubTask] = useState<SubTaskItem | null>(null)
+  const [editingSubTaskDetail, setEditingSubTaskDetail] = useState<SubTaskDetail | null>(null)
 
   const rows = useMemo(
     () => buildPlanRows({ project, tasks, taskSubMap, searchText }),
     [project, searchText, taskSubMap, tasks],
   )
-
-  const projectName = project?.name || ''
-  const projectCoaches = project?.coaches?.filter(Boolean).join('、') || '—'
-  const projectOwners = project?.owners?.filter(Boolean).join('、') || '—'
 
   const memberNames = useMemo(
     () => {
@@ -499,6 +517,10 @@ export function PlanTableViewV2({
     if (!row.subtask) return
     setSelectedSubTaskId(row.subtask.id)
     setEditingSubTask(row.subtask)
+    setEditingSubTaskDetail(null)
+    void fetchSubtaskDetail(row.subtask.id)
+      .then(setEditingSubTaskDetail)
+      .catch(() => setEditingSubTaskDetail(null))
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>, row: PlanTableRow) => {
@@ -511,24 +533,8 @@ export function PlanTableViewV2({
     if (!onUpdateSubTask) return
     await onUpdateSubTask(id, payload)
     setEditingSubTask(null)
+    setEditingSubTaskDetail(null)
   }
-
-  const keyTaskCount = rows.filter((r) => r.subtask).length
-  const emptyTaskCount = rows.filter((r) => !r.subtask).length
-
-  const completedCount = rows.filter((r) => r.subtask && getPlanStatusLabel(r.subtask.status) === '已完成').length
-  const inProgressCount = rows.filter((r) => r.subtask && getPlanStatusLabel(r.subtask.status) === '进行中').length
-  const notStartedCount = rows.filter((r) => r.subtask && getPlanStatusLabel(r.subtask.status) === '未开始').length
-  const delayedCount = rows.filter((r) => r.subtask && getPlanStatusLabel(r.subtask.status) === '延期').length
-
-  const taskIndexMap = useMemo(() => {
-    const map = new Map<number, number>()
-    let idx = 0
-    for (const row of rows) {
-      if (row.showTaskCells) map.set(row.task.id, idx++)
-    }
-    return map
-  }, [rows])
 
   if (loading) {
     return <div className="h-40 flex items-center justify-center text-slate-400 text-sm">加载中...</div>
@@ -536,13 +542,12 @@ export function PlanTableViewV2({
 
   return (
     <section className="v2-plan-view" aria-label="工作推进表">
-      {/* 项目信息 banner */}
-      <div className="v2-project-banner">
-        <div className="v2-project-banner__left">
-          <span className="v2-project-banner__label">项目</span>
-          <span className="v2-project-banner__name">{projectName}</span>
+      <div className="v2-table-actions">
+        <div className="v2-table-actions__project">
+          <span className="v2-table-actions__label">项目：</span>
+          <span className="v2-table-actions__name">{project?.name || '未选择项目'}</span>
         </div>
-        <div className="v2-project-banner__center">
+        <div className="v2-table-actions__buttons">
           <button type="button" className="v2-project-banner__toggle" onClick={() => setShowProjectStandard(true)}>
             评价标准
           </button>
@@ -552,29 +557,25 @@ export function PlanTableViewV2({
             </button>
           )}
         </div>
-        <div className="v2-project-banner__right">
-          <span className="v2-project-banner__role">企业教练：{projectCoaches}</span>
-          <span className="v2-project-banner__role">负责人：{projectOwners}</span>
-        </div>
       </div>
 
       {/* 表格主体 */}
       <div className="v2-table-scroll">
-        <div className="v2-table-canvas">
+        <div className="v2-table-canvas v2-sheet-frame">
           <table className="v2-grid">
             <colgroup>
-              <col style={{ width: 280 }} />
-              <col style={{ width: 260 }} />
-              <col style={{ width: 90 }} />
-              <col style={{ width: 120 }} />
-              <col style={{ width: 120 }} />
-              <col style={{ width: 90 }} />
+              <col style={{ width: 300 }} />
+              <col style={{ width: 430 }} />
+              <col style={{ width: 80 }} />
+              <col style={{ width: 130 }} />
+              <col style={{ width: 155 }} />
+              <col style={{ width: 85 }} />
             </colgroup>
             <thead>
               <tr>
                 <th className="v2-th v2-th--sticky-task">重点工作</th>
                 <th className="v2-th">关键任务</th>
-                <th className="v2-th">责任人</th>
+                <th className="v2-th">负责人</th>
                 <th className="v2-th">计划时间</th>
                 <th className="v2-th">协同人</th>
                 <th className="v2-th">状态</th>
@@ -588,10 +589,9 @@ export function PlanTableViewV2({
               ) : (
                 rows.map((row) => {
                   const selected = row.subtask?.id === selectedSubTaskId
-                  const planTime = formatPlanTime(row.planStart, row.planEnd)
-                  const taskIdx = taskIndexMap.get(row.task.id) ?? 0
-                  const canClick = row.subtask !== null
-                  return (
+                      const planTime = formatPlanTime(row.planStart, row.planEnd)
+                          const canClick = row.subtask !== null
+                      return (
                     <tr
                       key={`${row.task.id}-${row.subtask?.id ?? 'empty'}-${row.sequence}`}
                       className={`${selected ? 'v2-tr--selected' : ''}${canClick ? ' v2-tr--clickable' : ''}`}
@@ -605,7 +605,10 @@ export function PlanTableViewV2({
                           rowSpan={row.taskRowSpan}
                           className="v2-td v2-td--task v2-td--sticky-task v2-td--task-card"
                         >
-                          <TaskCard task={row.task} index={taskIdx} onOpenStandard={setStandardTask} />
+                              <TaskCard
+                                task={row.task}
+                                onOpenStandard={setStandardTask}
+                              />
                         </td>
                       )}
 
@@ -613,10 +616,10 @@ export function PlanTableViewV2({
                       <td
                         className={`v2-td v2-td--keytask${selected ? ' v2-td--selected' : ''}`}
                       >
-                        {canClick ? (
-                          <span className="v2-keytask-line">
-                            <span className="v2-keytask-line__text">{row.keyTask}</span>
-                          </span>
+                            {canClick ? (
+                              <span className="v2-keytask-line">
+                                <span className="v2-keytask-line__text">{row.keyTask}</span>
+                              </span>
                         ) : (
                           <span className="v2-cell-placeholder">{cellText(row.keyTask)}</span>
                         )}
@@ -652,8 +655,9 @@ export function PlanTableViewV2({
         <ProjectStandardModal project={project} onClose={() => setShowProjectStandard(false)} />
       )}
       {editingSubTask && (
-        <SubTaskEditModal
-          subtask={editingSubTask}
+          <SubTaskEditModal
+            subtask={editingSubTask}
+            detail={editingSubTaskDetail}
           task={rows.find((r) => r.task.id === editingSubTask.task_id)?.task}
           project={project}
           memberNames={memberNames}
@@ -663,34 +667,14 @@ export function PlanTableViewV2({
             currentUserName,
             subAssignee: editingSubTask.assignee,
           })}
-          onClose={() => setEditingSubTask(null)}
+          onClose={() => {
+            setEditingSubTask(null)
+            setEditingSubTaskDetail(null)
+          }}
           onSave={handleEditSave}
         />
-      )}
-
-      {/* 底部统计栏 */}
-      <div className="v2-footer-stats">
-        <div className="v2-footer-stats__left">
-          <span>共 {tasks.length} 项重点工作 · {keyTaskCount} 项关键任务</span>
-          {emptyTaskCount > 0 && <span>{emptyTaskCount} 个重点工作暂无关键任务</span>}
-        </div>
-        <div className="v2-footer-stats__right">
-          {onExport && (
-            <button type="button" className="v2-export-btn" disabled={exportDisabled} onClick={onExport} title="导出 Excel">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              <span>导出</span>
-            </button>
           )}
-          <span className="v2-footer-stat v2-footer-stat--completed">{completedCount} 已完成</span>
-          <span className="v2-footer-stat v2-footer-stat--inprogress">{inProgressCount} 进行中</span>
-          <span className="v2-footer-stat v2-footer-stat--notstarted">{notStartedCount} 未开始</span>
-          <span className="v2-footer-stat v2-footer-stat--delayed">{delayedCount} 逾期</span>
-        </div>
-      </div>
+
     </section>
   )
 }

@@ -875,6 +875,35 @@ print("INCOMPLETE_CHILDREN_BLOCK_COMPLETION")
     assert "INCOMPLETE_CHILDREN_BLOCK_COMPLETION" in result.stdout
 
 
+def test_noncanonical_completed_status_cannot_bypass_child_checks(tmp_path: Path):
+    result = _run_execution_script(
+        tmp_path,
+        r'''
+db = SessionLocal()
+proposal = db.get(models.MeetingChangeProposal, 1)
+proposal.proposed_json = json.dumps({"status": "Completed"})
+db.commit()
+db.close()
+
+response = client.post(
+    "/api/meetings/1/change-set/execute",
+    json={"proposal_ids": [1]},
+    cookies={"bowei_session": "test-session"},
+)
+assert response.status_code == 409, response.text
+db = SessionLocal()
+from app.domain import task_status as TS
+assert TS.normalize(db.get(models.Task, 10).status) == TS.S_IN_PROGRESS
+assert db.get(models.MeetingChangeProposal, 1).execution_status == "pending"
+db.close()
+app.dependency_overrides.clear()
+print("NONCANONICAL_COMPLETION_REJECTED")
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "NONCANONICAL_COMPLETION_REJECTED" in result.stdout
+
+
 def test_creating_key_task_under_completed_workstream_reopens_parent(tmp_path: Path):
     result = _run_execution_script(
         tmp_path,

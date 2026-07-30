@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import models
 from app.database import Base
+from app.domain import task_status as TS
 from app.services.meeting_change_set import (
     build_meeting_plan_snapshot,
     validate_meeting_change_proposal as _validate_meeting_change_proposal,
@@ -228,7 +229,7 @@ def test_unknown_target_missing_evidence_or_reason_blocks_proposal():
     proposal = {
             "action": "update_subtask",
             "target": {"subtask_id": 9999},
-            "proposed": {"status": "Done"},
+            "proposed": {"status": "completed"},
             "evidence": [],
             "reason": "  ",
             "confidence": 0.5,
@@ -665,6 +666,22 @@ def test_database_length_and_status_constraints_block_proposals():
         "errors": ["proposed.status is not an allowed task status"],
     }
 
+    unsupported_english_alias = validate_meeting_change_proposal(
+        {
+            **base,
+            "proposed": {
+                "key_task": "Valid title",
+                "owner": "Known owner",
+                "status": "Completed",
+            },
+        },
+        snapshot,
+    )
+    assert unsupported_english_alias["validation"] == {
+        "state": "blocked",
+        "errors": ["proposed.status is not an allowed task status"],
+    }
+
 
 def test_invalid_confidence_values_are_blocked():
     db = _db_session()
@@ -705,16 +722,16 @@ def test_proposed_field_output_has_stable_allowlist_order():
     }
 
     first = validate_meeting_change_proposal(
-        {**base, "proposed": {"status": "Done", "owner": "Known owner"}},
+        {**base, "proposed": {"status": "completed", "owner": "Known owner"}},
         snapshot,
     )
     second = validate_meeting_change_proposal(
-        {**base, "proposed": {"owner": "Known owner", "status": "Done"}},
+        {**base, "proposed": {"owner": "Known owner", "status": "completed"}},
         snapshot,
     )
 
     assert list(first["proposed"]) == list(second["proposed"]) == ["owner", "status"]
     assert first["proposed"] == second["proposed"] == {
         "owner": "Known owner",
-        "status": "Done",
+        "status": TS.S_COMPLETED,
     }

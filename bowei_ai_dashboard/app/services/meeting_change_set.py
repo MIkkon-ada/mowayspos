@@ -68,13 +68,6 @@ ALLOWED_STATUS_VALUES = {
     TS.S_DELAYED,
     TS.S_PAUSED,
     TS.S_ARCHIVED,
-    "Not started",
-    "In progress",
-    "Done",
-    "Completed",
-    "Delayed",
-    "Paused",
-    "Archived",
 }
 
 
@@ -311,8 +304,12 @@ def _normalize_proposed(
         max_length = field_limits.get(key)
         if max_length is not None and len(normalized) > max_length:
             errors.append(f"proposed.{key} exceeds {max_length} characters")
-        if key == "status" and TS.normalize(normalized) not in ALLOWED_STATUS_VALUES:
-            errors.append("proposed.status is not an allowed task status")
+        if key == "status":
+            canonical_status = TS.normalize(normalized)
+            if canonical_status not in ALLOWED_STATUS_VALUES:
+                errors.append("proposed.status is not an allowed task status")
+            else:
+                normalized = canonical_status
         proposed[key] = normalized
     return proposed
 
@@ -659,6 +656,11 @@ def _apply_validated_proposal(
     db: Session,
 ) -> models.Task | models.SubTask:
     proposed = _json_object(proposal.proposed_json)
+    if "status" in proposed:
+        canonical_status = TS.normalize(proposed["status"])
+        if canonical_status not in ALLOWED_STATUS_VALUES:
+            raise HTTPException(409, "proposal status is not canonical")
+        proposed["status"] = canonical_status
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(409, "project no longer exists")

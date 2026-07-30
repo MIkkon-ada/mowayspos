@@ -452,7 +452,7 @@ def _meeting_change_set_prompt(snapshot: dict) -> str:
     return f"""
 
 【工作推进表变更提案】
-除会议纪要字段外，你可以输出 change_set 数组；没有明确、可引用的变更时必须输出空数组。会议转录文字是唯一事实来源。下面的冻结快照只用于识别现有记录的 ID 和当前字段，绝不能把快照内容当作会议事实、补全会议内容或推断变更。
+此次请求已提供项目 ID，change_set 是必填字段；没有明确、可引用的变更时必须输出空数组。会议转录文字是唯一事实来源。下面的冻结快照只用于识别现有记录的 ID 和当前字段，绝不能把快照内容当作会议事实、补全会议内容或推断变更。
 
 冻结快照：
 ```json
@@ -524,6 +524,8 @@ async def analyze_meeting(
 ):
     current_user = require_login(current_user, db)
     if payload.project_id is not None:
+        if not db.get(models.Project, payload.project_id):
+            raise HTTPException(404, "project not found")
         require_project_access(current_user, payload.project_id, db)
     elif payload.mode == "progress":
         raise HTTPException(422, "project_id is required for progress meeting analysis")
@@ -944,13 +946,25 @@ _PROMPT_GENERIC = """你是一个只做事实提取的会议纪要助手。请�
   "reports": [],
   "confirmed_items": ["会议已明确确认并可直接入库的事项"],
   "decision_requests": ["需要企业教练判断的事项"],
-  "action_items": [{{"member": "负责人", "task": "事项", "deadline": "时间或空字符串"}}]
+  "action_items": [{{"member": "负责人", "task": "事项", "deadline": "时间或空字符串"}}],
+  "change_set": []
 }}
 
 要求：
 - confirmed_items 仅记录会议原文已明确拍板的结果；没有则空数组
 - decision_requests 仅记录原文明确要求企业教练判断、确认或裁定的事项；普通讨论、已拍板结果与待办不得放入此字段
 - 负责人或截止时间没有在原文明确出现时，分别填空字符串
+- 提供项目 ID 时，change_set 是必填字段；未提出任何可由原文逐字引文支撑的工作推进表变更时，返回 []
+- change_set 单项必须严格为：
+{{
+  "action": "create_workstream|update_workstream|create_subtask|update_subtask",
+  "target": {{"project_id": 123, "workstream_id": 456, "subtask_id": 789, "parent_workstream_id": 456}},
+  "proposed": {{"允许修改的字段": "字符串值"}},
+  "evidence": ["会议转录中的逐字连续引文"],
+  "reason": "非空字符串，说明引文如何支持变更",
+  "confidence": 0.0
+}}
+- target 内的 ID 必须是冻结快照中已有的整数；目标不明确时不得猜测任何 ID，省略不确定的 ID 并保留说明；evidence 必须是会议转录中的逐字连续片段。
 """
 
 # 项目汇报会提示词（有发言人映射 + 成员上下文时使用）
@@ -1001,8 +1015,21 @@ _PROMPT_REPORT = """你是一个只做事实提取的会议纪要助手。
   ],
   "confirmed_items": ["会议已明确确认并可直接入库的事项"],
   "decision_requests": ["需要企业教练判断的事项"],
-  "action_items": [{{"member": "负责人", "task": "事项", "deadline": "时间或空字符串"}}]
+  "action_items": [{{"member": "负责人", "task": "事项", "deadline": "时间或空字符串"}}],
+  "change_set": []
 }}
+
+提供项目 ID 时，change_set 是必填字段；未提出任何可由原文逐字引文支撑的工作推进表变更时，返回 []。
+change_set 单项必须严格为：
+{{
+  "action": "create_workstream|update_workstream|create_subtask|update_subtask",
+  "target": {{"project_id": 123, "workstream_id": 456, "subtask_id": 789, "parent_workstream_id": 456}},
+  "proposed": {{"允许修改的字段": "字符串值"}},
+  "evidence": ["会议转录中的逐字连续引文"],
+  "reason": "非空字符串，说明引文如何支持变更",
+  "confidence": 0.0
+}}
+target 内的 ID 必须是冻结快照中已有的整数；目标不明确时不得猜测任何 ID，省略不确定的 ID 并保留说明；evidence 必须是会议转录中的逐字连续片段。
 """
 
 

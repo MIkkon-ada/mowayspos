@@ -171,7 +171,11 @@ Base.metadata.create_all(bind=engine)
 db = SessionLocal()
 db.add_all([
     models.Person(id=1, name="Owner", is_active=True),
+    models.Person(id=2, name="CEO", system_role="company_ceo", is_active=True),
+    models.Person(id=3, name="Admin", is_active=True),
     models.Account(id=1, username="owner", password_hash="x", person_id=1, status="active"),
+    models.Account(id=2, username="ceo", password_hash="x", person_id=2, status="active"),
+    models.Account(id=3, username="admin", password_hash="x", person_id=3, status="active", is_tech_admin=True),
     models.Project(id=1, name="Project A", status="active", is_active=True),
     models.ProjectMember(project_id=1, person_id=1, person_name_snapshot="Owner", role="owner"),
     models.Task(
@@ -203,8 +207,9 @@ import app.main as main
 from app.routers import meetings
 from fastapi.testclient import TestClient
 
-main.get_session_user = lambda _session_id: "owner"
-app.dependency_overrides[meetings.get_current_user_name] = lambda: "owner"
+active_user = {"name": "owner"}
+main.get_session_user = lambda _session_id: active_user["name"]
+app.dependency_overrides[meetings.get_current_user_name] = lambda: active_user["name"]
 meetings._pick_provider = lambda: "test"
 
 transcript = "Owner agreed to update the task notes."
@@ -293,15 +298,50 @@ blocked_after = {
     "subtask": (db.get(models.SubTask, 20).title, db.get(models.SubTask, 20).notes),
 }
 assert blocked_after == before
-db.close()
 
-no_project_response = client.post(
+audit_count_before_no_project = db.query(models.MeetingChangeSet).count()
+meetings._do_analyze = lambda *_args: {"title": "No project analysis", "summary": "ordinary fields"}
+for request_body in (
+    {"text": "No project kickoff meeting", "mode": "kickoff"},
+    {"text": "No project generic meeting"},
+):
+    no_project_response = client.post(
+        "/api/meetings/analyze",
+        json=request_body,
+        cookies={"bowei_session": "test-session"},
+    )
+    assert no_project_response.status_code == 200, no_project_response.text
+    no_project_payload = no_project_response.json()
+    assert no_project_payload["title"] == "No project analysis"
+    assert no_project_payload["analysis_id"] is None
+    assert no_project_payload["change_set"] is None
+assert db.query(models.MeetingChangeSet).count() == audit_count_before_no_project
+
+llm_calls = []
+def _unexpected_llm(*_args):
+    llm_calls.append(True)
+    raise AssertionError("missing projects must not reach the LLM")
+meetings._do_analyze = _unexpected_llm
+for username in ("admin", "ceo"):
+    active_user["name"] = username
+    missing_project_response = client.post(
+        "/api/meetings/analyze",
+        json={"text": transcript, "project_id": 999, "mode": "progress"},
+        cookies={"bowei_session": "test-session"},
+    )
+    assert missing_project_response.status_code == 404, missing_project_response.text
+    assert missing_project_response.json()["detail"] == "project not found"
+assert llm_calls == []
+
+active_user["name"] = "owner"
+no_project_progress_response = client.post(
     "/api/meetings/analyze",
     json={"text": transcript, "mode": "progress"},
     cookies={"bowei_session": "test-session"},
 )
-assert no_project_response.status_code == 422, no_project_response.text
-assert no_project_response.json()["detail"] == "project_id is required for progress meeting analysis"
+assert no_project_progress_response.status_code == 422, no_project_progress_response.text
+assert no_project_progress_response.json()["detail"] == "project_id is required for progress meeting analysis"
+db.close()
 app.dependency_overrides.clear()
 print("ANALYZE_CHANGE_SET_PERSISTED")
 '''

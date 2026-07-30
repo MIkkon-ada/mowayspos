@@ -17,6 +17,46 @@ def _db():
     return sessionmaker(bind=engine)()
 
 
+def test_progress_and_generic_prompts_define_required_change_set_contract(monkeypatch):
+    db = _db()
+    db.add_all([
+        models.Person(id=1, name="Owner", is_active=True),
+        models.Account(username="owner", password_hash="x", person_id=1, status="active"),
+        models.Project(id=1, name="Project", status="active", is_active=True),
+        models.ProjectMember(project_id=1, person_id=1, person_name_snapshot="Owner", role="owner"),
+        models.Task(id=10, project_id=1, key_task="Workstream", owner="Owner", status="in_progress"),
+        models.SubTask(id=20, task_id=10, title="Key task", assignee="Owner", status="in_progress"),
+    ])
+    db.commit()
+    captured: list[str] = []
+    monkeypatch.setattr(meetings, "_pick_provider", lambda: "test")
+    monkeypatch.setattr(
+        meetings,
+        "_do_analyze",
+        lambda _text, prompt, _provider: captured.append(prompt) or {"change_set": []},
+    )
+
+    for mode in ("progress", "kickoff"):
+        asyncio.run(meetings.analyze_meeting(
+            meetings.MeetingAnalyzeRequest(
+                text="Owner explicitly asked to update Key task.",
+                project_id=1,
+                mode=mode,
+            ),
+            current_user="owner",
+            db=db,
+        ))
+
+    assert len(captured) == 2
+    for prompt in captured:
+        assert '"change_set": []' in prompt
+        assert '"action": "create_workstream|update_workstream|create_subtask|update_subtask"' in prompt
+        assert '"evidence": ["会议转录中的逐字连续引文"]' in prompt
+        assert "change_set 是必填字段" in prompt
+        assert "不得猜测任何 ID" in prompt
+        assert "唯一事实来源" in prompt
+
+
 def test_draft_visibility_allows_creator_owner_and_ceo_but_not_member():
     db = _db()
     db.add_all([

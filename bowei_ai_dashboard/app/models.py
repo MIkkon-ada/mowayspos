@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 
 from .database import Base
 from .time_utils import utc_now
@@ -137,6 +137,51 @@ class KickoffChangeProposal(Base, TimestampMixin):
     review_status = Column(String(20), nullable=False, default="pending", index=True)
     reviewer_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
     review_comment = Column(Text, default="")
+
+
+class MeetingChangeSet(Base, TimestampMixin):
+    __tablename__ = "meeting_change_sets"
+    __table_args__ = (
+        Index("ix_meeting_change_sets_project_id_status", "project_id", "status"),
+        Index("ix_meeting_change_sets_meeting_id", "meeting_id"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=True)
+    created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True)
+    transcript_hash = Column(String(64), nullable=False, default="")
+    snapshot_json = Column(Text, nullable=False, default="{}")
+    result_json = Column(Text, nullable=False, default="{}")
+    status = Column(String(20), nullable=False, default="draft")
+
+
+class MeetingChangeProposal(Base, TimestampMixin):
+    __tablename__ = "meeting_change_proposals"
+    __table_args__ = (
+        Index(
+            "ix_meeting_change_proposals_change_set_id_execution_status",
+            "change_set_id",
+            "execution_status",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    change_set_id = Column(Integer, ForeignKey("meeting_change_sets.id"), nullable=False)
+    action = Column(String(32), nullable=False)
+    target_type = Column(String(20), nullable=False)
+    target_id = Column(Integer, nullable=True)
+    parent_workstream_id = Column(Integer, ForeignKey("tasks.id"), nullable=True)
+    before_json = Column(Text, nullable=False, default="{}")
+    proposed_json = Column(Text, nullable=False, default="{}")
+    evidence_json = Column(Text, nullable=False, default="[]")
+    reason = Column(Text, nullable=False, default="")
+    confidence = Column(Float, nullable=False, default=0.0)
+    validation_json = Column(Text, nullable=False, default="[]")
+    execution_status = Column(String(20), nullable=False, default="pending")
+    executed_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True)
+    executed_at = Column(DateTime, nullable=True)
+    result_target_id = Column(Integer, nullable=True)
 
 
 class Achievement(Base, TimestampMixin):

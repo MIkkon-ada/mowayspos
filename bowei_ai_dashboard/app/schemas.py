@@ -373,6 +373,7 @@ class ProjectProfilePayload(BaseModel):
 
 class MeetingPayload(BaseModel):
     project_id: int | None = None
+    analysis_id: int | None = None
     related_special_project: str = ""
     meeting_type: str = ""
     title: str = ""

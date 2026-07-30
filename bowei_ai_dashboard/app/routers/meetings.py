@@ -296,6 +296,20 @@ def create_meeting(
     if project and project.status == "pending_kickoff":
         raise HTTPException(409, "项目待启动会确认，不能创建普通会议")
 
+    account = db.query(models.Account).filter(models.Account.username == current_user).first()
+    change_set = None
+    if payload.analysis_id is not None:
+        change_set = db.get(models.MeetingChangeSet, payload.analysis_id)
+        if not (
+            change_set
+            and change_set.project_id == payload.project_id
+            and change_set.meeting_id is None
+            and change_set.status == "draft"
+            and account
+            and change_set.created_by_person_id == account.person_id
+        ):
+            raise HTTPException(409, "meeting analysis draft cannot be attached")
+
     project_name = resolve_project_context(
         db,
         project_id=payload.project_id,
@@ -304,11 +318,10 @@ def create_meeting(
     data = {
         k: v
         for k, v in payload.model_dump().items()
-        if k not in {"project_id", "related_special_project"}
+        if k not in {"project_id", "analysis_id", "related_special_project"}
     }
     row = models.Meeting(**data)
     row.project_id = payload.project_id
-    account = db.query(models.Account).filter(models.Account.username == current_user).first()
     row.creator_person_id = account.person_id if account else None
     if payload.related_special_project:
         row.related_special_project = payload.related_special_project
@@ -316,6 +329,19 @@ def create_meeting(
         row.related_special_project = project_name
     db.add(row)
     db.flush()
+    if change_set is not None:
+        change_set.meeting_id = row.id
+        change_set.status = "attached"
+        crud.log(
+            db,
+            current_user,
+            "meeting_change_set_attach",
+            "meeting_change_set",
+            change_set.id,
+            {"meeting_id": None, "status": "draft"},
+            {"meeting_id": row.id, "status": "attached"},
+            project_id=row.project_id,
+        )
     if row.publish_status == "draft" and row.project_id:
         from ..services.notify import company_ceo_person_ids, project_strict_owner_ids, send as _notify
         for recipient_id in set(project_strict_owner_ids(row.project_id, db) + company_ceo_person_ids(db)):
@@ -628,13 +654,11 @@ async def analyze_meeting(
     return response
 
 
-@router.get("/{row_id}")
-def get_meeting(
+def _meeting_for_read(
     row_id: int,
-    current_user: str = Depends(get_current_user_name),
-    db: Session = Depends(get_db),
-):
-    current_user = require_login(current_user, db)
+    current_user: str,
+    db: Session,
+) -> models.Meeting:
     context = get_user_context_from_db(current_user, db)
     row = db.get(models.Meeting, row_id)
     if not row:
@@ -646,6 +670,35 @@ def get_meeting(
         require_project_access(current_user, project_id, db)
     elif not (context.get("is_tech_admin") or context.get("is_ceo")):
         raise HTTPException(403, "permission denied")
+    return row
+
+
+@router.get("/{row_id}/change-set")
+def get_meeting_change_set(
+    row_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    row = _meeting_for_read(row_id, current_user, db)
+    change_set = (
+        db.query(models.MeetingChangeSet)
+        .filter_by(meeting_id=row.id)
+        .first()
+    )
+    if not change_set:
+        raise HTTPException(404, "meeting change set not found")
+    return _meeting_change_set_payload(change_set, db)
+
+
+@router.get("/{row_id}")
+def get_meeting(
+    row_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    row = _meeting_for_read(row_id, current_user, db)
     return crud.to_dict(row)
 
 

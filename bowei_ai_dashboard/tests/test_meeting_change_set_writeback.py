@@ -369,3 +369,146 @@ def test_meeting_analyze_persists_immutable_change_set_without_work_plan_mutatio
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "ANALYZE_CHANGE_SET_PERSISTED" in result.stdout
+
+
+_ATTACH_AND_READ_CHANGE_SET = r'''
+import json
+
+from app import models
+from app.database import Base, SessionLocal, engine
+
+Base.metadata.create_all(bind=engine)
+db = SessionLocal()
+db.add_all([
+    models.Person(id=1, name="Owner", is_active=True),
+    models.Person(id=2, name="Other owner", is_active=True),
+    models.Person(id=3, name="Member", is_active=True),
+    models.Account(id=1, username="owner", password_hash="x", person_id=1, status="active"),
+    models.Account(id=2, username="other", password_hash="x", person_id=2, status="active"),
+    models.Account(id=3, username="member", password_hash="x", person_id=3, status="active"),
+    models.Project(id=1, name="Project A", status="active", is_active=True),
+    models.Project(id=2, name="Project B", status="active", is_active=True),
+    models.ProjectMember(project_id=1, person_id=1, person_name_snapshot="Owner", role="owner"),
+    models.ProjectMember(project_id=1, person_id=2, person_name_snapshot="Other owner", role="owner"),
+    models.ProjectMember(project_id=1, person_id=3, person_name_snapshot="Member", role="member"),
+    models.ProjectMember(project_id=2, person_id=1, person_name_snapshot="Owner", role="owner"),
+])
+db.commit()
+
+def add_draft(project_id, creator_id):
+    row = models.MeetingChangeSet(
+        project_id=project_id,
+        created_by_person_id=creator_id,
+        transcript_hash="a" * 64,
+        snapshot_json=json.dumps({"project_id": project_id, "workstreams": []}),
+        result_json=json.dumps({"change_set": []}),
+        status="draft",
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row.id
+
+own_draft_id = add_draft(1, 1)
+wrong_project_id = add_draft(2, 1)
+other_users_id = add_draft(1, 2)
+db.close()
+
+from app.main import app
+import app.main as main
+from app.routers import meetings
+from fastapi.testclient import TestClient
+
+active_user = {"name": "owner"}
+main.get_session_user = lambda _session_id: active_user["name"]
+app.dependency_overrides[meetings.get_current_user_name] = lambda: active_user["name"]
+client = TestClient(app)
+
+def meeting_payload(analysis_id):
+    return {
+        "project_id": 1,
+        "analysis_id": analysis_id,
+        "title": "Weekly review",
+        "meeting_type": "progress",
+        "publish_status": "draft",
+    }
+
+response = client.post(
+    "/api/meetings",
+    json=meeting_payload(own_draft_id),
+    cookies={"bowei_session": "test-session"},
+)
+assert response.status_code == 200, response.text
+meeting_id = response.json()["id"]
+
+detail = client.get(
+    f"/api/meetings/{meeting_id}/change-set",
+    cookies={"bowei_session": "test-session"},
+)
+assert detail.status_code == 200, detail.text
+assert detail.json()["id"] == own_draft_id
+assert detail.json()["status"] == "attached"
+
+db = SessionLocal()
+attached = db.get(models.MeetingChangeSet, own_draft_id)
+assert attached.meeting_id == meeting_id
+assert attached.status == "attached"
+attach_log = db.query(models.OperationLog).filter_by(
+    action="meeting_change_set_attach",
+    target_type="meeting_change_set",
+    target_id=own_draft_id,
+).one()
+assert json.loads(attach_log.after_json)["meeting_id"] == meeting_id
+meeting_count = db.query(models.Meeting).count()
+db.close()
+
+for invalid_analysis_id in (wrong_project_id, other_users_id):
+    invalid = client.post(
+        "/api/meetings",
+        json=meeting_payload(invalid_analysis_id),
+        cookies={"bowei_session": "test-session"},
+    )
+    assert invalid.status_code == 409, invalid.text
+
+db = SessionLocal()
+assert db.query(models.Meeting).count() == meeting_count
+assert db.get(models.MeetingChangeSet, wrong_project_id).meeting_id is None
+assert db.get(models.MeetingChangeSet, other_users_id).meeting_id is None
+db.close()
+
+active_user["name"] = "member"
+denied = client.get(
+    f"/api/meetings/{meeting_id}/change-set",
+    cookies={"bowei_session": "test-session"},
+)
+assert denied.status_code == 403, denied.text
+
+app.dependency_overrides.clear()
+print("ATTACH_AND_READ_CHANGE_SET")
+'''
+
+
+def test_saving_meeting_attaches_only_own_matching_draft_and_reuses_read_permissions(
+    tmp_path: Path,
+):
+    database = tmp_path / "meeting-attach-change-set.db"
+    env = os.environ.copy()
+    env.update(
+        {
+            "APP_ENV": "test",
+            "DATABASE_URL": f"sqlite:///{database.resolve().as_posix()}",
+            "FRONTEND_ORIGIN": "",
+            "PYTHONPATH": str(BACKEND_ROOT),
+        }
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(_ATTACH_AND_READ_CHANGE_SET)],
+        cwd=BACKEND_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ATTACH_AND_READ_CHANGE_SET" in result.stdout

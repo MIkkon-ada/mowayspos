@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import sqlalchemy as sa
+from sqlalchemy.orm import sessionmaker
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -114,3 +115,45 @@ def test_meeting_change_set_migration_contract(tmp_path: Path):
     assert (("project_id",), "projects") in change_set_foreign_keys
     assert (("meeting_id",), "meetings") in change_set_foreign_keys
     assert (("change_set_id",), "meeting_change_sets") in proposal_foreign_keys
+
+
+def test_deleting_attached_meeting_preserves_change_set_and_clears_reference(
+    tmp_path: Path,
+):
+    database = tmp_path / "meeting-delete.db"
+    result = _run_alembic(database, "upgrade", "head")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    engine = sa.create_engine(f"sqlite:///{database.as_posix()}")
+
+    @sa.event.listens_for(engine, "connect")
+    def _enable_foreign_keys(dbapi_connection, _connection_record):
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
+    from app import models
+
+    db = sessionmaker(bind=engine)()
+    db.add(models.Project(id=1, name="Project A"))
+    db.commit()
+    db.add(models.Meeting(id=1, project_id=1, title="Attached meeting"))
+    db.commit()
+    db.add(
+        models.MeetingChangeSet(
+            id=1,
+            project_id=1,
+            meeting_id=1,
+            transcript_hash="a" * 64,
+            snapshot_json="{}",
+            result_json="{}",
+            status="attached",
+        )
+    )
+    db.commit()
+
+    db.delete(db.get(models.Meeting, 1))
+    db.commit()
+    db.expire_all()
+
+    change_set = db.get(models.MeetingChangeSet, 1)
+    assert change_set is not None
+    assert change_set.meeting_id is None

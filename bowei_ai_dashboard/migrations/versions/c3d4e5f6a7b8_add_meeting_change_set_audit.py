@@ -19,7 +19,12 @@ def upgrade() -> None:
         "meeting_change_sets",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("project_id", sa.Integer(), sa.ForeignKey("projects.id"), nullable=False),
-        sa.Column("meeting_id", sa.Integer(), sa.ForeignKey("meetings.id"), nullable=True),
+        sa.Column(
+            "meeting_id",
+            sa.Integer(),
+            sa.ForeignKey("meetings.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("created_by_person_id", sa.Integer(), sa.ForeignKey("people.id"), nullable=True),
         sa.Column("transcript_hash", sa.String(length=64), nullable=False),
         sa.Column("snapshot_json", sa.Text(), nullable=False),

@@ -148,7 +148,7 @@ class MeetingChangeSet(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
-    meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id", ondelete="SET NULL"), nullable=True)
     created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True)
     transcript_hash = Column(String(64), nullable=False, default="")
     snapshot_json = Column(Text, nullable=False, default="{}")

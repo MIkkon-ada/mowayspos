@@ -495,6 +495,7 @@ export function PlanTableViewV2({
   const [standardTask, setStandardTask] = useState<TaskItem | null>(null)
   const [editingSubTask, setEditingSubTask] = useState<SubTaskItem | null>(null)
   const [editingSubTaskDetail, setEditingSubTaskDetail] = useState<SubTaskDetail | null>(null)
+  const hasProjectStandard = Boolean(project?.objectives?.trim())
 
   const rows = useMemo(
     () => buildPlanRows({ project, tasks, taskSubMap, searchText }),
@@ -548,9 +549,11 @@ export function PlanTableViewV2({
           <span className="v2-table-actions__name">{project?.name || '未选择项目'}</span>
         </div>
         <div className="v2-table-actions__buttons">
-          <button type="button" className="v2-project-banner__toggle" onClick={() => setShowProjectStandard(true)}>
-            评价标准
-          </button>
+          {hasProjectStandard && (
+            <button type="button" className="v2-project-banner__toggle" onClick={() => setShowProjectStandard(true)}>
+              评价标准
+            </button>
+          )}
           {canCreateTask && onCreateTask && (
             <button type="button" className="v2-project-banner__create" onClick={onCreateTask}>
               新增重点工作

@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -30,6 +31,10 @@ from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
 from ..services.kickoff_agent import build_kickoff_snapshot, run_kickoff_agent
 from ..services.kickoff_writeback import confirm_kickoff_start
+from ..services.meeting_change_set import (
+    build_meeting_plan_snapshot,
+    validate_meeting_change_proposal,
+)
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
 
@@ -331,6 +336,148 @@ class MeetingAnalyzeRequest(BaseModel):
     member_names: list[str] | None = None  # 项目成员姓名列表，用于构建成员上下文
 
 
+def _json_value(value, fallback):
+    try:
+        return json.loads(value or "")
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _meeting_change_proposal_payload(
+    row: models.MeetingChangeProposal,
+    project_id: int,
+) -> dict:
+    validation = _json_value(row.validation_json, {"state": "blocked", "errors": []})
+    target = {"project_id": project_id}
+    if row.target_type == "workstream" and row.target_id is not None:
+        target["workstream_id"] = row.target_id
+    if row.target_type == "subtask" and row.target_id is not None:
+        target["subtask_id"] = row.target_id
+    if row.parent_workstream_id is not None:
+        target["parent_workstream_id"] = row.parent_workstream_id
+    return {
+        "id": row.id,
+        "action": row.action,
+        "target": target,
+        "before": _json_value(row.before_json, {}),
+        "proposed": _json_value(row.proposed_json, {}),
+        "evidence": _json_value(row.evidence_json, []),
+        "reason": row.reason,
+        "confidence": row.confidence,
+        "validation": validation,
+        "execution_status": row.execution_status,
+    }
+
+
+def _meeting_change_set_payload(row: models.MeetingChangeSet, db: Session) -> dict:
+    proposals = (
+        db.query(models.MeetingChangeProposal)
+        .filter_by(change_set_id=row.id)
+        .order_by(models.MeetingChangeProposal.id.asc())
+        .all()
+    )
+    return {
+        "id": row.id,
+        "project_id": row.project_id,
+        "status": row.status,
+        "proposals": [
+            _meeting_change_proposal_payload(proposal, row.project_id)
+            for proposal in proposals
+        ],
+    }
+
+
+def _proposal_target_columns(proposal: dict) -> tuple[str, int | None, int | None]:
+    action = proposal.get("action")
+    target = proposal.get("target") or {}
+    if action == "update_workstream":
+        return "workstream", target.get("workstream_id"), None
+    if action == "update_subtask":
+        return "subtask", target.get("subtask_id"), target.get("parent_workstream_id")
+    if action == "create_subtask":
+        return "subtask", None, target.get("parent_workstream_id")
+    return "workstream", None, None
+
+
+def _persist_meeting_change_set(
+    *,
+    project_id: int,
+    transcript_text: str,
+    raw_result: dict,
+    snapshot: dict,
+    current_user: str,
+    db: Session,
+) -> models.MeetingChangeSet:
+    raw_proposals = raw_result.get("change_set") if isinstance(raw_result.get("change_set"), list) else []
+    proposals = [
+        validate_meeting_change_proposal(raw, snapshot, transcript_text)
+        for raw in raw_proposals
+    ]
+    account = db.query(models.Account).filter_by(username=current_user).first()
+    change_set = models.MeetingChangeSet(
+        project_id=project_id,
+        created_by_person_id=account.person_id if account else None,
+        transcript_hash=hashlib.sha256(transcript_text.encode("utf-8")).hexdigest(),
+        snapshot_json=json.dumps(snapshot, ensure_ascii=False, allow_nan=False),
+        result_json=json.dumps(raw_result, ensure_ascii=False, allow_nan=False),
+        status="draft",
+    )
+    db.add(change_set)
+    db.flush()
+    for proposal in proposals:
+        target_type, target_id, parent_workstream_id = _proposal_target_columns(proposal)
+        db.add(
+            models.MeetingChangeProposal(
+                change_set_id=change_set.id,
+                action=proposal["action"],
+                target_type=target_type,
+                target_id=target_id,
+                parent_workstream_id=parent_workstream_id,
+                before_json=json.dumps(proposal["before"], ensure_ascii=False, allow_nan=False),
+                proposed_json=json.dumps(proposal["proposed"], ensure_ascii=False, allow_nan=False),
+                evidence_json=json.dumps(proposal["evidence"], ensure_ascii=False, allow_nan=False),
+                reason=proposal["reason"],
+                confidence=proposal["confidence"],
+                validation_json=json.dumps(proposal["validation"], ensure_ascii=False, allow_nan=False),
+                execution_status="pending",
+            )
+        )
+    db.commit()
+    db.refresh(change_set)
+    return change_set
+
+
+def _meeting_change_set_prompt(snapshot: dict) -> str:
+    snapshot_text = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
+    return f"""
+
+【工作推进表变更提案】
+除会议纪要字段外，你可以输出 change_set 数组；没有明确、可引用的变更时必须输出空数组。会议转录文字是唯一事实来源。下面的冻结快照只用于识别现有记录的 ID 和当前字段，绝不能把快照内容当作会议事实、补全会议内容或推断变更。
+
+冻结快照：
+```json
+{snapshot_text}
+```
+
+change_set 中每一项必须严格为：
+{{
+  "action": "create_workstream|update_workstream|create_subtask|update_subtask",
+  "target": {{"project_id": {snapshot.get("project_id")}, "workstream_id": 0, "subtask_id": 0, "parent_workstream_id": 0}},
+  "proposed": {{}},
+  "evidence": ["会议转录中的逐字连续引文"],
+  "reason": "该引文为何支持这一项变更",
+  "confidence": 0.0
+}}
+
+规则：
+- 只允许上述四种 action；update_workstream 必须使用快照中的 workstream_id，update_subtask 必须使用快照中的 subtask_id，create_subtask 必须使用快照中的 parent_workstream_id。
+- 引文必须是会议转录中的逐字连续片段，每项至少一条；不得概括、改写或凭常识补全。
+- 目标不明确时不得猜测任何 ID：保留能说明歧义的文字并省略该 ID，让系统将其标记为待复核。
+- create_workstream 只能在原文明示新增重点工作时提出；create_subtask 只能在原文明示新增关键任务时提出。
+- 不得删除重点工作或关键任务，不得创建问题、成果、决策或修改项目成员。
+"""
+
+
 def _project_member_names(project_id: int | None, db: Session) -> set[str]:
     if not project_id:
         return set()
@@ -378,11 +525,18 @@ async def analyze_meeting(
     current_user = require_login(current_user, db)
     if payload.project_id is not None:
         require_project_access(current_user, payload.project_id, db)
+    elif payload.mode == "progress":
+        raise HTTPException(422, "project_id is required for progress meeting analysis")
 
     if not payload.text.strip():
         raise HTTPException(422, "text 不能为空")
 
     # 推进表只提供关联与核对上下文；会议原文仍是唯一的纪要事实来源。
+    snapshot = (
+        build_meeting_plan_snapshot(payload.project_id, db)
+        if payload.project_id is not None
+        else None
+    )
     project_member_names = sorted(_project_member_names(payload.project_id, db))
     work_plan_context = _build_all_members_context(project_member_names, payload.project_id, db)
     member_context_text = work_plan_context
@@ -414,6 +568,9 @@ async def analyze_meeting(
                 text=payload.text[:8000],
             )
 
+    if snapshot is not None:
+        prompt += _meeting_change_set_prompt(snapshot)
+
     provider = _pick_provider()
     try:
         result = await asyncio.to_thread(_do_analyze, payload.text, prompt, provider)
@@ -430,7 +587,7 @@ async def analyze_meeting(
         db,
     )
 
-    return {
+    response = {
         "title": result.get("title", ""),
         "meeting_type": result.get("meeting_type", ""),
         "meeting_date": result.get("meeting_date", ""),
@@ -445,6 +602,28 @@ async def analyze_meeting(
         "transcript_text": payload.text,
         "has_speakers": has_speakers,
     }
+    if snapshot is None:
+        response["analysis_id"] = None
+        response["change_set"] = None
+        return response
+
+    try:
+        change_set = _persist_meeting_change_set(
+            project_id=payload.project_id,
+            transcript_text=payload.text,
+            raw_result=result,
+            snapshot=snapshot,
+            current_user=current_user,
+            db=db,
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.exception("meeting change-set analysis persistence failed")
+        raise HTTPException(500, f"meeting change-set persistence failed: {exc}") from exc
+
+    response["analysis_id"] = change_set.id
+    response["change_set"] = _meeting_change_set_payload(change_set, db)
+    return response
 
 
 @router.get("/{row_id}")

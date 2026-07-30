@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..llm_config import PROVIDERS, get_provider_config, load_configs, save_configs
 from ..permissions import get_current_user_name, get_user_context_from_db
+from ..settings import get_settings
 
 router = APIRouter(prefix="/api/llm-config", tags=["llm-config"])
 
@@ -76,19 +77,28 @@ def save_config(
     _require_admin(current_user, db)
     if provider not in PROVIDERS:
         raise HTTPException(400, f"不支持的提供商: {provider}")
+    production = get_settings().app_env == "production"
+    supplied_api_key = payload.api_key.strip()
+    if production and supplied_api_key and supplied_api_key != "***":
+        raise HTTPException(400, "生产环境 API Key 必须通过环境变量配置")
     configs = load_configs()
     existing = configs.get(provider, {})
+    if production:
+        for stored_config in configs.values():
+            if isinstance(stored_config, dict):
+                stored_config.pop("api_key", None)
     provider_config = {
         "base_url": payload.base_url,
         "model": payload.model,
         "enabled": payload.enabled,
     }
-    # 管理员可通过网页界面配置 API Key；若前端回传 "***"（掩码），保留原始 Key 不覆盖。
-    provider_config["api_key"] = (
-        payload.api_key
-        if payload.api_key and payload.api_key != "***"
-        else existing.get("api_key", "")
-    )
+    if not production:
+        # 若前端回传 "***"（掩码），保留开发环境已保存的 Key 不覆盖。
+        provider_config["api_key"] = (
+            payload.api_key
+            if payload.api_key and payload.api_key != "***"
+            else existing.get("api_key", "")
+        )
     configs[provider] = provider_config
     save_configs(configs)
     return {"ok": True}
@@ -108,13 +118,27 @@ def test_config(
     db: Session = Depends(get_db),
 ):
     _require_admin(current_user, db)
-    # 优先用表单传来的值，未填则回退到已保存配置
+    production = get_settings().app_env == "production"
+    supplied_api_key = payload.api_key.strip()
+    if production and supplied_api_key and supplied_api_key != "***":
+        raise HTTPException(400, "生产环境 API Key 必须通过环境变量配置")
+
     saved = get_provider_config(provider)
-    api_key = payload.api_key if payload.api_key and payload.api_key != "***" else saved.get("api_key", "")
+    if production:
+        api_key = saved.get("api_key", "")
+    elif payload.api_key and payload.api_key != "***":
+        api_key = payload.api_key
+    else:
+        api_key = saved.get("api_key", "")
     base_url = payload.base_url or saved.get("base_url", "")
     model = payload.model or saved.get("model", "")
     if not api_key:
-        raise HTTPException(400, "请填写 API Key 后再测试")
+        detail = (
+            "生产环境未通过环境变量配置 API Key"
+            if production
+            else "请填写 API Key 后再测试"
+        )
+        raise HTTPException(400, detail)
     try:
         if provider == "anthropic":
             import anthropic
@@ -134,4 +158,6 @@ def test_config(
             )
         return {"ok": True, "message": "连接成功"}
     except Exception as e:
+        if production:
+            raise HTTPException(400, "连接失败，请检查服务配置") from None
         raise HTTPException(400, f"连接失败：{e}")

@@ -228,6 +228,12 @@ def get_llm_effective_config(provider: str, defaults: dict[str, str]) -> dict[st
     provider = (provider or "").strip().lower()
     effective = dict(defaults)
     file_cfg = get_llm_file_configs().get(provider, {})
+    if _get_app_env() == "production":
+        file_cfg = {
+            key: value
+            for key, value in file_cfg.items()
+            if key != "api_key"
+        }
     env_cfg = get_llm_env_config(provider)
     effective.update({k: v for k, v in file_cfg.items() if v is not None})
     effective.update(env_cfg)

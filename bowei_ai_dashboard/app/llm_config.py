@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .settings import get_llm_effective_config
+from .settings import get_llm_effective_config, get_settings
 
 _CONFIG_FILE = Path(__file__).resolve().parent.parent / "llm_configs.json"
 
@@ -47,15 +47,20 @@ def save_configs(configs: dict) -> None:
 def get_provider_config(provider: str) -> dict:
     """Return provider config with env precedence and file fallback.
 
-    In production (ALLOW_FILE_SECRET_FALLBACK=false), the file-based config
-    saved via the web UI is still used as the base — only env vars can override it.
+    Non-secret file settings remain available in production, but API keys are
+    environment-only.
     """
     meta = PROVIDERS.get(provider, {})
     stored = load_configs().get(provider, {})
+    stored_api_key = (
+        ""
+        if get_settings().app_env == "production"
+        else stored.get("api_key", "")
+    )
     effective = get_llm_effective_config(
         provider,
         {
-            "api_key": stored.get("api_key", ""),
+            "api_key": stored_api_key,
             "base_url": stored.get("base_url") or meta.get("default_base_url", ""),
             "model": stored.get("model") or meta.get("default_model", ""),
         },

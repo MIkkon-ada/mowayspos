@@ -33,6 +33,8 @@ from ..services.kickoff_agent import build_kickoff_snapshot, run_kickoff_agent
 from ..services.kickoff_writeback import confirm_kickoff_start
 from ..services.meeting_change_set import (
     build_meeting_plan_snapshot,
+    edit_meeting_change_proposal,
+    execute_meeting_change_set,
     validate_meeting_change_proposal,
 )
 
@@ -392,6 +394,9 @@ def _meeting_change_proposal_payload(
         "confidence": row.confidence,
         "validation": validation,
         "execution_status": row.execution_status,
+        "executed_by_person_id": row.executed_by_person_id,
+        "executed_at": row.executed_at,
+        "result_target_id": row.result_target_id,
     }
 
 
@@ -688,6 +693,94 @@ def get_meeting_change_set(
     )
     if not change_set:
         raise HTTPException(404, "meeting change set not found")
+    return _meeting_change_set_payload(change_set, db)
+
+
+@router.patch("/{row_id}/change-set/proposals/{proposal_id}")
+def patch_meeting_change_proposal(
+    row_id: int,
+    proposal_id: int,
+    payload: schemas.MeetingChangeProposalPatch,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    meeting = _meeting_for_read(row_id, current_user, db)
+    change_set = (
+        db.query(models.MeetingChangeSet)
+        .filter_by(meeting_id=meeting.id)
+        .first()
+    )
+    if not change_set:
+        raise HTTPException(404, "meeting change set not found")
+    proposal = (
+        db.query(models.MeetingChangeProposal)
+        .filter_by(id=proposal_id, change_set_id=change_set.id)
+        .first()
+    )
+    if not proposal:
+        raise HTTPException(404, "meeting change proposal not found")
+    edit_meeting_change_proposal(
+        proposal=proposal,
+        change_set=change_set,
+        transcript_text=meeting.transcript_text or "",
+        proposed=payload.proposed,
+        evidence=payload.evidence,
+        reason=payload.reason,
+        db=db,
+    )
+    db.commit()
+    db.refresh(proposal)
+    return _meeting_change_proposal_payload(proposal, change_set.project_id)
+
+
+@router.post("/{row_id}/change-set/execute")
+def execute_reviewed_meeting_change_set(
+    row_id: int,
+    payload: schemas.MeetingChangeSetExecutePayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    meeting = _meeting_for_read(row_id, current_user, db)
+    proposals = execute_meeting_change_set(
+        meeting=meeting,
+        proposal_ids=payload.proposal_ids,
+        actor=current_user,
+        db=db,
+    )
+    for proposal in proposals:
+        evidence = _json_value(proposal.evidence_json, [])
+        proposed = _json_value(proposal.proposed_json, {})
+        audit_before = {
+            "proposal_id": proposal.id,
+            "before": _json_value(proposal.before_json, {}),
+            "proposed": proposed,
+            "evidence": evidence,
+        }
+        audit_after = {
+            "proposal_id": proposal.id,
+            "proposed": proposed,
+            "evidence": evidence,
+            "result_target_id": proposal.result_target_id,
+            "execution_status": proposal.execution_status,
+        }
+        crud.log(
+            db,
+            current_user,
+            "meeting_change_execute",
+            "meeting_change_proposal",
+            proposal.id,
+            audit_before,
+            audit_after,
+            project_id=meeting.project_id,
+        )
+    db.commit()
+    change_set = (
+        db.query(models.MeetingChangeSet)
+        .filter_by(meeting_id=meeting.id)
+        .first()
+    )
     return _meeting_change_set_payload(change_set, db)
 
 

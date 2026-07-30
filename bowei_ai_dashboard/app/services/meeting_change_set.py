@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import math
+import json
 import re
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain import task_status as TS
+from ..permissions import PROJECT_ROLE_OWNER_KEY, require_project_role
+from ..services.project_close import require_project_business_writable
+from ..time_utils import utc_now
 
 
 ALLOWED_ACTIONS = {
@@ -386,3 +392,259 @@ def _split_people(value: Any) -> list[str]:
 
 def _is_id(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def edit_meeting_change_proposal(
+    *,
+    proposal: models.MeetingChangeProposal,
+    change_set: models.MeetingChangeSet,
+    transcript_text: str,
+    proposed: dict[str, Any],
+    evidence: list[str],
+    reason: str,
+    db: Session,
+) -> models.MeetingChangeProposal:
+    if proposal.execution_status != "pending":
+        raise HTTPException(409, "executed proposal cannot be edited")
+    snapshot = _json_object(change_set.snapshot_json)
+    raw = _stored_proposal_raw(proposal, change_set.project_id)
+    raw.update(
+        {
+            "proposed": proposed,
+            "evidence": evidence,
+            "reason": reason,
+        }
+    )
+    normalized = validate_meeting_change_proposal(raw, snapshot, transcript_text)
+    proposal.proposed_json = _json_dump(normalized["proposed"])
+    proposal.evidence_json = _json_dump(normalized["evidence"])
+    proposal.reason = normalized["reason"]
+    proposal.validation_json = _json_dump(normalized["validation"])
+    db.flush()
+    return proposal
+
+
+def execute_meeting_change_set(
+    *,
+    meeting: models.Meeting,
+    proposal_ids: list[int],
+    actor: str,
+    db: Session,
+) -> list[models.MeetingChangeProposal]:
+    change_set = (
+        db.query(models.MeetingChangeSet)
+        .filter_by(meeting_id=meeting.id)
+        .first()
+    )
+    if not change_set:
+        raise HTTPException(404, "meeting change set not found")
+    if not proposal_ids:
+        return []
+
+    require_project_role(
+        actor,
+        change_set.project_id,
+        [PROJECT_ROLE_OWNER_KEY],
+        db,
+    )
+    require_project_business_writable(change_set.project_id, db)
+
+    unique_ids = list(dict.fromkeys(proposal_ids))
+    if len(unique_ids) != len(proposal_ids):
+        raise HTTPException(422, "proposal_ids must be unique")
+    rows = (
+        db.query(models.MeetingChangeProposal)
+        .filter(
+            models.MeetingChangeProposal.change_set_id == change_set.id,
+            models.MeetingChangeProposal.id.in_(unique_ids),
+        )
+        .all()
+    )
+    if len(rows) != len(unique_ids):
+        raise HTTPException(409, "selected proposal does not belong to meeting change set")
+    by_id = {row.id: row for row in rows}
+    proposals = [by_id[row_id] for row_id in unique_ids]
+
+    snapshot = _json_object(change_set.snapshot_json)
+    for proposal in proposals:
+        if proposal.execution_status != "pending":
+            raise HTTPException(409, "selected proposal is not pending")
+        validation = _json_object(proposal.validation_json)
+        if validation.get("state") == "blocked":
+            raise HTTPException(409, "blocked proposal cannot be executed")
+        normalized = validate_meeting_change_proposal(
+            _stored_proposal_raw(proposal, change_set.project_id),
+            snapshot,
+            meeting.transcript_text or "",
+        )
+        if normalized["validation"]["state"] == "blocked":
+            raise HTTPException(409, "selected proposal failed revalidation")
+        _require_live_target_matches_snapshot(
+            proposal,
+            change_set.project_id,
+            db,
+        )
+
+    account = db.query(models.Account).filter_by(username=actor).first()
+    for proposal in proposals:
+        target = _apply_validated_proposal(
+            proposal,
+            change_set.project_id,
+            db,
+        )
+        proposal.result_target_id = target.id
+        proposal.execution_status = "executed"
+        proposal.executed_by_person_id = account.person_id if account else None
+        proposal.executed_at = utc_now()
+    change_set.status = "executed"
+    db.flush()
+    return proposals
+
+
+def _stored_proposal_raw(
+    proposal: models.MeetingChangeProposal,
+    project_id: int,
+) -> dict[str, Any]:
+    target: dict[str, Any] = {"project_id": project_id}
+    if proposal.target_type == "workstream" and proposal.target_id is not None:
+        target["workstream_id"] = proposal.target_id
+    if proposal.target_type == "subtask" and proposal.target_id is not None:
+        target["subtask_id"] = proposal.target_id
+    if proposal.parent_workstream_id is not None:
+        target["parent_workstream_id"] = proposal.parent_workstream_id
+    return {
+        "action": proposal.action,
+        "target": target,
+        "proposed": _json_object(proposal.proposed_json),
+        "evidence": _json_list(proposal.evidence_json),
+        "reason": proposal.reason,
+        "confidence": proposal.confidence,
+    }
+
+
+def _require_live_target_matches_snapshot(
+    proposal: models.MeetingChangeProposal,
+    project_id: int,
+    db: Session,
+) -> None:
+    before = _json_object(proposal.before_json)
+    if proposal.action == "update_workstream":
+        row = db.get(models.Task, proposal.target_id)
+        if not row or row.project_id != project_id or bool(row.is_deleted):
+            raise HTTPException(409, "workstream target is stale or deleted")
+        live = {field: str(getattr(row, field, "") or "") for field in WORKSTREAM_FIELDS}
+        if live != before:
+            raise HTTPException(409, "workstream target changed after analysis")
+        return
+    if proposal.action == "update_subtask":
+        row = db.get(models.SubTask, proposal.target_id)
+        parent = db.get(models.Task, row.task_id) if row else None
+        if (
+            not row
+            or bool(row.is_deleted)
+            or not parent
+            or bool(parent.is_deleted)
+            or parent.project_id != project_id
+            or parent.id != proposal.parent_workstream_id
+        ):
+            raise HTTPException(409, "subtask target is stale or deleted")
+        live = {field: str(getattr(row, field, "") or "") for field in SUBTASK_FIELDS}
+        if live != before:
+            raise HTTPException(409, "subtask target changed after analysis")
+        return
+    if proposal.action == "create_subtask":
+        parent = db.get(models.Task, proposal.parent_workstream_id)
+        if not parent or bool(parent.is_deleted) or parent.project_id != project_id:
+            raise HTTPException(409, "parent workstream is stale or deleted")
+
+
+def _apply_validated_proposal(
+    proposal: models.MeetingChangeProposal,
+    project_id: int,
+    db: Session,
+) -> models.Task | models.SubTask:
+    proposed = _json_object(proposal.proposed_json)
+    project = db.get(models.Project, project_id)
+    if not project:
+        raise HTTPException(409, "project no longer exists")
+
+    if proposal.action == "create_workstream":
+        values = {field: proposed.get(field, "") for field in WORKSTREAM_FIELDS}
+        values["status"] = TS.normalize(values.get("status"))
+        row = models.Task(
+            project_id=project_id,
+            special_project=project.name or "",
+            source_type="meeting_change_set",
+            is_deleted=False,
+            **values,
+        )
+        row.owner_id = _active_project_person_id(project_id, row.owner or "", db)
+    elif proposal.action == "update_workstream":
+        row = db.get(models.Task, proposal.target_id)
+        for field, value in proposed.items():
+            setattr(row, field, TS.normalize(value) if field == "status" else value)
+        row.owner_id = _active_project_person_id(project_id, row.owner or "", db)
+        row.edit_count = (row.edit_count or 0) + 1
+    elif proposal.action == "create_subtask":
+        values = {field: proposed.get(field, "") for field in SUBTASK_FIELDS}
+        values["status"] = TS.normalize(values.get("status"))
+        if values.get("assignee") and values["status"] == TS.S_NOT_STARTED:
+            values["status"] = TS.S_IN_PROGRESS
+        row = models.SubTask(
+            task_id=proposal.parent_workstream_id,
+            is_deleted=False,
+            **values,
+        )
+        row.assignee_id = _active_project_person_id(project_id, row.assignee or "", db)
+    elif proposal.action == "update_subtask":
+        row = db.get(models.SubTask, proposal.target_id)
+        before_assignee = (row.assignee or "").strip()
+        for field, value in proposed.items():
+            setattr(row, field, TS.normalize(value) if field == "status" else value)
+        if not before_assignee and (row.assignee or "").strip():
+            if TS.normalize(row.status) == TS.S_NOT_STARTED:
+                row.status = TS.S_IN_PROGRESS
+        row.assignee_id = _active_project_person_id(project_id, row.assignee or "", db)
+    else:
+        raise HTTPException(409, "proposal action is not executable")
+
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _active_project_person_id(project_id: int, name: str, db: Session) -> int | None:
+    normalized = (name or "").strip()
+    if not normalized:
+        return None
+    row = (
+        db.query(models.Person.id)
+        .join(models.ProjectMember, models.ProjectMember.person_id == models.Person.id)
+        .filter(
+            models.ProjectMember.project_id == project_id,
+            models.Person.name == normalized,
+            models.Person.is_active.is_(True),
+        )
+        .first()
+    )
+    return int(row[0]) if row else None
+
+
+def _json_object(value: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_list(value: str) -> list[Any]:
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _json_dump(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, allow_nan=False)

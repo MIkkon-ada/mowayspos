@@ -393,6 +393,25 @@ class MeetingStatusPatch(BaseModel):
     reject_reason: str = ""
 
 
+class MeetingChangeProposalPatch(BaseModel):
+    proposed: dict[str, Any]
+    evidence: list[str]
+    reason: str
+
+
+class MeetingChangeSetExecutePayload(BaseModel):
+    proposal_ids: list[int]
+
+    @field_validator("proposal_ids")
+    @classmethod
+    def validate_proposal_ids(cls, value: list[int]) -> list[int]:
+        if any(isinstance(item, bool) or item <= 0 for item in value):
+            raise ValueError("proposal_ids must contain positive integers")
+        if len(set(value)) != len(value):
+            raise ValueError("proposal_ids must be unique")
+        return value
+
+
 class KickoffRunCreatePayload(BaseModel):
     transcript_text: str = Field(..., min_length=1)
 

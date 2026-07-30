@@ -512,3 +512,335 @@ def test_saving_meeting_attaches_only_own_matching_draft_and_reuses_read_permiss
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "ATTACH_AND_READ_CHANGE_SET" in result.stdout
+
+
+_EXECUTION_SETUP = r'''
+import json
+
+from app import models
+from app.database import Base, SessionLocal, engine
+
+Base.metadata.create_all(bind=engine)
+db = SessionLocal()
+db.add_all([
+    models.Person(id=1, name="Owner", is_active=True),
+    models.Person(id=2, name="Member", is_active=True),
+    models.Account(id=1, username="owner", password_hash="x", person_id=1, status="active"),
+    models.Account(id=2, username="member", password_hash="x", person_id=2, status="active"),
+    models.Project(id=1, name="Project A", status="active", is_active=True),
+    models.ProjectMember(project_id=1, person_id=1, person_name_snapshot="Owner", role="owner"),
+    models.ProjectMember(project_id=1, person_id=2, person_name_snapshot="Member", role="member"),
+    models.Task(
+        id=10,
+        project_id=1,
+        special_project="Project A",
+        key_task="Existing workstream",
+        key_achievement="Before achievement",
+        completion_standard="Before standard",
+        coordinator="",
+        owner="Owner",
+        owner_id=1,
+        collaborators="",
+        plan_time="2026-07",
+        status="in_progress",
+        is_deleted=False,
+    ),
+    models.SubTask(
+        id=20,
+        task_id=10,
+        title="Existing key task",
+        assignee="Owner",
+        assignee_id=1,
+        plan_time="2026-07",
+        status="in_progress",
+        completion_criteria="Before criteria",
+        notes="Before notes",
+        is_deleted=False,
+    ),
+    models.Meeting(
+        id=1,
+        project_id=1,
+        creator_person_id=1,
+        title="Published review",
+        transcript_text="Evidence one. Updated evidence.",
+        publish_status="published",
+    ),
+])
+db.commit()
+
+snapshot = {
+    "project_id": 1,
+    "member_names": ["Owner", "Member"],
+    "workstreams": [{
+        "id": 10,
+        "key_task": "Existing workstream",
+        "owner": "Owner",
+        "coordinator": "",
+        "collaborators": "",
+        "plan_time": "2026-07",
+        "status": "in_progress",
+        "key_achievement": "Before achievement",
+        "completion_standard": "Before standard",
+        "subtasks": [{
+            "id": 20,
+            "title": "Existing key task",
+            "assignee": "Owner",
+            "plan_time": "2026-07",
+            "completion_criteria": "Before criteria",
+            "status": "in_progress",
+            "notes": "Before notes",
+        }],
+    }],
+}
+change_set = models.MeetingChangeSet(
+    id=1,
+    project_id=1,
+    meeting_id=1,
+    created_by_person_id=1,
+    transcript_hash="a" * 64,
+    snapshot_json=json.dumps(snapshot),
+    result_json=json.dumps({"change_set": []}),
+    status="attached",
+)
+db.add(change_set)
+db.flush()
+
+def add_proposal(
+    row_id,
+    action,
+    target_type,
+    target_id,
+    parent_workstream_id,
+    before,
+    proposed,
+    validation_state="ready",
+):
+    db.add(models.MeetingChangeProposal(
+        id=row_id,
+        change_set_id=1,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        parent_workstream_id=parent_workstream_id,
+        before_json=json.dumps(before),
+        proposed_json=json.dumps(proposed),
+        evidence_json=json.dumps(["Evidence one."]),
+        reason="Explicit meeting direction.",
+        confidence=0.9,
+        validation_json=json.dumps({
+            "state": validation_state,
+            "errors": [] if validation_state != "blocked" else ["blocked for test"],
+        }),
+        execution_status="pending",
+    ))
+
+workstream_before = {
+    "key_task": "Existing workstream",
+    "owner": "Owner",
+    "coordinator": "",
+    "collaborators": "",
+    "plan_time": "2026-07",
+    "status": "in_progress",
+    "key_achievement": "Before achievement",
+    "completion_standard": "Before standard",
+}
+subtask_before = {
+    "title": "Existing key task",
+    "assignee": "Owner",
+    "plan_time": "2026-07",
+    "completion_criteria": "Before criteria",
+    "status": "in_progress",
+    "notes": "Before notes",
+}
+add_proposal(1, "update_workstream", "workstream", 10, None, workstream_before, {
+    "key_achievement": "After achievement",
+})
+add_proposal(2, "update_subtask", "subtask", 20, 10, subtask_before, {
+    "notes": "Agent notes",
+})
+add_proposal(3, "create_workstream", "workstream", None, None, {}, {
+    "key_task": "Created workstream",
+    "owner": "Owner",
+    "status": "not_started",
+})
+add_proposal(4, "create_subtask", "subtask", None, 10, {}, {
+    "title": "Created key task",
+    "assignee": "Member",
+    "status": "not_started",
+})
+add_proposal(5, "create_subtask", "subtask", None, 10, {}, {
+    "title": "Unselected key task",
+    "assignee": "Member",
+})
+add_proposal(6, "create_workstream", "workstream", None, None, {}, {
+    "key_task": "Blocked workstream",
+}, "blocked")
+db.commit()
+db.close()
+
+from app.main import app
+import app.main as main
+from app.routers import meetings
+from fastapi.testclient import TestClient
+
+active_user = {"name": "owner"}
+main.get_session_user = lambda _session_id: active_user["name"]
+app.dependency_overrides[meetings.get_current_user_name] = lambda: active_user["name"]
+client = TestClient(app)
+'''
+
+
+def _run_execution_script(tmp_path: Path, body: str) -> subprocess.CompletedProcess[str]:
+    database = tmp_path / "meeting-execution.db"
+    env = os.environ.copy()
+    env.update(
+        {
+            "APP_ENV": "test",
+            "DATABASE_URL": f"sqlite:///{database.resolve().as_posix()}",
+            "FRONTEND_ORIGIN": "",
+            "PYTHONPATH": str(BACKEND_ROOT),
+        }
+    )
+    return subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(_EXECUTION_SETUP + "\n" + body)],
+        cwd=BACKEND_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+def test_execution_requires_owner_explicit_selection_and_nonblocked_rows(
+    tmp_path: Path,
+):
+    result = _run_execution_script(
+        tmp_path,
+        r'''
+active_user["name"] = "member"
+denied = client.post(
+    "/api/meetings/1/change-set/execute",
+    json={"proposal_ids": [1]},
+    cookies={"bowei_session": "test-session"},
+)
+assert denied.status_code == 403, denied.text
+
+active_user["name"] = "owner"
+empty = client.post(
+    "/api/meetings/1/change-set/execute",
+    json={"proposal_ids": []},
+    cookies={"bowei_session": "test-session"},
+)
+assert empty.status_code == 200, empty.text
+
+blocked = client.post(
+    "/api/meetings/1/change-set/execute",
+    json={"proposal_ids": [6]},
+    cookies={"bowei_session": "test-session"},
+)
+assert blocked.status_code == 409, blocked.text
+
+db = SessionLocal()
+assert db.query(models.Task).count() == 1
+assert db.query(models.SubTask).count() == 1
+assert {
+    row.execution_status
+    for row in db.query(models.MeetingChangeProposal).all()
+} == {"pending"}
+db.close()
+app.dependency_overrides.clear()
+print("EXECUTION_GUARDS_OK")
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "EXECUTION_GUARDS_OK" in result.stdout
+
+
+def test_patch_revalidates_and_selected_four_actions_execute_with_audit(
+    tmp_path: Path,
+):
+    result = _run_execution_script(
+        tmp_path,
+        r'''
+patched = client.patch(
+    "/api/meetings/1/change-set/proposals/2",
+    json={
+        "proposed": {"notes": "Human reviewed notes"},
+        "evidence": ["Updated evidence."],
+        "reason": "Human confirmed the exact update.",
+    },
+    cookies={"bowei_session": "test-session"},
+)
+assert patched.status_code == 200, patched.text
+assert patched.json()["proposed"]["notes"] == "Human reviewed notes"
+assert patched.json()["evidence"] == ["Updated evidence."]
+assert patched.json()["validation"]["state"] == "ready"
+
+executed = client.post(
+    "/api/meetings/1/change-set/execute",
+    json={"proposal_ids": [1, 2, 3, 4]},
+    cookies={"bowei_session": "test-session"},
+)
+assert executed.status_code == 200, executed.text
+payload = executed.json()
+assert {row["id"] for row in payload["proposals"] if row["execution_status"] == "executed"} == {1, 2, 3, 4}
+
+db = SessionLocal()
+assert db.get(models.Task, 10).key_achievement == "After achievement"
+assert db.get(models.SubTask, 20).notes == "Human reviewed notes"
+created_workstream = db.query(models.Task).filter_by(key_task="Created workstream").one()
+assert created_workstream.owner_id == 1
+created_key_task = db.query(models.SubTask).filter_by(title="Created key task").one()
+assert created_key_task.task_id == 10
+assert created_key_task.assignee_id == 2
+assert db.get(models.MeetingChangeProposal, 5).execution_status == "pending"
+assert db.get(models.MeetingChangeProposal, 6).execution_status == "pending"
+
+logs = db.query(models.OperationLog).filter_by(action="meeting_change_execute").all()
+assert len(logs) == 4
+for log in logs:
+    after = json.loads(log.after_json)
+    assert after["proposal_id"] == log.target_id
+    assert after["result_target_id"] is not None
+    assert after["evidence"]
+db.close()
+app.dependency_overrides.clear()
+print("FOUR_ACTIONS_EXECUTED")
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "FOUR_ACTIONS_EXECUTED" in result.stdout
+
+
+def test_stale_selected_target_rejects_entire_batch_without_partial_create(
+    tmp_path: Path,
+):
+    result = _run_execution_script(
+        tmp_path,
+        r'''
+db = SessionLocal()
+db.get(models.SubTask, 20).notes = "Changed after analysis"
+db.commit()
+db.close()
+
+stale = client.post(
+    "/api/meetings/1/change-set/execute",
+    json={"proposal_ids": [2, 3]},
+    cookies={"bowei_session": "test-session"},
+)
+assert stale.status_code == 409, stale.text
+
+db = SessionLocal()
+assert db.query(models.Task).filter_by(key_task="Created workstream").count() == 0
+assert db.get(models.SubTask, 20).notes == "Changed after analysis"
+assert db.get(models.MeetingChangeProposal, 2).execution_status == "pending"
+assert db.get(models.MeetingChangeProposal, 3).execution_status == "pending"
+assert db.query(models.OperationLog).filter_by(action="meeting_change_execute").count() == 0
+db.close()
+app.dependency_overrides.clear()
+print("STALE_BATCH_REJECTED")
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "STALE_BATCH_REJECTED" in result.stdout

@@ -18,6 +18,30 @@ def _db_session():
 
 
 def _seed_plan(db):
+    db.add_all(
+        [
+            models.Project(id=7, name="Project 7"),
+            models.Project(id=8, name="Project 8"),
+            models.Person(id=1, name="Known owner", is_active=True),
+            models.Person(id=2, name="Known coordinator", is_active=True),
+            models.Person(id=3, name="Known collaborator", is_active=True),
+            models.Person(id=4, name="Known assignee", is_active=True),
+            models.Person(id=5, name="Member without task", is_active=True),
+            models.Person(id=6, name="Inactive member", is_active=False),
+            models.Person(id=7, name="Active nonmember", is_active=True),
+        ]
+    )
+    db.flush()
+    db.add_all(
+        [
+            models.ProjectMember(project_id=7, person_id=1, role="owner"),
+            models.ProjectMember(project_id=7, person_id=2, role="project_ceo"),
+            models.ProjectMember(project_id=7, person_id=3, role="member"),
+            models.ProjectMember(project_id=7, person_id=4, role="member"),
+            models.ProjectMember(project_id=7, person_id=5, role="member"),
+            models.ProjectMember(project_id=7, person_id=6, role="member"),
+        ]
+    )
     active = models.Task(
         id=1,
         project_id=7,
@@ -101,6 +125,13 @@ def test_snapshot_contains_only_live_project_plan_rows_and_never_mutates_them():
 
     assert snapshot == {
         "project_id": 7,
+        "member_names": [
+            "Known assignee",
+            "Known collaborator",
+            "Known coordinator",
+            "Known owner",
+            "Member without task",
+        ],
         "workstreams": [
             {
                 "id": 1,
@@ -199,6 +230,7 @@ def test_create_workstream_requires_key_task():
             "proposed": {"owner": "Known owner"},
             "evidence": ["Speaker 1: create a new workstream."],
             "reason": "A new workstream was explicitly requested.",
+            "confidence": 0.5,
         },
         build_meeting_plan_snapshot(7, db),
     )
@@ -220,6 +252,7 @@ def test_create_subtask_requires_title_and_parent_workstream():
             "proposed": {"assignee": "Known assignee"},
             "evidence": ["Speaker 1: create the follow-up task."],
             "reason": "The follow-up was explicitly assigned.",
+            "confidence": 0.5,
         },
         build_meeting_plan_snapshot(7, db),
     )
@@ -354,6 +387,7 @@ def test_empty_update_proposed_fields_are_blocked_for_both_target_types():
             "proposed": {},
             "evidence": ["Speaker 1: review the workstream."],
             "reason": "The workstream was discussed.",
+            "confidence": 0.5,
         },
         snapshot,
     )
@@ -364,6 +398,7 @@ def test_empty_update_proposed_fields_are_blocked_for_both_target_types():
             "proposed": {},
             "evidence": ["Speaker 1: review the subtask."],
             "reason": "The subtask was discussed.",
+            "confidence": 0.5,
         },
         snapshot,
     )
@@ -397,7 +432,7 @@ def test_unknown_owner_requires_review_without_mutating_the_plan():
 
     assert normalized["validation"] == {
         "state": "needs_review",
-        "errors": ["owner is not present in the frozen plan and requires review"],
+        "errors": ["owner requires review for nonmember or inactive names: New owner"],
     }
     assert db.query(models.Task).count() == before_count
 
@@ -421,6 +456,164 @@ def test_unknown_assignee_requires_review_without_mutating_the_plan():
 
     assert normalized["validation"] == {
         "state": "needs_review",
-        "errors": ["assignee is not present in the frozen plan and requires review"],
+        "errors": ["assignee requires review for nonmember or inactive names: New person"],
     }
     assert db.query(models.SubTask).count() == before_count
+
+
+def test_forged_evidence_excerpt_is_blocked_when_transcript_is_supplied():
+    db = _db_session()
+    _seed_plan(db)
+    proposal = _valid_update_workstream()
+    proposal["evidence"] = ["Speaker 9: approve an unmentioned change."]
+
+    normalized = validate_meeting_change_proposal(
+        proposal,
+        build_meeting_plan_snapshot(7, db),
+        transcript_text="Speaker 1: use the approved standard.",
+    )
+
+    assert normalized["validation"] == {
+        "state": "blocked",
+        "errors": ["evidence excerpts must occur in transcript_text"],
+    }
+
+
+def test_member_names_use_active_project_members_including_roles_without_tasks():
+    db = _db_session()
+    _seed_plan(db)
+    snapshot = build_meeting_plan_snapshot(7, db)
+
+    assert snapshot["member_names"] == [
+        "Known assignee",
+        "Known collaborator",
+        "Known coordinator",
+        "Known owner",
+        "Member without task",
+    ]
+    normalized = validate_meeting_change_proposal(
+        {
+            "action": "update_workstream",
+            "target": {"workstream_id": 1},
+            "proposed": {
+                "owner": "Member without task",
+                "coordinator": "Known coordinator",
+                "collaborators": "Known owner, Known collaborator，Member without task",
+            },
+            "evidence": ["Speaker 1: assign the listed project members."],
+            "reason": "The meeting explicitly reassigned the workstream.",
+            "confidence": 0.9,
+        },
+        snapshot,
+    )
+
+    assert normalized["validation"] == {"state": "ready", "errors": []}
+
+
+def test_inactive_or_nonmember_people_require_review_for_all_workstream_people_fields():
+    db = _db_session()
+    _seed_plan(db)
+    snapshot = build_meeting_plan_snapshot(7, db)
+
+    inactive_owner = validate_meeting_change_proposal(
+        {
+            "action": "update_workstream",
+            "target": {"workstream_id": 1},
+            "proposed": {"owner": "Inactive member"},
+            "evidence": ["Speaker 1: assign an inactive member."],
+            "reason": "The assignment was discussed.",
+            "confidence": 0.5,
+        },
+        snapshot,
+    )
+    nonmember_coordinator = validate_meeting_change_proposal(
+        {
+            "action": "update_workstream",
+            "target": {"workstream_id": 1},
+            "proposed": {"coordinator": "Active nonmember"},
+            "evidence": ["Speaker 1: appoint an outsider."],
+            "reason": "The appointment was discussed.",
+            "confidence": 0.5,
+        },
+        snapshot,
+    )
+    mixed_collaborators = validate_meeting_change_proposal(
+        {
+            "action": "update_workstream",
+            "target": {"workstream_id": 1},
+            "proposed": {"collaborators": "Known owner, Inactive member，Active nonmember"},
+            "evidence": ["Speaker 1: assign the listed collaborators."],
+            "reason": "The collaboration was discussed.",
+            "confidence": 0.5,
+        },
+        snapshot,
+    )
+
+    assert inactive_owner["validation"] == {
+        "state": "needs_review",
+        "errors": ["owner requires review for nonmember or inactive names: Inactive member"],
+    }
+    assert nonmember_coordinator["validation"] == {
+        "state": "needs_review",
+        "errors": ["coordinator requires review for nonmember or inactive names: Active nonmember"],
+    }
+    assert mixed_collaborators["validation"] == {
+        "state": "needs_review",
+        "errors": [
+            "collaborators requires review for nonmember or inactive names: Inactive member, Active nonmember"
+        ],
+    }
+
+
+def test_invalid_confidence_values_are_blocked():
+    db = _db_session()
+    _seed_plan(db)
+    snapshot = build_meeting_plan_snapshot(7, db)
+
+    for value in (
+        None,
+        "not-a-number",
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        -0.01,
+        1.01,
+    ):
+        proposal = _valid_update_workstream()
+        proposal["confidence"] = value
+
+        normalized = validate_meeting_change_proposal(proposal, snapshot)
+
+        assert normalized["confidence"] == 0.0
+        assert normalized["validation"] == {
+            "state": "blocked",
+            "errors": ["confidence must be a finite number between 0 and 1"],
+        }
+
+
+def test_proposed_field_output_has_stable_allowlist_order():
+    db = _db_session()
+    _seed_plan(db)
+    snapshot = build_meeting_plan_snapshot(7, db)
+    base = {
+        "action": "update_workstream",
+        "target": {"workstream_id": 1},
+        "evidence": ["Speaker 1: update owner and status."],
+        "reason": "The meeting explicitly updated both fields.",
+        "confidence": 0.6,
+    }
+
+    first = validate_meeting_change_proposal(
+        {**base, "proposed": {"status": "Done", "owner": "Known owner"}},
+        snapshot,
+    )
+    second = validate_meeting_change_proposal(
+        {**base, "proposed": {"owner": "Known owner", "status": "Done"}},
+        snapshot,
+    )
+
+    assert list(first["proposed"]) == list(second["proposed"]) == ["owner", "status"]
+    assert first["proposed"] == second["proposed"] == {
+        "owner": "Known owner",
+        "status": "Done",
+    }

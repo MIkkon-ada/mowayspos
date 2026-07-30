@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -17,7 +18,7 @@ ALLOWED_ACTIONS = {
     "update_subtask",
 }
 
-WORKSTREAM_FIELDS = {
+WORKSTREAM_FIELDS = (
     "key_task",
     "owner",
     "coordinator",
@@ -26,20 +27,38 @@ WORKSTREAM_FIELDS = {
     "status",
     "key_achievement",
     "completion_standard",
-}
+)
 
-SUBTASK_FIELDS = {
+SUBTASK_FIELDS = (
     "title",
     "assignee",
     "plan_time",
     "completion_criteria",
     "status",
     "notes",
-}
+)
 
 
 def build_meeting_plan_snapshot(project_id: int, db: Session) -> dict[str, Any]:
     """Freeze live, non-deleted work-plan rows without inferring meeting facts."""
+    member_names: list[str] = []
+    seen_member_names: set[str] = set()
+    member_rows = (
+        db.query(models.Person.name)
+        .join(models.ProjectMember, models.ProjectMember.person_id == models.Person.id)
+        .filter(
+            models.ProjectMember.project_id == project_id,
+            models.Person.is_active.is_(True),
+        )
+        .order_by(models.Person.name, models.Person.id)
+        .all()
+    )
+    for (name,) in member_rows:
+        normalized_name = (name or "").strip()
+        if normalized_name and normalized_name not in seen_member_names:
+            member_names.append(normalized_name)
+            seen_member_names.add(normalized_name)
+
     workstreams: list[dict[str, Any]] = []
     rows = (
         db.query(models.Task)
@@ -79,10 +98,18 @@ def build_meeting_plan_snapshot(project_id: int, db: Session) -> dict[str, Any]:
                 ],
             }
         )
-    return {"project_id": project_id, "workstreams": workstreams}
+    return {
+        "project_id": project_id,
+        "member_names": member_names,
+        "workstreams": workstreams,
+    }
 
 
-def validate_meeting_change_proposal(raw: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
+def validate_meeting_change_proposal(
+    raw: dict[str, Any],
+    snapshot: dict[str, Any],
+    transcript_text: str | None = None,
+) -> dict[str, Any]:
     """Return a safe, review-only proposal derived from one frozen plan snapshot."""
     raw = raw if isinstance(raw, dict) else {}
     snapshot_project_id = snapshot.get("project_id")
@@ -113,8 +140,9 @@ def validate_meeting_change_proposal(raw: dict[str, Any], snapshot: dict[str, An
     allowed_fields = _allowed_fields_for_action(action)
     proposed = _normalize_proposed(raw.get("proposed"), allowed_fields, errors)
     evidence = _normalize_evidence(raw.get("evidence"), errors)
+    _validate_evidence_against_transcript(evidence, transcript_text, errors)
     reason = _normalize_reason(raw.get("reason"), errors)
-    confidence = _normalize_confidence(raw.get("confidence"))
+    confidence = _normalize_confidence(raw.get("confidence"), errors)
 
     _validate_creation_requirements(action, proposed, target, errors)
     if not errors:
@@ -204,15 +232,19 @@ def _resolve_target(
     return workstream, subtask
 
 
-def _allowed_fields_for_action(action: str) -> set[str]:
+def _allowed_fields_for_action(action: str) -> tuple[str, ...]:
     if action in {"create_workstream", "update_workstream"}:
         return WORKSTREAM_FIELDS
     if action in {"create_subtask", "update_subtask"}:
         return SUBTASK_FIELDS
-    return set()
+    return ()
 
 
-def _normalize_proposed(value: Any, allowed_fields: set[str], errors: list[str]) -> dict[str, str]:
+def _normalize_proposed(
+    value: Any,
+    allowed_fields: tuple[str, ...],
+    errors: list[str],
+) -> dict[str, str]:
     if not isinstance(value, dict):
         errors.append("proposed must be an object")
         return {}
@@ -222,9 +254,10 @@ def _normalize_proposed(value: Any, allowed_fields: set[str], errors: list[str])
         errors.append(f"proposed contains unsupported fields: {', '.join(unsupported)}")
 
     proposed: dict[str, str] = {}
-    for key, item in value.items():
-        if key not in allowed_fields:
+    for key in allowed_fields:
+        if key not in value:
             continue
+        item = value[key]
         if not isinstance(item, str):
             errors.append(f"proposed.{key} must be a string")
             continue
@@ -251,6 +284,18 @@ def _normalize_evidence(value: Any, errors: list[str]) -> list[str]:
     return evidence
 
 
+def _validate_evidence_against_transcript(
+    evidence: list[str],
+    transcript_text: str | None,
+    errors: list[str],
+) -> None:
+    if transcript_text is not None and (
+        not isinstance(transcript_text, str)
+        or any(excerpt not in transcript_text for excerpt in evidence)
+    ):
+        errors.append("evidence excerpts must occur in transcript_text")
+
+
 def _normalize_reason(value: Any, errors: list[str]) -> str:
     if not isinstance(value, str) or not value.strip():
         errors.append("reason must be a non-empty string")
@@ -258,13 +303,19 @@ def _normalize_reason(value: Any, errors: list[str]) -> str:
     return value.strip()
 
 
-def _normalize_confidence(value: Any) -> float:
+def _normalize_confidence(value: Any, errors: list[str]) -> float:
     if isinstance(value, bool):
+        errors.append("confidence must be a finite number between 0 and 1")
         return 0.0
     try:
-        return float(value)
+        confidence = float(value)
     except (TypeError, ValueError):
+        errors.append("confidence must be a finite number between 0 and 1")
         return 0.0
+    if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+        errors.append("confidence must be a finite number between 0 and 1")
+        return 0.0
+    return confidence
 
 
 def _validate_creation_requirements(
@@ -290,9 +341,9 @@ def _before_from_snapshot(
     subtask: dict[str, Any] | None,
 ) -> dict[str, str]:
     if action == "update_workstream" and workstream is not None:
-        return {field: str(workstream.get(field) or "") for field in sorted(WORKSTREAM_FIELDS)}
+        return {field: str(workstream.get(field) or "") for field in WORKSTREAM_FIELDS}
     if action == "update_subtask" and subtask is not None:
-        return {field: str(subtask.get(field) or "") for field in sorted(SUBTASK_FIELDS)}
+        return {field: str(subtask.get(field) or "") for field in SUBTASK_FIELDS}
     return {}
 
 
@@ -302,27 +353,35 @@ def _add_unknown_person_review_notes(
     snapshot: dict[str, Any],
     review_notes: list[str],
 ) -> None:
-    field = "owner" if action in {"create_workstream", "update_workstream"} else "assignee"
-    value = proposed.get(field, "")
-    if value and value not in _known_people(snapshot):
-        review_notes.append(f"{field} is not present in the frozen plan and requires review")
-
-
-def _known_people(snapshot: dict[str, Any]) -> set[str]:
-    people: set[str] = set()
-    for workstream in _workstreams_by_id(snapshot).values():
+    known_members = _known_member_names(snapshot)
+    if action in {"create_workstream", "update_workstream"}:
         for field in ("owner", "coordinator", "collaborators"):
-            people.update(_split_people(workstream.get(field)))
-        for subtask in workstream.get("subtasks", []):
-            if isinstance(subtask, dict):
-                people.update(_split_people(subtask.get("assignee")))
-    return people
+            unknown_names = [
+                name for name in _split_people(proposed.get(field, "")) if name not in known_members
+            ]
+            if unknown_names:
+                review_notes.append(
+                    f"{field} requires review for nonmember or inactive names: {', '.join(unknown_names)}"
+                )
+    elif action in {"create_subtask", "update_subtask"}:
+        assignee = proposed.get("assignee", "")
+        if assignee and assignee not in known_members:
+            review_notes.append(
+                f"assignee requires review for nonmember or inactive names: {assignee}"
+            )
 
 
-def _split_people(value: Any) -> set[str]:
-    if not isinstance(value, str):
+def _known_member_names(snapshot: dict[str, Any]) -> set[str]:
+    rows = snapshot.get("member_names")
+    if not isinstance(rows, list):
         return set()
-    return {item.strip() for item in re.split(r"[,/，、;；]", value) if item.strip()}
+    return {name.strip() for name in rows if isinstance(name, str) and name.strip()}
+
+
+def _split_people(value: Any) -> list[str]:
+    if not isinstance(value, str):
+        return []
+    return [item.strip() for item in re.split(r"[,/，、;；]", value) if item.strip()]
 
 
 def _is_id(value: Any) -> bool:

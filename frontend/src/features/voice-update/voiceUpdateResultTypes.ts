@@ -107,6 +107,7 @@ export type VoiceUpdateResultCardProps = {
   keyTaskIssues: KeyTaskIssue[]
   setKeyTaskIssues: Dispatch<SetStateAction<KeyTaskIssue[]>>
   selectedSubtaskId: number | null
+  selectedProjectId: number | null
   proposedSubtasks: ProposedSubTask[]
   setProposedSubtasks: Dispatch<SetStateAction<ProposedSubTask[]>>
   cardEdits: Record<number, CardEdit>
@@ -121,7 +122,7 @@ export type VoiceUpdateResultCardProps = {
 
 export type VoiceUpdateTaskReportsSectionProps = Pick<
   VoiceUpdateResultCardProps,
-  'phase' | 'taskReports' | 'setTaskReports' | 'keyTaskIssues' | 'setKeyTaskIssues' | 'selectedSubtaskId' | 'cardEdits' | 'updateCardEdit' | 'projectTasksForSuggest' | 'voiceSubtasksContext'
+  'phase' | 'taskReports' | 'setTaskReports' | 'keyTaskIssues' | 'setKeyTaskIssues' | 'selectedSubtaskId' | 'selectedProjectId' | 'cardEdits' | 'updateCardEdit' | 'projectTasksForSuggest' | 'voiceSubtasksContext'
 >
 
 export type VoiceUpdateEditableFieldsSectionProps = Pick<

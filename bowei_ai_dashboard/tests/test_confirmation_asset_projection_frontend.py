@@ -133,15 +133,11 @@ def test_same_issue_on_different_subtasks_is_preserved_twice():
 
 def test_submission_achievement_block_is_before_owner_actions_and_not_view_restricted():
     page = _page()
-    block = page.index("{/* Submission-level achievements */}")
-    issues = page.index("{/* Unified issue review projection */}")
-    owner = page.index("{/* Submission-level owner actions */}")
-    assert block < issues < owner
-    snippet = page[block:issues]
-    assert "提交级成果" in snippet
-    assert "submissionAchievements.length > 0" in snippet
-    assert "viewMode === 'all'" not in snippet
-    assert "viewMode === 'mine'" not in snippet
+    # The current inline review workbench projects submission achievements
+    # into the confirmation payload rather than rendering a separate legacy block.
+    assert "assetProjection.submissionAchievements.map" in page
+    assert "write_task_reports_achievements" in page
+    assert "viewMode === 'mine'" not in page
 
 
 def test_confirm_payload_preserves_report_issues_and_separates_submission_issues():

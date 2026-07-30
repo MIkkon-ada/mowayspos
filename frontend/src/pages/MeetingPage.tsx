@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { fetchMeetings, patchMeetingStatus } from '../api/meetings'
+import { getOverview } from '../api/dashboard'
 import { useProject } from '../context/ProjectContext'
 import type { MeetingItem } from '../types'
 import { InfoRow, MeetingSection, renderJsonList } from '../features/meeting/meetingShared'
 import { toast } from '../utils/toast'
 import { SkeletonTableRows } from '../components/Skeleton'
 import { NewMeetingModal } from '../features/meeting/NewMeetingModal'
+import { KickoffAgentWorkspace } from '../features/meeting/KickoffAgentWorkspace'
 import { STATUS_CONFIG, TYPE_STYLE, fmtTime, getStatus, typeLabel, type PublishStatus } from '../features/meeting/meetingUtils'
 import { getProjectDisplayName } from '../domain/projectDisplay'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
@@ -27,8 +29,11 @@ export function MeetingPage() {
   const [showReturnInput, setShowReturnInput] = useState(false)
   const [showNewModal, setShowNewModal] = useState(false)
   const [editingItem, setEditingItem] = useState<MeetingItem | null>(null)
+  const [projectProgress, setProjectProgress] = useState<Record<number, number>>({})
 
   const currentProject = projects.find((p) => p.id === currentProjectId) ?? null
+  const effectiveProject = projects.find((p) => p.id === effectiveProjectId) ?? null
+  const pending_kickoff = String(effectiveProject?.lifecycle_status ?? effectiveProject?.status ?? '') === 'pending_kickoff'
   const projectArchived = isProjectArchived(currentProject)
   const noProject = !effectiveProjectId
 
@@ -51,6 +56,33 @@ export function MeetingPage() {
       cancelled = true
     }
   }, [effectiveProjectId, urlMeetingId])
+
+  useEffect(() => {
+    if (effectiveProjectId || projects.length === 0) return
+    let cancelled = false
+
+    getOverview()
+      .then((overview) => {
+        const cards = overview.project_cards
+        if (cancelled || !Array.isArray(cards)) return
+        const nextProgress: Record<number, number> = {}
+        cards.forEach((card) => {
+          if (!card || typeof card !== 'object') return
+          const item = card as Record<string, unknown>
+          const projectId = Number(item.project_id)
+          const completionRate = Number(item.completion_rate)
+          if (Number.isFinite(projectId) && Number.isFinite(completionRate)) {
+            nextProgress[projectId] = Math.max(0, Math.min(100, completionRate))
+          }
+        })
+        setProjectProgress(nextProgress)
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
+  }, [effectiveProjectId, projects.length])
 
   async function handleStatusChange(status: PublishStatus) {
     if (!selected) return
@@ -118,28 +150,72 @@ export function MeetingPage() {
             <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
             </svg>
-            新建会议纪要
+            {pending_kickoff ? '发起启动会确认' : '新建会议纪要'}
           </button>
         </div>
       </header>
 
       <main className="flex-1 overflow-y-auto p-6" style={{ background: '#F1F5F9' }}>
         {!effectiveProjectId && !loading && (
-          <div className="max-w-md mx-auto mt-16">
-            <div className="bg-white rounded-2xl border p-6 text-center" style={{ borderColor: '#E9EFF6' }}>
+          <div className="max-w-3xl mx-auto mt-12">
+            <div className="bg-white rounded-2xl border p-6 sm:p-8 text-center" style={{ borderColor: '#E9EFF6' }}>
               <h2 className="text-base font-bold text-slate-700 mb-2">请选择要查看的项目</h2>
               <p className="text-sm text-slate-400 mb-5">选择一个项目，即可查看和创建会议纪要</p>
-              <div className="space-y-2">
-                {projects.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => setSearchParams((prev) => { prev.set('projectId', String(p.id)); return prev })}
-                    className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium text-slate-700 hover:bg-blue-50 hover:border-blue-200 transition-colors"
-                  >
-                    <div>{p.name}</div>
-                    {p.code && <div className="text-xs text-slate-400 mt-0.5">{p.code}</div>}
-                  </button>
-                ))}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-left">
+                {projects.map((p) => {
+                  const manager = p.owners?.[0] ?? p.coordinator ?? '—'
+                  const memberCount = Object.values(p.member_counts ?? {}).reduce((sum, count) => sum + count, 0)
+                  const period = p.start_date || p.end_date ? `${p.start_date ?? '—'} — ${p.end_date ?? '—'}` : '\u6682\u672a\u8bbe\u7f6e'
+                  const statusLabel = p.is_active ? '\u8fdb\u884c\u4e2d' : '\u672a\u542f\u7528'
+                  const progress = projectProgress[p.id] ?? 0
+
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => setSearchParams((prev) => { prev.set('projectId', String(p.id)); return prev })}
+                      className="aspect-square flex flex-col rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-50/40 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500 text-white shadow-sm">
+                          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M12 3v3m0 12v3M3 12h3m12 0h3M5.64 5.64l2.12 2.12m8.48 8.48 2.12 2.12m0-12.72-2.12 2.12m-8.48 8.48-2.12 2.12M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+                          </svg>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-base font-bold text-slate-800">{p.name}</div>
+                          {p.code && <div className="mt-0.5 truncate text-xs text-slate-400">{p.code}</div>}
+                        </div>
+                        <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold ${p.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>{statusLabel}</span>
+                      </div>
+
+                      <div className="mt-5 grid grid-cols-2 overflow-hidden rounded-xl border border-slate-100 bg-slate-50/60 text-sm">
+                        <div className="project-card-period border-b border-r border-slate-100 p-3">
+                          <div className="text-[11px] text-slate-400">{'\u9879\u76ee\u5468\u671f'}</div>
+                          <div className="mt-1 truncate font-medium text-slate-700" title={period}>{period}</div>
+                        </div>
+                        <div className="project-card-manager border-b border-slate-100 p-3">
+                          <div className="text-[11px] text-slate-400">{'\u9879\u76ee\u7ecf\u7406'}</div>
+                          <div className="mt-1 truncate font-medium text-slate-700" title={manager}>{manager}</div>
+                        </div>
+                        <div className="project-card-members border-r border-slate-100 p-3">
+                          <div className="text-[11px] text-slate-400">{'\u9879\u76ee\u6210\u5458'}</div>
+                          <div className="mt-1 font-medium text-slate-700">{memberCount > 0 ? `${memberCount} \u4eba` : '—'}</div>
+                        </div>
+                        <div className="project-card-progress p-3">
+                          <div className="text-[11px] text-slate-400">{'\u5f53\u524d\u8fdb\u5ea6'}</div>
+                          <div className="mt-1 font-medium text-slate-700">{`${progress}%`}</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-auto pt-5">
+                        <div className="h-1.5 overflow-hidden rounded-full bg-slate-100" role="progressbar" aria-label={'\u9879\u76ee\u5f53\u524d\u8fdb\u5ea6'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+                          <div className="h-full rounded-full bg-sky-500" style={{ width: `${progress}%` }} />
+                        </div>
+                        <div className="mt-3 text-right text-sm font-semibold text-sky-600">{'\u8fdb\u5165\u9879\u76ee \u2192'}</div>
+                      </div>
+                    </button>
+                  )
+                })}
               </div>
               <p className="text-xs text-slate-400 mt-4">
                 或从左侧菜单进入任意项目功能区，顶部栏会自动切换当前项目
@@ -149,6 +225,7 @@ export function MeetingPage() {
         )}
         {effectiveProjectId && (
           <>
+            {pending_kickoff && showNewModal && <KickoffAgentWorkspace projectId={effectiveProjectId} onClose={() => setShowNewModal(false)} />}
             {loading && (
               <div className="bg-white rounded-2xl border p-4" style={{ borderColor: '#E9EFF6' }}>
                 <table className="w-full text-sm"><tbody><SkeletonTableRows rows={6} cols={6} /></tbody></table>
@@ -175,11 +252,10 @@ export function MeetingPage() {
                   <InfoRow label="会议名称" value={selected.title ?? '-'} />
                   <InfoRow label="日期" value={selected.meeting_date ?? '-'} />
                   <InfoRow label="主持人" value={selected.host ?? '-'} />
-                  <InfoRow label="参会人" value={selected.participants ?? '-'} />
                   <InfoRow label="类型" value={typeLabel(selected.meeting_type)} />
                 </MeetingSection>
                 {selected.summary && (
-                  <MeetingSection title="会议摘要">
+                  <MeetingSection title="会议要点">
                     <p className="text-xs text-slate-600 leading-relaxed">{selected.summary}</p>
                   </MeetingSection>
                 )}
@@ -331,7 +407,7 @@ export function MeetingPage() {
         )}
       </main>
 
-      {showNewModal && effectiveProjectId && <NewMeetingModal projectId={effectiveProjectId} defaultMeetingType={urlMeetingType} onClose={() => setShowNewModal(false)} onCreated={handleCreated} />}
+          {showNewModal && effectiveProjectId && !pending_kickoff && <NewMeetingModal projectId={effectiveProjectId} defaultMeetingType={urlMeetingType} onClose={() => setShowNewModal(false)} onCreated={handleCreated} />}
       {editingItem && effectiveProjectId && <NewMeetingModal projectId={effectiveProjectId} editItem={editingItem} onClose={() => setEditingItem(null)} onCreated={handleCreated} />}
     </div>
   )

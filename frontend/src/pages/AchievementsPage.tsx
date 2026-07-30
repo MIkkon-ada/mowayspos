@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { createAchievement, fetchAchievements, updateAchievement } from '../api/achievements'
+import { createAchievement, deleteAchievementAttachment, downloadAchievementAttachment, fetchAchievementAttachments, fetchAchievements, type AchievementAttachment, updateAchievement, uploadAchievementAttachment } from '../api/achievements'
 import { fetchTasks } from '../api/tasks'
 import { fetchSubTasks, fetchSubtasksByProject } from '../api/subtasks'
 import { useProject } from '../context/ProjectContext'
 import { getAchievementAddressAction } from '../domain/achievementFlow'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
+import { canManageProjectWork } from '../domain/taskPermission'
 import type { AchievementItem, Project, SubTaskItem, TaskItem } from '../types'
 
 const ACHIEVEMENT_TYPES = ['方案', '模板', 'SOP', 'Prompt', 'Agent', '文档'] as const
@@ -23,6 +24,19 @@ type RegistrationForm = {
   file_link: string
   scenario: string
   description: string
+}
+
+type AttachmentQueueItem = { key: string; file: File; progress: number; error: string; uploading: boolean }
+const ATTACHMENT_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.webp,.zip,.rar'
+const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
+
+function formatFileSize(bytes?: number): string {
+  if (!bytes) return '0 B'
+  return bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function isPreviewableImage(attachment: AchievementAttachment): boolean {
+  return IMAGE_TYPES.has(attachment.mime_type.toLowerCase()) || /\.(jpe?g|png|gif|webp)$/i.test(attachment.original_name)
 }
 
 function parseProjectId(searchParams: URLSearchParams): number | null {
@@ -151,6 +165,7 @@ export function AchievementsPage() {
   const projectId = parseProjectId(searchParams)
   const currentProject = projects.find((project) => project.id === projectId) ?? null
   const projectArchived = isProjectArchived(currentProject)
+  const canMaintainAttachments = canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProject?.user_roles ?? [] })
 
   const [items, setItems] = useState<AchievementItem[]>([])
   const [selected, setSelected] = useState<AchievementItem | null>(null)
@@ -178,6 +193,12 @@ export function AchievementsPage() {
   const [editError, setEditError] = useState('')
   const [editSaving, setEditSaving] = useState(false)
   const [editDraft, setEditDraft] = useState({ name: '', version: '', file_link: '', scenario: '', reuse_tag: '' })
+  const [attachments, setAttachments] = useState<AchievementAttachment[]>([])
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false)
+  const [attachmentsError, setAttachmentsError] = useState('')
+  const [attachmentQueue, setAttachmentQueue] = useState<AttachmentQueueItem[]>([])
+  const selectedAchievementIdRef = useRef<number | null>(null)
+  const uploadAbortControllers = useRef<Map<string, AbortController>>(new Map())
 
   const visibleProjects = useMemo(() => {
     const term = projectSearch.trim().toLowerCase()
@@ -214,19 +235,32 @@ export function AchievementsPage() {
   }, [items, filterType, filterTaskId, filterSource, filterDate, keyword])
 
   const stats = useMemo(() => {
-    const manual = items.filter((item) => sourceLabel(item) === '手动登记').length
-    const ai = items.filter((item) => sourceLabel(item) === 'AI确认入库').length
-    const taskCount = new Set(items.map((item) => item.related_task_id).filter(Boolean)).size
+    const latestUpdated = items
+      .map((item) => item.confirmed_at || item.updated_at || item.created_at || '')
+      .filter(Boolean)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || null
     return {
       total: items.length,
       month: items.filter((item) => isThisMonth(item.confirmed_at || item.updated_at || item.created_at)).length,
-      ai,
-      manual,
-      taskCount,
+      latestUpdated,
     }
   }, [items])
 
   const selectedTaskName = selected ? taskName(tasks, selected.related_task_id) : '—'
+
+  useEffect(() => {
+    uploadAbortControllers.current.forEach((controller) => controller.abort())
+    uploadAbortControllers.current.clear()
+    selectedAchievementIdRef.current = selected?.id ?? null
+    if (!selected?.id) { setAttachments([]); setAttachmentQueue([]); return }
+    let cancelled = false
+    setAttachmentsLoading(true); setAttachmentsError(''); setAttachmentQueue([])
+    fetchAchievementAttachments(selected.id)
+      .then((rows) => { if (!cancelled) setAttachments(rows) })
+      .catch((error: unknown) => { if (!cancelled) setAttachmentsError(error instanceof Error ? error.message : '附件加载失败') })
+      .finally(() => { if (!cancelled) setAttachmentsLoading(false) })
+    return () => { cancelled = true }
+  }, [selected?.id])
 
   useEffect(() => {
     if (!projectId) {
@@ -430,6 +464,45 @@ export function AchievementsPage() {
     window.open(action.url, '_blank', 'noopener,noreferrer')
   }
 
+  async function uploadQueuedAttachment(queueItem: AttachmentQueueItem) {
+    if (!selected || !projectId || !canMaintainAttachments) return
+    const achievementId = selected.id
+    const controller = new AbortController()
+    uploadAbortControllers.current.set(queueItem.key, controller)
+    setAttachmentQueue((rows) => rows.map((row) => row.key === queueItem.key ? { ...row, uploading: true, error: '', progress: 0 } : row))
+    try {
+      const created = await uploadAchievementAttachment(queueItem.file, { projectId, achievementId }, (progress) => {
+        if (selectedAchievementIdRef.current !== achievementId) return
+        setAttachmentQueue((rows) => rows.map((row) => row.key === queueItem.key ? { ...row, progress } : row))
+      }, controller.signal)
+      if (selectedAchievementIdRef.current !== achievementId) return
+      setAttachments((rows) => [created, ...rows])
+      setAttachmentQueue((rows) => rows.filter((row) => row.key !== queueItem.key))
+    } catch (error: unknown) {
+      if (selectedAchievementIdRef.current !== achievementId || (error instanceof DOMException && error.name === 'AbortError')) return
+      setAttachmentQueue((rows) => rows.map((row) => row.key === queueItem.key ? { ...row, uploading: false, error: error instanceof Error ? error.message : '上传失败' } : row))
+    } finally {
+      uploadAbortControllers.current.delete(queueItem.key)
+    }
+  }
+
+  function addAttachmentFiles(files: FileList | null) {
+    if (!canMaintainAttachments) return
+    const queued = Array.from(files || []).map((file) => ({ key: `${file.name}-${file.size}-${file.lastModified}-${crypto.randomUUID()}`, file, progress: 0, error: '', uploading: false }))
+    setAttachmentQueue((rows) => [...rows, ...queued])
+    queued.forEach((item) => { void uploadQueuedAttachment(item) })
+  }
+
+  async function removeAttachment(attachment: AchievementAttachment) {
+    if (!canMaintainAttachments && attachment.uploaded_by !== currentUser?.name) return
+    try {
+      await deleteAchievementAttachment(attachment.id)
+      setAttachments((rows) => rows.filter((row) => row.id !== attachment.id))
+    } catch (error: unknown) {
+      setAttachmentsError(error instanceof Error ? error.message : '删除附件失败')
+    }
+  }
+
   if (!projectId) {
     return (
       <div className="flex-1 overflow-hidden bg-[#f7f9fc] flex flex-col">
@@ -439,8 +512,8 @@ export function AchievementsPage() {
           </div>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[1500px] px-6 py-6">
-          <div className="mb-5 flex items-center gap-4">
+        <div className="mx-auto max-w-[1440px] px-6 py-6">
+          <div className="mb-6 flex items-center gap-4">
             {[
               ['项目', projects.length, 'bg-indigo-50 text-indigo-600', 'text-2xl'],
               ['已入库成果', overviewLoading ? '…' : overviewStats.total, 'bg-emerald-50 text-emerald-600', 'text-2xl'],
@@ -487,10 +560,10 @@ export function AchievementsPage() {
 
           <div className="achievement-project-picker-card overflow-hidden rounded border border-slate-200 bg-white shadow-sm">
             <div className="overflow-auto">
-              <table className="w-full min-w-[980px] text-left text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50/70 text-sm font-bold text-slate-500">
+              <table className="w-full min-w-[920px] text-left text-sm">
+                <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th className="px-6 py-4">项目名称</th><th className="px-5 py-4">状态</th><th className="px-5 py-4">项目负责人</th><th className="px-5 py-4">企业教练</th><th className="px-5 py-4">成果数量</th><th className="px-5 py-4">最近更新</th><th className="px-5 py-4 text-center">操作</th>
+                    <th className="px-5 py-2.5">项目名称</th><th className="px-4 py-2.5">状态</th><th className="px-4 py-2.5">项目负责人</th><th className="px-4 py-2.5">企业教练</th><th className="px-4 py-2.5">成果数量</th><th className="px-4 py-2.5">最近更新</th><th className="px-4 py-2.5 text-center">操作</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -499,29 +572,30 @@ export function AchievementsPage() {
                   ) : pagedProjects.map((project) => {
                     const summary = projectAchievementSummary[project.id]
                     return <tr key={project.id} className="transition-colors hover:bg-blue-50/50">
-                      <td className="px-6 py-3.5">
-                        <p className="font-bold text-slate-950">{project.name}</p>
+                      <td className="px-5 py-2.5 achievement-project-identity border-l-4 border-blue-500">
+                        <p className="achievement-project-identity__name truncate font-bold text-slate-950">{project.name}</p>
                         <p className="mt-0.5 text-xs text-slate-400">项目编号：{project.code || `#${project.id}`}</p>
                       </td>
-                      <td className="px-4 py-3.5"><span className="rounded-md border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">{projectStatusLabel(project)}</span></td>
-                      <td className="px-4 py-3.5 text-slate-700">{ownerText(project)}</td>
-                      <td className="px-4 py-3.5 text-slate-700">{coachText(project)}</td>
-                      <td className="px-4 py-3.5 font-semibold text-slate-800">{overviewLoading ? '…' : summary?.count ?? 0}</td>
-                      <td className="px-4 py-3.5 text-slate-600">{overviewLoading ? '…' : formatDate(summary?.lastUpdated)}</td>
-                      <td className="px-4 py-3.5 text-center">
-                        <button type="button" onClick={() => navigate(`/work/achievements?projectId=${project.id}`)} className="rounded-md border border-blue-500 bg-white px-3 py-2 text-xs font-bold text-blue-600 transition hover:bg-blue-50">查看成果&nbsp;›</button>
+                      <td className="px-4 py-2.5"><span className="rounded border border-blue-100 bg-blue-50 px-2 py-0.5 text-xs font-bold text-blue-700">{projectStatusLabel(project)}</span></td>
+                      <td className="px-4 py-2.5 text-sm text-slate-600">{ownerText(project)}</td>
+                      <td className="px-4 py-2.5 text-sm text-slate-600">{coachText(project)}</td>
+                      <td className="px-4 py-2.5 text-sm font-semibold text-slate-800">{overviewLoading ? '…' : summary?.count ?? 0}</td>
+                      <td className="px-4 py-2.5 text-sm text-slate-400">{overviewLoading ? '…' : formatDate(summary?.lastUpdated)}</td>
+                      <td className="px-4 py-2.5 text-center">
+                        <button type="button" onClick={() => navigate(`/work/achievements?projectId=${project.id}`)} className="rounded border border-blue-500 bg-white px-3 py-1.5 text-xs font-bold text-blue-600 transition hover:bg-blue-50">查看成果&nbsp;›</button>
                       </td>
                     </tr>
                   })}
                 </tbody>
               </table>
             </div>
-            <div className="flex items-center justify-between border-t border-slate-200 px-6 py-4">
-              <span className="text-sm text-slate-500">共 {visibleProjects.length} 条记录</span>
+            <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/50 px-5 py-2.5">
+              <span className="text-xs text-slate-400">共 {visibleProjects.length} 个项目</span>
               <div className="flex items-center gap-2">
-                <button type="button" disabled={overviewPage <= 1} onClick={() => setOverviewPage((page) => Math.max(1, page - 1))} className="h-9 w-9 rounded-md text-slate-400 hover:bg-slate-50 disabled:opacity-30">‹</button>
-                <span className="grid h-9 min-w-9 place-items-center rounded-md border border-blue-500 px-2 text-sm font-bold text-blue-600">{overviewPage}</span>
-                <button type="button" disabled={overviewPage >= overviewPageCount} onClick={() => setOverviewPage((page) => Math.min(overviewPageCount, page + 1))} className="h-9 w-9 rounded-md text-slate-400 hover:bg-slate-50 disabled:opacity-30">›</button>
+                <button type="button" disabled={overviewPage <= 1} onClick={() => setOverviewPage((page) => Math.max(1, page - 1))} className="rounded border border-slate-300 bg-white p-1 text-slate-500 hover:bg-slate-50 disabled:opacity-40">‹</button>
+                <span className="rounded border border-blue-600 bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-blue-700">{overviewPage}</span>
+                <button type="button" disabled={overviewPage >= overviewPageCount} onClick={() => setOverviewPage((page) => Math.min(overviewPageCount, page + 1))} className="rounded border border-slate-300 bg-white p-1 text-slate-500 hover:bg-slate-50 disabled:opacity-40">›</button>
+                <span className="text-xs text-slate-400">{overviewPageSize}条/页</span>
               </div>
             </div>
           </div>
@@ -546,7 +620,7 @@ export function AchievementsPage() {
       </header>
       <div className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col px-6 py-5">
 
-        <div className="mb-5 grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="mb-5 grid shrink-0 grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
@@ -566,57 +640,39 @@ export function AchievementsPage() {
             </div>
           </div>
           <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-50 text-purple-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" /></svg>
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l2.5 2.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             </div>
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">AI确认入库</p>
-              <p className="mt-0.5 text-lg font-black tabular-nums text-slate-950">{stats.ai}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>
-            </div>
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">手动登记</p>
-              <p className="mt-0.5 text-lg font-black tabular-nums text-slate-950">{stats.manual}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-rose-50 text-rose-600">
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V19.5a2.25 2.25 0 002.25 2.25h.75m0-3H12" /></svg>
-            </div>
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">关联重点工作数</p>
-              <p className="mt-0.5 text-lg font-black tabular-nums text-slate-950">{stats.taskCount}</p>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">最近更新</p>
+              <p className="mt-0.5 text-lg font-black tabular-nums text-slate-950">{formatDate(stats.latestUpdated)}</p>
             </div>
           </div>
         </div>
 
         <div className="grid min-h-0 flex-1 gap-5 lg:grid-cols-[1fr_420px]">
           <main className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-white px-4 py-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <select value={filterType} onChange={(event) => setFilterType(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
+            <div className="flex flex-col gap-3 border-b border-slate-100 bg-white px-4 py-3">
+              <div className="flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto pb-1">
+                <select value={filterType} onChange={(event) => setFilterType(event.target.value)} className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
                   <option>全部</option>
                   {ACHIEVEMENT_TYPES.map((type) => <option key={type}>{type}</option>)}
                 </select>
-                <select value={filterTaskId} onChange={(event) => setFilterTaskId(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
+                <select value={filterTaskId} onChange={(event) => setFilterTaskId(event.target.value)} className="max-w-[420px] shrink-0 truncate rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
                   <option value="">重点工作</option>
                   {tasks.map((task) => <option key={task.id} value={task.id}>{task.key_task}</option>)}
                 </select>
                 <select disabled className="rounded-lg border border-slate-200 bg-slate-100 px-2 py-1.5 text-xs font-semibold text-slate-400" title="关键任务筛选">
                   <option>关键任务</option>
                 </select>
-                <select value={filterSource} onChange={(event) => setFilterSource(event.target.value as (typeof SOURCE_OPTIONS)[number])} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
+                <select value={filterSource} onChange={(event) => setFilterSource(event.target.value as (typeof SOURCE_OPTIONS)[number])} className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
                   {SOURCE_OPTIONS.map((source) => <option key={source}>{source}</option>)}
                 </select>
-                <select value={filterDate} onChange={(event) => setFilterDate(event.target.value as (typeof DATE_OPTIONS)[number])} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
+                <select value={filterDate} onChange={(event) => setFilterDate(event.target.value as (typeof DATE_OPTIONS)[number])} className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
                   {DATE_OPTIONS.map((option) => <option key={option}>{option}</option>)}
                 </select>
               </div>
-              <div className="relative w-full sm:w-auto">
+              <div className="relative w-full sm:max-w-[280px]">
                 <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索成果名称" className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-9 pr-3 text-xs text-slate-700 outline-none focus:border-sky-400 sm:w-[220px]" />
                 <svg className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
               </div>
@@ -743,7 +799,31 @@ export function AchievementsPage() {
                             <p className="break-all text-xs text-slate-600">{selected.file_link}</p>
                             <button type="button" onClick={() => openAchievementLink(selected)} className="mt-2 rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-xs font-bold text-sky-700 hover:bg-sky-50">打开成果</button>
                           </div>
-                        ) : <p className="text-sm text-slate-400">暂无附件与链接</p>}
+                        ) : null}
+                        <div className="mt-3 space-y-2 rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                          <label className={`inline-flex items-center rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-xs font-bold text-sky-700 ${projectArchived || !canMaintainAttachments ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-sky-50'}`}>
+                            上传附件
+                            <input type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.webp,.zip,.rar" disabled={projectArchived || !canMaintainAttachments} className="sr-only" onChange={(event) => { addAttachmentFiles(event.target.files); event.currentTarget.value = '' }} />
+                          </label>
+                          <p className="text-[11px] text-slate-400">支持文档、图片和压缩包；单个文件最大 20 MB。</p>
+                          {!projectArchived && !canMaintainAttachments && <p className="text-[11px] text-amber-700">仅项目负责人或协调人可以上传附件。</p>}
+                          {attachmentsError && <p className="text-xs text-red-600">{attachmentsError}</p>}
+                          {attachmentsLoading && <p className="text-xs text-slate-400">附件加载中...</p>}
+                          {attachmentQueue.map((item) => <div key={item.key} className="rounded-lg border border-slate-200 bg-white p-2 text-xs">
+                            <div className="flex items-center justify-between gap-2"><span className="min-w-0 truncate text-slate-700">{item.file.name}</span><span className="shrink-0 text-slate-400">{item.uploading ? `${item.progress}%` : item.error ? '上传失败' : '等待上传'}</span></div>
+                            {item.uploading && <div className="mt-1 h-1.5 overflow-hidden rounded bg-slate-100"><div className="h-full bg-sky-500" style={{ width: `${item.progress}%` }} /></div>}
+                            {item.error && <div className="mt-1 flex gap-2"><span className="min-w-0 flex-1 text-red-600">{item.error}</span><button type="button" className="font-bold text-sky-700" onClick={() => { void uploadQueuedAttachment(item) }}>重试</button><button type="button" className="font-bold text-slate-500" onClick={() => setAttachmentQueue((rows) => rows.filter((row) => row.key !== item.key))}>移除</button></div>}
+                          </div>)}
+                          {attachments.map((attachment) => <div key={attachment.id} className="rounded-lg border border-slate-200 bg-white p-2 text-xs">
+                            <div className="flex items-start gap-2">
+                              {isPreviewableImage(attachment) && <img src={downloadAchievementAttachment(attachment.id)} alt="" className="h-10 w-10 rounded object-cover" />}
+                              <div className="min-w-0 flex-1"><a href={downloadAchievementAttachment(attachment.id)} className="block truncate font-bold text-sky-700 hover:underline">{attachment.original_name}</a><p className="mt-0.5 text-slate-400">{formatFileSize(attachment.size_bytes)} · {attachment.uploaded_by || '—'} · {formatDate(attachment.created_at)}</p></div>
+                              <a href={downloadAchievementAttachment(attachment.id)} className="shrink-0 font-bold text-sky-700">下载</a>
+                              {!projectArchived && (canMaintainAttachments || attachment.uploaded_by === currentUser?.name) && <button type="button" className="shrink-0 font-bold text-red-600" onClick={() => { void removeAttachment(attachment) }}>删除</button>}
+                            </div>
+                          </div>)}
+                          {!attachmentsLoading && attachments.length === 0 && attachmentQueue.length === 0 && !selected.file_link && <p className="text-sm text-slate-400">暂无附件</p>}
+                        </div>
                       </section>
                     </div>
                   )}

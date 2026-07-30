@@ -277,6 +277,7 @@ export type AchievementSubmissionItem = {
   file_link?: string
   scenario?: string
   reuse_tag?: string
+  attachment_ids?: number[]
   status: string  // 待确认 / 已确认 / 已退回 / 已撤回
   reviewer?: string
   reviewed_at?: string | null

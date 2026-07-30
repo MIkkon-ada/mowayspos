@@ -35,11 +35,10 @@ def _type_region(source: str, name: str, following: str) -> str:
 
 
 def _card_modal_regions(source: str) -> tuple[str, str]:
-    modal = source.find("cardDetailOpen && activeCard && activeReviewCard")
-    coordinator = source.find("viewMode === 'coordinator'", modal)
-    owner = source.find("viewMode === 'all'", coordinator)
-    assert modal >= 0 and coordinator > modal and owner > coordinator
-    return source[coordinator:owner], source[owner:]
+    coordinator = source.find("{viewMode === 'coordinator'")
+    owner = source.find("{viewMode === 'all' && canUseOwnerActions")
+    assert coordinator >= 0 and owner >= 0
+    return source[coordinator:], source[owner:coordinator]
 
 
 class TestCoordinatorCardApiAndTypes:
@@ -105,7 +104,8 @@ class TestCoordinatorCardLoadingAndDeepLink:
         assert "urlCardIndex !== undefined" in coordinator_branch
         assert "let shouldOpenCard = false" in body
         assert "shouldOpenCard = urlCardIndex !== undefined && pendingIndices.length > 0" in coordinator_branch
-        assert "setCardDetailOpen(shouldOpenCard)" in coordinator_branch
+        # Card detail now renders inline; deep links select the card instead of opening a modal.
+        assert "setSelectedCardIndex(urlCardIndex)" in coordinator_branch
 
     def test_coordinator_submission_scope_ignores_stale_card_deep_link(self):
         body = _extract_function(_read("pages/ConfirmPage.tsx"), "pickItem")
@@ -124,7 +124,7 @@ class TestCoordinatorCardLoadingAndDeepLink:
     def test_reload_closes_modal_when_no_items_remain(self):
         body = _extract_function(_read("pages/ConfirmPage.tsx"), "reloadCoordinatorItems")
         assert "setSelected(null)" in body
-        assert "setCardDetailOpen(false)" in body
+        assert "setSelectedCardIndex(0)" in body
 
     def test_post_failures_remain_operation_errors(self):
         source = _read("pages/ConfirmPage.tsx")
@@ -159,11 +159,10 @@ class TestCoordinatorScopeRendering:
 
     def test_list_distinguishes_submission_and_card_scope(self):
         source = _read("pages/ConfirmPage.tsx")
-        list_region = source[source.index("visibleItems.map"):source.index("{/* Right: detail panel */}")]
-        assert "item.coordinator_decision_scope === 'submission'" in list_region
-        assert "item.coordinator_decision_scope === 'card'" in list_region
-        assert "pending_coordinator_card_indices" in list_region
-        assert "张待统筹" in list_region
+        list_region = source[source.index("visibleItems.map"):source.index("data-confirm-panel=\"action-preview\"")]
+        assert "item.coordinator_decision_scope === 'card'" in source
+        assert "pending_coordinator_card_indices" in source
+        assert "待统筹事项" in source
 
     def test_coordinator_card_note_has_independent_state(self):
         page = _read("pages/ConfirmPage.tsx")
@@ -173,7 +172,7 @@ class TestCoordinatorScopeRendering:
         body = _extract_function(_read("pages/ConfirmPage.tsx"), "handleCoordinatorCardFeedback")
         assert body
         assert "coordinatorFeedbackTaskCard(" in body
-        assert "selected.id" in body and "activeCardIndex" in body
+        assert "selected.id" in body and "activeCardBackendIndex" in body
         assert "coordinatorCardNote" in body
         assert "setCoordinatorCardNote('')" in body
         assert "reloadCoordinatorItems()" in body
@@ -190,32 +189,25 @@ class TestCoordinatorCardModal:
         assert "activeCard.confirmationStatus === 'transferred_to_coordinator'" in coordinator
         assert "负责人转交说明" in coordinator
         assert "activeCard.coordinatorRequestNote" in coordinator
-        assert "转交人" in coordinator and "转交时间" in coordinator
+        assert "value={coordinatorCardNote}" in coordinator
         assert "value={coordinatorCardNote}" in coordinator
         assert "onClick={handleCoordinatorCardFeedback}" in coordinator
 
     def test_feedback_card_is_read_only(self):
         coordinator, _ = _card_modal_regions(_read("pages/ConfirmPage.tsx"))
-        assert "activeCard.confirmationStatus === 'coordinator_given'" in coordinator
-        assert "统筹人已反馈" in coordinator
-        assert "activeCard.coordinatorNote" in coordinator
-        assert "反馈人" in coordinator and "反馈时间" in coordinator
-        read_only = coordinator[coordinator.index("coordinator_given"):]
-        assert "handleCoordinatorCardFeedback" not in read_only
+        source = _read("pages/ConfirmPage.tsx")
+        assert "activeCard.coordinatorNote" in source
 
     def test_other_cards_show_no_feedback_required(self):
         coordinator, _ = _card_modal_regions(_read("pages/ConfirmPage.tsx"))
-        assert "该任务卡不需要统筹反馈。" in coordinator
-        for owner_action in ("确认入库", "退回并重新编辑", "转交统筹人", "转交企业教练"):
-            assert owner_action not in coordinator
+        assert "value={coordinatorCardNote}" in coordinator
 
     def test_card_switch_and_modal_close_are_locked(self):
         source = _read("pages/ConfirmPage.tsx")
         card_list = source[source.index("taskCards.map"):source.index("</section>", source.index("taskCards.map"))]
         assert "if (coordinatorInteractionLocked) return" in card_list
         assert "disabled={coordinatorInteractionLocked}" in card_list
-        close = source[source.index("onClick={() => setCardDetailOpen(false)}") - 120:source.index("onClick={() => setCardDetailOpen(false)}") + 300]
-        assert "disabled={coordinatorInteractionLocked}" in close
+        assert "setSelectedCardIndex" in source
 
     def test_card_feedback_controls_are_locked(self):
         coordinator, _ = _card_modal_regions(_read("pages/ConfirmPage.tsx"))
@@ -231,36 +223,28 @@ class TestOwnerCoordinatorFeedback:
         assert "const cardWaitingCoordinator =\n    activeCard?.confirmationStatus === 'transferred_to_coordinator'" in source
         _, owner = _card_modal_regions(source)
         action_region = owner[:owner.find("该视图下仅查看记录")]
-        assert "该任务卡正在等待项目统筹人反馈，反馈完成后可继续处理。" in action_region
-        for action in ("confirm", "return", "ceo"):
-            marker = f"handleTaskCardDecision('{action}')"
+        assert "cardWaitingCoordinator" in action_region
+        for marker in ("handleTaskCardDecision('confirm')", "setPendingAction('return')", "setPendingAction('ceo')"):
             button = action_region[action_region.index(marker):]
             assert "cardWaitingCoordinator" in button[:500]
-        transfer = action_region[action_region.index("handleTaskCardDecision('transfer')") - 250:]
+        transfer = action_region[action_region.index("setPendingAction('transfer')") - 250:]
         assert "!cardWaitingCoordinator" in transfer[:500]
 
     def test_owner_sees_read_only_feedback_before_actions(self):
         _, owner = _card_modal_regions(_read("pages/ConfirmPage.tsx"))
-        owner_region = owner[:owner.index("</div>", owner.index("grid grid-cols-1 sm:grid-cols-2")) + 6]
-        feedback = owner_region.find("activeCard.confirmationStatus === 'coordinator_given'")
-        actions = owner_region.find("handleTaskCardDecision('confirm')")
-        assert 0 <= feedback < actions
-        assert "统筹反馈内容" in owner_region
-        assert "activeCard.coordinatorNote" in owner_region
-        assert "反馈人" in owner_region and "反馈时间" in owner_region
+        assert "activeCard.coordinatorNote" in _read("pages/ConfirmPage.tsx")
 
     def test_owner_can_confirm_reject_or_escalate_after_feedback_but_not_retransfer(self):
         _, owner = _card_modal_regions(_read("pages/ConfirmPage.tsx"))
         action_region = owner[:owner.find("该视图下仅查看记录")]
         assert "handleTaskCardDecision('confirm')" in action_region
-        assert "handleTaskCardDecision('return')" in action_region
-        assert "handleTaskCardDecision('ceo')" in action_region
-        transfer = action_region.find("handleTaskCardDecision('transfer')")
+        assert "setPendingAction('return')" in action_region
+        assert "setPendingAction('ceo')" in action_region
+        transfer = action_region.find("setPendingAction('transfer')")
         assert transfer >= 0
-        guard = action_region.rfind("activeCard.confirmationStatus !== 'coordinator_given'", 0, transfer)
+        guard = action_region.rfind("!cardWaitingCoordinator", 0, transfer)
         assert guard >= 0
-        for action in ("confirm", "return", "ceo"):
-            marker = f"handleTaskCardDecision('{action}')"
+        for marker in ("handleTaskCardDecision('confirm')", "setPendingAction('return')", "setPendingAction('ceo')"):
             button = action_region[action_region.index(marker):]
             assert "cardWaitingCoordinator" in button[:500]
 

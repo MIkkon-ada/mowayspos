@@ -815,6 +815,7 @@ export function ConfirmPage() {
           pickItem(d[0])
         } else {
           setSelected(null)
+          setSelectedCardIndex(0)
         }
       })
   }
@@ -1035,7 +1036,7 @@ export function ConfirmPage() {
                 <div className="py-10 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
                   <IconFileText size={28} className="text-slate-300" />
                   <span>
-                    {loadError ? loadError : viewMode === 'ceo' ? '暂无待决策事项' : viewMode === 'coordinator' ? '暂无待统筹事项' : viewMode === 'all' ? '暂无待确认事项' : '暂无提交记录'}
+                    {loadError ? loadError : viewMode === 'ceo' ? '暂无待决策事项' : viewMode === 'coordinator' ? '暂无待统筹事项' : '暂无待确认事项'}
                   </span>
                 </div>
               ) : visibleItems.map((item) => {

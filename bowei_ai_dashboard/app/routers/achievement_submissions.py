@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
@@ -65,6 +66,19 @@ def create_submission(
     if not task_row:
         raise HTTPException(422, "related_task_id 无效，找不到对应关键任务")
 
+    attachments = []
+    if payload.attachment_ids:
+        attachments = db.query(models.AchievementAttachment).filter(
+            models.AchievementAttachment.id.in_(payload.attachment_ids),
+            models.AchievementAttachment.project_id == payload.project_id,
+            models.AchievementAttachment.achievement_id.is_(None),
+            models.AchievementAttachment.achievement_submission_id.is_(None),
+            models.AchievementAttachment.uploaded_by == current_user,
+            models.AchievementAttachment.deleted_at.is_(None),
+        ).with_for_update().all()
+        if len(attachments) != len(payload.attachment_ids):
+            raise HTTPException(422, "attachment_ids must reference unbound attachments uploaded by the submitter")
+
     row = models.AchievementSubmission(
         project_id=payload.project_id,
         special_project=proj_name,
@@ -81,6 +95,20 @@ def create_submission(
     )
     db.add(row)
     db.flush()
+    if payload.attachment_ids:
+        bound_count = db.execute(
+            update(models.AchievementAttachment).where(
+                models.AchievementAttachment.id.in_(payload.attachment_ids),
+                models.AchievementAttachment.project_id == payload.project_id,
+                models.AchievementAttachment.achievement_id.is_(None),
+                models.AchievementAttachment.achievement_submission_id.is_(None),
+                models.AchievementAttachment.uploaded_by == current_user,
+                models.AchievementAttachment.deleted_at.is_(None),
+            ).values(achievement_submission_id=row.id)
+        ).rowcount
+        if bound_count != len(payload.attachment_ids):
+            db.rollback()
+            raise HTTPException(409, "one or more attachments were already bound")
     crud.log(db, current_user, "achievement_submission_create", "achievement_submission", row.id, {}, crud.to_dict(row),
              project_id=payload.project_id)
 
@@ -136,7 +164,9 @@ def confirm_submission(
     db: Session = Depends(get_db),
 ):
     context = get_user_context_from_db(current_user, db)
-    row = db.get(models.AchievementSubmission, sub_id)
+    row = db.query(models.AchievementSubmission).filter(
+        models.AchievementSubmission.id == sub_id,
+    ).with_for_update().first()
     if not row:
         raise HTTPException(404, "submission not found")
     require_project_business_writable(row.project_id, db)
@@ -169,6 +199,13 @@ def confirm_submission(
     )
     db.add(ach)
     db.flush()
+    for attachment in db.query(models.AchievementAttachment).filter(
+        models.AchievementAttachment.project_id == row.project_id,
+        models.AchievementAttachment.achievement_submission_id == row.id,
+        models.AchievementAttachment.deleted_at.is_(None),
+    ):
+        attachment.achievement_id = ach.id
+        attachment.achievement_submission_id = None
     crud.log(db, current_user, "achievement_submission_approve", "achievement_submission", row.id,
              {"status": _STATUS_PENDING}, {"status": _STATUS_CONFIRMED},
              project_id=row.project_id)

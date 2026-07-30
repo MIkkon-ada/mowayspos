@@ -110,6 +110,35 @@ class Meeting(Base, TimestampMixin):
     publish_status = Column(String(20), default="draft")
 
 
+class KickoffAgentRun(Base, TimestampMixin):
+    __tablename__ = "kickoff_agent_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=True, index=True)
+    snapshot_json = Column(Text, nullable=False, default="{}")
+    result_json = Column(Text, nullable=False, default="{}")
+    status = Column(String(20), nullable=False, default="draft", index=True)
+    created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+
+
+class KickoffChangeProposal(Base, TimestampMixin):
+    __tablename__ = "kickoff_change_proposals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("kickoff_agent_runs.id"), nullable=False, index=True)
+    proposal_type = Column(String(20), nullable=False)
+    target_type = Column(String(20), nullable=False)
+    target_id = Column(Integer, nullable=True, index=True)
+    before_json = Column(Text, nullable=False, default="{}")
+    proposed_json = Column(Text, nullable=False, default="{}")
+    evidence_json = Column(Text, nullable=False, default="[]")
+    validation_json = Column(Text, nullable=False, default="[]")
+    review_status = Column(String(20), nullable=False, default="pending", index=True)
+    reviewer_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    review_comment = Column(Text, default="")
+
+
 class Achievement(Base, TimestampMixin):
     __tablename__ = "achievements"
 
@@ -156,6 +185,25 @@ class AchievementSubmission(Base, TimestampMixin):
     reviewed_at = Column(DateTime, nullable=True)
     reject_reason = Column(Text, default="")
     source_type = Column(String(40), default="人工补录")
+
+
+class AchievementAttachment(Base, TimestampMixin):
+    __tablename__ = "achievement_attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    achievement_id = Column(Integer, ForeignKey("achievements.id"), nullable=True, index=True)
+    achievement_submission_id = Column(
+        Integer, ForeignKey("achievement_submissions.id"), nullable=True, index=True
+    )
+    storage_key = Column(String(255), nullable=False, unique=True)
+    original_name = Column(String(255), nullable=False)
+    mime_type = Column(String(120), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    uploaded_by = Column(String(50))
+    uploaded_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by = Column(String(50), default="")
 
 
 class Issue(Base, TimestampMixin):

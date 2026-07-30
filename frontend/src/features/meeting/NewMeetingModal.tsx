@@ -7,7 +7,7 @@ import { ReportsSection } from './MeetingReportsSection'
 import { PushToTasksModal } from './PushToTasksModal'
 
 type ModalStep = 'input' | 'analyzing' | 'review'
-type MeetingMode = 'kickoff' | 'progress'
+type MeetingMode = 'progress'
 
 type ReviewForm = {
   title: string
@@ -18,6 +18,7 @@ type ReviewForm = {
   summary: string
   reports_json: string
   task_list_json: string
+  confirmed_items_json: string
   decision_items_json: string
   risk_items_json: string
   transcript_text: string
@@ -33,6 +34,7 @@ function emptyForm(defaultMeetingType: string): ReviewForm {
     summary: '',
     reports_json: '[]',
     task_list_json: '[]',
+    confirmed_items_json: '[]',
     decision_items_json: '[]',
     risk_items_json: '[]',
     transcript_text: '',
@@ -55,7 +57,7 @@ export function NewMeetingModal({
   const isEdit = useMemo(() => !!editItem, [editItem])
 
   const [step, setStep] = useState<ModalStep>(isEdit ? 'review' : 'input')
-  const [meetingMode, setMeetingMode] = useState<MeetingMode | null>(null)
+  const [meetingMode] = useState<MeetingMode>('progress')
   const [meetingText, setMeetingText] = useState('')
   const [statusMsg, setStatusMsg] = useState('')
   const [error, setError] = useState('')
@@ -77,6 +79,7 @@ export function NewMeetingModal({
         summary: editItem.summary ?? '',
         reports_json: String((editItem as Record<string, unknown>).reports_json ?? '[]'),
         task_list_json: editItem.task_list_json ?? '[]',
+        confirmed_items_json: editItem.risk_items_json ?? '[]',
         decision_items_json: editItem.decision_items_json ?? '[]',
         risk_items_json: editItem.risk_items_json ?? '[]',
         transcript_text: String((editItem as Record<string, unknown>).transcript_text ?? ''),
@@ -121,18 +124,18 @@ export function NewMeetingModal({
       const result: MeetingAnalyzeResult = await analyzeMeeting(
         text,
         projectId,
-        meetingMode ?? undefined,
-        members.map(m => m.person_name_snapshot).filter(Boolean),
+        meetingMode,
       )
       setForm({
         title: result.title,
         meeting_type: result.meeting_type,
         meeting_date: result.meeting_date,
         host: result.host,
-        participants: result.participants,
+        participants: '',
         summary: result.summary,
         reports_json: result.reports_json ?? '[]',
         task_list_json: result.task_list_json,
+        confirmed_items_json: result.confirmed_items_json ?? '[]',
         decision_items_json: result.decision_items_json,
         risk_items_json: result.risk_items_json,
         transcript_text: text,
@@ -148,11 +151,13 @@ export function NewMeetingModal({
     setSaving(true)
     setError('')
     try {
+      const { confirmed_items_json, ...meetingForm } = form
+      const payload = { project_id: projectId, ...meetingForm, risk_items_json: confirmed_items_json }
       if (isEdit && editItem) {
-        const item = await updateMeeting(editItem.id, { project_id: projectId, ...form })
+        const item = await updateMeeting(editItem.id, payload)
         onCreated(item)
       } else {
-        const item = await createMeeting({ project_id: projectId, ...form })
+        const item = await createMeeting(payload)
         onCreated(item)
       }
     } catch (e: unknown) {
@@ -186,7 +191,7 @@ export function NewMeetingModal({
           if (e.target === e.currentTarget) onClose()
         }}
       >
-        <div className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden" style={{ width: 700, maxHeight: '92vh' }}>
+        <div className="bg-white shadow-2xl flex flex-col overflow-hidden" style={{ width: '100vw', height: '100vh' }}>
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: '#E9EFF6' }}>
             <div className="flex items-center gap-3">
@@ -244,11 +249,10 @@ export function NewMeetingModal({
                   <label className="block text-xs font-semibold text-slate-600 mb-2">会议类型</label>
                   <div className="grid grid-cols-2 gap-3">
                     <button
-                      onClick={() => setMeetingMode('kickoff')}
-                      className="text-left p-4 rounded-xl border-2 transition-all"
+                      className="hidden"
                       style={{
-                        borderColor: meetingMode === 'kickoff' ? '#0EA5E9' : '#E2E8F0',
-                        background: meetingMode === 'kickoff' ? '#F0F9FF' : 'white',
+                        borderColor: '#E2E8F0',
+                        background: 'white',
                       }}
                     >
                       <div className="flex items-center gap-2 mb-1">
@@ -270,7 +274,7 @@ export function NewMeetingModal({
                       </div>
                     </button>
                     <button
-                      onClick={() => setMeetingMode('progress')}
+                      onClick={() => undefined}
                       className="text-left p-4 rounded-xl border-2 transition-all"
                       style={{
                         borderColor: meetingMode === 'progress' ? '#0EA5E9' : '#E2E8F0',
@@ -359,7 +363,7 @@ export function NewMeetingModal({
                     </span>
                     {meetingText.trim() && (
                       <span className="text-xs text-slate-400">
-                        AI 将自动提取：会议标题、摘要、参会人、决策事项、暂定工作计划
+                        AI 将自动提取：会议标题、会议要点、决策事项、暂定工作计划
                       </span>
                     )}
                   </div>
@@ -384,7 +388,8 @@ export function NewMeetingModal({
             )}
 
             {step === 'review' && (
-              <div className="p-6 space-y-5">
+              <div className="grid grid-cols-5 gap-6 p-6 h-full overflow-hidden">
+              <div className="col-span-3 space-y-5 overflow-y-auto pr-2">
                 <div>
                   <SectionTitle>基本信息</SectionTitle>
                   <div className="grid grid-cols-2 gap-3 mt-2">
@@ -397,7 +402,6 @@ export function NewMeetingModal({
                         onChange={(e) => setField('meeting_type', e.target.value)}
                       >
                         <option value="">请选择</option>
-                        <option value="kickoff">启动会</option>
                         <option value="weekly">周会</option>
                         <option value="monthly">月会</option>
                         <option value="review">评审会</option>
@@ -407,14 +411,11 @@ export function NewMeetingModal({
                     </div>
                     <Field label="日期" value={form.meeting_date} onChange={(v) => setField('meeting_date', v)} placeholder="YYYY-MM-DD" />
                     <Field label="主持人" value={form.host} onChange={(v) => setField('host', v)} />
-                    <div className="col-span-2">
-                      <Field label="参会人" value={form.participants} onChange={(v) => setField('participants', v)} placeholder="多个姓名用逗号分隔" />
-                    </div>
                   </div>
                 </div>
 
                 <div>
-                  <SectionTitle>会议摘要</SectionTitle>
+                  <SectionTitle>会议要点</SectionTitle>
                   <textarea
                     className="w-full mt-2 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-300 resize-none"
                     rows={3}
@@ -424,10 +425,16 @@ export function NewMeetingModal({
                 </div>
 
                 <ReportsSection reportsJson={form.reports_json} />
-                <JsonListSection label="决策事项" value={form.decision_items_json} onChange={(v) => setField('decision_items_json', v)} dotColor="#3B82F6" />
+                <JsonListSection label="已确认事项（直接入库）" value={form.confirmed_items_json} onChange={(v) => setField('confirmed_items_json', v)} dotColor="#10B981" />
+                <JsonListSection label="待企业教练决策" value={form.decision_items_json} onChange={(v) => setField('decision_items_json', v)} dotColor="#F59E0B" />
                 <JsonListSection label="暂定工作计划" value={form.task_list_json} onChange={(v) => setField('task_list_json', v)} dotColor="#10B981" />
 
                 {error && <ErrorBar msg={error} />}
+              </div>
+              <aside className="col-span-2 border border-slate-200 rounded-xl bg-slate-50 p-4 overflow-y-auto">
+                <SectionTitle>会议原文对照</SectionTitle>
+                <p className="mt-3 text-sm leading-7 whitespace-pre-wrap text-slate-600">{form.transcript_text || meetingText || '暂无原文'}</p>
+              </aside>
               </div>
             )}
           </div>
@@ -455,7 +462,7 @@ export function NewMeetingModal({
                 </button>
                 <button
                   onClick={handleAnalyze}
-                  disabled={!meetingText.trim() || !meetingMode}
+                  disabled={!meetingText.trim()}
                   className="px-6 py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90 disabled:opacity-50"
                   style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}
                 >

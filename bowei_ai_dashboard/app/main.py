@@ -34,6 +34,7 @@ from .llm_config import PROVIDERS, load_configs
 from .permissions import get_all_project_roles, get_user_context_from_db, system_role_label
 from .routers import (
     accounts,
+    achievement_attachments,
     achievement_submissions,
     achievements,
     admin,
@@ -477,6 +478,7 @@ app.include_router(updates.router)
 app.include_router(confirmations.router)
 app.include_router(tasks.router)
 app.include_router(achievements.router)
+app.include_router(achievement_attachments.router)
 app.include_router(achievement_submissions.router)
 app.include_router(issues.router)
 app.include_router(meetings.router)

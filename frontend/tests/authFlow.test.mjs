@@ -33,8 +33,8 @@ test('mytasks sidebar navigation always enters the personal task center', async 
   assert.equal(getProjectScopedNavigationDestination('mytasks', 4, [{ id: 4 }]), '/member/tasks')
 })
 
-test('privileged and forced-password destinations remain unchanged', async () => {
+test('privileged users enter the dashboard and the removed forced-password flag does not redirect', async () => {
   const { getPostLoginDestination } = await loadAuthFlow()
   assert.equal(getPostLoginDestination({ ...member, is_tech_admin: true }, [{ id: 4 }], null), '/home/dashboard')
-  assert.equal(getPostLoginDestination({ ...member, must_change_password: true }, [], null), '/change-password')
+  assert.equal(getPostLoginDestination({ ...member, must_change_password: true }, [], null), '/home/dashboard')
 })

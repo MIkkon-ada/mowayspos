@@ -56,5 +56,8 @@ def downgrade() -> None:
     with op.batch_alter_table("projects") as batch_op:
         batch_op.alter_column("is_active", server_default=None)
         batch_op.alter_column("status", server_default=None)
+    bind = op.get_bind()
+    existing_columns = {column["name"] for column in sa.inspect(bind).get_columns("projects")}
     for column in reversed(_PROFILE_COLUMNS):
-        op.drop_column("projects", column.name)
+        if column.name in existing_columns:
+            op.drop_column("projects", column.name)

@@ -7,6 +7,7 @@ from sqlalchemy import text
 from .. import crud, models, schemas
 from ..database import get_db
 from ..domain import task_status as TS
+from ..domain import project_lifecycle as PL
 from ..domain import submission_result_type as RT
 from ..permissions import (
     PROJECT_ROLE_COORDINATOR,
@@ -141,11 +142,15 @@ def _check_project_member_create(context: dict, task: models.Task, db: Session) 
 
 
 def _check_subtask_struct_write(context: dict, task: models.Task, db: Session) -> None:
-    if context.get("is_tech_admin"):
-        return
     project_id = task.project_id
     if project_id is None:
         raise HTTPException(403, "permission denied")
+    project = db.get(models.Project, project_id)
+    require_project_business_writable(project_id, db)
+    if project and PL.normalize(project.status) != PL.S_ACTIVE:
+        raise HTTPException(409, "项目待启动会确认，暂不能调整执行期关键任务")
+    if context.get("is_tech_admin"):
+        return
     person_id = context.get("person_id")
     if person_id is None:
         raise HTTPException(403, "permission denied")
@@ -381,6 +386,38 @@ def get_subtask_detail(
 
     result = crud.to_dict(row)
 
+    # 执行详情使用：按关键任务聚合已确认/已提交的工作汇报，保留四项固定结构。
+    import json as _json
+    report_rows = (
+        db.query(models.UpdateSubmission)
+        .filter(models.UpdateSubmission.related_subtask_id == row.id)
+        .order_by(models.UpdateSubmission.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    result["work_reports"] = []
+    for report_row in report_rows:
+        try:
+            payload = _json.loads(report_row.human_result_json or report_row.ai_result_json or "{}")
+        except Exception:
+            payload = {}
+        task_reports = payload.get("task_reports") or []
+        matched = next((item for item in task_reports if item.get("matched_subtask_id") == row.id), None)
+        if not matched:
+            matched = payload if any(key in payload for key in ("completed_items", "next_steps", "issues", "achievements")) else {}
+        completed = matched.get("completed") or matched.get("completed_items") or []
+        if isinstance(completed, str):
+            completed = [completed]
+        result["work_reports"].append({
+            "id": report_row.id,
+            "submitter": report_row.submitter,
+            "created_at": report_row.created_at.isoformat() if report_row.created_at else None,
+            "completed_items": completed if isinstance(completed, list) else [],
+            "next_steps": matched.get("next_steps") or [],
+            "issues": matched.get("subtask_issues") or matched.get("issues") or [],
+            "achievements": matched.get("achievements") or [],
+        })
+
     if parent:
         result["parent_task"] = {
             "id": parent.id,
@@ -392,7 +429,6 @@ def get_subtask_detail(
     if row.source_submission_id:
         sub = db.get(models.UpdateSubmission, row.source_submission_id)
         if sub:
-            import json as _json
             ai_raw = {}
             try:
                 ai_raw = _json.loads(sub.ai_result_json or "{}")
@@ -412,7 +448,7 @@ def get_subtask_detail(
 
     achievements = (
         db.query(models.Achievement)
-        .filter(models.Achievement.related_task_id == row.task_id)
+        .filter(models.Achievement.related_subtask_id == row.id)
         .order_by(models.Achievement.created_at.desc())
         .limit(10)
         .all()
@@ -432,7 +468,7 @@ def get_subtask_detail(
 
     issues = (
         db.query(models.Issue)
-        .filter(models.Issue.related_task_id == row.task_id)
+        .filter(models.Issue.related_subtask_id == row.id)
         .order_by(models.Issue.created_at.desc())
         .limit(10)
         .all()

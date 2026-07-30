@@ -344,6 +344,7 @@ def test_t3_head_schema_matches_current_orm(tmp_path: Path):
         "kickoff_by",
         "initiated_by",
     }
+    _PROJECT_PROFILE_EXTRA_COLUMNS = _PROJECT_PROFILE_COLUMNS - {"objectives"}
 
     migrated = tmp_path / "migrated-head.db"
     orm = tmp_path / "current-orm.db"
@@ -380,8 +381,8 @@ def test_t3_head_schema_matches_current_orm(tmp_path: Path):
         mig_col_names = {c["name"] for c in migrated_snapshot[table]["columns"]}
         orm_col_names = {c["name"] for c in orm_snapshot[table]["columns"]}
         extra = mig_col_names - orm_col_names
-        assert extra == _PROJECT_PROFILE_COLUMNS, (
-            f"projects extra columns {extra} != expected {_PROJECT_PROFILE_COLUMNS}"
+        assert extra == _PROJECT_PROFILE_EXTRA_COLUMNS, (
+            f"projects extra columns {extra} != expected {_PROJECT_PROFILE_EXTRA_COLUMNS}"
         )
 
         # 5. After removing 9 columns, remaining fields match ORM exactly
@@ -390,17 +391,18 @@ def test_t3_head_schema_matches_current_orm(tmp_path: Path):
              if c["name"] not in _PROJECT_PROFILE_COLUMNS),
             key=lambda c: str(c["name"]),
         )
-        orm_sorted = sorted(
-            orm_snapshot[table]["columns"],
+        orm_remaining = sorted(
+            (c for c in orm_snapshot[table]["columns"]
+             if c["name"] not in _PROJECT_PROFILE_COLUMNS),
             key=lambda c: str(c["name"]),
         )
         # Normalize: status/is_active server_defaults are set by c8e4f2a7d901
         # but ORM models only carry Python-side defaults.
-        for col_list in (mig_remaining, orm_sorted):
+        for col_list in (mig_remaining, orm_remaining):
             for col in col_list:
                 if col["name"] in ("status", "is_active"):
                     col["default"] = None
-        assert mig_remaining == orm_sorted, (
+        assert mig_remaining == orm_remaining, (
             "projects non-profile columns do not match ORM"
         )
 

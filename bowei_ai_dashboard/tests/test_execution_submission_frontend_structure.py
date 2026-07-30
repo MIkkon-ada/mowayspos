@@ -125,7 +125,7 @@ def test_confirmations_api_exists():
 
 def test_plan_table_view_unchanged():
     """计划表视图组件不引新增功能术语。"""
-    source = _frontend_source("components/task-management/PlanTableView.tsx")
+    source = _frontend_source("components/task-management/PlanTableViewV2.tsx")
     lowered = source.lower()
 
     assert "workstream" not in lowered

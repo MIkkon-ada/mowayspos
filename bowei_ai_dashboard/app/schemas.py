@@ -109,6 +109,7 @@ class AchievementSubmissionPayload(BaseModel):
     file_link: str = ""
     scenario: str = ""
     reuse_tag: str = Field("", max_length=80)
+    attachment_ids: list[int] = Field(default_factory=list)
 
 
 class AchievementSubmissionRejectRequest(BaseModel):
@@ -389,6 +390,23 @@ class MeetingPayload(BaseModel):
 class MeetingStatusPatch(BaseModel):
     publish_status: str
     reject_reason: str = ""
+
+
+class KickoffRunCreatePayload(BaseModel):
+    transcript_text: str = Field(..., min_length=1)
+
+
+class KickoffRunSubmitPayload(BaseModel):
+    summary: str = ""
+
+
+class KickoffProposalReviewPayload(BaseModel):
+    status: str
+    review_comment: str = ""
+
+
+class KickoffStartConfirmPayload(BaseModel):
+    review_comment: str = ""
 
 
 class SubTaskPayload(BaseModel):

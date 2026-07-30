@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './client'
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut } from './client'
 import type { AchievementItem, AchievementSubmissionItem } from '../types'
 
 export function fetchAchievements(projectId?: number | null): Promise<AchievementItem[]> {
@@ -44,6 +44,62 @@ export type AchievementSubmissionPayload = {
   file_link?: string
   scenario?: string
   reuse_tag?: string
+  attachment_ids?: number[]
+}
+
+export type AchievementAttachment = {
+  id: number
+  project_id: number
+  achievement_id?: number | null
+  achievement_submission_id?: number | null
+  original_name: string
+  mime_type: string
+  size_bytes: number
+  uploaded_by: string
+  created_at: string
+}
+
+export function fetchAchievementAttachments(achievementId: number): Promise<AchievementAttachment[]> {
+  return apiGet<AchievementAttachment[]>(`/api/achievement-attachments?achievement_id=${achievementId}`)
+}
+
+export function downloadAchievementAttachment(id: number): string {
+  return `/api/achievement-attachments/${id}/download`
+}
+
+export function deleteAchievementAttachment(id: number): Promise<unknown> {
+  return apiDelete(`/api/achievement-attachments/${id}`)
+}
+
+export function uploadAchievementAttachment(
+  file: File,
+  target: { projectId: number; achievementId?: number; achievementSubmissionId?: number },
+  onProgress?: (percent: number) => void,
+  signal?: AbortSignal,
+): Promise<AchievementAttachment> {
+  const form = new FormData()
+  form.append('project_id', String(target.projectId))
+  form.append('file', file)
+  if (target.achievementId != null) form.append('achievement_id', String(target.achievementId))
+  if (target.achievementSubmissionId != null) form.append('achievement_submission_id', String(target.achievementSubmissionId))
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', '/api/achievement-attachments')
+    xhr.withCredentials = true
+    const abort = () => xhr.abort()
+    signal?.addEventListener('abort', abort, { once: true })
+    xhr.onloadend = () => signal?.removeEventListener('abort', abort)
+    xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress?.(Math.round(event.loaded / event.total * 100)) }
+    xhr.onerror = () => reject(new Error('上传失败，请检查网络后重试'))
+    xhr.onabort = () => reject(new DOMException('上传已取消', 'AbortError'))
+    xhr.onload = () => {
+      let body: unknown = null
+      try { body = xhr.responseText ? JSON.parse(xhr.responseText) : null } catch { body = xhr.responseText }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as AchievementAttachment)
+      else reject(new ApiError(xhr.status, (body as { detail?: string } | null)?.detail || '上传失败', body))
+    }
+    xhr.send(form)
+  })
 }
 
 export function createAchievementSubmission(

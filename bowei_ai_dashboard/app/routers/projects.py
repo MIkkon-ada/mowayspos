@@ -2172,14 +2172,12 @@ def approve_project(
         raise HTTPException(409, "已归档项目不可启动")
 
     payload = payload or schemas.ProjectProfilePayload()
-    _set_project_lifecycle(project, "active", db=db, project_id=project_id)
-    kickoff_value = (kickoff_date or utc_now().date().isoformat()).strip()
-    current_name = get_user_context_from_db(current_user, db)["name"] or current_user
+    _set_project_lifecycle(project, PL.S_PENDING_KICKOFF, db=db, project_id=project_id)
     _update_project_columns(
         db,
         project_id,
-        kickoff_date=kickoff_value,
-        kickoff_by=current_name,
+        kickoff_date="",
+        kickoff_by="",
         project_type=(payload.project_type or "").strip() if payload.project_type is not None else None,
         client_name=(payload.client_name or "").strip() if payload.client_name is not None else None,
         background=(payload.background or "").strip() if payload.background is not None else None,

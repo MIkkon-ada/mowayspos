@@ -46,6 +46,7 @@ export function VoiceUpdatePage() {
   const [selectedProvider, setSelectedProvider] = useState('deepseek')
   const [reportScope, setReportScope] = useState<VoiceReportScope>('all')
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
+  const [quickSubtaskId, setQuickSubtaskId] = useState<number | null>(null)
   const [providers, setProviders] = useState<AvailableProvider[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [resolvedProjectDetail, setResolvedProjectDetail] = useState<Project | null>(null)
@@ -115,7 +116,7 @@ export function VoiceUpdatePage() {
     scope: reportScope,
     selectedProjectId,
     enabled: reportScope === 'all' || selectedProjectIsActive,
-    requestedSubtaskId: selectedProjectId === requestedProjectId ? requestedSubtaskId : null,
+    requestedSubtaskId: quickSubtaskId ?? (selectedProjectId === requestedProjectId ? requestedSubtaskId : null),
     restoredSubtaskId: !requestedSubtaskId && selectedProjectId === draftState.projectId ? draftState.subtaskId ?? null : null,
   })
 
@@ -201,12 +202,14 @@ export function VoiceUpdatePage() {
   function handleProjectChange(projectId: number | null) {
     if (controlsLocked) return
     resetExtractionState()
+    setQuickSubtaskId(null)
     setSelectedProjectId(projectId)
   }
 
   function handleScopeChange(scope: VoiceReportScope) {
     if (controlsLocked) return
     resetExtractionState()
+    setQuickSubtaskId(null)
     setReportScope(scope)
     if (scope === 'all') setSelectedProjectId(null)
   }
@@ -214,7 +217,16 @@ export function VoiceUpdatePage() {
   function handleTaskChange(subtaskId: number | null) {
     if (controlsLocked) return
     resetExtractionState()
+    setQuickSubtaskId(null)
     taskBinding.selectTask(subtaskId)
+  }
+
+  function handleQuickTaskSelect(projectId: number, subtaskId: number) {
+    if (controlsLocked) return
+    resetExtractionState()
+    setQuickSubtaskId(subtaskId)
+    setSelectedProjectId(projectId)
+    setReportScope('task')
   }
 
   function handleSaveDraft() {
@@ -252,6 +264,7 @@ export function VoiceUpdatePage() {
           onProjectChange={handleProjectChange}
           onScopeChange={handleScopeChange}
           onTaskChange={handleTaskChange}
+          onQuickTaskSelect={handleQuickTaskSelect}
           onOpenTaskDetail={taskBinding.openTaskDetail}
         />
         <button type="button" className="voice-update-history-button" onClick={() => setHistoryOpen(true)}>历史提交</button>
@@ -307,6 +320,7 @@ export function VoiceUpdatePage() {
                 setTaskReports={setTaskReports}
                 keyTaskIssues={keyTaskIssues}
                 setKeyTaskIssues={setKeyTaskIssues}
+                selectedProjectId={selectedProjectId}
                 selectedSubtaskId={taskBinding.selectedSubtaskId}
                 proposedSubtasks={proposedSubtasks}
                 setProposedSubtasks={setProposedSubtasks}

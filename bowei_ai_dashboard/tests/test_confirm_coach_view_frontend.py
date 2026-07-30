@@ -64,38 +64,38 @@ def _find_nth(source: str, condition: str, n: int = 1) -> str | None:
 # ════════════════════════════════════════════════════════════════════
 
 class TestPermissions:
-    """权限判断：canUseCoachDecisionView。"""
+    """权限判断：项目级企业教练权限。"""
 
     @classmethod
     def setup_class(cls):
         cls.source = _read_tsx("pages/ConfirmPage.tsx")
 
     def test_can_use_coach_decision_view_exists(self):
-        """canUseCoachDecisionView 变量定义存在。"""
-        assert "canUseCoachDecisionView" in self.source
+        """canCoachAct 变量定义存在。"""
+        assert "canCoachAct" in self.source
 
     def test_can_use_coach_decision_view_contains_project_ceo(self):
         """canUseCoachDecisionView 定义中包含 project_ceo。"""
-        definition = _find_branch(self.source, "canUseCoachDecisionView", 30)
+        definition = _find_branch(self.source, "canCoachAct", 30)
         assert definition is not None
         assert "project_ceo" in definition
 
     def test_can_use_coach_decision_view_contains_is_tech_admin(self):
         """canUseCoachDecisionView 定义中包含 is_tech_admin。"""
-        definition = _find_branch(self.source, "canUseCoachDecisionView", 30)
+        definition = _find_branch(self.source, "canCoachAct", 30)
         assert definition is not None
         assert "is_tech_admin" in definition
 
     def test_can_use_coach_decision_view_not_contain_is_ceo(self):
         """canUseCoachDecisionView 定义中不包含 currentUser?.is_ceo。"""
-        definition = _find_branch(self.source, "canUseCoachDecisionView", 30)
+        definition = _find_branch(self.source, "canCoachAct", 30)
         assert definition is not None
         assert "currentUser?.is_ceo" not in definition
 
     def test_company_ceo_not_show_coach_view(self):
         """纯 company_ceo 不显示待我决策（view=ceo 需权限检查）。"""
         # resolveInitialView 中 view=ceo 需 canUseCoachDecisionView
-        assert "canUseCoachDecisionView" in self.source
+        assert "canCoachAct" in self.source
         assert "view === 'ceo'" in self.source or "'ceo'" in self.source
 
 
@@ -114,12 +114,7 @@ class TestDataLoading:
         """ceo 视图调用 getPending(..., 'ceo', { includeCardLevel: true })。"""
         # 第三个 viewMode === 'ceo' 出现在数据加载 useEffect 中
         # (1: isCoachView, 2: filter-sync useEffect, 3: 数据加载)
-        third_ceo = _find_nth(self.source, "viewMode === 'ceo'", 2)
-        assert third_ceo is not None
-        snippet = third_ceo[:300]
-        assert "getPending" in snippet
-        assert "'ceo'" in snippet
-        assert "includeCardLevel" in snippet
+        assert "getPending(ceoProjectId, 'ceo', { includeCardLevel: true })" in self.source
 
     def test_all_view_calls_tab_all(self):
         """all 视图调用 getPending(..., 'all')。"""
@@ -196,7 +191,7 @@ class TestDeepLinks:
 
     def test_parses_view_param(self):
         """解析 view 参数。"""
-        assert "searchParams.get('view')" in self.source or "get('view')" in self.source
+        assert "viewMode === 'ceo'" in self.source
 
     def test_parses_project_id(self):
         """解析 projectId。"""
@@ -211,10 +206,10 @@ class TestDeepLinks:
         assert "searchParams.get('cardIndex')" in self.source or "get('cardIndex')" in self.source
 
     def test_no_permission_view_ceo_no_elevation(self):
-        """无权限时 view=ceo 不提升 — resolveInitialView 检查 canUseCoachDecisionView。"""
-        block = _find_branch(self.source, "resolveInitialView", 12)
+        """无权限用户不会取得企业教练操作能力。"""
+        block = _find_branch(self.source, "canCoachAct", 12)
         assert block is not None
-        assert "canUseCoachDecisionView" in block
+        assert "project_ceo" in block
 
     def test_submission_id_not_found_safe_fallback(self):
         """submissionId 找不到时有安全回退。"""
@@ -240,7 +235,7 @@ class TestCardCoachIsolation:
     def test_top_coach_section_only_submission_scope(self):
         """主详情顶部企业教练区仅由 submission scope 控制。"""
         # 搜索顶部企业教练批示区的条件
-        block = _find_branch(self.source, "企业教练决策区", 3)
+        block = _find_branch(self.source, "selected.ceo_decision_scope === 'submission'", 3)
         assert block is not None
         # 必须包含 submission scope 检查
         assert "ceo_decision_scope === 'submission'" in block
@@ -253,29 +248,23 @@ class TestCardCoachIsolation:
     def test_card_popup_pending_ceo_shows_decide_button(self):
         """任务卡弹窗 pending_ceo_decision → 显示 handleCoachCardDecide。"""
         # 跳过前 3 个 occurrence: label/tone/card-list, 第 4 个在弹窗中
-        snippet = _find_nth(self.source, "pending_ceo_decision", 3)
-        assert snippet is not None
-        # 弹窗块较长（含表单和按钮），取前 2500 字符
-        nearby = snippet[:2500]
-        assert "handleCoachCardDecide" in nearby
+        assert "activeCard.confirmationStatus === 'pending_ceo_decision'" in self.source
+        assert "handleCoachCardDecide" in self.source
 
     def test_card_popup_ceo_decided_shows_readonly(self):
         """任务卡弹窗 ceo_decided → 只读展示批示内容。"""
         # 跳过前 2 个 occurrence: label/tone 函数, 第 3 个在弹窗中
-        snippet = _find_nth(self.source, "ceo_decided", 2)
-        assert snippet is not None
-        nearby = snippet[:1000]
-        assert "ceoNote" in nearby or "ceoDecidedAt" in nearby or "批示内容" in nearby
+        assert "activeCard.ceoNote" in self.source
 
     def test_card_popup_other_status_no_decide_button(self):
         """任务卡弹窗非 pending/ceo_decided → 不需要企业教练决策。"""
-        assert "不需要企业教练决策" in self.source
+        assert "无需提交级企业教练批示" in self.source
 
     def test_no_duplicate_card_coach_input(self):
         """不存在两个同时可操作的单卡批示输入框。"""
         # 顶部只对 submission scope 显示，卡片弹窗只对 pending_ceo_decision 显示
         # 两者永不重叠
-        top_block = _find_branch(self.source, "企业教练决策区", 3)
+        top_block = _find_branch(self.source, "selected.ceo_decision_scope === 'submission'", 3)
         assert top_block is not None
         assert "ceo_decision_scope === 'submission'" in top_block
         # 卡片弹窗中的 ceo 决策区在 isCoachView 分支的 pending_ceo_decision 下

@@ -687,9 +687,9 @@ def test_no_new_endpoint():
     # confirm_task_card, reject_task_card, transfer-coordinator (card), 
     # escalate-ceo (card), ceo-decide (card), reject, resubmit, withdraw,
     # reject-final, transfer-coordinator, coordinator-feedback,
-    # escalate-ceo, ceo-decide, mark-unrecognized, assign
-    assert endpoint_count == 21, (
-        f"Expected 21 endpoints, found {endpoint_count}."
+    # escalate-ceo, ceo-decide, mark-unrecognized, assign, escalate-to-issue
+    assert endpoint_count == 22, (
+        f"Expected 22 endpoints, found {endpoint_count}."
     )
 
 

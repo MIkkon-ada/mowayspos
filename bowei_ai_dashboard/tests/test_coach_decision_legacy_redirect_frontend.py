@@ -158,7 +158,9 @@ class TestNoPermissionElevation:
         start = source.find("function LegacyCoachDecisionRedirect")
         if start < 0:
             return ""
-        next_func = source.find("function AppRoutes", start)
+        next_func = source.find("function ConfirmationCenterRoute", start)
+        if next_func < 0:
+            next_func = source.find("function AppRoutes", start)
         if next_func < 0:
             next_func = source.find("type SetupState", start)
         if next_func < 0:
@@ -185,9 +187,9 @@ class TestNoPermissionElevation:
         assert not any(w in body for w in capability_words)
 
     def test_confirm_page_still_controls_permission(self):
-        """ConfirmPage 仍通过 canUseCoachDecisionView 控制权限。"""
+        """ConfirmPage 仍通过项目级企业教练权限控制操作。"""
         source = _read_tsx("pages/ConfirmPage.tsx")
-        assert "canUseCoachDecisionView" in source
+        assert "canCoachAct" in source
         # view=ceo 需要权限检查
         ceo_block = _find_branch(source, "viewMode === 'ceo'", 5)
         assert ceo_block is not None

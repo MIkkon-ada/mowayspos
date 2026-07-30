@@ -15,6 +15,7 @@ export function VoiceUpdateResultCard(props: VoiceUpdateResultCardProps) {
     setTaskReports,
     keyTaskIssues,
     setKeyTaskIssues,
+    selectedProjectId,
     selectedSubtaskId,
     proposedSubtasks,
     setProposedSubtasks,
@@ -56,6 +57,7 @@ export function VoiceUpdateResultCard(props: VoiceUpdateResultCardProps) {
           setTaskReports={setTaskReports}
           keyTaskIssues={keyTaskIssues}
           setKeyTaskIssues={setKeyTaskIssues}
+          selectedProjectId={selectedProjectId}
           selectedSubtaskId={selectedSubtaskId}
           cardEdits={cardEdits}
           updateCardEdit={updateCardEdit}

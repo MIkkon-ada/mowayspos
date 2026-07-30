@@ -354,6 +354,26 @@ test('target visual replica uses one compact header and keeps existing controls'
   assert.match(source, /\.voice-update-history-drawer\s*\{[^}]*width:\s*292px/s)
 })
 
+test('work report scope selector uses a compact chevron matching other project selectors', () => {
+  const binding = read(BINDING_BAR)
+  const css = read(CSS)
+  assert.match(binding, /voice-update-binding-scope-arrow/)
+  assert.match(css, /\.voice-update-binding-field\.is-scope \{ position: relative/)
+  assert.match(css, /\.voice-update-binding-scope-arrow \{[^}]*width: 8px[^}]*height: 8px[^}]*border-right: 2px solid #94a3b8[^}]*transform: translateY\(-65%\) rotate\(45deg\)/s)
+  assert.match(css, /\.voice-update-binding-field\.is-scope select \{[^}]*appearance: none[^}]*padding-right: 36px/s)
+})
+
+test('work report scope menu previews project and key-task candidates on hover', () => {
+  const binding = read(BINDING_BAR)
+  const page = read(PAGE)
+
+  assert.match(binding, /voice-update-scope-menu/)
+  assert.match(binding, /onMouseEnter=\{\(\) => setHoveredScope\('project'\)\}/)
+  assert.match(binding, /onMouseEnter=\{\(\) => setHoveredScope\('task'\)\}/)
+  assert.match(binding, /onQuickTaskSelect/)
+  assert.match(page, /function handleQuickTaskSelect\(projectId: number, subtaskId: number\)/)
+})
+
 test('input and result panels expose plain headings and the re-extract action', () => {
   const input = read(INPUT)
   const result = read(RESULT)
@@ -581,4 +601,14 @@ test('compact work report modules use natural height without large filler gaps',
   assert.match(css, /\.voice-update-workspace\s*\{[^}]*gap:\s*0/s)
   assert.doesNotMatch(css, /\.voice-update-workspace\s*\{[^}]*min-height:\s*650px/s)
   assert.match(css, /\.voice-update-textarea\s*\{[^}]*height:\s*240px[^}]*min-height:\s*240px/s)
+})
+
+test('each AI-extracted achievement can upload unbound evidence for confirmation writeback', () => {
+  const reports = read(REPORTS)
+  const api = read('src/api/achievements.ts')
+  assert.match(reports, /uploadAchievementAttachment/)
+  assert.match(reports, /attachment_ids/)
+  assert.match(reports, /projectId/)
+  assert.match(reports, /type="file"/)
+  assert.match(api, /projectId: number; achievementId\?: number; achievementSubmissionId\?: number/)
 })

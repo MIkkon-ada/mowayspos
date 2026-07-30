@@ -31,6 +31,7 @@ export type TaskReportAchievement = {
   name: string
   achievement_type: string
   file_link?: string
+  attachment_ids?: number[]
 }
 
 export type TaskReportProgress = {

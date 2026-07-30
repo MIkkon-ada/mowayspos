@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { uploadAchievementAttachment } from '../../api/achievements'
 import { fetchSubTasks } from '../../api/subtasks'
 import type { TaskReport, TaskReportAchievement, TaskReportProgress } from '../../api/updates'
 import type { SubTaskItem } from '../../types'
@@ -17,12 +18,14 @@ export function VoiceUpdateTaskReportsSection({
   setTaskReports,
   keyTaskIssues,
   setKeyTaskIssues,
+  selectedProjectId,
   cardEdits,
   updateCardEdit,
   projectTasksForSuggest,
   voiceSubtasksContext,
 }: VoiceUpdateTaskReportsSectionProps) {
   const [activeReportIndex, setActiveReportIndex] = useState(0)
+  const [uploadingAchievement, setUploadingAchievement] = useState<string | null>(null)
   const safeActiveIndex = Math.min(activeReportIndex, Math.max(taskReports.length - 1, 0))
   const activeItem = taskReports[safeActiveIndex]
     ? { report: taskReports[safeActiveIndex], index: safeActiveIndex }
@@ -58,6 +61,30 @@ export function VoiceUpdateTaskReportsSection({
       }))
       return { ...report, achievements } as TaskReport
     }))
+  }
+
+  async function uploadEvidence(report: TaskReport, reportIndex: number, achievementIndex: number, file: File | null) {
+    if (!file) return
+    const projectId = report.type === 'progress' ? report.project_id ?? selectedProjectId : selectedProjectId
+    if (!projectId) {
+      window.alert('请先为该工作卡选择所属项目，再上传成果附件')
+      return
+    }
+    const key = `${reportIndex}-${achievementIndex}`
+    setUploadingAchievement(key)
+    try {
+      const attachment = await uploadAchievementAttachment(file, { projectId })
+      setTaskReports((previous) => previous.map((item, currentReportIndex) => currentReportIndex === reportIndex ? {
+        ...item,
+        achievements: item.achievements.map((entry, currentAchievementIndex) => currentAchievementIndex === achievementIndex
+          ? { ...entry, attachment_ids: [...(entry.attachment_ids ?? []), attachment.id] }
+          : entry),
+      } as TaskReport : item))
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '附件上传失败，请重试')
+    } finally {
+      setUploadingAchievement(null)
+    }
   }
 
   function renderOwnership(report: TaskReport, index: number) {
@@ -264,6 +291,11 @@ export function VoiceUpdateTaskReportsSection({
                   } as TaskReport : item))}
                   placeholder="可选"
                 />
+                <span>成果附件{achievement.attachment_ids?.length ? `（已选 ${achievement.attachment_ids.length} 个）` : ''}</span>
+                <input type="file" disabled={phase === 'submitted' || uploadingAchievement === `${index}-${achievementIndex}`} onChange={(event) => {
+                  void uploadEvidence(report, index, achievementIndex, event.target.files?.[0] ?? null)
+                  event.currentTarget.value = ''
+                }} />
               </label>
             ))}
           </details>

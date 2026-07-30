@@ -58,6 +58,7 @@ def test_project_lifecycle_defines_close_states_and_helpers():
         "draft",
         "dispatched",
         "pending_review",
+        "pending_kickoff",
         "returned",
         "active",
         "pending_close",

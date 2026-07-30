@@ -11,3 +11,7 @@ test('meeting drafts show source material beside AI notes', () => {
   assert.ok(source.includes('selected.transcript_text'))
   assert.ok(source.includes('未进入 AI 确认中心'))
 })
+
+test('meeting details do not present inferred attendees as meeting facts', () => {
+  assert.ok(!source.includes('InfoRow label="参会人"'))
+})

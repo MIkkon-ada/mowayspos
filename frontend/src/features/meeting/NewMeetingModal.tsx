@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { analyzeMeeting, createMeeting, transcribeAudio, updateMeeting, type MeetingAnalyzeResult } from '../../api/meetings'
-import { getProjectMembers } from '../../api/projects'
-import type { MeetingItem, ProjectMember } from '../../types'
+import type { MeetingItem } from '../../types'
 import { ErrorBar, Field, JsonListSection, SectionTitle } from './meetingShared'
 import { ReportsSection } from './MeetingReportsSection'
-import { PushToTasksModal } from './PushToTasksModal'
+import { MeetingChangeSetReviewModal } from './MeetingChangeSetReviewModal'
 
 type ModalStep = 'input' | 'analyzing' | 'review'
 type MeetingMode = 'progress'
@@ -62,8 +61,9 @@ export function NewMeetingModal({
   const [statusMsg, setStatusMsg] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
-  const [showPushModal, setShowPushModal] = useState(false)
-  const [members, setMembers] = useState<ProjectMember[]>([])
+  const [analysisId, setAnalysisId] = useState<number | null>(null)
+  const [savedMeeting, setSavedMeeting] = useState<MeetingItem | null>(null)
+  const [reviewMeetingId, setReviewMeetingId] = useState<number | null>(null)
   const [audioFile, setAudioFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -87,10 +87,6 @@ export function NewMeetingModal({
     }
     return emptyForm(defaultMeetingType)
   })
-
-  useEffect(() => {
-    getProjectMembers(projectId).then(setMembers).catch(() => {})
-  }, [projectId])
 
   function setField(key: keyof ReviewForm, val: string) {
     setForm((f) => ({ ...f, [key]: val }))
@@ -118,6 +114,7 @@ export function NewMeetingModal({
       return
     }
     setError('')
+    setAnalysisId(null)
     setStep('analyzing')
     setStatusMsg('AI 正在分析会议内容，提取摘要和行动计划...')
     try {
@@ -126,6 +123,7 @@ export function NewMeetingModal({
         projectId,
         meetingMode,
       )
+      setAnalysisId(result.analysis_id)
       setForm({
         title: result.title,
         meeting_type: result.meeting_type,
@@ -157,8 +155,16 @@ export function NewMeetingModal({
         const item = await updateMeeting(editItem.id, payload)
         onCreated(item)
       } else {
-        const item = await createMeeting(payload)
-        onCreated(item)
+        const item = await createMeeting({
+          ...payload,
+          analysis_id: analysisId,
+        })
+        setSavedMeeting(item)
+        if (analysisId !== null) {
+          setReviewMeetingId(item.id)
+        } else {
+          onCreated(item)
+        }
       }
     } catch (e: unknown) {
       setError(`保存失败：${e instanceof Error ? e.message : String(e)}`)
@@ -181,6 +187,17 @@ export function NewMeetingModal({
       : step === 'analyzing'
         ? statusMsg
         : '检查 AI 提取结果，确认后保存'
+
+  if (reviewMeetingId !== null && savedMeeting) {
+    const finishReview = () => onCreated(savedMeeting)
+    return (
+      <MeetingChangeSetReviewModal
+        meetingId={reviewMeetingId}
+        onClose={finishReview}
+        onDone={finishReview}
+      />
+    )
+  }
 
   return (
     <>
@@ -447,9 +464,6 @@ export function NewMeetingModal({
                   {isEdit ? '取消' : '返回修改'}
                 </button>
                 <div className="flex gap-2">
-                  <button onClick={() => setShowPushModal(true)} className="px-4 py-2.5 rounded-xl border-2 border-emerald-200 text-emerald-700 text-sm font-semibold hover:bg-emerald-50 flex items-center gap-2">
-                    推送到工作推进
-                  </button>
                   <button onClick={handleSave} disabled={saving} className="px-6 py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90 disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}>
                     {saving ? '保存中...' : isEdit ? '保存修改' : '保存草稿'}
                   </button>
@@ -476,19 +490,6 @@ export function NewMeetingModal({
         </div>
       </div>
 
-      {showPushModal && (
-        <PushToTasksModal
-          projectId={projectId}
-          reportsJson={form.reports_json}
-          transcriptText={form.transcript_text}
-          members={members}
-          onClose={() => setShowPushModal(false)}
-          onDone={() => {
-            setShowPushModal(false)
-            handleSave()
-          }}
-        />
-      )}
     </>
   )
 }

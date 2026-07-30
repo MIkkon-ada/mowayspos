@@ -386,6 +386,9 @@ def _meeting_change_proposal_payload(
     return {
         "id": row.id,
         "action": row.action,
+        "target_type": row.target_type,
+        "target_id": row.target_id,
+        "parent_workstream_id": row.parent_workstream_id,
         "target": target,
         "before": _json_value(row.before_json, {}),
         "proposed": _json_value(row.proposed_json, {}),

@@ -289,10 +289,10 @@ def _validate_evidence_against_transcript(
     transcript_text: str | None,
     errors: list[str],
 ) -> None:
-    if transcript_text is not None and (
-        not isinstance(transcript_text, str)
-        or any(excerpt not in transcript_text for excerpt in evidence)
-    ):
+    if not isinstance(transcript_text, str) or not transcript_text.strip():
+        errors.append("transcript_text must be a non-empty string")
+        return
+    if any(excerpt not in transcript_text for excerpt in evidence):
         errors.append("evidence excerpts must occur in transcript_text")
 
 

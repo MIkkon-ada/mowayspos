@@ -7,7 +7,7 @@ from app import models
 from app.database import Base
 from app.services.meeting_change_set import (
     build_meeting_plan_snapshot,
-    validate_meeting_change_proposal,
+    validate_meeting_change_proposal as _validate_meeting_change_proposal,
 )
 
 
@@ -111,6 +111,29 @@ def _valid_update_workstream():
     }
 
 
+def _transcript_for(proposal):
+    evidence = proposal.get("evidence") if isinstance(proposal, dict) else []
+    return "\n".join(item for item in evidence if isinstance(item, str)) or "Meeting transcript."
+
+
+def _validate_with_transcript(proposal, snapshot):
+    return _validate_meeting_change_proposal(
+        proposal,
+        snapshot,
+        transcript_text=_transcript_for(proposal),
+    )
+
+
+def validate_meeting_change_proposal(proposal, snapshot, transcript_text=None):
+    if transcript_text is None:
+        return _validate_with_transcript(proposal, snapshot)
+    return _validate_meeting_change_proposal(
+        proposal,
+        snapshot,
+        transcript_text=transcript_text,
+    )
+
+
 def test_snapshot_contains_only_live_project_plan_rows_and_never_mutates_them():
     db = _db_session()
     active, _deleted = _seed_plan(db)
@@ -168,7 +191,12 @@ def test_valid_update_workstream_uses_frozen_before_value_and_does_not_mutate_ro
     active, _deleted = _seed_plan(db)
     snapshot = build_meeting_plan_snapshot(7, db)
 
-    normalized = validate_meeting_change_proposal(_valid_update_workstream(), snapshot)
+    proposal = _valid_update_workstream()
+    normalized = validate_meeting_change_proposal(
+        proposal,
+        snapshot,
+        transcript_text=_transcript_for(proposal),
+    )
 
     assert normalized == {
         "action": "update_workstream",
@@ -197,16 +225,18 @@ def test_unknown_target_missing_evidence_or_reason_blocks_proposal():
     _seed_plan(db)
     snapshot = build_meeting_plan_snapshot(7, db)
 
-    normalized = validate_meeting_change_proposal(
-        {
+    proposal = {
             "action": "update_subtask",
             "target": {"subtask_id": 9999},
             "proposed": {"status": "Done"},
             "evidence": [],
             "reason": "  ",
             "confidence": 0.5,
-        },
+    }
+    normalized = validate_meeting_change_proposal(
+        proposal,
         snapshot,
+        transcript_text=_transcript_for(proposal),
     )
 
     assert normalized["validation"] == {
@@ -223,16 +253,18 @@ def test_create_workstream_requires_key_task():
     db = _db_session()
     _seed_plan(db)
 
-    normalized = validate_meeting_change_proposal(
-        {
+    proposal = {
             "action": "create_workstream",
             "target": {},
             "proposed": {"owner": "Known owner"},
             "evidence": ["Speaker 1: create a new workstream."],
             "reason": "A new workstream was explicitly requested.",
             "confidence": 0.5,
-        },
+    }
+    normalized = validate_meeting_change_proposal(
+        proposal,
         build_meeting_plan_snapshot(7, db),
+        transcript_text=_transcript_for(proposal),
     )
 
     assert normalized["validation"] == {
@@ -245,16 +277,18 @@ def test_create_subtask_requires_title_and_parent_workstream():
     db = _db_session()
     _seed_plan(db)
 
-    normalized = validate_meeting_change_proposal(
-        {
+    proposal = {
             "action": "create_subtask",
             "target": {},
             "proposed": {"assignee": "Known assignee"},
             "evidence": ["Speaker 1: create the follow-up task."],
             "reason": "The follow-up was explicitly assigned.",
             "confidence": 0.5,
-        },
+    }
+    normalized = validate_meeting_change_proposal(
+        proposal,
         build_meeting_plan_snapshot(7, db),
+        transcript_text=_transcript_for(proposal),
     )
 
     assert normalized["validation"] == {
@@ -275,6 +309,7 @@ def test_unknown_proposed_field_is_removed_and_blocks_proposal():
     normalized = validate_meeting_change_proposal(
         proposal,
         build_meeting_plan_snapshot(7, db),
+        transcript_text=_transcript_for(proposal),
     )
 
     assert normalized["proposed"] == {"completion_standard": "Approved standard"}
@@ -476,6 +511,28 @@ def test_forged_evidence_excerpt_is_blocked_when_transcript_is_supplied():
     assert normalized["validation"] == {
         "state": "blocked",
         "errors": ["evidence excerpts must occur in transcript_text"],
+    }
+
+
+def test_missing_or_blank_transcript_blocks_proposals():
+    db = _db_session()
+    _seed_plan(db)
+    snapshot = build_meeting_plan_snapshot(7, db)
+
+    missing = _validate_meeting_change_proposal(_valid_update_workstream(), snapshot)
+    blank = _validate_meeting_change_proposal(
+        _valid_update_workstream(),
+        snapshot,
+        transcript_text="   ",
+    )
+
+    assert missing["validation"] == {
+        "state": "blocked",
+        "errors": ["transcript_text must be a non-empty string"],
+    }
+    assert blank["validation"] == {
+        "state": "blocked",
+        "errors": ["transcript_text must be a non-empty string"],
     }
 
 

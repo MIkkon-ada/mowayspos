@@ -227,7 +227,7 @@ def test_create_subtask_requires_title_and_parent_workstream():
     assert normalized["validation"] == {
         "state": "blocked",
         "errors": [
-            "create_subtask requires target.workstream_id",
+            "create_subtask requires target.parent_workstream_id",
             "create_subtask requires proposed.title",
         ],
     }
@@ -251,6 +251,157 @@ def test_unknown_proposed_field_is_removed_and_blocks_proposal():
     }
 
 
+def test_valid_create_workstream_is_normalized_against_the_frozen_project():
+    db = _db_session()
+    _seed_plan(db)
+
+    normalized = validate_meeting_change_proposal(
+        {
+            "action": "create_workstream",
+            "target": {},
+            "proposed": {"key_task": "New workstream", "owner": "Known owner"},
+            "evidence": ["Speaker 1: create the new workstream."],
+            "reason": "The new workstream was explicitly agreed.",
+            "confidence": 0.7,
+        },
+        build_meeting_plan_snapshot(7, db),
+    )
+
+    assert normalized == {
+        "action": "create_workstream",
+        "target": {"project_id": 7},
+        "before": {},
+        "proposed": {"key_task": "New workstream", "owner": "Known owner"},
+        "evidence": ["Speaker 1: create the new workstream."],
+        "reason": "The new workstream was explicitly agreed.",
+        "confidence": 0.7,
+        "validation": {"state": "ready", "errors": []},
+    }
+
+
+def test_valid_create_subtask_is_normalized_against_its_parent_workstream():
+    db = _db_session()
+    active, _deleted = _seed_plan(db)
+
+    normalized = validate_meeting_change_proposal(
+        {
+            "action": "create_subtask",
+            "target": {"parent_workstream_id": active.id},
+            "proposed": {"title": "New follow-up", "assignee": "Known assignee"},
+            "evidence": ["Speaker 1: create the follow-up."],
+            "reason": "The follow-up was explicitly assigned.",
+            "confidence": 0.8,
+        },
+        build_meeting_plan_snapshot(7, db),
+    )
+
+    assert normalized == {
+        "action": "create_subtask",
+        "target": {"project_id": 7, "parent_workstream_id": 1},
+        "before": {},
+        "proposed": {"title": "New follow-up", "assignee": "Known assignee"},
+        "evidence": ["Speaker 1: create the follow-up."],
+        "reason": "The follow-up was explicitly assigned.",
+        "confidence": 0.8,
+        "validation": {"state": "ready", "errors": []},
+    }
+
+
+def test_valid_update_subtask_uses_frozen_parent_and_before_values():
+    db = _db_session()
+    _seed_plan(db)
+
+    normalized = validate_meeting_change_proposal(
+        {
+            "action": "update_subtask",
+            "target": {"subtask_id": 11},
+            "proposed": {"notes": "Updated note"},
+            "evidence": ["Speaker 2: record the updated note."],
+            "reason": "The meeting explicitly added the note.",
+            "confidence": 0.75,
+        },
+        build_meeting_plan_snapshot(7, db),
+    )
+
+    assert normalized == {
+        "action": "update_subtask",
+        "target": {"project_id": 7, "parent_workstream_id": 1, "subtask_id": 11},
+        "before": {
+            "assignee": "Known assignee",
+            "completion_criteria": "Old criterion",
+            "notes": "Old note",
+            "plan_time": "2026-08-01",
+            "status": "In progress",
+            "title": "Existing subtask",
+        },
+        "proposed": {"notes": "Updated note"},
+        "evidence": ["Speaker 2: record the updated note."],
+        "reason": "The meeting explicitly added the note.",
+        "confidence": 0.75,
+        "validation": {"state": "ready", "errors": []},
+    }
+
+
+def test_empty_update_proposed_fields_are_blocked_for_both_target_types():
+    db = _db_session()
+    _seed_plan(db)
+    snapshot = build_meeting_plan_snapshot(7, db)
+
+    workstream = validate_meeting_change_proposal(
+        {
+            "action": "update_workstream",
+            "target": {"workstream_id": 1},
+            "proposed": {},
+            "evidence": ["Speaker 1: review the workstream."],
+            "reason": "The workstream was discussed.",
+        },
+        snapshot,
+    )
+    subtask = validate_meeting_change_proposal(
+        {
+            "action": "update_subtask",
+            "target": {"subtask_id": 11},
+            "proposed": {},
+            "evidence": ["Speaker 1: review the subtask."],
+            "reason": "The subtask was discussed.",
+        },
+        snapshot,
+    )
+
+    assert workstream["validation"] == {
+        "state": "blocked",
+        "errors": ["update proposal must include at least one allowed field"],
+    }
+    assert subtask["validation"] == {
+        "state": "blocked",
+        "errors": ["update proposal must include at least one allowed field"],
+    }
+
+
+def test_unknown_owner_requires_review_without_mutating_the_plan():
+    db = _db_session()
+    _seed_plan(db)
+    before_count = db.query(models.Task).count()
+
+    normalized = validate_meeting_change_proposal(
+        {
+            "action": "create_workstream",
+            "target": {},
+            "proposed": {"key_task": "New workstream", "owner": "New owner"},
+            "evidence": ["Speaker 2: New owner will own the workstream."],
+            "reason": "The meeting explicitly assigned the workstream.",
+            "confidence": 0.8,
+        },
+        build_meeting_plan_snapshot(7, db),
+    )
+
+    assert normalized["validation"] == {
+        "state": "needs_review",
+        "errors": ["owner is not present in the frozen plan and requires review"],
+    }
+    assert db.query(models.Task).count() == before_count
+
+
 def test_unknown_assignee_requires_review_without_mutating_the_plan():
     db = _db_session()
     active, _deleted = _seed_plan(db)
@@ -259,7 +410,7 @@ def test_unknown_assignee_requires_review_without_mutating_the_plan():
     normalized = validate_meeting_change_proposal(
         {
             "action": "create_subtask",
-            "target": {"workstream_id": active.id},
+            "target": {"parent_workstream_id": active.id},
             "proposed": {"title": "New follow-up", "assignee": "New person"},
             "evidence": ["Speaker 2: New person will own the follow-up."],
             "reason": "The meeting explicitly assigned the follow-up.",

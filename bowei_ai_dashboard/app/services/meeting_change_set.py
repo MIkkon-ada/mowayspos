@@ -167,16 +167,24 @@ def _resolve_target(
     workstream: dict[str, Any] | None = None
     subtask: dict[str, Any] | None = None
 
-    if action in {"update_workstream", "create_subtask"}:
+    if action == "update_workstream":
         workstream_id = raw_target.get("workstream_id")
         if not _is_id(workstream_id):
-            if action == "update_workstream":
-                errors.append("update_workstream requires target.workstream_id")
+            errors.append("update_workstream requires target.workstream_id")
         elif workstream_id not in workstreams:
             errors.append("target workstream_id is not present in snapshot")
         else:
             workstream = workstreams[workstream_id]
             target["workstream_id"] = workstream_id
+
+    if action == "create_subtask":
+        parent_workstream_id = raw_target.get("parent_workstream_id")
+        if _is_id(parent_workstream_id):
+            if parent_workstream_id not in workstreams:
+                errors.append("target parent_workstream_id is not present in snapshot")
+            else:
+                workstream = workstreams[parent_workstream_id]
+                target["parent_workstream_id"] = parent_workstream_id
 
     if action == "update_subtask":
         subtask_id = raw_target.get("subtask_id")
@@ -184,11 +192,14 @@ def _resolve_target(
             errors.append("target subtask_id is not present in snapshot")
         else:
             workstream, subtask = subtasks[subtask_id]
-            target["workstream_id"] = workstream["id"]
+            target["parent_workstream_id"] = workstream["id"]
             target["subtask_id"] = subtask_id
-            supplied_workstream_id = raw_target.get("workstream_id")
-            if supplied_workstream_id is not None and supplied_workstream_id != workstream["id"]:
-                errors.append("target workstream_id does not contain subtask_id")
+            supplied_parent_workstream_id = raw_target.get("parent_workstream_id")
+            if (
+                supplied_parent_workstream_id is not None
+                and supplied_parent_workstream_id != workstream["id"]
+            ):
+                errors.append("target parent_workstream_id does not contain subtask_id")
 
     return workstream, subtask
 
@@ -265,10 +276,12 @@ def _validate_creation_requirements(
     if action == "create_workstream" and not proposed.get("key_task"):
         errors.append("create_workstream requires proposed.key_task")
     if action == "create_subtask":
-        if "workstream_id" not in target:
-            errors.append("create_subtask requires target.workstream_id")
+        if "parent_workstream_id" not in target:
+            errors.append("create_subtask requires target.parent_workstream_id")
         if not proposed.get("title"):
             errors.append("create_subtask requires proposed.title")
+    if action in {"update_workstream", "update_subtask"} and not proposed:
+        errors.append("update proposal must include at least one allowed field")
 
 
 def _before_from_snapshot(

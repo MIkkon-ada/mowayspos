@@ -844,3 +844,137 @@ print("STALE_BATCH_REJECTED")
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "STALE_BATCH_REJECTED" in result.stdout
+
+
+_REVIEW_BEFORE_PLAN_WRITE = r'''
+from app import models
+from app.database import Base, SessionLocal, engine
+
+Base.metadata.create_all(bind=engine)
+db = SessionLocal()
+db.add_all([
+    models.Person(id=1, name="Owner", is_active=True),
+    models.Account(id=1, username="owner", password_hash="x", person_id=1, status="active"),
+    models.Project(id=1, name="Project A", status="active", is_active=True),
+    models.ProjectMember(project_id=1, person_id=1, person_name_snapshot="Owner", role="owner"),
+    models.Task(
+        id=10,
+        project_id=1,
+        special_project="Project A",
+        key_task="Existing workstream",
+        owner="Owner",
+        owner_id=1,
+        status="in_progress",
+        is_deleted=False,
+    ),
+])
+db.commit()
+db.close()
+
+from app.main import app
+import app.main as main
+from app.routers import meetings
+from fastapi.testclient import TestClient
+
+main.get_session_user = lambda _session_id: "owner"
+app.dependency_overrides[meetings.get_current_user_name] = lambda: "owner"
+meetings._pick_provider = lambda: "test"
+meetings._do_analyze = lambda *_args: {
+    "title": "Weekly review",
+    "meeting_type": "progress",
+    "summary": "A new key task was agreed.",
+    "change_set": [{
+        "action": "create_subtask",
+        "target": {"project_id": 1, "parent_workstream_id": 10},
+        "proposed": {
+            "title": "New reviewed key task",
+            "assignee": "Owner",
+            "status": "not_started",
+        },
+        "evidence": ["Owner: create the reviewed key task."],
+        "reason": "The owner explicitly created the task.",
+        "confidence": 0.95,
+    }],
+}
+
+client = TestClient(app)
+analysis = client.post(
+    "/api/meetings/analyze",
+    json={
+        "project_id": 1,
+        "mode": "progress",
+        "text": "Owner: create the reviewed key task.",
+    },
+    cookies={"bowei_session": "test-session"},
+)
+assert analysis.status_code == 200, analysis.text
+analysis_id = analysis.json()["analysis_id"]
+
+saved = client.post(
+    "/api/meetings",
+    json={
+        "project_id": 1,
+        "analysis_id": analysis_id,
+        "meeting_type": "progress",
+        "title": "Weekly review",
+        "transcript_text": "Owner: create the reviewed key task.",
+        "publish_status": "draft",
+    },
+    cookies={"bowei_session": "test-session"},
+)
+assert saved.status_code == 200, saved.text
+meeting_id = saved.json()["id"]
+
+db = SessionLocal()
+assert db.query(models.SubTask).count() == 0
+db.close()
+
+detail = client.get(
+    f"/api/meetings/{meeting_id}/change-set",
+    cookies={"bowei_session": "test-session"},
+)
+assert detail.status_code == 200, detail.text
+proposal_id = detail.json()["proposals"][0]["id"]
+
+executed = client.post(
+    f"/api/meetings/{meeting_id}/change-set/execute",
+    json={"proposal_ids": [proposal_id]},
+    cookies={"bowei_session": "test-session"},
+)
+assert executed.status_code == 200, executed.text
+
+db = SessionLocal()
+assert db.query(models.SubTask).count() == 1
+created = db.query(models.SubTask).one()
+assert created.title == "New reviewed key task"
+assert created.task_id == 10
+db.close()
+app.dependency_overrides.clear()
+print("REVIEW_REQUIRED_BEFORE_PLAN_WRITE")
+'''
+
+
+def test_saved_meeting_requires_reviewed_selection_before_any_plan_write(
+    tmp_path: Path,
+):
+    database = tmp_path / "meeting-review-before-write.db"
+    env = os.environ.copy()
+    env.update(
+        {
+            "APP_ENV": "test",
+            "DATABASE_URL": f"sqlite:///{database.resolve().as_posix()}",
+            "FRONTEND_ORIGIN": "",
+            "PYTHONPATH": str(BACKEND_ROOT),
+        }
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(_REVIEW_BEFORE_PLAN_WRITE)],
+        cwd=BACKEND_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "REVIEW_REQUIRED_BEFORE_PLAN_WRITE" in result.stdout

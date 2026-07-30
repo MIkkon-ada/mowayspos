@@ -55,3 +55,23 @@ curl --fail http://127.0.0.1:18100/api/health
 ```
 
 The health response must report `status=ok`, `database=ok`, and `env=production`. The host Nginx should proxy `pos.moways.com.cn` to `127.0.0.1:18100` and preserve `X-Forwarded-Proto`; configuring that host proxy and Certbot remains a separate infrastructure step.
+
+## Meeting change-set release safety
+
+The meeting change-set release adds only `meeting_change_sets` and
+`meeting_change_proposals` plus their indexes. Apply the additive migration with
+`alembic upgrade head`.
+
+Do not run `docker compose down -v`, remove `/data/mowayspos/postgres`, or
+recreate the PostgreSQL service for this release. The persistent LLM settings
+file remains `/data/mowayspos/env/llm_configs.json`, and WeCom values remain in
+`/data/mowayspos/env/production.env`; this feature modifies neither file.
+
+After deployment:
+
+1. Verify `/api/health` and confirm `alembic current` reports the expected head.
+2. In a non-production test project, run one meeting analysis and confirm that
+   saving the meeting does not change `tasks` or `subtasks` row counts.
+3. Explicitly select one non-blocked proposal, execute it, and confirm that only
+   the selected proposal changed the work-progress rows and produced a
+   `meeting_change_execute` audit record.

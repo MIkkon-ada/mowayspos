@@ -22,6 +22,8 @@ assert.match(reviewSource, /proposal\.evidence/)
 assert.match(reviewSource, /executeMeetingChangeSet/)
 assert.match(reviewSource, /updateMeetingChangeProposal/)
 assert.match(reviewSource, /确认执行/)
+assert.match(reviewSource, /const requestedCount = selectedIds\.size/)
+assert.match(reviewSource, /已完成 \$\{requestedCount\} 项变更/)
 
 assert.match(newMeetingSource, /analysis_id: analysisId/)
 assert.match(newMeetingSource, /MeetingChangeSetReviewModal/)

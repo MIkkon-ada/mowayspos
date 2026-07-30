@@ -846,6 +846,99 @@ print("STALE_BATCH_REJECTED")
     assert "STALE_BATCH_REJECTED" in result.stdout
 
 
+def test_workstream_cannot_complete_with_incomplete_key_tasks(tmp_path: Path):
+    result = _run_execution_script(
+        tmp_path,
+        r'''
+db = SessionLocal()
+proposal = db.get(models.MeetingChangeProposal, 1)
+proposal.proposed_json = json.dumps({"status": "completed"})
+db.commit()
+db.close()
+
+response = client.post(
+    "/api/meetings/1/change-set/execute",
+    json={"proposal_ids": [1]},
+    cookies={"bowei_session": "test-session"},
+)
+assert response.status_code == 409, response.text
+db = SessionLocal()
+from app.domain import task_status as TS
+assert TS.normalize(db.get(models.Task, 10).status) == TS.S_IN_PROGRESS
+assert db.get(models.MeetingChangeProposal, 1).execution_status == "pending"
+db.close()
+app.dependency_overrides.clear()
+print("INCOMPLETE_CHILDREN_BLOCK_COMPLETION")
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "INCOMPLETE_CHILDREN_BLOCK_COMPLETION" in result.stdout
+
+
+def test_creating_key_task_under_completed_workstream_reopens_parent(tmp_path: Path):
+    result = _run_execution_script(
+        tmp_path,
+        r'''
+db = SessionLocal()
+db.get(models.Task, 10).status = "completed"
+change_set = db.get(models.MeetingChangeSet, 1)
+stored_snapshot = json.loads(change_set.snapshot_json)
+stored_snapshot["workstreams"][0]["status"] = "completed"
+change_set.snapshot_json = json.dumps(stored_snapshot)
+db.commit()
+db.close()
+
+response = client.post(
+    "/api/meetings/1/change-set/execute",
+    json={"proposal_ids": [4]},
+    cookies={"bowei_session": "test-session"},
+)
+assert response.status_code == 200, response.text
+db = SessionLocal()
+from app.domain import task_status as TS
+assert TS.normalize(db.get(models.Task, 10).status) == TS.S_IN_PROGRESS
+assert db.query(models.SubTask).filter_by(title="Created key task").count() == 1
+db.close()
+app.dependency_overrides.clear()
+print("COMPLETED_PARENT_REOPENED")
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "COMPLETED_PARENT_REOPENED" in result.stdout
+
+
+def test_key_task_status_update_synchronizes_parent_workstream(tmp_path: Path):
+    result = _run_execution_script(
+        tmp_path,
+        r'''
+patched = client.patch(
+    "/api/meetings/1/change-set/proposals/2",
+    json={
+        "proposed": {"status": "delayed"},
+        "evidence": ["Updated evidence."],
+        "reason": "The meeting marked this key task delayed.",
+    },
+    cookies={"bowei_session": "test-session"},
+)
+assert patched.status_code == 200, patched.text
+response = client.post(
+    "/api/meetings/1/change-set/execute",
+    json={"proposal_ids": [2]},
+    cookies={"bowei_session": "test-session"},
+)
+assert response.status_code == 200, response.text
+db = SessionLocal()
+assert db.get(models.SubTask, 20).status == "延期"
+assert db.get(models.Task, 10).status == "延期"
+db.close()
+app.dependency_overrides.clear()
+print("PARENT_STATUS_SYNCHRONIZED")
+''',
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PARENT_STATUS_SYNCHRONIZED" in result.stdout
+
+
 _REVIEW_BEFORE_PLAN_WRITE = r'''
 from app import models
 from app.database import Base, SessionLocal, engine

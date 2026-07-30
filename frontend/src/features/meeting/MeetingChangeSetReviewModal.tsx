@@ -134,6 +134,7 @@ export function MeetingChangeSetReviewModal({
 
   async function confirmExecute() {
     if (selectedIds.size === 0) return
+    const requestedCount = selectedIds.size
     setExecuting(true)
     setError('')
     setMessage('')
@@ -142,10 +143,7 @@ export function MeetingChangeSetReviewModal({
       setChangeSet(result)
       setSelectedIds(new Set())
       setConfirming(false)
-      const executedCount = result.proposals.filter(
-        (proposal) => proposal.execution_status === 'executed',
-      ).length
-      setMessage(`已完成 ${executedCount} 项变更，正在刷新会议数据…`)
+      setMessage(`已完成 ${requestedCount} 项变更，正在刷新会议数据…`)
       await new Promise((resolve) => window.setTimeout(resolve, 600))
       onDone()
     } catch (cause: unknown) {

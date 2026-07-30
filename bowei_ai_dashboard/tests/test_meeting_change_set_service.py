@@ -448,7 +448,7 @@ def test_empty_update_proposed_fields_are_blocked_for_both_target_types():
     }
 
 
-def test_unknown_owner_requires_review_without_mutating_the_plan():
+def test_unknown_owner_is_blocked_without_mutating_the_plan():
     db = _db_session()
     _seed_plan(db)
     before_count = db.query(models.Task).count()
@@ -466,13 +466,13 @@ def test_unknown_owner_requires_review_without_mutating_the_plan():
     )
 
     assert normalized["validation"] == {
-        "state": "needs_review",
+        "state": "blocked",
         "errors": ["owner requires review for nonmember or inactive names: New owner"],
     }
     assert db.query(models.Task).count() == before_count
 
 
-def test_unknown_assignee_requires_review_without_mutating_the_plan():
+def test_unknown_assignee_is_blocked_without_mutating_the_plan():
     db = _db_session()
     active, _deleted = _seed_plan(db)
     before_count = db.query(models.SubTask).count()
@@ -490,7 +490,7 @@ def test_unknown_assignee_requires_review_without_mutating_the_plan():
     )
 
     assert normalized["validation"] == {
-        "state": "needs_review",
+        "state": "blocked",
         "errors": ["assignee requires review for nonmember or inactive names: New person"],
     }
     assert db.query(models.SubTask).count() == before_count
@@ -567,7 +567,7 @@ def test_member_names_use_active_project_members_including_roles_without_tasks()
     assert normalized["validation"] == {"state": "ready", "errors": []}
 
 
-def test_inactive_or_nonmember_people_require_review_for_all_workstream_people_fields():
+def test_inactive_or_nonmember_people_are_blocked_for_all_workstream_people_fields():
     db = _db_session()
     _seed_plan(db)
     snapshot = build_meeting_plan_snapshot(7, db)
@@ -607,18 +607,62 @@ def test_inactive_or_nonmember_people_require_review_for_all_workstream_people_f
     )
 
     assert inactive_owner["validation"] == {
-        "state": "needs_review",
+        "state": "blocked",
         "errors": ["owner requires review for nonmember or inactive names: Inactive member"],
     }
     assert nonmember_coordinator["validation"] == {
-        "state": "needs_review",
+        "state": "blocked",
         "errors": ["coordinator requires review for nonmember or inactive names: Active nonmember"],
     }
     assert mixed_collaborators["validation"] == {
-        "state": "needs_review",
+        "state": "blocked",
         "errors": [
             "collaborators requires review for nonmember or inactive names: Inactive member, Active nonmember"
         ],
+    }
+
+
+def test_database_length_and_status_constraints_block_proposals():
+    db = _db_session()
+    _seed_plan(db)
+    snapshot = build_meeting_plan_snapshot(7, db)
+    base = {
+        "action": "create_workstream",
+        "target": {},
+        "evidence": ["Speaker 1: create a constrained workstream."],
+        "reason": "The workstream was explicitly created.",
+        "confidence": 0.8,
+    }
+
+    too_long = validate_meeting_change_proposal(
+        {
+            **base,
+            "proposed": {
+                "key_task": "x" * 201,
+                "owner": "Known owner",
+            },
+        },
+        snapshot,
+    )
+    invalid_status = validate_meeting_change_proposal(
+        {
+            **base,
+            "proposed": {
+                "key_task": "Valid title",
+                "owner": "Known owner",
+                "status": "invented_status",
+            },
+        },
+        snapshot,
+    )
+
+    assert too_long["validation"] == {
+        "state": "blocked",
+        "errors": ["proposed.key_task exceeds 200 characters"],
+    }
+    assert invalid_status["validation"] == {
+        "state": "blocked",
+        "errors": ["proposed.status is not an allowed task status"],
     }
 
 

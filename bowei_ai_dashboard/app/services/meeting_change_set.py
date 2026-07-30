@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import crud, models
 from ..domain import task_status as TS
 from ..permissions import PROJECT_ROLE_OWNER_KEY, require_project_role
 from ..services.project_close import require_project_business_writable
@@ -43,6 +43,39 @@ SUBTASK_FIELDS = (
     "status",
     "notes",
 )
+
+WORKSTREAM_FIELD_LIMITS = {
+    "key_task": 200,
+    "owner": 50,
+    "coordinator": 50,
+    "collaborators": 200,
+    "plan_time": 20,
+    "status": 20,
+    "key_achievement": 200,
+}
+
+SUBTASK_FIELD_LIMITS = {
+    "title": 200,
+    "assignee": 50,
+    "plan_time": 20,
+    "status": 20,
+}
+
+ALLOWED_STATUS_VALUES = {
+    TS.S_NOT_STARTED,
+    TS.S_IN_PROGRESS,
+    TS.S_COMPLETED,
+    TS.S_DELAYED,
+    TS.S_PAUSED,
+    TS.S_ARCHIVED,
+    "Not started",
+    "In progress",
+    "Done",
+    "Completed",
+    "Delayed",
+    "Paused",
+    "Archived",
+}
 
 
 def build_meeting_plan_snapshot(project_id: int, db: Session) -> dict[str, Any]:
@@ -144,7 +177,12 @@ def validate_meeting_change_proposal(
     )
 
     allowed_fields = _allowed_fields_for_action(action)
-    proposed = _normalize_proposed(raw.get("proposed"), allowed_fields, errors)
+    proposed = _normalize_proposed(
+        raw.get("proposed"),
+        allowed_fields,
+        _field_limits_for_action(action),
+        errors,
+    )
     evidence = _normalize_evidence(raw.get("evidence"), errors)
     _validate_evidence_against_transcript(evidence, transcript_text, errors)
     reason = _normalize_reason(raw.get("reason"), errors)
@@ -153,11 +191,12 @@ def validate_meeting_change_proposal(
     _validate_creation_requirements(action, proposed, target, errors)
     if not errors:
         _add_unknown_person_review_notes(action, proposed, snapshot, review_notes)
+        errors.extend(review_notes)
 
     before = _before_from_snapshot(action, workstream, subtask)
     validation = {
-        "state": "blocked" if errors else "needs_review" if review_notes else "ready",
-        "errors": errors or review_notes,
+        "state": "blocked" if errors else "ready",
+        "errors": errors,
     }
     return {
         "action": action,
@@ -249,6 +288,7 @@ def _allowed_fields_for_action(action: str) -> tuple[str, ...]:
 def _normalize_proposed(
     value: Any,
     allowed_fields: tuple[str, ...],
+    field_limits: dict[str, int],
     errors: list[str],
 ) -> dict[str, str]:
     if not isinstance(value, dict):
@@ -267,8 +307,22 @@ def _normalize_proposed(
         if not isinstance(item, str):
             errors.append(f"proposed.{key} must be a string")
             continue
-        proposed[key] = item.strip()
+        normalized = item.strip()
+        max_length = field_limits.get(key)
+        if max_length is not None and len(normalized) > max_length:
+            errors.append(f"proposed.{key} exceeds {max_length} characters")
+        if key == "status" and TS.normalize(normalized) not in ALLOWED_STATUS_VALUES:
+            errors.append("proposed.status is not an allowed task status")
+        proposed[key] = normalized
     return proposed
+
+
+def _field_limits_for_action(action: str) -> dict[str, int]:
+    if action in {"create_workstream", "update_workstream"}:
+        return WORKSTREAM_FIELD_LIMITS
+    if action in {"create_subtask", "update_subtask"}:
+        return SUBTASK_FIELD_LIMITS
+    return {}
 
 
 def _normalize_evidence(value: Any, errors: list[str]) -> list[str]:
@@ -485,11 +539,29 @@ def execute_meeting_change_set(
             db,
         )
 
+    claimed_count = (
+        db.query(models.MeetingChangeProposal)
+        .filter(
+            models.MeetingChangeProposal.change_set_id == change_set.id,
+            models.MeetingChangeProposal.id.in_(unique_ids),
+            models.MeetingChangeProposal.execution_status == "pending",
+        )
+        .update(
+            {models.MeetingChangeProposal.execution_status: "executing"},
+            synchronize_session=False,
+        )
+    )
+    if claimed_count != len(proposals):
+        raise HTTPException(409, "selected proposal was claimed by another execution")
+    for proposal in proposals:
+        proposal.execution_status = "executing"
+
     account = db.query(models.Account).filter_by(username=actor).first()
     for proposal in proposals:
         target = _apply_validated_proposal(
             proposal,
             change_set.project_id,
+            actor,
             db,
         )
         proposal.result_target_id = target.id
@@ -529,7 +601,12 @@ def _require_live_target_matches_snapshot(
 ) -> None:
     before = _json_object(proposal.before_json)
     if proposal.action == "update_workstream":
-        row = db.get(models.Task, proposal.target_id)
+        row = (
+            db.query(models.Task)
+            .filter(models.Task.id == proposal.target_id)
+            .with_for_update()
+            .first()
+        )
         if not row or row.project_id != project_id or bool(row.is_deleted):
             raise HTTPException(409, "workstream target is stale or deleted")
         live = {field: str(getattr(row, field, "") or "") for field in WORKSTREAM_FIELDS}
@@ -537,8 +614,20 @@ def _require_live_target_matches_snapshot(
             raise HTTPException(409, "workstream target changed after analysis")
         return
     if proposal.action == "update_subtask":
-        row = db.get(models.SubTask, proposal.target_id)
-        parent = db.get(models.Task, row.task_id) if row else None
+        row = (
+            db.query(models.SubTask)
+            .filter(models.SubTask.id == proposal.target_id)
+            .with_for_update()
+            .first()
+        )
+        parent = (
+            db.query(models.Task)
+            .filter(models.Task.id == row.task_id)
+            .with_for_update()
+            .first()
+            if row
+            else None
+        )
         if (
             not row
             or bool(row.is_deleted)
@@ -553,7 +642,12 @@ def _require_live_target_matches_snapshot(
             raise HTTPException(409, "subtask target changed after analysis")
         return
     if proposal.action == "create_subtask":
-        parent = db.get(models.Task, proposal.parent_workstream_id)
+        parent = (
+            db.query(models.Task)
+            .filter(models.Task.id == proposal.parent_workstream_id)
+            .with_for_update()
+            .first()
+        )
         if not parent or bool(parent.is_deleted) or parent.project_id != project_id:
             raise HTTPException(409, "parent workstream is stale or deleted")
 
@@ -561,6 +655,7 @@ def _require_live_target_matches_snapshot(
 def _apply_validated_proposal(
     proposal: models.MeetingChangeProposal,
     project_id: int,
+    actor: str,
     db: Session,
 ) -> models.Task | models.SubTask:
     proposed = _json_object(proposal.proposed_json)
@@ -581,11 +676,14 @@ def _apply_validated_proposal(
         row.owner_id = _active_project_person_id(project_id, row.owner or "", db)
     elif proposal.action == "update_workstream":
         row = db.get(models.Task, proposal.target_id)
+        if "status" in proposed and TS.normalize(proposed["status"]) == TS.S_COMPLETED:
+            _require_workstream_completion(row, db)
         for field, value in proposed.items():
             setattr(row, field, TS.normalize(value) if field == "status" else value)
         row.owner_id = _active_project_person_id(project_id, row.owner or "", db)
         row.edit_count = (row.edit_count or 0) + 1
     elif proposal.action == "create_subtask":
+        parent = db.get(models.Task, proposal.parent_workstream_id)
         values = {field: proposed.get(field, "") for field in SUBTASK_FIELDS}
         values["status"] = TS.normalize(values.get("status"))
         if values.get("assignee") and values["status"] == TS.S_NOT_STARTED:
@@ -596,8 +694,12 @@ def _apply_validated_proposal(
             **values,
         )
         row.assignee_id = _active_project_person_id(project_id, row.assignee or "", db)
+        db.add(row)
+        db.flush()
+        _sync_parent_task_status(parent, db, actor)
     elif proposal.action == "update_subtask":
         row = db.get(models.SubTask, proposal.target_id)
+        parent = db.get(models.Task, row.task_id)
         before_assignee = (row.assignee or "").strip()
         for field, value in proposed.items():
             setattr(row, field, TS.normalize(value) if field == "status" else value)
@@ -605,12 +707,57 @@ def _apply_validated_proposal(
             if TS.normalize(row.status) == TS.S_NOT_STARTED:
                 row.status = TS.S_IN_PROGRESS
         row.assignee_id = _active_project_person_id(project_id, row.assignee or "", db)
+        _sync_parent_task_status(parent, db, actor)
     else:
         raise HTTPException(409, "proposal action is not executable")
 
     db.add(row)
     db.flush()
     return row
+
+
+def _require_workstream_completion(task: models.Task, db: Session) -> None:
+    subtasks = (
+        db.query(models.SubTask)
+        .filter_by(task_id=task.id, is_deleted=False)
+        .with_for_update()
+        .all()
+    )
+    if not subtasks:
+        raise HTTPException(409, "workstream has no active key tasks")
+    if not all(TS.is_completed(row.status) for row in subtasks):
+        raise HTTPException(409, "all key tasks must be completed first")
+
+
+def _sync_parent_task_status(
+    task: models.Task,
+    db: Session,
+    actor: str,
+) -> None:
+    subtasks = (
+        db.query(models.SubTask)
+        .filter_by(task_id=task.id, is_deleted=False)
+        .all()
+    )
+    next_status = TS.derive_parent_status(
+        task.status,
+        [row.status or "" for row in subtasks],
+    )
+    if TS.normalize(task.status) == next_status:
+        return
+    before_status = task.status
+    task.status = next_status
+    task.edit_count = (task.edit_count or 0) + 1
+    crud.log(
+        db,
+        actor,
+        "task_sync_status_from_subtasks",
+        "task",
+        task.id,
+        {"status": before_status},
+        {"status": next_status},
+        project_id=task.project_id,
+    )
 
 
 def _active_project_person_id(project_id: int, name: str, db: Session) -> int | None:

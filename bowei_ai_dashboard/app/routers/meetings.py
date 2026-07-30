@@ -332,6 +332,25 @@ def create_meeting(
     db.add(row)
     db.flush()
     if change_set is not None:
+        claimed_count = (
+            db.query(models.MeetingChangeSet)
+            .filter(
+                models.MeetingChangeSet.id == change_set.id,
+                models.MeetingChangeSet.project_id == payload.project_id,
+                models.MeetingChangeSet.created_by_person_id == account.person_id,
+                models.MeetingChangeSet.meeting_id.is_(None),
+                models.MeetingChangeSet.status == "draft",
+            )
+            .update(
+                {
+                    models.MeetingChangeSet.meeting_id: row.id,
+                    models.MeetingChangeSet.status: "attached",
+                },
+                synchronize_session=False,
+            )
+        )
+        if claimed_count != 1:
+            raise HTTPException(409, "meeting analysis draft was attached concurrently")
         change_set.meeting_id = row.id
         change_set.status = "attached"
         crud.log(

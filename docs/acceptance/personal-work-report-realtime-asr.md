@@ -24,6 +24,9 @@ The complete corpus must collectively cover all of the following:
 - Natural pauses of 1-3 seconds.
 - Representative office noise.
 - An immediate stop after the final spoken word, with no trailing silence added.
+- `case-20.wav` contains at least 12 seconds of continuous speech/audio so each
+  row has a predetermined steady interval of at least 10 seconds for packet-rate
+  measurement.
 
 Use the exact same 20 WAV bytes and UTF-8 references for every rollout row. Keep a
 manifest containing case ID, WAV SHA-256, reference-transcript SHA-256, covered
@@ -50,6 +53,18 @@ packet and stop behavior is code-defined. It must use a previously preserved
 baseline Git revision and immutable frontend/backend image digests. If that
 revision or either image is unavailable, the acceptance run is **BLOCKED**;
 never synthesize or label a current build as the legacy baseline.
+
+Row 1 uses its real legacy protocol: after the WebSocket opens, the client sends
+small binary PCM frames directly, sends the text message `stop`, receives server
+events shaped as `{text, final}`, and treats a normal WebSocket close as the
+completion signal. It has no `ready`, `started`, `done`, or `session_id`. The
+legacy server's 0.8-second callback wait after `stop` is part of the baseline
+behavior and must not be changed or emulated by a current image.
+Row 1 CER, terminology recall, missing-tail, duplicate-final, first-partial, and
+first-final measurements remain directly comparable with Rows 2-4.
+
+Rows 2-4 use the explicit `ready` -> `start` -> `started` -> binary PCM ->
+`stop` -> `done` protocol described by the current implementation.
 
 ### Reproducibility record
 
@@ -79,24 +94,30 @@ diagnostic retry is recorded separately rather than replacing it.
 
 Use one dedicated test machine. Configure its fixed virtual-loopback device so
 audio played to the paired output appears as Chrome's microphone input. For each
-case:
+case, confirm Chrome has the recorded loopback microphone selected and open a
+new personal work-report WebSocket. Play the immutable WAV through the loopback
+output without changing gain or processing settings. For example:
 
-1. Confirm Chrome has the recorded loopback microphone selected, open a new
-   personal work-report session, and wait for `ready`.
-2. Send `start`, wait for `started`, then play the immutable WAV through the
-   loopback output without changing gain or processing settings. For example:
+```powershell
+ffplay -nodisp -autoexit -loglevel error .\corpus\case-01.wav
+```
 
-   ```powershell
-   ffplay -nodisp -autoexit -loglevel error .\corpus\case-01.wav
-   ```
+The command uses the test machine's configured default output; the actual
+output/loopback device names and routing must be fixed and recorded for that
+machine. Then follow the row-specific sequence:
 
-   The command uses the test machine's configured default output; the actual
-   output/loopback device names and routing must be fixed and recorded for that
-   machine.
-3. Send `stop` immediately after playback completes (especially for the
-   final-word stop cases), wait for `done`, and do not start the next file first.
-4. Save the client monotonic event timeline and sanitized backend metrics for
-   `ready`, `started`, each PCM send, each transcript event, `stop`, and `done`.
+- **Row 1:** after WebSocket open, begin sending the legacy small binary PCM
+  frames. Immediately after playback completes, send text `stop`, retain every
+  `{text, final}` event, and wait for a normal WebSocket close. Save monotonic
+  timestamps for open, each PCM send, each transcript event, `stop`, and close.
+- **Rows 2-4:** wait for `ready`, send `start`, wait for `started`, and only then
+  begin PCM. Immediately after playback completes, flush the final short packet,
+  send JSON `stop`, retain every transcript event, and wait for `done`. Save
+  monotonic timestamps for `ready`, `started`, each PCM send, each transcript
+  event, `stop`, and `done`.
+
+Do not start the next file until the applicable completion signal (normal close
+for Row 1, `done` for Rows 2-4) has arrived.
 
 This is an operator procedure, not a claim that the repository contains a WAV
 replay harness.
@@ -141,9 +162,11 @@ it fails the gate; never omit it from `N`.
   `WebSocket.send` call.
 - First final latency: client monotonic time when the first `final=true`
   transcript is parsed minus that same first-PCM timestamp.
-- Stop-to-`done` latency: client monotonic time when `done` is parsed minus the
-  time immediately after the JSON `stop` message is successfully sent, after
-  the worklet's final short-packet flush acknowledgement.
+- Stop latency uses a protocol-specific endpoint. For Row 1, record
+  stop-to-close from immediately after text `stop` is sent until the normal
+  WebSocket close is observed. For Rows 2-4, record stop-to-`done` from
+  immediately after JSON `stop` is successfully sent, after the worklet's final
+  short-packet flush acknowledgement, until `done` is parsed.
 - Audio packets per second: packet count divided by elapsed time over one
   continuous steady window of at least 10 seconds, excluding the final short
   packet and connection/start/stop intervals.
@@ -154,32 +177,64 @@ it fails the gate; never omit it from `N`.
   (or the entire reference when shorter than 5) and require that exact sequence
   to occur within the final 20 normalized hypothesis characters. Count the file
   as one missing tail otherwise.
-- Duplicate-final count: count every final after the first with the same
-  `segment_id`, and every exact replay of the same final-event fingerprint
-  (`segment_id`, normalized text, begin time, and end time), even if UI
-  deduplication hides it.
+- Duplicate-final count: for Rows 2-4, count every final after the first with the
+  same `segment_id`, and every exact replay of the same final-event fingerprint
+  (`segment_id`, normalized text, begin time, and end time). For Row 1, which has
+  no `segment_id`, count every second receipt of the same serialized
+  `{text, final: true}` payload within a session as a replay. Count duplicates
+  even if UI deduplication hides them.
 
 Record provider request IDs beside failed cases so they can be investigated
 without storing audio or transcript content in logs.
 
 ## Acceptance gates
 
-A rollout row is acceptable only when all applicable gates pass:
+A rollout row is acceptable only when all applicable gates pass.
 
-- Audio packet rate is 9-11 packets/second in every qualifying steady window.
+### Gates for every row
+
 - Missing-tail count is 0/20.
 - Duplicate-final count is 0.
 - First-partial P95 is at most 1.5 seconds.
+- Row 1 must end every one of its 20 sessions with a normal WebSocket close after
+  all final events have been received. The lack of `done` is expected and must
+  not fail Row 1.
+- Rows 2-4 must emit `done` for every one of their 20 sessions.
+
+Row 1 stop-to-close latency and its legacy packet rate are recorded as baseline
+observations only. The current stop-to-`done`, 10-packets/second, and new-queue
+gates do not apply to Row 1.
+
+### Candidate gates for Rows 2-4
+
+- Each row's micro CER is less than or equal to the Row 1 Paraformer baseline
+  micro CER; no accuracy-regression tolerance is allowed. If Row 2, Row 3, or
+  Row 4 is worse during its actual canary, do not advance that candidate and
+  roll it back.
 - Stop-to-`done` P95 is at most 3 seconds.
-- Row 4 micro CER is less than or equal to the Row 1 Paraformer baseline micro
-  CER; no accuracy-regression tolerance is allowed.
+- Audio packet rate is 9-11 packets/second over the predetermined continuous
+  steady window of at least 10 seconds. If `case-20.wav` does not produce a
+  qualifying window, the row fails acceptance rather than skipping this gate.
+- The backend `audio_queue` capacity is 50, queue peak is at most 40 (80%), and
+  the row has zero `AUDIO_BACKPRESSURE` errors, zero dropped audio packets, and
+  zero sustained full-queue or producer-blocking episodes. Any violation fails
+  the row and requires rollback. A sustained full queue means depth 50 for at
+  least 100 ms; a producer-blocking episode is any audio enqueue that must wait
+  because the queue is full. Source both counts from sanitized backend queue
+  instrumentation.
+- Every session follows the explicit protocol without timeout, provider error,
+  malformed event order, or missing `done`, even when visible text appears
+  complete.
+
+Row 1's legacy queue capacity is 200. Record its queue peak only when observable
+in the preserved build; do not compare it with the capacity-50/peak-40 gate.
+
+### Context gate for Row 4
+
 - Row 4 permission-scoped terminology recall strictly exceeds the Row 1
   Paraformer baseline.
 - Forged or inaccessible `project_id` and `selected_task_id` values return a
   stable permission error and leak no project, task, member, or context content.
-
-Treat timeout, provider error, malformed event sequence, or absence of `done` as
-a failed case, even when the visible transcript appears complete.
 
 ## Permission and leakage checks
 

@@ -282,6 +282,43 @@ def test_stream_strips_request_id_from_provider_error():
 
         error = next(item for item in ws.sent if item["type"] == "error")
         assert "request_id" not in error
+        assert [item["type"] for item in ws.sent] == [
+            "ready",
+            "started",
+            "error",
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_stream_does_not_send_done_when_stop_produces_provider_error():
+    class StopErrorAsr(FakeAsr):
+        async def stop(self):
+            self.stopped = True
+            self.stop_frame_count = len(self.frames)
+            await self.events.put(
+                {
+                    "type": "error",
+                    "code": "ASR_PROVIDER_ERROR",
+                    "message": "stop failed",
+                    "request_id": "provider-secret-id",
+                    "retryable": True,
+                }
+            )
+            await self.events.put(None)
+
+    async def scenario():
+        ws, _, _ = await _run(
+            [_start_message(), _stop()],
+            asr=StopErrorAsr(),
+        )
+
+        assert [item["type"] for item in ws.sent] == [
+            "ready",
+            "started",
+            "error",
+        ]
+        assert "request_id" not in ws.sent[-1]
 
     asyncio.run(scenario())
 

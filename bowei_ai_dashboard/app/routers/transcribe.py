@@ -242,14 +242,17 @@ async def run_transcribe_stream(
     started_at = time.monotonic()
     first_result_at: float | None = None
     explicit_stop = False
+    session_failed = False
     audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=50)
 
     async def send_results() -> None:
-        nonlocal first_result_at
+        nonlocal first_result_at, session_failed
         while True:
             event = await session.next_event()
             if event is None:
                 return
+            if event.get("type") == "error":
+                session_failed = True
             if first_result_at is None and event.get("type") == "transcript":
                 first_result_at = time.monotonic()
             safe_event = {
@@ -328,7 +331,7 @@ async def run_transcribe_stream(
             finally:
                 await result_task
 
-    if not explicit_stop:
+    if not explicit_stop or session_failed:
         return
 
     duration_ms = audio_bytes * 1000 // (16000 * 2)

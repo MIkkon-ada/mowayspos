@@ -44,7 +44,10 @@ class DashScopeRealtimeAsr:
         self._state = _SessionState.NEW
         self._state_lock = asyncio.Lock()
         self._stop_task: asyncio.Task[None] | None = None
+        self._provider_start_future: asyncio.Future[None] | None = None
         self._provider_stop_future: asyncio.Future[None] | None = None
+        self._start_decision = threading.Event()
+        self._start_cleanup_requested = False
         self._callbacks_open = False
         self._terminal_sent = False
         self._provider_failed = False
@@ -100,22 +103,22 @@ class DashScopeRealtimeAsr:
                             }
                         ]
                     }
-                await asyncio.to_thread(self._recognition.start, **start_kwargs)
+                provider_start = self._start_provider_start_worker(start_kwargs)
+                await asyncio.shield(provider_start)
             except asyncio.CancelledError:
                 self._callbacks_open = False
-                try:
-                    await self._best_effort_stop_after_start_failure()
-                finally:
-                    self._state = _SessionState.STOPPED
-                    self._publish_terminal()
+                self._request_start_cleanup()
+                self._state = _SessionState.STOPPED
+                self._publish_terminal()
                 raise
             except Exception as exc:
                 self._callbacks_open = False
-                await self._best_effort_stop_after_start_failure()
+                self._request_start_cleanup()
                 self._publish_internal_error("ASR_PROVIDER_ERROR", str(exc))
                 self._publish_terminal()
                 self._state = _SessionState.STOPPED
                 raise AsrStartError("ASR start failed") from exc
+            self._accept_started_provider()
             self._state = _SessionState.RUNNING
 
     async def send_audio(self, frame: bytes) -> None:
@@ -173,29 +176,64 @@ class DashScopeRealtimeAsr:
                     )
                 await asyncio.sleep(0)
         except TimeoutError:
-            self._publish_internal_error(
-                "ASR_STOP_TIMEOUT",
-                "recognition stop timed out",
-            )
+            if not self._provider_failed and not self.completed.is_set():
+                self._publish_internal_error(
+                    "ASR_STOP_TIMEOUT",
+                    "recognition stop timed out",
+                )
         except Exception as exc:
-            self._publish_internal_error("ASR_PROVIDER_ERROR", str(exc))
+            if not self._provider_failed and not self.completed.is_set():
+                self._publish_internal_error("ASR_PROVIDER_ERROR", str(exc))
         finally:
             self._callbacks_open = False
             self._publish_terminal()
             async with self._state_lock:
                 self._state = _SessionState.STOPPED
 
-    async def _best_effort_stop_after_start_failure(self) -> None:
-        if self._recognition is None:
-            return
-        cleanup = self._start_provider_stop_worker()
-        try:
-            await asyncio.wait_for(
-                asyncio.shield(cleanup),
-                timeout=min(self.settings.stop_timeout_seconds, 0.25),
-            )
-        except Exception:
-            pass
+    def _start_provider_start_worker(
+        self,
+        start_kwargs: dict[str, Any],
+    ) -> asyncio.Future[None]:
+        """Run start and any cancellation cleanup serially on one daemon worker."""
+        if self._provider_start_future is not None:
+            return self._provider_start_future
+        loop = self._loop
+        recognition = self._recognition
+        if loop is None or recognition is None:
+            raise RuntimeError("ASR provider start is unavailable")
+        future: asyncio.Future[None] = loop.create_future()
+        future.add_done_callback(_consume_future_exception)
+        self._provider_start_future = future
+
+        def run_provider_start() -> None:
+            error: BaseException | None = None
+            try:
+                recognition.start(**start_kwargs)
+            except BaseException as exc:
+                error = exc
+            _settle_provider_call(loop, future, error)
+            self._start_decision.wait()
+            if self._start_cleanup_requested:
+                try:
+                    recognition.stop()
+                except BaseException:
+                    pass
+
+        worker = threading.Thread(
+            target=run_provider_start,
+            name=f"dashscope-asr-start-{id(self):x}",
+            daemon=True,
+        )
+        worker.start()
+        return future
+
+    def _request_start_cleanup(self) -> None:
+        self._start_cleanup_requested = True
+        self._start_decision.set()
+
+    def _accept_started_provider(self) -> None:
+        self._start_cleanup_requested = False
+        self._start_decision.set()
 
     def _start_provider_stop_worker(self) -> asyncio.Future[None]:
         """Run the unkillable SDK stop outside asyncio's shared executor.
@@ -203,7 +241,9 @@ class DashScopeRealtimeAsr:
         Python cannot terminate a blocked thread. A per-session daemon thread
         prevents one stuck SDK call from exhausting the default executor or
         delaying interpreter shutdown, while the adapter deadline still closes
-        its event stream deterministically.
+        its event stream deterministically. Deployments should monitor
+        ASR_STOP_TIMEOUT events because daemon workers are intentionally not
+        subject to an unsafe global thread-kill mechanism.
         """
         if self._provider_stop_future is not None:
             return self._provider_stop_future
@@ -219,9 +259,9 @@ class DashScopeRealtimeAsr:
             try:
                 recognition.stop()
             except BaseException as exc:
-                _settle_provider_stop(loop, future, exc)
+                _settle_provider_call(loop, future, exc)
             else:
-                _settle_provider_stop(loop, future, None)
+                _settle_provider_call(loop, future, None)
 
         worker = threading.Thread(
             target=run_provider_stop,
@@ -353,19 +393,19 @@ def _remaining(deadline: float, loop: asyncio.AbstractEventLoop) -> float:
     return max(0.0, deadline - loop.time())
 
 
-def _settle_provider_stop(
+def _settle_provider_call(
     loop: asyncio.AbstractEventLoop,
     future: asyncio.Future[None],
     error: BaseException | None,
 ) -> None:
     try:
-        loop.call_soon_threadsafe(_finish_provider_stop, future, error)
+        loop.call_soon_threadsafe(_finish_provider_call, future, error)
     except RuntimeError:
-        # The owning event loop may already be closed after a timed-out stop.
+        # A daemon worker may outlive its owning event loop after cancellation.
         pass
 
 
-def _finish_provider_stop(
+def _finish_provider_call(
     future: asyncio.Future[None],
     error: BaseException | None,
 ) -> None:

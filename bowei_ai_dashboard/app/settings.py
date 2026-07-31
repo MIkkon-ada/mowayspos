@@ -1,4 +1,4 @@
-"""Runtime settings helpers for backend auth/session and secret sources."""
+"""Typed backend runtime settings and configuration-source helpers."""
 
 from __future__ import annotations
 

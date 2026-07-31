@@ -72,8 +72,23 @@
 }
 
 .voice-update-binding-field { display: flex; min-width: 240px; max-width: 360px; flex: 1 1 280px; align-items: center; gap: 10px; color: #64748b; font-size: 12px; font-weight: 650; }
-.voice-update-binding-field.is-scope { min-width: 110px; max-width: 140px; flex: 0 1 auto; }
-.voice-update-binding-field.is-scope select { min-width: 0; }
+.voice-update-binding-field.is-scope { position: relative; min-width: 110px; max-width: 140px; flex: 0 1 auto; }
+.voice-update-binding-field.is-scope select { min-width: 0; appearance: none; padding-right: 36px; }
+.voice-update-binding-scope-arrow { position: absolute; top: 50%; right: 17px; width: 8px; height: 8px; border-right: 2px solid #94a3b8; border-bottom: 2px solid #94a3b8; transform: translateY(-65%) rotate(45deg); pointer-events: none; }
+.voice-update-scope-menu { position: relative; z-index: 12; flex: 0 0 auto; min-width: 140px; }
+.voice-update-scope-trigger { position: relative; display: flex; width: 100%; height: 38px; align-items: center; border: 1px solid #d7dee8; border-radius: 8px; background: #fff; padding: 0 36px 0 12px; color: #334155; font-size: 12px; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.voice-update-scope-trigger:hover { border-color: #94a3b8; background: #f8fafc; }
+.voice-update-scope-trigger:disabled { cursor: not-allowed; background: #f8fafc; color: #94a3b8; }
+.voice-update-scope-options { position: absolute; top: calc(100% + 6px); left: 0; width: 168px; border: 1px solid #dbe3ed; border-radius: 8px; background: #fff; padding: 4px; box-shadow: 0 8px 20px rgb(15 23 42 / 12%); }
+.voice-update-scope-options > button, .voice-update-scope-option-group > button, .voice-update-scope-submenu > button { display: flex; width: 100%; align-items: center; justify-content: space-between; border: 0; border-radius: 5px; background: transparent; padding: 8px 9px; color: #334155; font: inherit; text-align: left; cursor: pointer; }
+.voice-update-scope-options > button:hover, .voice-update-scope-option-group > button:hover, .voice-update-scope-options .is-selected { background: #f1f5f9; color: #0f172a; }
+.voice-update-scope-option-group { position: relative; }
+.voice-update-scope-submenu { position: absolute; top: -5px; left: calc(100% + 5px); max-height: 260px; width: 260px; overflow-y: auto; border: 1px solid #dbe3ed; border-radius: 8px; background: #fff; padding: 4px; box-shadow: 0 8px 20px rgb(15 23 42 / 12%); }
+.voice-update-scope-submenu > button:hover { background: #f1f5f9; }
+.voice-update-scope-submenu > p { margin: 0; padding: 10px; color: #94a3b8; font-size: 12px; }
+.voice-update-scope-task-submenu > button { display: grid; gap: 2px; }
+.voice-update-scope-task-submenu strong { overflow: hidden; color: #334155; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.voice-update-scope-task-submenu small { overflow: hidden; color: #94a3b8; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .voice-update-binding-field > span { flex: 0 0 auto; white-space: nowrap; }
 .voice-update-binding-plan { display: flex; min-width: 0; align-items: center; gap: 8px; color: #64748b; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .voice-update-binding-field > span > span { color: #ef4444; }
@@ -112,6 +127,7 @@
 .voice-update-input-heading span { color: #94a3b8; font-size: 11px; }
 .voice-update-textarea { width: 100%; height: 240px; min-height: 240px; resize: vertical; border: 1px solid #d7dee8; border-radius: 8px; padding: 14px; color: #334155; font: inherit; line-height: 1.6; outline: none; }
 .voice-update-textarea:focus { border-color: #38bdf8; box-shadow: 0 0 0 3px rgb(56 189 248 / 12%); }
+.voice-update-textarea.is-media-read-only { background: #f8fafc; color: #475569; cursor: progress; }
 .voice-update-character-count { margin-top: 6px; color: #64748b; font-size: 12px; font-weight: 700; text-align: right; }
 .voice-update-input-hints { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 10px 0 0; border: 0; padding: 0; color: #64748b; font-size: 11px; }
 .voice-update-extract-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; margin-top: 22px; }
@@ -159,6 +175,7 @@
 .voice-update-record-button:hover { background: #075985; }
 .voice-update-stop-button { background: #ef4444; color: #fff; }
 .voice-update-stop-button:hover { background: #dc2626; }
+.voice-update-recorder-bar button:disabled { cursor: wait; opacity: .65; }
 
 .voice-update-result-header { min-height: 64px; padding: 0 24px; }
 .voice-update-result-header h2 { margin: 0; color: #0f172a; font-size: 16px; font-weight: 800; }

@@ -26,6 +26,7 @@ const SUBMISSION = 'src/features/voice-update/useVoiceSubmission.ts'
 const DRAFT = 'src/features/voice-update/useVoiceDraft.ts'
 const CSS = 'src/features/voice-update/voiceUpdateFlow.css'
 const ROUTES = 'src/app/routes.tsx'
+const RECORDER = 'src/features/voice-update/useVoiceRecorder.ts'
 
 async function loadFlowModel() {
   const source = read(TYPES)
@@ -354,6 +355,26 @@ test('target visual replica uses one compact header and keeps existing controls'
   assert.match(source, /\.voice-update-history-drawer\s*\{[^}]*width:\s*292px/s)
 })
 
+test('work report scope selector uses a compact chevron matching other project selectors', () => {
+  const binding = read(BINDING_BAR)
+  const css = read(CSS)
+  assert.match(binding, /voice-update-binding-scope-arrow/)
+  assert.match(css, /\.voice-update-binding-field\.is-scope \{ position: relative/)
+  assert.match(css, /\.voice-update-binding-scope-arrow \{[^}]*width: 8px[^}]*height: 8px[^}]*border-right: 2px solid #94a3b8[^}]*transform: translateY\(-65%\) rotate\(45deg\)/s)
+  assert.match(css, /\.voice-update-binding-field\.is-scope select \{[^}]*appearance: none[^}]*padding-right: 36px/s)
+})
+
+test('work report scope menu previews project and key-task candidates on hover', () => {
+  const binding = read(BINDING_BAR)
+  const page = read(PAGE)
+
+  assert.match(binding, /voice-update-scope-menu/)
+  assert.match(binding, /onMouseEnter=\{\(\) => setHoveredScope\('project'\)\}/)
+  assert.match(binding, /onMouseEnter=\{\(\) => setHoveredScope\('task'\)\}/)
+  assert.match(binding, /onQuickTaskSelect/)
+  assert.match(page, /function handleQuickTaskSelect\(projectId: number, subtaskId: number\)/)
+})
+
 test('input and result panels expose plain headings and the re-extract action', () => {
   const input = read(INPUT)
   const result = read(RESULT)
@@ -581,4 +602,59 @@ test('compact work report modules use natural height without large filler gaps',
   assert.match(css, /\.voice-update-workspace\s*\{[^}]*gap:\s*0/s)
   assert.doesNotMatch(css, /\.voice-update-workspace\s*\{[^}]*min-height:\s*650px/s)
   assert.match(css, /\.voice-update-textarea\s*\{[^}]*height:\s*240px[^}]*min-height:\s*240px/s)
+})
+
+test('each AI-extracted achievement can upload unbound evidence for confirmation writeback', () => {
+  const reports = read(REPORTS)
+  const api = read('src/api/achievements.ts')
+  assert.match(reports, /uploadAchievementAttachment/)
+  assert.match(reports, /attachment_ids/)
+  assert.match(reports, /projectId/)
+  assert.match(reports, /type="file"/)
+  assert.match(api, /projectId: number; achievementId\?: number; achievementSubmissionId\?: number/)
+})
+
+test('realtime recording is scoped to one active project task', () => {
+  const page = read(PAGE)
+  const recorder = read(RECORDER)
+  assert.match(page, /const canRecord = reportScope === 'task'[\s\S]{0,220}selectedProjectIsActive/)
+  assert.match(page, /projectId:\s*selectedProjectId/)
+  assert.match(page, /selectedTaskId:\s*taskBinding\.selectedSubtaskId/)
+  assert.match(page, /canRecord,/)
+  assert.match(recorder, /scene:\s*'work_report'/)
+  assert.doesNotMatch(recorder, /meeting/i)
+})
+
+test('realtime recorder uses one permanent message handler and the explicit lifecycle protocol', () => {
+  const source = read(RECORDER)
+  assert.equal((source.match(/ws\.onmessage\s*=/g) ?? []).length, 1)
+  for (const helper of ['parseServerMessage', 'emptyTranscript', 'mergeTranscript', 'composeTranscript']) {
+    assert.match(source, new RegExp(helper))
+  }
+  assert.match(source, /type:\s*'start'/)
+  assert.match(source, /waitForMessage\('ready'/)
+  assert.match(source, /waitForMessage\('started'/)
+  assert.match(source, /waitForMessage\(\['done',\s*'error'\]/)
+  assert.doesNotMatch(source, /setTimeout\(resolve,\s*1500\)/)
+})
+
+test('realtime recorder flushes tail audio before sending stop and cleans up on unmount', () => {
+  const source = read(RECORDER)
+  assert.match(source, /postMessage\(\{\s*type:\s*'stop'\s*\}\)[\s\S]*await Promise\.race\([\s\S]*flushed[\s\S]*ws\.send\(JSON\.stringify\(\{\s*type:\s*'stop'/)
+  assert.match(source, /bufferedAmount\s*>\s*512\s*\*\s*1024/)
+  assert.match(source, /useEffect\(\(\)\s*=>\s*\(\)\s*=>/)
+})
+
+test('recording locks only media controls and shows connection and finalization states', () => {
+  const page = read(PAGE)
+  const input = read(INPUT)
+  assert.match(page, /const mediaActive =/)
+  assert.match(page, /const controlsLocked = phase === 'extracting' \|\| phase === 'submitting' \|\| mediaActive/)
+  assert.match(page, /mediaActive=\{mediaActive\}/)
+  assert.match(page, /recorderState=\{recorderState\}/)
+  assert.match(input, /readOnly=\{mediaActive\}/)
+  assert.match(input, /正在连接语音服务/)
+  assert.match(input, /正在完成最后一句/)
+  assert.match(input, /请先选择执行中的项目和关键任务/)
+  assert.match(input, /disabled=\{recording \? false : controlsLocked \|\| voiceBusy \|\| !canRecord\}/)
 })

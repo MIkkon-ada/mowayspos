@@ -642,7 +642,7 @@ test('realtime recorder flushes tail audio before sending stop and cleans up on 
   const source = read(RECORDER)
   assert.match(source, /postMessage\(\{\s*type:\s*'stop'\s*\}\)[\s\S]*await Promise\.race\([\s\S]*flushed[\s\S]*ws\.send\(JSON\.stringify\(\{\s*type:\s*'stop'/)
   assert.match(source, /bufferedAmount\s*>\s*512\s*\*\s*1024/)
-  assert.match(source, /useEffect\(\(\)\s*=>\s*\(\)\s*=>/)
+  assert.match(source, /useEffect\(\(\)\s*=>\s*\{[\s\S]*mountedRef\.current = false[\s\S]*void cleanup/)
 })
 
 test('recording locks only media controls and shows connection and finalization states', () => {
@@ -676,4 +676,40 @@ test('realtime recorder invalidates stale microphone starts and handles socket e
   assert.match(source, /await navigator\.mediaDevices\.getUserMedia[\s\S]*isCurrentAttempt/)
   assert.match(source, /ws\.addEventListener\('error',\s*finishWithFailure/)
   assert.match(source, /removeEventListener\('error',\s*finishWithFailure/)
+})
+
+test('realtime recorder atomically detaches owned resources before awaiting disposal', () => {
+  const source = read(RECORDER)
+  const cleanupStart = source.indexOf('const cleanup = useCallback')
+  const cleanupEnd = source.indexOf('const finishTerminal = useCallback')
+  const cleanupSource = source.slice(cleanupStart, cleanupEnd)
+  assert.match(cleanupSource, /const socket = wsRef\.current[\s\S]*wsRef\.current = null/)
+  assert.match(cleanupSource, /const context = audioCtxRef\.current[\s\S]*audioCtxRef\.current = null/)
+  assert.match(cleanupSource, /const stream = streamRef\.current[\s\S]*streamRef\.current = null/)
+  assert.match(cleanupSource, /const node = workletRef\.current[\s\S]*workletRef\.current = null/)
+  assert.match(cleanupSource, /wsRef\.current = null[\s\S]*workletRef\.current = null[\s\S]*await releaseLocalMedia/)
+  assert.doesNotMatch(cleanupSource, /await releaseLocalMedia[\s\S]*wsRef\.current/)
+})
+
+test('realtime recorder synchronously owns one mounted start attempt and scopes socket events and waiters', () => {
+  const source = read(RECORDER)
+  assert.match(source, /startInFlightRef/)
+  assert.match(source, /mountedRef/)
+  assert.match(source, /if \(startInFlightRef\.current \|\| mediaActiveRef\.current\) return/)
+  assert.match(source, /startInFlightRef\.current = true[\s\S]*const attempt =/)
+  assert.match(source, /installSocketHandlers\(ws,\s*attempt\)/)
+  assert.match(source, /if \(!ownsAttempt\(ws,\s*attempt\)\) return/)
+  assert.match(source, /attempt:\s*number/)
+  assert.match(source, /waiter\.attempt !== attempt/)
+  assert.match(source, /finally[\s\S]*startOwnerRef\.current === attempt/)
+})
+
+test('audio upload and realtime recording are mutually exclusive without disabling idle text or upload modes', () => {
+  const page = read(PAGE)
+  const input = read(INPUT)
+  assert.match(page, /const canRecord = reportScope === 'task'[\s\S]*&& !uploading/)
+  assert.match(page, /const controlsLocked = phase === 'extracting' \|\| phase === 'submitting' \|\| mediaActive \|\| uploading/)
+  assert.match(input, /disabled=\{uploading \|\| mediaActive\}/)
+  assert.match(input, /if \(!mediaActive\) onUploadFile\(file\)/)
+  assert.doesNotMatch(page, /canRecord\s*=\s*false/)
 })

@@ -167,8 +167,14 @@ export function VoiceUpdateInputPanel({
             ref={uploadInputRef}
             type="file"
             accept="audio/*,.mp3,.wav,.m4a,.flac,.aac,.ogg,.wma,.amr,.webm,.mp4"
+            disabled={mediaActive}
             hidden
-            onChange={(event) => { const file = event.target.files?.[0]; if (file) onUploadFile(file) }}
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (file) {
+                if (!mediaActive) onUploadFile(file)
+              }
+            }}
           />
           <div className="voice-update-recorder-bar">
             <div className="voice-update-recorder-info">
@@ -178,7 +184,7 @@ export function VoiceUpdateInputPanel({
             <button
               type="button"
               className="voice-update-record-button"
-              disabled={uploading}
+              disabled={uploading || mediaActive}
               onClick={() => uploadInputRef.current?.click()}
             >
               {uploading ? '转写中' : '选择音频'}

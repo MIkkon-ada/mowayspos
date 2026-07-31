@@ -23,6 +23,7 @@ type WorkletMessage =
   | { type: 'flushed' }
 
 type Waiter = {
+  attempt: number
   types: Set<ServerMessage['type']>
   resolve: (message: ServerMessage | null) => void
   timer: ReturnType<typeof setTimeout>
@@ -66,10 +67,14 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
   const argsRef = useRef(args)
   argsRef.current = args
   const stateRef = useRef<RecorderState>('idle')
+  const mountedRef = useRef(true)
+  const mediaActiveRef = useRef(false)
+  const startInFlightRef = useRef(false)
+  const startOwnerRef = useRef<number | null>(null)
   const terminalRef = useRef(false)
   const attemptGenerationRef = useRef(0)
   const stoppingRef = useRef(false)
-  const intentionalCloseRef = useRef(false)
+  const intentionalCloseSocketsRef = useRef(new WeakSet<WebSocket>())
   const backpressureRef = useRef(false)
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
@@ -83,7 +88,8 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
 
   const updateState = useCallback((next: RecorderState) => {
     stateRef.current = next
-    setRecorderState(next)
+    mediaActiveRef.current = ['connecting', 'starting', 'recording', 'stopping'].includes(next)
+    if (mountedRef.current) setRecorderState(next)
   }, [])
 
   const clearTimer = useCallback(() => {
@@ -93,8 +99,9 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
     }
   }, [])
 
-  const resolveWaiters = useCallback((message: ServerMessage | null) => {
+  const resolveWaiters = useCallback((message: ServerMessage | null, attempt: number) => {
     for (const waiter of [...waitersRef.current]) {
+      if (waiter.attempt !== attempt) continue
       if (message && !waiter.types.has(message.type) && message.type !== 'error') continue
       clearTimeout(waiter.timer)
       waitersRef.current.delete(waiter)
@@ -104,11 +111,13 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
 
   const waitForMessage = useCallback((
     expected: ServerMessage['type'] | ServerMessage['type'][],
+    attempt: number,
     timeoutMs = SOCKET_TIMEOUT_MS,
   ) => {
     const types = new Set(Array.isArray(expected) ? expected : [expected])
     return new Promise<ServerMessage | null>((resolve) => {
       const waiter: Waiter = {
+        attempt,
         types,
         resolve,
         timer: setTimeout(() => {
@@ -120,56 +129,74 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
     })
   }, [])
 
-  const releaseMedia = useCallback(async () => {
-    flushWaiterRef.current = null
-    try {
-      sourceRef.current?.disconnect()
-    } catch {
-      // The graph may already be disconnected.
-    }
-    sourceRef.current = null
-    try {
-      workletRef.current?.disconnect()
-    } catch {
-      // The graph may already be disconnected.
-    }
-    if (workletRef.current) workletRef.current.port.onmessage = null
-    workletRef.current = null
-    streamRef.current?.getTracks().forEach((track) => track.stop())
-    streamRef.current = null
+  const releaseAttachedMedia = useCallback(async () => {
     const context = audioCtxRef.current
+    const stream = streamRef.current
+    const source = sourceRef.current
+    const node = workletRef.current
+    const flushWaiter = flushWaiterRef.current
     audioCtxRef.current = null
-    if (context && context.state !== 'closed') {
-      try {
-        await context.close()
-      } catch {
-        // Cleanup must stay idempotent.
-      }
-    }
+    streamRef.current = null
+    sourceRef.current = null
+    workletRef.current = null
+    flushWaiterRef.current = null
+    flushWaiter?.()
+    await releaseLocalMedia(context, stream, source, node)
   }, [])
 
-  const cleanup = useCallback(async (closeSocket = true) => {
-    attemptGenerationRef.current += 1
-    clearTimer()
-    resolveWaiters(null)
-    await releaseMedia()
+  const cleanup = useCallback(async (options?: {
+    invalidateAttempt?: boolean
+    preserveAttempt?: number
+  }) => {
+    const invalidateAttempt = options?.invalidateAttempt ?? true
+    const preserveAttempt = options?.preserveAttempt
+
+    // Atomically detach every owned resource before the first await.
     const socket = wsRef.current
+    const context = audioCtxRef.current
+    const stream = streamRef.current
+    const source = sourceRef.current
+    const node = workletRef.current
+    const flushWaiter = flushWaiterRef.current
     wsRef.current = null
-    if (closeSocket && socket && socket.readyState < WebSocket.CLOSING) {
-      intentionalCloseRef.current = true
+    audioCtxRef.current = null
+    streamRef.current = null
+    sourceRef.current = null
+    workletRef.current = null
+    flushWaiterRef.current = null
+
+    if (invalidateAttempt) attemptGenerationRef.current += 1
+    if (socket) intentionalCloseSocketsRef.current.add(socket)
+    clearTimer()
+    flushWaiter?.()
+
+    const capturedWaiters = [...waitersRef.current].filter(
+      (waiter) => waiter.attempt !== preserveAttempt,
+    )
+    for (const waiter of capturedWaiters) {
+      clearTimeout(waiter.timer)
+      waitersRef.current.delete(waiter)
+      waiter.resolve(null)
+    }
+
+    await releaseLocalMedia(context, stream, source, node)
+    if (socket && socket.readyState < WebSocket.CLOSING) {
       try {
         socket.close(1000)
       } catch {
         // Cleanup must stay idempotent.
       }
     }
-  }, [clearTimer, releaseMedia, resolveWaiters])
+  }, [clearTimer])
 
   const finishTerminal = useCallback(async (
     next: Extract<RecorderState, 'completed' | 'failed'>,
     message?: string,
     socket?: WebSocket,
+    attempt = attemptGenerationRef.current,
   ) => {
+    if (!mountedRef.current) return
+    if (attemptGenerationRef.current !== attempt) return
     if (socket && wsRef.current !== socket) return
     if (terminalRef.current) return
     if (next === 'completed' && stateRef.current === 'failed') return
@@ -178,17 +205,24 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
     clearTimer()
     updateState(next)
     if (message) argsRef.current.setError(message)
-    await cleanup()
+    await cleanup({ invalidateAttempt: true })
   }, [cleanup, clearTimer, updateState])
 
-  const installSocketHandlers = useCallback((ws: WebSocket) => {
+  const ownsAttempt = useCallback((ws: WebSocket, attempt: number) => (
+    mountedRef.current
+    && wsRef.current === ws
+    && attemptGenerationRef.current === attempt
+  ), [])
+
+  const installSocketHandlers = useCallback((ws: WebSocket, attempt: number) => {
     ws.onmessage = (event) => {
+      if (!ownsAttempt(ws, attempt)) return
       if (typeof event.data !== 'string') return
       const message = parseServerMessage(event.data)
       if (!message) return
 
       // Wake protocol waiters before applying terminal UI state.
-      resolveWaiters(message)
+      resolveWaiters(message, attempt)
 
       if (message.type === 'transcript' && !terminalRef.current) {
         transcriptRef.current = mergeTranscript(transcriptRef.current, message)
@@ -196,31 +230,32 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
         return
       }
       if (message.type === 'error') {
-        void finishTerminal('failed', message.message, ws)
+        void finishTerminal('failed', message.message, ws, attempt)
         return
       }
       if (message.type === 'done' && stateRef.current !== 'failed') {
-        void finishTerminal('completed', undefined, ws)
+        void finishTerminal('completed', undefined, ws, attempt)
       }
     }
 
     const handleTransportFailure = () => {
-      if (wsRef.current !== ws) return
-      resolveWaiters(null)
+      if (!ownsAttempt(ws, attempt)) return
+      if (intentionalCloseSocketsRef.current.has(ws)) return
+      resolveWaiters(null, attempt)
       if (
-        !intentionalCloseRef.current
-        && ['connecting', 'starting', 'recording', 'stopping'].includes(stateRef.current)
+        ['connecting', 'starting', 'recording', 'stopping'].includes(stateRef.current)
       ) {
         void finishTerminal(
           'failed',
           '语音服务连接中断，请检查已识别文字后重试',
           ws,
+          attempt,
         )
       }
     }
     ws.onerror = handleTransportFailure
     ws.onclose = handleTransportFailure
-  }, [finishTerminal, resolveWaiters])
+  }, [finishTerminal, ownsAttempt, resolveWaiters])
 
   const openSocket = useCallback((ws: WebSocket) => new Promise<boolean>((resolve) => {
     if (ws.readyState === WebSocket.OPEN) {
@@ -253,13 +288,20 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
   }), [])
 
   const isCurrentAttempt = useCallback((attempt: number, ws: WebSocket) => (
-    attemptGenerationRef.current === attempt
-    && wsRef.current === ws
+    ownsAttempt(ws, attempt)
     && ws.readyState === WebSocket.OPEN
     && !terminalRef.current
     && stateRef.current !== 'failed'
     && stateRef.current !== 'completed'
-  ), [])
+  ), [ownsAttempt])
+
+  const ownsStartAttempt = useCallback((attempt: number, ws?: WebSocket) => (
+    mountedRef.current
+    && startInFlightRef.current
+    && startOwnerRef.current === attempt
+    && attemptGenerationRef.current === attempt
+    && (!ws || isCurrentAttempt(attempt, ws))
+  ), [isCurrentAttempt])
 
   const startMicrophone = useCallback(async (ws: WebSocket, attempt: number) => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -273,7 +315,7 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
     try {
       context = new AudioContext({ sampleRate: 16000 })
       await context.audioWorklet.addModule('/worklets/pcm-audio-processor.js')
-      if (!isCurrentAttempt(attempt, ws)) {
+      if (!ownsStartAttempt(attempt, ws)) {
         await releaseLocalMedia(context, stream, source, node)
         return false
       }
@@ -286,7 +328,7 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
           noiseSuppression: true,
         },
       })
-      if (!isCurrentAttempt(attempt, ws)) {
+      if (!ownsStartAttempt(attempt, ws)) {
         await releaseLocalMedia(context, stream, source, node)
         return false
       }
@@ -310,6 +352,7 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
               'failed',
               '网络发送积压过高，录音已停止，请检查已识别文字后重试',
               ws,
+              attempt,
             )
           }
           return
@@ -318,7 +361,7 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
       }
       source.connect(node)
       node.connect(context.destination)
-      if (!isCurrentAttempt(attempt, ws)) {
+      if (!ownsStartAttempt(attempt, ws)) {
         await releaseLocalMedia(context, stream, source, node)
         return false
       }
@@ -335,10 +378,11 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
       }
       throw error instanceof Error ? error : new Error('启动录音失败，请重试')
     }
-  }, [finishTerminal, isCurrentAttempt])
+  }, [finishTerminal, isCurrentAttempt, ownsStartAttempt])
 
   const stopRecording = useCallback(async () => {
     if (stoppingRef.current || stateRef.current !== 'recording') return
+    const attempt = attemptGenerationRef.current
     stoppingRef.current = true
     clearTimer()
     updateState('stopping')
@@ -356,119 +400,152 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
       ])
     }
 
-    if (terminalRef.current) return
-    await releaseMedia()
-    if (terminalRef.current) return
+    if (terminalRef.current || attemptGenerationRef.current !== attempt) return
+    await releaseAttachedMedia()
+    if (terminalRef.current || attemptGenerationRef.current !== attempt) return
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      await finishTerminal('failed', '语音服务连接已断开，请检查已识别文字后重试')
+      await finishTerminal(
+        'failed',
+        '语音服务连接已断开，请检查已识别文字后重试',
+        undefined,
+        attempt,
+      )
       return
     }
 
     // Register before sending because the server may answer immediately.
-    const terminal = waitForMessage(['done', 'error'], DONE_TIMEOUT_MS)
+    const terminal = waitForMessage(['done', 'error'], attempt, DONE_TIMEOUT_MS)
     ws.send(JSON.stringify({ type: 'stop' }))
     const result = await terminal
     if (!result) {
-      await finishTerminal('failed', '语音收尾超时，请检查最后一句是否完整', ws)
+      await finishTerminal('failed', '语音收尾超时，请检查最后一句是否完整', ws, attempt)
       return
     }
     if (result.type === 'error') return
     if (!tailWasFlushed) {
       argsRef.current.setError('录音已完成，但尾帧确认超时，请检查最后一句是否完整')
     }
-  }, [clearTimer, finishTerminal, releaseMedia, updateState, waitForMessage])
+  }, [clearTimer, finishTerminal, releaseAttachedMedia, updateState, waitForMessage])
 
   const startRecording = useCallback(async () => {
-    if (!['idle', 'completed', 'failed'].includes(stateRef.current)) return
-    const { projectId, selectedTaskId, canRecord, initialText, setError } = argsRef.current
-    setError(null)
-    if (!canRecord || !projectId || !selectedTaskId) {
-      terminalRef.current = true
-      updateState('failed')
-      setError('请先选择执行中的项目和关键任务')
-      return
-    }
-
-    await cleanup()
-    terminalRef.current = false
-    stoppingRef.current = false
-    intentionalCloseRef.current = false
-    backpressureRef.current = false
+    if (!mountedRef.current) return
+    if (startInFlightRef.current || mediaActiveRef.current) return
+    startInFlightRef.current = true
     const attempt = attemptGenerationRef.current + 1
     attemptGenerationRef.current = attempt
-    transcriptRef.current = emptyTranscript(initialText)
+    startOwnerRef.current = attempt
+    terminalRef.current = false
+    stoppingRef.current = false
+    backpressureRef.current = false
     setTimer(0)
     updateState('connecting')
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${protocol}//${window.location.host}/api/transcribe/stream`)
-    ws.binaryType = 'arraybuffer'
-    wsRef.current = ws
-    installSocketHandlers(ws)
-
-    // Waiters are installed before the socket can deliver the corresponding event.
-    const ready = waitForMessage('ready')
-    const opened = await openSocket(ws)
-    const readyResult = await ready
-    if (!opened || readyResult?.type !== 'ready' || !isCurrentAttempt(attempt, ws)) {
-      if (!terminalRef.current) {
-        await finishTerminal('failed', '语音服务连接超时，请重试', ws)
-      }
-      return
-    }
-
-    updateState('starting')
-    const started = waitForMessage('started')
-    ws.send(JSON.stringify({
-      type: 'start',
-      scene: 'work_report',
-      project_id: projectId,
-      selected_task_id: selectedTaskId,
-      sample_rate: 16000,
-      format: 'pcm',
-    }))
-    const startResult = await started
-    if (startResult?.type !== 'started' || !isCurrentAttempt(attempt, ws)) {
-      if (!terminalRef.current) {
-        await finishTerminal('failed', '语音识别启动超时，请重试', ws)
-      }
-      return
-    }
-
     try {
+      argsRef.current.setError(null)
+
+      // Dispose a previous terminal session without invalidating this claimed attempt.
+      await cleanup({ invalidateAttempt: false, preserveAttempt: attempt })
+      if (!ownsStartAttempt(attempt)) return
+
+      const { projectId, selectedTaskId, canRecord, initialText, setError } = argsRef.current
+      if (!canRecord || !projectId || !selectedTaskId) {
+        terminalRef.current = true
+        updateState('failed')
+        setError('请先选择执行中的项目和关键任务')
+        return
+      }
+
+      transcriptRef.current = emptyTranscript(initialText)
+      if (!ownsStartAttempt(attempt)) return
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const ws = new WebSocket(`${protocol}//${window.location.host}/api/transcribe/stream`)
+      if (!ownsStartAttempt(attempt)) {
+        intentionalCloseSocketsRef.current.add(ws)
+        ws.close(1000)
+        return
+      }
+      ws.binaryType = 'arraybuffer'
+      wsRef.current = ws
+      installSocketHandlers(ws, attempt)
+
+      // Waiters are installed before the socket can deliver the corresponding event.
+      const ready = waitForMessage('ready', attempt)
+      const opened = await openSocket(ws)
+      const readyResult = await ready
+      if (!opened || readyResult?.type !== 'ready' || !ownsStartAttempt(attempt, ws)) {
+        if (ownsAttempt(ws, attempt) && !terminalRef.current) {
+          await finishTerminal('failed', '语音服务连接超时，请重试', ws, attempt)
+        }
+        return
+      }
+
+      updateState('starting')
+      const started = waitForMessage('started', attempt)
+      ws.send(JSON.stringify({
+        type: 'start',
+        scene: 'work_report',
+        project_id: projectId,
+        selected_task_id: selectedTaskId,
+        sample_rate: 16000,
+        format: 'pcm',
+      }))
+      const startResult = await started
+      if (startResult?.type !== 'started' || !ownsStartAttempt(attempt, ws)) {
+        if (ownsAttempt(ws, attempt) && !terminalRef.current) {
+          await finishTerminal('failed', '语音识别启动超时，请重试', ws, attempt)
+        }
+        return
+      }
+
       const attached = await startMicrophone(ws, attempt)
-      if (!attached || !isCurrentAttempt(attempt, ws)) return
+      if (!attached || !ownsStartAttempt(attempt, ws)) return
+      updateState('recording')
+      if (!ownsStartAttempt(attempt, ws)) return
+      timerIntervalRef.current = setInterval(() => {
+        if (mountedRef.current && attemptGenerationRef.current === attempt) {
+          setTimer((value) => value + 1)
+        }
+      }, 1000)
     } catch (error) {
-      if (isCurrentAttempt(attempt, ws)) {
+      const ws = wsRef.current
+      if (ownsStartAttempt(attempt) && (!ws || ownsAttempt(ws, attempt))) {
         await finishTerminal(
           'failed',
           error instanceof Error ? error.message : '启动录音失败，请重试',
-          ws,
+          ws ?? undefined,
+          attempt,
         )
       }
-      return
+    } finally {
+      if (startOwnerRef.current === attempt) {
+        startOwnerRef.current = null
+        startInFlightRef.current = false
+      }
     }
-
-    if (!isCurrentAttempt(attempt, ws)) return
-    updateState('recording')
-    timerIntervalRef.current = setInterval(() => setTimer((value) => value + 1), 1000)
   }, [
     cleanup,
     finishTerminal,
     installSocketHandlers,
-    isCurrentAttempt,
     openSocket,
+    ownsAttempt,
+    ownsStartAttempt,
     startMicrophone,
     updateState,
     waitForMessage,
   ])
 
-  useEffect(() => () => {
-    stoppingRef.current = true
-    intentionalCloseRef.current = true
-    terminalRef.current = true
-    void cleanup()
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      stoppingRef.current = true
+      terminalRef.current = true
+      startInFlightRef.current = false
+      startOwnerRef.current = null
+      attemptGenerationRef.current += 1
+      void cleanup({ invalidateAttempt: false })
+    }
   }, [cleanup])
 
   const recording = recorderState === 'recording'

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services.realtime_asr import DashScopeRealtimeAsr
+from app.services.realtime_asr import AsrStartError, DashScopeRealtimeAsr
 from app.settings import AsrSettings
 
 
@@ -18,6 +18,7 @@ class FakeRecognition:
         self.start_kwargs = None
         self.frames = []
         self.stopped = False
+        self.stop_calls = 0
         type(self).instances.append(self)
 
     def start(self, **kwargs):
@@ -28,13 +29,13 @@ class FakeRecognition:
 
     def stop(self):
         self.stopped = True
+        self.stop_calls += 1
         self.callback.on_complete()
 
 
 class BlockingStopRecognition(FakeRecognition):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.stop_calls = 0
         self.stop_entered = threading.Event()
         self.stop_release = threading.Event()
 
@@ -80,6 +81,42 @@ class FinalOnStopRecognition(FakeRecognition):
             )
         )
         self.callback.on_complete()
+
+
+class BlockingStartRecognition(FakeRecognition):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.start_entered = threading.Event()
+        self.start_release = threading.Event()
+
+    def start(self, **kwargs):
+        self.start_kwargs = kwargs
+        self.start_entered.set()
+        self.start_release.wait(timeout=1)
+
+
+class InspectStopThreadRecognition(FakeRecognition):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.stop_thread_daemon = None
+        self.stop_thread_name = None
+
+    def stop(self):
+        thread = threading.current_thread()
+        self.stop_calls += 1
+        self.stop_thread_daemon = thread.daemon
+        self.stop_thread_name = thread.name
+        self.callback.on_complete()
+
+
+class SlowStopWithoutCompletionRecognition(FakeRecognition):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.stop_release = threading.Event()
+
+    def stop(self):
+        self.stop_calls += 1
+        self.stop_release.wait(timeout=0.06)
 
 
 def _settings(
@@ -512,7 +549,8 @@ def test_start_exception_is_structured_and_terminal():
             recognition_factory=StartFailRecognition,
         )
 
-        await session.start()
+        with pytest.raises(AsrStartError, match="start failed"):
+            await session.start()
 
         assert await session.next_event() == {
             "type": "error",
@@ -590,5 +628,104 @@ def test_authentication_provider_error_is_not_retryable():
         event = await session.next_event()
         assert event["retryable"] is False
         await session.stop()
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_start_cleans_up_and_stays_stopped():
+    async def scenario():
+        session = DashScopeRealtimeAsr(
+            "secret",
+            _settings(),
+            "",
+            recognition_factory=BlockingStartRecognition,
+        )
+        start_task = asyncio.create_task(session.start())
+        while not FakeRecognition.instances or not isinstance(
+            FakeRecognition.instances[-1], BlockingStartRecognition
+        ):
+            await asyncio.sleep(0)
+        recognition = FakeRecognition.instances[-1]
+        assert await asyncio.to_thread(recognition.start_entered.wait, 0.2)
+
+        start_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await start_task
+
+        recognition.start_release.set()
+        assert session.state == "STOPPED"
+        assert await session.next_event() is None
+        await session.stop()
+        assert recognition.stop_calls == 1
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(session.next_event(), timeout=0.02)
+
+    asyncio.run(scenario())
+
+
+def test_provider_error_stop_does_not_call_provider_or_publish_second_error():
+    async def scenario():
+        session = DashScopeRealtimeAsr(
+            "secret",
+            _settings(),
+            "",
+            recognition_factory=FakeRecognition,
+        )
+        await session.start()
+        recognition = FakeRecognition.instances[-1]
+        recognition.callback.on_error(
+            _result(status_code=401, message="unauthorized", request_id="req-auth")
+        )
+
+        first = await session.next_event()
+        assert first["code"] == "ASR_PROVIDER_ERROR"
+        assert first["retryable"] is False
+        await session.stop()
+
+        assert recognition.stop_calls == 0
+        assert await session.next_event() is None
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(session.next_event(), timeout=0.02)
+
+    asyncio.run(scenario())
+
+
+def test_provider_stop_uses_a_dedicated_daemon_thread():
+    async def scenario():
+        session = DashScopeRealtimeAsr(
+            "secret",
+            _settings(),
+            "",
+            recognition_factory=InspectStopThreadRecognition,
+        )
+        await session.start()
+        recognition = FakeRecognition.instances[-1]
+
+        await session.stop()
+
+        assert recognition.stop_calls == 1
+        assert recognition.stop_thread_daemon is True
+        assert recognition.stop_thread_name.startswith("dashscope-asr-stop-")
+
+    asyncio.run(scenario())
+
+
+def test_stop_and_completion_share_one_timeout_budget():
+    async def scenario():
+        session = DashScopeRealtimeAsr(
+            "secret",
+            _settings(stop_timeout_seconds=0.08),
+            "",
+            recognition_factory=SlowStopWithoutCompletionRecognition,
+        )
+        await session.start()
+
+        started = time.perf_counter()
+        await session.stop()
+        elapsed = time.perf_counter() - started
+
+        assert 0.06 <= elapsed < 0.14
+        assert (await session.next_event())["code"] == "ASR_STOP_TIMEOUT"
+        assert await session.next_event() is None
 
     asyncio.run(scenario())

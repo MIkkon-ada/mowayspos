@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from enum import Enum
+import threading
 from typing import Any, Callable
 
 from app.settings import AsrSettings
+
+
+class AsrStartError(RuntimeError):
+    """Raised after a failed provider start has been reported to consumers."""
 
 
 class _SessionState(str, Enum):
@@ -39,8 +44,10 @@ class DashScopeRealtimeAsr:
         self._state = _SessionState.NEW
         self._state_lock = asyncio.Lock()
         self._stop_task: asyncio.Task[None] | None = None
+        self._provider_stop_future: asyncio.Future[None] | None = None
         self._callbacks_open = False
         self._terminal_sent = False
+        self._provider_failed = False
 
     @property
     def state(self) -> str:
@@ -94,13 +101,21 @@ class DashScopeRealtimeAsr:
                         ]
                     }
                 await asyncio.to_thread(self._recognition.start, **start_kwargs)
+            except asyncio.CancelledError:
+                self._callbacks_open = False
+                try:
+                    await self._best_effort_stop_after_start_failure()
+                finally:
+                    self._state = _SessionState.STOPPED
+                    self._publish_terminal()
+                raise
             except Exception as exc:
                 self._callbacks_open = False
                 await self._best_effort_stop_after_start_failure()
                 self._publish_internal_error("ASR_PROVIDER_ERROR", str(exc))
                 self._publish_terminal()
                 self._state = _SessionState.STOPPED
-                return
+                raise AsrStartError("ASR start failed") from exc
             self._state = _SessionState.RUNNING
 
     async def send_audio(self, frame: bytes) -> None:
@@ -142,20 +157,21 @@ class DashScopeRealtimeAsr:
     async def _run_stop(self) -> None:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.settings.stop_timeout_seconds
-        recognition = self._recognition
         try:
-            provider_stop = asyncio.create_task(asyncio.to_thread(recognition.stop))
-            provider_stop.add_done_callback(_consume_task_exception)
-            await asyncio.wait_for(
-                asyncio.shield(provider_stop),
-                timeout=_remaining(deadline, loop),
-            )
-            if not self.completed.is_set():
+            if self._provider_failed:
+                await asyncio.sleep(0)
+            else:
+                provider_stop = self._start_provider_stop_worker()
                 await asyncio.wait_for(
-                    self.completed.wait(),
+                    asyncio.shield(provider_stop),
                     timeout=_remaining(deadline, loop),
                 )
-            await asyncio.sleep(0)
+                if not self.completed.is_set():
+                    await asyncio.wait_for(
+                        self.completed.wait(),
+                        timeout=_remaining(deadline, loop),
+                    )
+                await asyncio.sleep(0)
         except TimeoutError:
             self._publish_internal_error(
                 "ASR_STOP_TIMEOUT",
@@ -172,8 +188,7 @@ class DashScopeRealtimeAsr:
     async def _best_effort_stop_after_start_failure(self) -> None:
         if self._recognition is None:
             return
-        cleanup = asyncio.create_task(asyncio.to_thread(self._recognition.stop))
-        cleanup.add_done_callback(_consume_task_exception)
+        cleanup = self._start_provider_stop_worker()
         try:
             await asyncio.wait_for(
                 asyncio.shield(cleanup),
@@ -181,6 +196,40 @@ class DashScopeRealtimeAsr:
             )
         except Exception:
             pass
+
+    def _start_provider_stop_worker(self) -> asyncio.Future[None]:
+        """Run the unkillable SDK stop outside asyncio's shared executor.
+
+        Python cannot terminate a blocked thread. A per-session daemon thread
+        prevents one stuck SDK call from exhausting the default executor or
+        delaying interpreter shutdown, while the adapter deadline still closes
+        its event stream deterministically.
+        """
+        if self._provider_stop_future is not None:
+            return self._provider_stop_future
+        loop = self._loop
+        recognition = self._recognition
+        if loop is None or recognition is None:
+            raise RuntimeError("ASR provider stop is unavailable")
+        future: asyncio.Future[None] = loop.create_future()
+        future.add_done_callback(_consume_future_exception)
+        self._provider_stop_future = future
+
+        def run_provider_stop() -> None:
+            try:
+                recognition.stop()
+            except BaseException as exc:
+                _settle_provider_stop(loop, future, exc)
+            else:
+                _settle_provider_stop(loop, future, None)
+
+        worker = threading.Thread(
+            target=run_provider_stop,
+            name=f"dashscope-asr-stop-{id(self):x}",
+            daemon=True,
+        )
+        worker.start()
+        return future
 
     def _publish_transcript(self, sentence: Any) -> None:
         text = str(_field(sentence, "text", "") or "").strip()
@@ -212,6 +261,7 @@ class DashScopeRealtimeAsr:
         loop.call_soon_threadsafe(publish)
 
     def _publish_error(self, result: Any) -> None:
+        self._provider_failed = True
         message = _field(result, "message")
         request_id = _field(result, "request_id")
         event = {
@@ -303,6 +353,30 @@ def _remaining(deadline: float, loop: asyncio.AbstractEventLoop) -> float:
     return max(0.0, deadline - loop.time())
 
 
-def _consume_task_exception(task: asyncio.Task[Any]) -> None:
-    if not task.cancelled():
-        task.exception()
+def _settle_provider_stop(
+    loop: asyncio.AbstractEventLoop,
+    future: asyncio.Future[None],
+    error: BaseException | None,
+) -> None:
+    try:
+        loop.call_soon_threadsafe(_finish_provider_stop, future, error)
+    except RuntimeError:
+        # The owning event loop may already be closed after a timed-out stop.
+        pass
+
+
+def _finish_provider_stop(
+    future: asyncio.Future[None],
+    error: BaseException | None,
+) -> None:
+    if future.done():
+        return
+    if error is None:
+        future.set_result(None)
+    else:
+        future.set_exception(error)
+
+
+def _consume_future_exception(future: asyncio.Future[Any]) -> None:
+    if not future.cancelled():
+        future.exception()

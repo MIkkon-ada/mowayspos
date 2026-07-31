@@ -20,7 +20,7 @@ The complete corpus must collectively cover all of the following:
 - Key-task titles.
 - Dates and percentages.
 - English brand terms mixed into Chinese speech.
-- Natural pauses of 1-2 seconds.
+- Natural pauses of 1-3 seconds.
 - Representative office noise.
 - An immediate stop after the final spoken word, with no trailing silence added.
 

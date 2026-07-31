@@ -78,31 +78,21 @@ def build_work_report_asr_context(
 
     require_project_access(username, project_id, db)
 
-    task = (
-        db.query(models.Task)
+    selected = (
+        db.query(models.SubTask, models.Task)
+        .join(models.Task, models.SubTask.task_id == models.Task.id)
         .filter(
-            models.Task.id == selected_task_id,
+            models.SubTask.id == selected_task_id,
+            models.SubTask.is_deleted.is_(False),
             models.Task.is_deleted.is_(False),
         )
         .first()
     )
-    if task is None:
+    if selected is None:
         raise HTTPException(status_code=404, detail="task_not_found")
+    selected_subtask, task = selected
     if task.project_id != project_id:
         raise HTTPException(status_code=403, detail="task_outside_project")
-
-    subtasks = (
-        db.query(models.SubTask)
-        .join(models.Task, models.SubTask.task_id == models.Task.id)
-        .filter(
-            models.Task.id == selected_task_id,
-            models.Task.project_id == project_id,
-            models.Task.is_deleted.is_(False),
-            models.SubTask.is_deleted.is_(False),
-        )
-        .order_by(models.SubTask.id)
-        .all()
-    )
 
     identity = get_user_context_from_db(username, db)
     roles = set(
@@ -114,17 +104,17 @@ def build_work_report_asr_context(
         roles & _MANAGEMENT_ROLES
     )
     display_name = str(identity.get("name") or "").strip()
-    is_assigned = display_name == str(task.owner or "").strip() or any(
-        display_name == str(subtask.assignee or "").strip()
-        for subtask in subtasks
+    is_assigned = (
+        display_name == str(task.owner or "").strip()
+        or display_name == str(selected_subtask.assignee or "").strip()
     )
     if not is_manager and not is_assigned:
         raise HTTPException(status_code=403, detail="work_report_scope_denied")
 
-    subtask_titles = _unique_text(subtask.title for subtask in subtasks)
+    subtask_titles = _unique_text([selected_subtask.title])
     related_people = _split_names(
         [
-            *(subtask.assignee for subtask in subtasks),
+            selected_subtask.assignee,
             task.owner,
             task.coordinator,
             task.collaborators,

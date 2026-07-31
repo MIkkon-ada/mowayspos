@@ -100,6 +100,7 @@ def test_context_contains_only_scoped_work_report_terms_and_is_bounded(
         is_deleted=False,
     )
     isolated_db.add(subtask)
+    isolated_db.flush()
 
     other_project = _active_project(isolated_db, "绝密的其他项目")
     other_task = models.Task(
@@ -114,7 +115,7 @@ def test_context_contains_only_scoped_work_report_terms_and_is_bounded(
     context = build_work_report_asr_context(
         current_user="reporter",
         project_id=project.id,
-        selected_task_id=task.id,
+        selected_task_id=subtask.id,
         db=isolated_db,
     )
 
@@ -153,21 +154,21 @@ def test_selected_task_from_another_project_is_rejected(isolated_db: Session):
     )
     isolated_db.add(other_task)
     isolated_db.flush()
-    isolated_db.add(
-        models.SubTask(
-            task_id=other_task.id,
-            title="其他项目关键任务",
-            assignee="王小明",
-            is_deleted=False,
-        )
+    other_subtask = models.SubTask(
+        task_id=other_task.id,
+        title="其他项目关键任务",
+        assignee="王小明",
+        is_deleted=False,
     )
+    isolated_db.add(other_subtask)
+    isolated_db.flush()
     isolated_db.commit()
 
     with pytest.raises(HTTPException) as exc_info:
         build_work_report_asr_context(
             current_user="reporter",
             project_id=selected_project.id,
-            selected_task_id=other_task.id,
+            selected_task_id=other_subtask.id,
             db=isolated_db,
         )
 
@@ -198,21 +199,21 @@ def test_member_without_management_or_assignment_is_rejected(
     )
     isolated_db.add(task)
     isolated_db.flush()
-    isolated_db.add(
-        models.SubTask(
-            task_id=task.id,
-            title="没有分配给该成员的关键任务",
-            assignee="关键任务负责人",
-            is_deleted=False,
-        )
+    selected_subtask = models.SubTask(
+        task_id=task.id,
+        title="没有分配给该成员的关键任务",
+        assignee="关键任务负责人",
+        is_deleted=False,
     )
+    isolated_db.add(selected_subtask)
+    isolated_db.flush()
     isolated_db.commit()
 
     with pytest.raises(HTTPException) as exc_info:
         build_work_report_asr_context(
             current_user="member",
             project_id=project.id,
-            selected_task_id=task.id,
+            selected_task_id=selected_subtask.id,
             db=isolated_db,
         )
 
@@ -240,24 +241,122 @@ def test_punctuation_inside_subtask_title_is_preserved(isolated_db: Session):
     )
     isolated_db.add(task)
     isolated_db.flush()
-    isolated_db.add(
-        models.SubTask(
-            task_id=task.id,
-            title="调研甲，验证乙",
-            assignee=reporter.name,
-            is_deleted=False,
-        )
+    selected_subtask = models.SubTask(
+        task_id=task.id,
+        title="调研甲，验证乙",
+        assignee=reporter.name,
+        is_deleted=False,
     )
+    isolated_db.add(selected_subtask)
+    isolated_db.flush()
     isolated_db.commit()
 
     context = build_work_report_asr_context(
         current_user="owner",
         project_id=project.id,
-        selected_task_id=task.id,
+        selected_task_id=selected_subtask.id,
         db=isolated_db,
     )
 
     assert context.splitlines()[0] == "当前关键任务：调研甲，验证乙"
+
+
+def test_context_contains_only_the_selected_subtask(isolated_db: Session):
+    reporter = _person_with_account(
+        isolated_db, name="项目负责人", username="owner"
+    )
+    project = _active_project(isolated_db, "单任务上下文项目")
+    isolated_db.add(
+        models.ProjectMember(
+            project_id=project.id,
+            person_id=reporter.id,
+            person_name_snapshot=reporter.name,
+            role="owner",
+        )
+    )
+    task = models.Task(
+        project_id=project.id,
+        key_task="同一重点工作",
+        owner=reporter.name,
+        is_deleted=False,
+    )
+    isolated_db.add(task)
+    isolated_db.flush()
+    sibling = models.SubTask(
+        task_id=task.id,
+        title="不可泄露的兄弟关键任务",
+        assignee="兄弟任务负责人",
+        is_deleted=False,
+    )
+    selected = models.SubTask(
+        task_id=task.id,
+        title="当前选中的关键任务",
+        assignee="当前任务负责人",
+        is_deleted=False,
+    )
+    isolated_db.add_all([sibling, selected])
+    isolated_db.flush()
+    isolated_db.commit()
+
+    context = build_work_report_asr_context(
+        current_user="owner",
+        project_id=project.id,
+        selected_task_id=selected.id,
+        db=isolated_db,
+    )
+
+    assert "当前关键任务：当前选中的关键任务" in context
+    assert sibling.title not in context
+    assert sibling.assignee not in context
+    assert selected.assignee in context
+
+
+def test_sibling_assignee_cannot_access_selected_subtask(isolated_db: Session):
+    reporter = _person_with_account(
+        isolated_db, name="兄弟任务负责人", username="sibling-assignee"
+    )
+    project = _active_project(isolated_db, "兄弟任务权限项目")
+    isolated_db.add(
+        models.ProjectMember(
+            project_id=project.id,
+            person_id=reporter.id,
+            person_name_snapshot=reporter.name,
+            role="member",
+        )
+    )
+    task = models.Task(
+        project_id=project.id,
+        key_task="权限隔离重点工作",
+        owner="重点工作负责人",
+        is_deleted=False,
+    )
+    isolated_db.add(task)
+    isolated_db.flush()
+    sibling = models.SubTask(
+        task_id=task.id,
+        title="分配给当前用户的兄弟任务",
+        assignee=reporter.name,
+        is_deleted=False,
+    )
+    selected = models.SubTask(
+        task_id=task.id,
+        title="未分配给当前用户的选中任务",
+        assignee="其他负责人",
+        is_deleted=False,
+    )
+    isolated_db.add_all([sibling, selected])
+    isolated_db.flush()
+    isolated_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        build_work_report_asr_context(
+            current_user="sibling-assignee",
+            project_id=project.id,
+            selected_task_id=selected.id,
+            db=isolated_db,
+        )
+
+    assert exc_info.value.status_code == 403
 
 
 @pytest.mark.parametrize(
@@ -308,7 +407,15 @@ def test_missing_or_inactive_scope_is_rejected(
             )
             isolated_db.add(task)
             isolated_db.flush()
-            selected_task_id = task.id
+            selected_subtask = models.SubTask(
+                task_id=task.id,
+                title="状态验证关键任务",
+                assignee=reporter.name,
+                is_deleted=False,
+            )
+            isolated_db.add(selected_subtask)
+            isolated_db.flush()
+            selected_task_id = selected_subtask.id
         else:
             selected_task_id = 98765
     else:

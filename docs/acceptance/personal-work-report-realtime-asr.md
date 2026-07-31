@@ -215,13 +215,17 @@ gates do not apply to Row 1.
 - Audio packet rate is 9-11 packets/second over the predetermined continuous
   steady window of at least 10 seconds. If `case-20.wav` does not produce a
   qualifying window, the row fails acceptance rather than skipping this gate.
-- The backend `audio_queue` capacity is 50, queue peak is at most 40 (80%), and
-  the row has zero `AUDIO_BACKPRESSURE` errors, zero dropped audio packets, and
-  zero sustained full-queue or producer-blocking episodes. Any violation fails
-  the row and requires rollback. A sustained full queue means depth 50 for at
-  least 100 ms; a producer-blocking episode is any audio enqueue that must wait
-  because the queue is full. Source both counts from sanitized backend queue
-  instrumentation.
+- The backend `audio_queue` capacity is 50. Sanitized logs for every successful
+  session must report `queue_peak <= 40` (80%), and the complete 20-file row must
+  contain zero terminal `AUDIO_BACKPRESSURE` events. Any
+  `AUDIO_BACKPRESSURE` event fails that session, fails the row, and requires
+  rollback.
+- Telemetry limitation: the coordinator enqueues audio with `put_nowait`; it
+  does not wait on a full queue and therefore produces no producer-blocking
+  duration or count. Current telemetry also has no independent dropped-packet
+  counter. Do not claim either uncollected value is zero: the auditable overflow
+  evidence is the terminal `AUDIO_BACKPRESSURE` event, together with
+  `queue_peak` for successful sessions.
 - Every session follows the explicit protocol without timeout, provider error,
   malformed event order, or missing `done`, even when visible text appears
   complete.

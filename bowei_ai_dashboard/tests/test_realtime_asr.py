@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -27,6 +28,57 @@ class FakeRecognition:
 
     def stop(self):
         self.stopped = True
+        self.callback.on_complete()
+
+
+class BlockingStopRecognition(FakeRecognition):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.stop_calls = 0
+        self.stop_entered = threading.Event()
+        self.stop_release = threading.Event()
+
+    def stop(self):
+        self.stop_calls += 1
+        self.stop_entered.set()
+        self.stop_release.wait(timeout=1)
+        self.callback.on_event(
+            _result(
+                sentence={
+                    "text": "迟到结果",
+                    "sentence_end": True,
+                    "begin_time": 1,
+                    "end_time": 2,
+                }
+            )
+        )
+        self.callback.on_complete()
+
+
+class StartFailRecognition(FakeRecognition):
+    def start(self, **kwargs):
+        raise RuntimeError("start exploded")
+
+
+class StopFailRecognition(FakeRecognition):
+    def stop(self):
+        self.stopped = True
+        raise RuntimeError("stop exploded")
+
+
+class FinalOnStopRecognition(FakeRecognition):
+    def stop(self):
+        self.stopped = True
+        self.callback.on_event(
+            _result(
+                sentence={
+                    "text": "最终结果",
+                    "sentence_end": True,
+                    "begin_time": 10,
+                    "end_time": 20,
+                }
+            )
+        )
         self.callback.on_complete()
 
 
@@ -345,5 +397,198 @@ def test_stop_before_start_closes_event_stream():
         await session.stop()
 
         assert await session.next_event() is None
+
+    asyncio.run(scenario())
+
+
+def test_repeated_start_is_rejected():
+    async def scenario():
+        session = DashScopeRealtimeAsr(
+            "secret",
+            _settings(),
+            "",
+            recognition_factory=FakeRecognition,
+        )
+        await session.start()
+
+        with pytest.raises(RuntimeError, match="NEW"):
+            await session.start()
+
+        await session.stop()
+
+    asyncio.run(scenario())
+
+
+def test_send_audio_after_stop_is_rejected():
+    async def scenario():
+        session = DashScopeRealtimeAsr(
+            "secret",
+            _settings(),
+            "",
+            recognition_factory=FakeRecognition,
+        )
+        await session.start()
+        await session.stop()
+
+        with pytest.raises(RuntimeError, match="RUNNING"):
+            await session.send_audio(b"late")
+        with pytest.raises(RuntimeError, match="NEW"):
+            await session.start()
+
+    asyncio.run(scenario())
+
+
+def test_concurrent_stop_calls_wait_for_one_provider_stop():
+    async def scenario():
+        session = DashScopeRealtimeAsr(
+            "secret",
+            _settings(stop_timeout_seconds=0.5),
+            "",
+            recognition_factory=BlockingStopRecognition,
+        )
+        await session.start()
+        recognition = FakeRecognition.instances[-1]
+
+        first = asyncio.create_task(session.stop())
+        assert await asyncio.to_thread(recognition.stop_entered.wait, 0.2)
+        second = asyncio.create_task(session.stop())
+        await asyncio.sleep(0.02)
+        assert not second.done()
+
+        recognition.stop_release.set()
+        await asyncio.gather(first, second)
+        assert recognition.stop_calls == 1
+        assert session.state == "STOPPED"
+        assert (await session.next_event())["text"] == "迟到结果"
+        assert await session.next_event() is None
+        await session.stop()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(session.next_event(), timeout=0.02)
+
+    asyncio.run(scenario())
+
+
+def test_blocking_provider_stop_times_out_and_ignores_late_final():
+    async def scenario():
+        session = DashScopeRealtimeAsr(
+            "secret",
+            _settings(stop_timeout_seconds=0.03),
+            "",
+            recognition_factory=BlockingStopRecognition,
+        )
+        await session.start()
+        recognition = FakeRecognition.instances[-1]
+
+        started = time.perf_counter()
+        await session.stop()
+        elapsed = time.perf_counter() - started
+
+        assert elapsed < 0.15
+        assert await session.next_event() == {
+            "type": "error",
+            "code": "ASR_STOP_TIMEOUT",
+            "message": "recognition stop timed out",
+            "request_id": "",
+            "retryable": True,
+        }
+        assert await session.next_event() is None
+        recognition.stop_release.set()
+        await asyncio.sleep(0.05)
+        recognition.callback.on_error(
+            _result(status_code=500, message="late error", request_id="req-late")
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(session.next_event(), timeout=0.02)
+
+    asyncio.run(scenario())
+
+
+def test_start_exception_is_structured_and_terminal():
+    async def scenario():
+        session = DashScopeRealtimeAsr(
+            "secret",
+            _settings(),
+            "",
+            recognition_factory=StartFailRecognition,
+        )
+
+        await session.start()
+
+        assert await session.next_event() == {
+            "type": "error",
+            "code": "ASR_PROVIDER_ERROR",
+            "message": "start exploded",
+            "request_id": "",
+            "retryable": True,
+        }
+        assert await session.next_event() is None
+        assert session.state == "STOPPED"
+
+    asyncio.run(scenario())
+
+
+def test_stop_exception_is_structured_and_terminal():
+    async def scenario():
+        session = DashScopeRealtimeAsr(
+            "secret",
+            _settings(),
+            "",
+            recognition_factory=StopFailRecognition,
+        )
+        await session.start()
+
+        await session.stop()
+
+        assert await session.next_event() == {
+            "type": "error",
+            "code": "ASR_PROVIDER_ERROR",
+            "message": "stop exploded",
+            "request_id": "",
+            "retryable": True,
+        }
+        assert await session.next_event() is None
+        assert session.state == "STOPPED"
+
+    asyncio.run(scenario())
+
+
+def test_normal_stop_delivers_final_before_terminal_sentinel():
+    async def scenario():
+        session = DashScopeRealtimeAsr(
+            "secret",
+            _settings(),
+            "",
+            recognition_factory=FinalOnStopRecognition,
+        )
+        await session.start()
+
+        await session.stop()
+
+        final = await session.next_event()
+        assert final["type"] == "transcript"
+        assert final["text"] == "最终结果"
+        assert final["final"] is True
+        assert await session.next_event() is None
+
+    asyncio.run(scenario())
+
+
+def test_authentication_provider_error_is_not_retryable():
+    async def scenario():
+        session = DashScopeRealtimeAsr(
+            "secret",
+            _settings(),
+            "",
+            recognition_factory=FakeRecognition,
+        )
+        await session.start()
+
+        FakeRecognition.instances[-1].callback.on_event(
+            _result(status_code=401, message="unauthorized", request_id="req-auth")
+        )
+
+        event = await session.next_event()
+        assert event["retryable"] is False
+        await session.stop()
 
     asyncio.run(scenario())

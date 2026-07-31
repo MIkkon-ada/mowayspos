@@ -44,6 +44,10 @@ export function mergeTranscript(
   event: TranscriptMessage,
 ): TranscriptState {
   if (!event.final) {
+    if (Object.hasOwn(state.confirmed, event.segment_id)) return state
+
+    // The single WebSocket writer preserves provider event order, so only the
+    // current partial segment needs tracking; cross-segment reordering is out of scope.
     return {
       ...state,
       partial: { segmentId: event.segment_id, text: event.text },
@@ -77,7 +81,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isOptionalTime(value: Record<string, unknown>, key: string): boolean {
   if (!Object.hasOwn(value, key)) return true
   const field = value[key]
-  return field === null || (typeof field === 'number' && Number.isFinite(field))
+  return (
+    field === null
+    || (typeof field === 'number' && Number.isFinite(field) && field >= 0)
+  )
+}
+
+function trimmedNonBlank(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
 }
 
 export function parseServerMessage(raw: string): ServerMessage | null {
@@ -89,29 +102,39 @@ export function parseServerMessage(raw: string): ServerMessage | null {
       return { type: 'ready' }
     }
 
-    if (
-      value.type === 'started'
-      && typeof value.model === 'string'
-      && typeof value.session_id === 'string'
-    ) {
+    if (value.type === 'started') {
+      const model = trimmedNonBlank(value.model)
+      const sessionId = trimmedNonBlank(value.session_id)
+      if (!model || !sessionId) return null
       return {
         type: 'started',
-        model: value.model,
-        session_id: value.session_id,
+        model,
+        session_id: sessionId,
       }
     }
 
-    if (
-      value.type === 'transcript'
-      && typeof value.segment_id === 'string'
-      && typeof value.text === 'string'
-      && typeof value.final === 'boolean'
-      && isOptionalTime(value, 'begin_time')
-      && isOptionalTime(value, 'end_time')
-    ) {
+    if (value.type === 'transcript') {
+      const segmentId = trimmedNonBlank(value.segment_id)
+      if (
+        !segmentId
+        || typeof value.text !== 'string'
+        || !value.text.trim()
+        || typeof value.final !== 'boolean'
+        || !isOptionalTime(value, 'begin_time')
+        || !isOptionalTime(value, 'end_time')
+      ) return null
+
+      const beginTime = value.begin_time
+      const endTime = value.end_time
+      if (
+        typeof beginTime === 'number'
+        && typeof endTime === 'number'
+        && endTime < beginTime
+      ) return null
+
       const message: TranscriptMessage = {
         type: 'transcript',
-        segment_id: value.segment_id,
+        segment_id: segmentId,
         text: value.text,
         final: value.final,
       }
@@ -124,29 +147,29 @@ export function parseServerMessage(raw: string): ServerMessage | null {
       return message
     }
 
-    if (
-      value.type === 'done'
-      && typeof value.session_id === 'string'
-      && typeof value.duration_ms === 'number'
-      && Number.isFinite(value.duration_ms)
-    ) {
+    if (value.type === 'done') {
+      const sessionId = trimmedNonBlank(value.session_id)
+      if (
+        !sessionId
+        || typeof value.duration_ms !== 'number'
+        || !Number.isFinite(value.duration_ms)
+        || value.duration_ms < 0
+      ) return null
       return {
         type: 'done',
-        session_id: value.session_id,
+        session_id: sessionId,
         duration_ms: value.duration_ms,
       }
     }
 
-    if (
-      value.type === 'error'
-      && typeof value.code === 'string'
-      && typeof value.message === 'string'
-      && typeof value.retryable === 'boolean'
-    ) {
+    if (value.type === 'error') {
+      const code = trimmedNonBlank(value.code)
+      const message = trimmedNonBlank(value.message)
+      if (!code || !message || typeof value.retryable !== 'boolean') return null
       return {
         type: 'error',
-        code: value.code,
-        message: value.message,
+        code,
+        message,
         retryable: value.retryable,
       }
     }

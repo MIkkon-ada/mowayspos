@@ -78,6 +78,19 @@ test('a final for another segment does not clear the current partial', async () 
   assert.equal(composeTranscript(state), '第一句。正在说')
 })
 
+test('a late partial for an already confirmed segment is ignored', async () => {
+  const { emptyTranscript, mergeTranscript, composeTranscript } = await loadModule()
+  let state = mergeTranscript(emptyTranscript(''), {
+    type: 'transcript', segment_id: 'seg-0', text: '最终结果。', final: true,
+  })
+  const confirmedState = state
+  state = mergeTranscript(state, {
+    type: 'transcript', segment_id: 'seg-0', text: '迟到的中间结果', final: false,
+  })
+  assert.equal(state, confirmedState)
+  assert.equal(composeTranscript(state), '最终结果。')
+})
+
 test('empty transcript trims base text and only separates base from recognized text', async () => {
   const { emptyTranscript, mergeTranscript, composeTranscript } = await loadModule()
   assert.deepEqual(emptyTranscript('  '), {
@@ -187,6 +200,79 @@ test('parser rejects malformed fields for every message type', async () => {
   invalidValues[0].type = 1
   for (const value of invalidValues) {
     assert.equal(parseServerMessage(JSON.stringify(value)), null)
+  }
+})
+
+test('parser rejects blank semantic fields and blank transcript text', async () => {
+  const { parseServerMessage } = await loadModule()
+  const invalidValues = [
+    { type: 'started', model: ' ', session_id: 'session-1' },
+    { type: 'started', model: 'model', session_id: '\t' },
+    { type: 'transcript', segment_id: '\n', text: '结果', final: false },
+    { type: 'transcript', segment_id: 'seg-1', text: '  ', final: false },
+    { type: 'done', session_id: ' ', duration_ms: 1 },
+    { type: 'error', code: ' ', message: '请重试', retryable: true },
+    { type: 'error', code: 'FAILED', message: ' ', retryable: true },
+  ]
+  for (const value of invalidValues) {
+    assert.equal(parseServerMessage(JSON.stringify(value)), null)
+  }
+})
+
+test('parser trims identifiers, model, error code, and error message', async () => {
+  const { parseServerMessage } = await loadModule()
+  assert.deepEqual(
+    parseServerMessage(
+      JSON.stringify({
+        type: 'started',
+        model: ' fun-asr-realtime ',
+        session_id: ' session-1 ',
+      }),
+    ),
+    { type: 'started', model: 'fun-asr-realtime', session_id: 'session-1' },
+  )
+  assert.deepEqual(
+    parseServerMessage(
+      JSON.stringify({
+        type: 'transcript',
+        segment_id: ' seg-1 ',
+        text: ' 识别结果 ',
+        final: true,
+      }),
+    ),
+    {
+      type: 'transcript',
+      segment_id: 'seg-1',
+      text: ' 识别结果 ',
+      final: true,
+    },
+  )
+  assert.deepEqual(
+    parseServerMessage(
+      JSON.stringify({
+        type: 'error',
+        code: ' FAILED ',
+        message: ' 请重试 ',
+        retryable: true,
+      }),
+    ),
+    { type: 'error', code: 'FAILED', message: '请重试', retryable: true },
+  )
+})
+
+test('parser rejects invalid durations and transcript time ranges', async () => {
+  const { parseServerMessage } = await loadModule()
+  const invalidRawValues = [
+    '{"type":"done","session_id":"session-1","duration_ms":-1}',
+    '{"type":"done","session_id":"session-1","duration_ms":1e309}',
+    '{"type":"transcript","segment_id":"seg-1","text":"结果","final":true,"begin_time":-1}',
+    '{"type":"transcript","segment_id":"seg-1","text":"结果","final":true,"end_time":-1}',
+    '{"type":"transcript","segment_id":"seg-1","text":"结果","final":true,"begin_time":1e309}',
+    '{"type":"transcript","segment_id":"seg-1","text":"结果","final":true,"end_time":1e309}',
+    '{"type":"transcript","segment_id":"seg-1","text":"结果","final":true,"begin_time":20,"end_time":10}',
+  ]
+  for (const raw of invalidRawValues) {
+    assert.equal(parseServerMessage(raw), null)
   }
 })
 

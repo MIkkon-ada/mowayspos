@@ -120,6 +120,8 @@ def test_stream_sends_ready_started_audio_stop_and_done_in_order():
         assert [item["type"] for item in ws.sent] == ["ready", "started", "done"]
         assert ws.sent[1]["model"]
         assert ws.sent[1]["session_id"]
+        assert ws.sent[1]["packet_duration_ms"] == 100
+        assert ws.sent[1]["stop_timeout_seconds"] == 8.0
         assert ws.sent[2]["session_id"] == ws.sent[1]["session_id"]
         assert ws.sent[2]["duration_ms"] == 0
         assert asr.frames == [b"\x01\x02"]
@@ -205,20 +207,46 @@ def test_stream_maps_other_context_failure():
     asyncio.run(scenario())
 
 
-def test_stream_skips_context_builder_when_context_is_disabled(monkeypatch):
+def test_stream_validates_context_but_hides_it_when_context_is_disabled(monkeypatch):
     monkeypatch.setenv("ASR_CONTEXT_ENABLED", "false")
+    builder_calls = []
 
-    def must_not_run(*_args):
-        raise AssertionError("context builder should be disabled")
+    def validate_scope(*args):
+        builder_calls.append(args)
+        return "validated private context"
 
     async def scenario():
         ws, _, calls = await _run(
             [_start_message(), _stop()],
-            context_builder=must_not_run,
+            context_builder=validate_scope,
         )
 
         assert ws.sent[-1]["type"] == "done"
+        assert len(builder_calls) == 1
         assert calls[0]["context"] == ""
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status_code", [403, 404])
+def test_stream_context_disabled_still_rejects_invalid_scope(
+    monkeypatch,
+    status_code,
+):
+    monkeypatch.setenv("ASR_CONTEXT_ENABLED", "false")
+
+    def reject_forged_ids(*_args):
+        raise HTTPException(status_code=status_code, detail="invalid scope")
+
+    async def scenario():
+        ws, asr, _ = await _run(
+            [_start_message(project_id=99999, selected_task_id=88888)],
+            context_builder=reject_forged_ids,
+        )
+
+        expected = "CONTEXT_FORBIDDEN" if status_code == 403 else "CONTEXT_INVALID"
+        assert ws.sent[-1]["code"] == expected
+        assert asr.started is False
 
     asyncio.run(scenario())
 
@@ -324,6 +352,68 @@ def test_stream_does_not_send_done_when_stop_produces_provider_error():
         assert "request_id" not in ws.sent[-1]
 
     asyncio.run(scenario())
+
+
+def test_stream_preserves_safe_stop_timeout_code_without_done():
+    class StopTimeoutAsr(FakeAsr):
+        async def stop(self):
+            self.stopped = True
+            await self.events.put(
+                {
+                    "type": "error",
+                    "code": "ASR_STOP_TIMEOUT",
+                    "message": "unsafe provider detail",
+                    "request_id": "provider-request",
+                    "retryable": True,
+                }
+            )
+            await self.events.put(None)
+
+    async def scenario():
+        ws, _, _ = await _run(
+            [_start_message(), _stop()],
+            asr=StopTimeoutAsr(),
+        )
+
+        assert [item["type"] for item in ws.sent] == [
+            "ready",
+            "started",
+            "error",
+        ]
+        assert ws.sent[-1]["code"] == "ASR_STOP_TIMEOUT"
+        assert ws.sent[-1]["message"] == "语音识别服务发生错误，请重试"
+
+    asyncio.run(scenario())
+
+
+def test_stream_maps_unknown_provider_code_and_sanitizes_request_id_log(caplog):
+    unsafe_request_id = "prefix\r\n" + ("x" * 200)
+    provider_error = {
+        "type": "error",
+        "code": "UNKNOWN_PROVIDER_DETAIL",
+        "message": "unsafe provider detail",
+        "request_id": unsafe_request_id,
+        "retryable": True,
+    }
+
+    async def scenario():
+        ws, _, _ = await _run(
+            [_start_message(), _stop()],
+            asr=FakeAsr(events=[provider_error]),
+        )
+
+        assert ws.sent[-1]["code"] == "ASR_PROVIDER_ERROR"
+        assert ws.sent[-1]["message"] == "语音识别服务发生错误，请重试"
+
+    asyncio.run(scenario())
+
+    record = next(
+        item for item in caplog.records if "ASR provider event" in item.getMessage()
+    )
+    logged_request_id = record.getMessage().split("request_id=", 1)[1]
+    assert "\r" not in logged_request_id
+    assert "\n" not in logged_request_id
+    assert len(logged_request_id) == 128
 
 
 def test_stream_backpressure_reports_error_and_never_done():
@@ -614,5 +704,74 @@ def test_stream_cleanup_deadline_handles_stuck_audio_and_result(
         assert time.monotonic() - started < 0.5
         assert asr.stopped is True
         assert all(item["type"] != "done" for item in ws.sent)
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=1))
+
+
+def test_stream_start_message_has_deadline(monkeypatch):
+    from app.routers import transcribe
+
+    monkeypatch.setattr(transcribe, "_START_MESSAGE_TIMEOUT_SECONDS", 0.01)
+
+    class NeverStartsWebSocket(FakeWebSocket):
+        async def receive(self):
+            await asyncio.Event().wait()
+
+    async def scenario():
+        ws = NeverStartsWebSocket([])
+        await run_transcribe_stream(
+            ws,
+            current_user="member",
+            db=object(),
+            context_builder=lambda *args: "context",
+            asr_factory=lambda **kwargs: FakeAsr(),
+            api_key="key",
+        )
+
+        assert ws.sent[-1]["code"] == "PROTOCOL_TIMEOUT"
+        assert ws.sent[-1]["retryable"] is True
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=1))
+
+
+@pytest.mark.parametrize(
+    ("idle_timeout", "max_seconds", "expected_code"),
+    [
+        (0.01, 1.0, "SESSION_IDLE_TIMEOUT"),
+        (1.0, 0.01, "SESSION_LIMIT_REACHED"),
+    ],
+)
+def test_stream_enforces_idle_and_wallclock_deadlines(
+    monkeypatch,
+    idle_timeout,
+    max_seconds,
+    expected_code,
+):
+    from app.routers import transcribe
+
+    monkeypatch.setattr(transcribe, "_SESSION_IDLE_TIMEOUT_SECONDS", idle_timeout)
+    monkeypatch.setattr(transcribe, "_MAX_SESSION_SECONDS", max_seconds)
+
+    class BlockingAfterStartWebSocket(FakeWebSocket):
+        async def receive(self):
+            if self.incoming:
+                return self.incoming.pop(0)
+            await asyncio.Event().wait()
+
+    async def scenario():
+        ws = BlockingAfterStartWebSocket([_start_message()])
+        asr = FakeAsr()
+        await run_transcribe_stream(
+            ws,
+            current_user="member",
+            db=object(),
+            context_builder=lambda *args: "context",
+            asr_factory=lambda **kwargs: asr,
+            api_key="key",
+        )
+
+        assert ws.sent[-1]["code"] == expected_code
+        assert all(item["type"] != "done" for item in ws.sent)
+        assert asr.stopped is True
 
     asyncio.run(asyncio.wait_for(scenario(), timeout=1))

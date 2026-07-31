@@ -4,7 +4,7 @@ import re
 from collections.abc import Iterable
 
 from fastapi import HTTPException
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, or_, text
 from sqlalchemy.orm import Session
 
 from app import models
@@ -90,10 +90,39 @@ def _matches_assignment(
     display_name: str,
     assigned_person_id: int | None,
     assigned_name: str | None,
+    allow_name_fallback: bool,
 ) -> bool:
     if assigned_person_id is not None:
         return person_id is not None and int(person_id) == int(assigned_person_id)
-    return display_name == str(assigned_name or "").strip()
+    return allow_name_fallback and display_name == str(assigned_name or "").strip()
+
+
+def _legacy_name_maps_uniquely_to_person(
+    *,
+    project_id: int,
+    person_id: int | None,
+    display_name: str,
+    db: Session,
+) -> bool:
+    if person_id is None or not display_name:
+        return False
+    matching_ids = {
+        int(row[0])
+        for row in (
+            db.query(models.ProjectMember.person_id)
+            .join(models.Person, models.Person.id == models.ProjectMember.person_id)
+            .filter(
+                models.ProjectMember.project_id == project_id,
+                or_(
+                    models.Person.name == display_name,
+                    models.ProjectMember.person_name_snapshot == display_name,
+                ),
+            )
+            .distinct()
+            .all()
+        )
+    }
+    return matching_ids == {int(person_id)}
 
 
 def build_work_report_asr_context(
@@ -138,18 +167,26 @@ def build_work_report_asr_context(
     )
     display_name = str(identity.get("name") or "").strip()
     person_id = identity.get("person_id")
+    allow_name_fallback = _legacy_name_maps_uniquely_to_person(
+        project_id=project_id,
+        person_id=person_id,
+        display_name=display_name,
+        db=db,
+    )
     is_assigned = (
         _matches_assignment(
             person_id=person_id,
             display_name=display_name,
             assigned_person_id=task.owner_id,
             assigned_name=task.owner,
+            allow_name_fallback=allow_name_fallback,
         )
         or _matches_assignment(
             person_id=person_id,
             display_name=display_name,
             assigned_person_id=selected_subtask.assignee_id,
             assigned_name=selected_subtask.assignee,
+            allow_name_fallback=allow_name_fallback,
         )
     )
     if not is_manager and not is_assigned:

@@ -463,6 +463,66 @@ def test_legacy_null_assignment_ids_fall_back_to_name(isolated_db: Session):
     assert "当前关键任务：遗留关键任务" in context
 
 
+def test_legacy_name_assignment_rejects_duplicate_project_member_names(
+    isolated_db: Session,
+):
+    reporter = _person_with_account(
+        isolated_db,
+        name="同名遗留成员",
+        username="legacy-duplicate",
+    )
+    duplicate = _person_with_account(
+        isolated_db,
+        name="同名遗留成员",
+        username="legacy-duplicate-other",
+    )
+    project = _active_project(isolated_db, "同名遗留授权项目")
+    isolated_db.add_all(
+        [
+            models.ProjectMember(
+                project_id=project.id,
+                person_id=reporter.id,
+                person_name_snapshot=reporter.name,
+                role="member",
+            ),
+            models.ProjectMember(
+                project_id=project.id,
+                person_id=duplicate.id,
+                person_name_snapshot=duplicate.name,
+                role="member",
+            ),
+        ]
+    )
+    task = models.Task(
+        project_id=project.id,
+        key_task="遗留姓名重点工作",
+        owner="其他负责人",
+        owner_id=None,
+        is_deleted=False,
+    )
+    isolated_db.add(task)
+    isolated_db.flush()
+    selected = models.SubTask(
+        task_id=task.id,
+        title="遗留姓名关键任务",
+        assignee=reporter.name,
+        assignee_id=None,
+        is_deleted=False,
+    )
+    isolated_db.add(selected)
+    isolated_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        build_work_report_asr_context(
+            current_user="legacy-duplicate",
+            project_id=project.id,
+            selected_task_id=selected.id,
+            db=isolated_db,
+        )
+
+    assert exc_info.value.status_code == 403
+
+
 @pytest.mark.parametrize(
     ("project_state", "project_id"),
     [("active", 1), ("inactive", 1), ("missing", 98765)],

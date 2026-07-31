@@ -41,6 +41,11 @@ _SUPPORTED_FORMATS = {
 }
 _MAX_SESSION_AUDIO_BYTES = 16000 * 2 * 60 * 60 * 4
 _CLEANUP_GRACE_SECONDS = 0.1
+_START_MESSAGE_TIMEOUT_SECONDS = 10.0
+_SESSION_IDLE_TIMEOUT_SECONDS = 30.0
+_MAX_SESSION_SECONDS = 60.0 * 60 * 4
+_SAFE_PROVIDER_ERROR_CODES = {"ASR_PROVIDER_ERROR", "ASR_STOP_TIMEOUT"}
+_MAX_PROVIDER_REQUEST_ID_LENGTH = 128
 
 
 class StreamStart(BaseModel):
@@ -250,10 +255,20 @@ async def run_transcribe_stream(
             if event is None:
                 return
             if event.get("type") == "error":
-                request_id = str(event.get("request_id") or "")
+                provider_code = str(event.get("code") or "")
+                safe_code = (
+                    provider_code
+                    if provider_code in _SAFE_PROVIDER_ERROR_CODES
+                    else "ASR_PROVIDER_ERROR"
+                )
+                request_id = (
+                    str(event.get("request_id") or "")
+                    .replace("\r", " ")
+                    .replace("\n", " ")[:_MAX_PROVIDER_REQUEST_ID_LENGTH]
+                )
                 logger.warning(
                     "ASR provider event code=%s request_id=%s",
-                    "ASR_PROVIDER_ERROR",
+                    safe_code,
                     request_id,
                 )
                 session_failed = True
@@ -262,7 +277,7 @@ async def run_transcribe_stream(
                     await emit(
                         {
                             "type": "error",
-                            "code": "ASR_PROVIDER_ERROR",
+                            "code": safe_code,
                             "message": "语音识别服务发生错误，请重试",
                             "retryable": bool(event.get("retryable", True)),
                         }
@@ -391,7 +406,17 @@ async def run_transcribe_stream(
         try:
             await emit({"type": "ready"})
             try:
-                first = await websocket.receive()
+                first = await asyncio.wait_for(
+                    websocket.receive(),
+                    timeout=_START_MESSAGE_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                await emit_terminal_error(
+                    "PROTOCOL_TIMEOUT",
+                    "录音启动等待超时，请重试",
+                    retryable=True,
+                )
+                return
             except (WebSocketDisconnect, RuntimeError, ConnectionError):
                 transport_failed = True
                 return
@@ -406,16 +431,13 @@ async def run_transcribe_stream(
                 return
 
             try:
-                context = (
-                    context_builder(
-                        current_user,
-                        start.project_id,
-                        start.selected_task_id,
-                        db,
-                    )
-                    if settings.context_enabled
-                    else ""
+                validated_context = context_builder(
+                    current_user,
+                    start.project_id,
+                    start.selected_task_id,
+                    db,
                 )
+                context = validated_context if settings.context_enabled else ""
             except HTTPException as exc:
                 await emit_terminal_error(
                     (
@@ -457,14 +479,18 @@ async def run_transcribe_stream(
             await emit(
                 {
                     "type": "started",
-                    "model": settings.realtime_model,
-                    "session_id": session_id,
-                }
-            )
+                        "model": settings.realtime_model,
+                        "session_id": session_id,
+                        "packet_duration_ms": settings.packet_duration_ms,
+                        "stop_timeout_seconds": settings.stop_timeout_seconds,
+                    }
+                )
 
             audio_task = asyncio.create_task(send_audio())
             result_task = asyncio.create_task(send_results())
             receive_task = asyncio.create_task(websocket.receive())
+            session_wallclock_started = loop.time()
+            last_receive_at = session_wallclock_started
             max_packet_bytes = (
                 start.sample_rate
                 * 2
@@ -484,10 +510,29 @@ async def run_transcribe_stream(
                     )
                     if task is not None
                 }
+                max_deadline = session_wallclock_started + _MAX_SESSION_SECONDS
+                idle_deadline = last_receive_at + _SESSION_IDLE_TIMEOUT_SECONDS
+                wait_deadline = min(max_deadline, idle_deadline)
                 done, _ = await asyncio.wait(
                     watched,
                     return_when=asyncio.FIRST_COMPLETED,
+                    timeout=max(0.0, wait_deadline - loop.time()),
                 )
+
+                if not done:
+                    if max_deadline <= idle_deadline:
+                        await emit_terminal_error(
+                            "SESSION_LIMIT_REACHED",
+                            "录音已达到最长时限，请重新开始",
+                            retryable=False,
+                        )
+                    else:
+                        await emit_terminal_error(
+                            "SESSION_IDLE_TIMEOUT",
+                            "长时间未收到音频，录音已结束",
+                            retryable=True,
+                        )
+                    break
 
                 if writer_task in done:
                     transport_failed = True
@@ -542,6 +587,7 @@ async def run_transcribe_stream(
                     session_failed = True
                     break
                 receive_task = None
+                last_receive_at = loop.time()
 
                 if message.get("type") == "websocket.disconnect":
                     transport_failed = True

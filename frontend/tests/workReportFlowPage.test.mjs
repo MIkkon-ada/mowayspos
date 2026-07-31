@@ -658,3 +658,22 @@ test('recording locks only media controls and shows connection and finalization 
   assert.match(input, /请先选择执行中的项目和关键任务/)
   assert.match(input, /disabled=\{recording \? false : controlsLocked \|\| voiceBusy \|\| !canRecord\}/)
 })
+
+test('realtime recorder terminal events converge on idempotent cleanup', () => {
+  const source = read(RECORDER)
+  assert.match(source, /const finishTerminal = useCallback/)
+  assert.match(source, /message\.type === 'error'[\s\S]*void finishTerminal\('failed'/)
+  assert.match(source, /message\.type === 'done'[\s\S]*void finishTerminal\('completed'/)
+  assert.match(source, /handleTransportFailure[\s\S]*void finishTerminal\(\s*'failed'/)
+  assert.match(source, /terminalRef/)
+})
+
+test('realtime recorder invalidates stale microphone starts and handles socket error immediately', () => {
+  const source = read(RECORDER)
+  assert.match(source, /attemptGenerationRef/)
+  assert.match(source, /const isCurrentAttempt =/)
+  assert.match(source, /await context\.audioWorklet\.addModule[\s\S]*isCurrentAttempt/)
+  assert.match(source, /await navigator\.mediaDevices\.getUserMedia[\s\S]*isCurrentAttempt/)
+  assert.match(source, /ws\.addEventListener\('error',\s*finishWithFailure/)
+  assert.match(source, /removeEventListener\('error',\s*finishWithFailure/)
+})

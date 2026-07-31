@@ -122,11 +122,13 @@ class DashScopeRealtimeAsr:
             self._segment_index += 1
 
     def _publish_error(self, result: Any) -> None:
+        message = _field(result, "message")
+        request_id = _field(result, "request_id")
         event = {
             "type": "error",
             "code": "ASR_PROVIDER_ERROR",
-            "message": str(_field(result, "message", "") or ""),
-            "request_id": _field(result, "request_id"),
+            "message": str(message) if message else "recognition failed",
+            "request_id": "" if request_id is None else str(request_id),
             "retryable": True,
         }
         loop = self._loop

@@ -227,6 +227,53 @@ def test_provider_error_is_exposed_as_retryable_event():
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    "result",
+    [
+        SimpleNamespace(status_code=500, message=None),
+        SimpleNamespace(status_code=500, message="", request_id=None),
+    ],
+)
+def test_provider_error_uses_fallback_message_and_empty_request_id(result):
+    async def scenario():
+        session = DashScopeRealtimeAsr(
+            "secret",
+            _settings(),
+            "",
+            recognition_factory=FakeRecognition,
+        )
+        await session.start()
+        FakeRecognition.instances[-1].callback.on_error(result)
+
+        event = await session.next_event()
+        assert event["message"] == "recognition failed"
+        assert event["request_id"] == ""
+        await session.stop()
+
+    asyncio.run(scenario())
+
+
+def test_provider_error_handles_missing_message_and_normalizes_request_id():
+    async def scenario():
+        session = DashScopeRealtimeAsr(
+            "secret",
+            _settings(),
+            "",
+            recognition_factory=FakeRecognition,
+        )
+        await session.start()
+        result = SimpleNamespace(status_code=500, request_id=12345)
+
+        FakeRecognition.instances[-1].callback.on_error(result)
+
+        event = await session.next_event()
+        assert event["message"] == "recognition failed"
+        assert event["request_id"] == "12345"
+        await session.stop()
+
+    asyncio.run(scenario())
+
+
 def test_non_success_event_is_exposed_as_provider_error():
     async def scenario():
         session = DashScopeRealtimeAsr(

@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app import database, models
-from app.services.asr_context import build_work_report_asr_context
+from app.services.asr_context import _bounded_lines, build_work_report_asr_context
 
 
 @pytest.fixture()
@@ -19,6 +19,10 @@ def isolated_db(tmp_path: Path) -> Session:
         connect_args={"check_same_thread": False},
     )
     models.Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE projects ADD COLUMN lifecycle_status VARCHAR(20)")
+        )
     session = sessionmaker(bind=engine)()
 
     assert Path(session.get_bind().url.database).resolve() == database_path.resolve()
@@ -359,6 +363,222 @@ def test_sibling_assignee_cannot_access_selected_subtask(isolated_db: Session):
     assert exc_info.value.status_code == 403
 
 
+@pytest.mark.parametrize("bound_identity", ["task_owner", "subtask_assignee"])
+def test_same_name_member_cannot_impersonate_id_bound_assignee(
+    isolated_db: Session,
+    bound_identity: str,
+):
+    victim = _person_with_account(
+        isolated_db, name="同名成员", username=f"victim-{bound_identity}"
+    )
+    attacker = _person_with_account(
+        isolated_db, name="同名成员", username=f"attacker-{bound_identity}"
+    )
+    project = _active_project(isolated_db, f"同名鉴权-{bound_identity}")
+    isolated_db.add(
+        models.ProjectMember(
+            project_id=project.id,
+            person_id=attacker.id,
+            person_name_snapshot=attacker.name,
+            role="member",
+        )
+    )
+    task = models.Task(
+        project_id=project.id,
+        key_task="同名鉴权重点工作",
+        owner="同名成员" if bound_identity == "task_owner" else "其他负责人",
+        owner_id=victim.id if bound_identity == "task_owner" else None,
+        is_deleted=False,
+    )
+    isolated_db.add(task)
+    isolated_db.flush()
+    selected = models.SubTask(
+        task_id=task.id,
+        title="同名鉴权关键任务",
+        assignee=(
+            "同名成员"
+            if bound_identity == "subtask_assignee"
+            else "其他关键任务负责人"
+        ),
+        assignee_id=(
+            victim.id if bound_identity == "subtask_assignee" else None
+        ),
+        is_deleted=False,
+    )
+    isolated_db.add(selected)
+    isolated_db.flush()
+    isolated_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        build_work_report_asr_context(
+            current_user=f"attacker-{bound_identity}",
+            project_id=project.id,
+            selected_task_id=selected.id,
+            db=isolated_db,
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+def test_legacy_null_assignment_ids_fall_back_to_name(isolated_db: Session):
+    reporter = _person_with_account(
+        isolated_db, name="遗留负责人", username="legacy-assignee"
+    )
+    project = _active_project(isolated_db, "遗留姓名鉴权项目")
+    isolated_db.add(
+        models.ProjectMember(
+            project_id=project.id,
+            person_id=reporter.id,
+            person_name_snapshot=reporter.name,
+            role="member",
+        )
+    )
+    task = models.Task(
+        project_id=project.id,
+        key_task="遗留重点工作",
+        owner="其他负责人",
+        owner_id=None,
+        is_deleted=False,
+    )
+    isolated_db.add(task)
+    isolated_db.flush()
+    selected = models.SubTask(
+        task_id=task.id,
+        title="遗留关键任务",
+        assignee=reporter.name,
+        assignee_id=None,
+        is_deleted=False,
+    )
+    isolated_db.add(selected)
+    isolated_db.flush()
+    isolated_db.commit()
+
+    context = build_work_report_asr_context(
+        current_user="legacy-assignee",
+        project_id=project.id,
+        selected_task_id=selected.id,
+        db=isolated_db,
+    )
+
+    assert "当前关键任务：遗留关键任务" in context
+
+
+@pytest.mark.parametrize(
+    ("project_state", "project_id"),
+    [("active", 1), ("inactive", 1), ("missing", 98765)],
+)
+def test_non_member_cannot_enumerate_project_existence_or_lifecycle(
+    isolated_db: Session,
+    project_state: str,
+    project_id: int,
+):
+    attacker = _person_with_account(
+        isolated_db, name="项目外攻击者", username=f"outsider-{project_state}"
+    )
+    if project_state != "missing":
+        project = models.Project(
+            name=f"不可枚举项目-{project_state}",
+            status="active" if project_state == "active" else "draft",
+            is_active=project_state == "active",
+        )
+        isolated_db.add(project)
+        isolated_db.flush()
+        assert project.id == project_id
+    isolated_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        build_work_report_asr_context(
+            current_user=f"outsider-{project_state}",
+            project_id=project_id,
+            selected_task_id=98765,
+            db=isolated_db,
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("status", "lifecycle_status"),
+    [("active", "draft"), ("draft", "active")],
+)
+def test_project_is_reportable_when_either_lifecycle_field_is_active(
+    isolated_db: Session,
+    status: str,
+    lifecycle_status: str,
+):
+    reporter = _person_with_account(
+        isolated_db,
+        name="生命周期负责人",
+        username=f"lifecycle-{status}-{lifecycle_status}",
+    )
+    project = models.Project(
+        name=f"生命周期项目-{status}-{lifecycle_status}",
+        status=status,
+        is_active=False,
+    )
+    isolated_db.add(project)
+    isolated_db.flush()
+    isolated_db.execute(
+        text(
+            "UPDATE projects SET lifecycle_status=:lifecycle "
+            "WHERE id=:project_id"
+        ),
+        {"lifecycle": lifecycle_status, "project_id": project.id},
+    )
+    isolated_db.add(
+        models.ProjectMember(
+            project_id=project.id,
+            person_id=reporter.id,
+            person_name_snapshot=reporter.name,
+            role="owner",
+        )
+    )
+    task = models.Task(
+        project_id=project.id,
+        key_task="生命周期重点工作",
+        owner=reporter.name,
+        owner_id=reporter.id,
+        is_deleted=False,
+    )
+    isolated_db.add(task)
+    isolated_db.flush()
+    selected = models.SubTask(
+        task_id=task.id,
+        title="生命周期关键任务",
+        assignee=reporter.name,
+        assignee_id=reporter.id,
+        is_deleted=False,
+    )
+    isolated_db.add(selected)
+    isolated_db.flush()
+    isolated_db.commit()
+
+    context = build_work_report_asr_context(
+        current_user=f"lifecycle-{status}-{lifecycle_status}",
+        project_id=project.id,
+        selected_task_id=selected.id,
+        db=isolated_db,
+    )
+
+    assert "当前项目：" in context
+
+
+def test_bounded_lines_keeps_complete_high_priority_lines():
+    exact = "甲" * 400
+    assert _bounded_lines([exact]) == exact
+
+    high_priority = "乙" * 390
+    too_long_next_line = "丙" * 20
+    later_complete_line = "丁" * 5
+    bounded = _bounded_lines(
+        [high_priority, too_long_next_line, later_complete_line]
+    )
+
+    assert bounded == f"{high_priority}\n{later_complete_line}"
+    assert len(bounded) <= 400
+    assert too_long_next_line not in bounded
+
+
 @pytest.mark.parametrize(
     ("project_exists", "is_active", "task_exists", "expected_status"),
     [
@@ -378,7 +598,7 @@ def test_missing_or_inactive_scope_is_rejected(
         isolated_db,
         name="项目负责人",
         username="owner",
-        system_role="super_admin",
+        system_role="company_ceo",
     )
     project_id = 98765
     if project_exists:

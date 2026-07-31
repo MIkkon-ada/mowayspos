@@ -4,6 +4,7 @@ import re
 from collections.abc import Iterable
 
 from fastapi import HTTPException
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from app import models
@@ -62,6 +63,39 @@ def _unique_text(values: Iterable[str | None]) -> list[str]:
     return result
 
 
+def _project_is_active(project: models.Project, db: Session) -> bool:
+    if str(project.status or "").strip() == "active":
+        return True
+
+    lifecycle = str(getattr(project, "lifecycle_status", "") or "").strip()
+    if lifecycle == "active":
+        return True
+
+    columns = {
+        str(column["name"]).lower()
+        for column in inspect(db.get_bind()).get_columns("projects")
+    }
+    if "lifecycle_status" not in columns:
+        return False
+    stored_lifecycle = db.execute(
+        text("SELECT lifecycle_status FROM projects WHERE id=:project_id"),
+        {"project_id": project.id},
+    ).scalar()
+    return str(stored_lifecycle or "").strip() == "active"
+
+
+def _matches_assignment(
+    *,
+    person_id: int | None,
+    display_name: str,
+    assigned_person_id: int | None,
+    assigned_name: str | None,
+) -> bool:
+    if assigned_person_id is not None:
+        return person_id is not None and int(person_id) == int(assigned_person_id)
+    return display_name == str(assigned_name or "").strip()
+
+
 def build_work_report_asr_context(
     current_user: str,
     project_id: int,
@@ -69,14 +103,13 @@ def build_work_report_asr_context(
     db: Session,
 ) -> str:
     username = require_login(current_user, db)
+    require_project_access(username, project_id, db)
 
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if project is None:
         raise HTTPException(status_code=404, detail="project_not_found")
-    if not project.is_active or project.status != "active":
+    if not _project_is_active(project, db):
         raise HTTPException(status_code=409, detail="project_not_active")
-
-    require_project_access(username, project_id, db)
 
     selected = (
         db.query(models.SubTask, models.Task)
@@ -104,9 +137,20 @@ def build_work_report_asr_context(
         roles & _MANAGEMENT_ROLES
     )
     display_name = str(identity.get("name") or "").strip()
+    person_id = identity.get("person_id")
     is_assigned = (
-        display_name == str(task.owner or "").strip()
-        or display_name == str(selected_subtask.assignee or "").strip()
+        _matches_assignment(
+            person_id=person_id,
+            display_name=display_name,
+            assigned_person_id=task.owner_id,
+            assigned_name=task.owner,
+        )
+        or _matches_assignment(
+            person_id=person_id,
+            display_name=display_name,
+            assigned_person_id=selected_subtask.assignee_id,
+            assigned_name=selected_subtask.assignee,
+        )
     )
     if not is_manager and not is_assigned:
         raise HTTPException(status_code=403, detail="work_report_scope_denied")

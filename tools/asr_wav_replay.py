@@ -97,6 +97,15 @@ def serialize_results(results: Iterable[Mapping[str, object]]) -> dict[str, list
     return {"results": [{key: value for key, value in row.items() if key in allowed} for row in results]}
 
 
+def normalize_cookie(cookie: str | None) -> str | None:
+    if not cookie:
+        return None
+    value = cookie.strip()
+    if "=" not in value:
+        return f"bowei_session={value}"
+    return value
+
+
 async def replay_case(
     path: str | Path,
     *,
@@ -120,7 +129,7 @@ async def replay_case(
         "missing_tail": True,
         "status": "failed",
     }
-    headers = {"Cookie": cookie} if cookie else None
+    headers = {"Cookie": normalize_cookie(cookie)} if normalize_cookie(cookie) else None
     connect_kwargs = {"additional_headers": headers} if headers else {}
     events: list[dict[str, object]] = []
     hypothesis_parts: list[str] = []

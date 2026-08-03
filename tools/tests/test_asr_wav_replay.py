@@ -18,6 +18,7 @@ from asr_wav_replay import (  # noqa: E402
     serialize_results,
     write_evidence,
     replay_case,
+    normalize_cookie,
 )
 
 
@@ -122,3 +123,8 @@ def test_replay_case_follows_explicit_protocol(tmp_path):
     assert json.loads(socket.sent[0])["type"] == "start"
     assert isinstance(socket.sent[1], bytes)
     assert json.loads(socket.sent[2]) == {"type": "stop"}
+
+
+def test_normalize_cookie_adds_session_cookie_name_to_raw_value():
+    assert normalize_cookie("abc123") == "bowei_session=abc123"
+    assert normalize_cookie("bowei_session=abc123; other=x") == "bowei_session=abc123; other=x"

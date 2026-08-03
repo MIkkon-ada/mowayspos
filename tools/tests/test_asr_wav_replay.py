@@ -49,6 +49,7 @@ def test_count_duplicate_finals_counts_replays_by_fingerprint():
 def test_has_missing_tail_requires_reference_tail_in_hypothesis_end():
     assert has_missing_tail("本周完成验收", "本周完成验收") is False
     assert has_missing_tail("本周完成验收", "本周完成") is True
+    assert has_missing_tail("项目名称是 Moways AI 驾驶舱。", "项目名称是 Moways AI 驾驶舱") is False
 
 
 def test_serialize_results_excludes_transcript_text_and_cookie():

@@ -7,6 +7,7 @@ import csv
 import json
 import os
 import time
+import unicodedata
 import wave
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Mapping
@@ -58,7 +59,12 @@ def count_duplicate_finals(events: Iterable[Mapping[str, object]]) -> int:
 
 
 def _normalized_text(value: str) -> str:
-    return "".join(value.casefold().split())
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    return "".join(
+        char
+        for char in normalized
+        if not char.isspace() and not unicodedata.category(char).startswith("P")
+    )
 
 
 def has_missing_tail(reference: str, hypothesis: str) -> bool:

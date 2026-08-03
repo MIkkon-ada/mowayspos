@@ -211,8 +211,9 @@ async def replay_case(
             if first_audio_at is not None and first_final_at is not None:
                 result["first_final_ms"] = round((first_final_at - first_audio_at) * 1000)
             result["duplicate_final_count"] = count_duplicate_finals(events)
+            result["_final_text"] = "".join(hypothesis_parts)
             result["missing_tail"] = has_missing_tail(
-                _reference_for(wav_path), "".join(hypothesis_parts)
+                _reference_for(wav_path), result["_final_text"]
             )
             return result
     except Exception as exc:
@@ -265,6 +266,22 @@ def write_evidence(results: Iterable[Mapping[str, object]], output: str | Path) 
         writer.writerows(sanitized)
 
 
+def write_debug_transcripts(results: Iterable[Mapping[str, object]], output: str | Path) -> None:
+    """Write opt-in local diagnostics; never called by the default CLI path."""
+    output_path = Path(output)
+    output_path.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "transcripts": [
+            {"case_id": row.get("case_id"), "final_text": row.get("_final_text", "")}
+            for row in results
+        ]
+    }
+    (output_path / "transcripts.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Replay local work-report ASR WAV corpus")
     parser.add_argument("--corpus", required=True)
@@ -274,6 +291,11 @@ def main() -> None:
     parser.add_argument("--cookie", default=os.environ.get("MOWAYS_ASR_SESSION_COOKIE"))
     parser.add_argument("--output", required=True)
     parser.add_argument("--no-pace", action="store_true")
+    parser.add_argument(
+        "--debug-transcripts",
+        action="store_true",
+        help="explicitly write local final transcript diagnostics",
+    )
     args = parser.parse_args()
     results = asyncio.run(
         replay_corpus(
@@ -286,6 +308,8 @@ def main() -> None:
         )
     )
     write_evidence(results, args.output)
+    if args.debug_transcripts:
+        write_debug_transcripts(results, args.output)
     print(json.dumps(serialize_results(results), ensure_ascii=False, indent=2))
 
 

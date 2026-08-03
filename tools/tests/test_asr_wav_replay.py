@@ -17,6 +17,7 @@ from asr_wav_replay import (  # noqa: E402
     read_wav_pcm,
     serialize_results,
     write_evidence,
+    write_debug_transcripts,
     replay_case,
     normalize_cookie,
 )
@@ -69,6 +70,18 @@ def test_write_evidence_writes_json_and_csv_without_transcript_text(tmp_path):
 
     assert "不应落盘" not in (tmp_path / "evidence" / "results.json").read_text(encoding="utf-8")
     assert "case-01" in (tmp_path / "evidence" / "results.csv").read_text(encoding="utf-8")
+
+
+def test_write_debug_transcripts_is_explicit_and_case_scoped(tmp_path):
+    write_debug_transcripts(
+        [{"case_id": "case-09", "_final_text": "调试文本", "status": "done"}],
+        tmp_path / "debug",
+    )
+
+    assert (tmp_path / "debug" / "transcripts.json").read_text(encoding="utf-8") == (
+        '{\n  "transcripts": [\n    {\n      "case_id": "case-09",\n      '
+        '"final_text": "调试文本"\n    }\n  ]\n}'
+    )
 
 
 def test_replay_case_follows_explicit_protocol(tmp_path):

@@ -43,6 +43,24 @@ def test_validate_evidence_blocks_invalid_span_or_mismatch(ref, transcript, expe
     assert all(item["status"] == "blocked" for item in result)
 
 
+@pytest.mark.parametrize(
+    ("ref", "transcript", "expected_hash"),
+    [
+        ({"start": 0, "end": 3, "quote": "evi"}, "evidence", None),
+        ({"start": 0, "end": 3, "quote": None}, "evidence", "sha256:placeholder"),
+        ({"start": True, "end": 4, "quote": "vid"}, "evidence", hashlib.sha256(b"vid").hexdigest()),
+        ({"start": 0, "end": False, "quote": ""}, "evidence", hashlib.sha256(b"").hexdigest()),
+        ({"start": 0, "end": 3, "quote": "evi"}, None, "sha256:placeholder"),
+        (None, "evidence", "sha256:placeholder"),
+    ],
+)
+def test_validate_evidence_blocks_invalid_input_without_raising(ref, transcript, expected_hash):
+    result = validate_evidence(ref, transcript, expected_hash)
+
+    assert result
+    assert all(item["status"] == "blocked" for item in result)
+
+
 def test_resolve_temporal_expression_supports_next_week_and_next_wednesday():
     reference_date = date(2026, 8, 3)
 

@@ -25,17 +25,32 @@ _WEEKDAY_MAP = {
 }
 
 
-def validate_evidence(ref: dict[str, Any], transcript: str, expected_hash: str) -> list[dict[str, str]]:
+def validate_evidence(ref: Any, transcript: Any, expected_hash: Any) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
+
+    if not isinstance(ref, dict):
+        return [{"code": "invalid_ref", "status": "blocked"}]
 
     start = ref.get("start")
     end = ref.get("end")
     quote = ref.get("quote")
 
-    if not isinstance(transcript, str) or not isinstance(quote, str):
+    if (
+        not isinstance(transcript, str)
+        or not isinstance(expected_hash, str)
+        or not isinstance(quote, str)
+    ):
         return [{"code": "invalid_ref", "status": "blocked"}]
 
-    if not isinstance(start, int) or not isinstance(end, int) or start < 0 or end <= start or end > len(transcript):
+    if (
+        not isinstance(start, int)
+        or isinstance(start, bool)
+        or not isinstance(end, int)
+        or isinstance(end, bool)
+        or start < 0
+        or end <= start
+        or end > len(transcript)
+    ):
         return [{"code": "invalid_span", "status": "blocked"}]
 
     span = transcript[start:end]

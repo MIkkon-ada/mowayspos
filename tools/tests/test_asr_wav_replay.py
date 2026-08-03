@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 from asr_wav_replay import (  # noqa: E402
     count_duplicate_finals,
     has_missing_tail,
+    classify_tail,
     iter_pcm_frames,
     read_wav_pcm,
     serialize_results,
@@ -51,6 +52,18 @@ def test_has_missing_tail_requires_reference_tail_in_hypothesis_end():
     assert has_missing_tail("本周完成验收", "本周完成验收") is False
     assert has_missing_tail("本周完成验收", "本周完成") is True
     assert has_missing_tail("项目名称是 Moways AI 驾驶舱。", "项目名称是 Moways AI 驾驶舱") is False
+    assert has_missing_tail("任务预计在八月三日晚上六点完成。", "任务预计在8月3日晚上6点完成。") is False
+
+
+def test_classify_tail_distinguishes_truncation_from_recognition_mismatch():
+    assert classify_tail("当前版本需要重点验证实时出字延迟。", "当前版本需要重点验证实时出自延迟。") == {
+        "missing_tail": False,
+        "tail_mismatch": True,
+    }
+    assert classify_tail("本周完成项目验收。", "本周完成项目。") == {
+        "missing_tail": True,
+        "tail_mismatch": False,
+    }
 
 
 def test_serialize_results_excludes_transcript_text_and_cookie():

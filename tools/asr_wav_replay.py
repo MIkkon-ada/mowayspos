@@ -60,20 +60,34 @@ def count_duplicate_finals(events: Iterable[Mapping[str, object]]) -> int:
 
 def _normalized_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value).casefold()
+    normalized = normalized.replace("\ufeff", "")
+    chinese_digits = str.maketrans(
+        "\u96f6\u3007\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d",
+        "00123456789",
+    )
     return "".join(
-        char
+        char.translate(chinese_digits)
         for char in normalized
         if not char.isspace() and not unicodedata.category(char).startswith("P")
     )
 
 
-def has_missing_tail(reference: str, hypothesis: str) -> bool:
+def classify_tail(reference: str, hypothesis: str) -> dict[str, bool]:
     normalized_reference = _normalized_text(reference)
     normalized_hypothesis = _normalized_text(hypothesis)
     if not normalized_reference:
-        return False
+        return {"missing_tail": False, "tail_mismatch": False}
     tail = normalized_reference[-5:]
-    return tail not in normalized_hypothesis[-20:]
+    if tail in normalized_hypothesis[-20:]:
+        return {"missing_tail": False, "tail_mismatch": False}
+    return {
+        "missing_tail": len(normalized_hypothesis) < len(normalized_reference),
+        "tail_mismatch": len(normalized_hypothesis) >= len(normalized_reference),
+    }
+
+
+def has_missing_tail(reference: str, hypothesis: str) -> bool:
+    return classify_tail(reference, hypothesis)["missing_tail"]
 
 
 def sha256_file(path: str | Path) -> str:
@@ -97,6 +111,7 @@ def serialize_results(results: Iterable[Mapping[str, object]]) -> dict[str, list
         "stop_done_ms",
         "duplicate_final_count",
         "missing_tail",
+        "tail_mismatch",
         "status",
         "error_code",
     }
@@ -212,9 +227,7 @@ async def replay_case(
                 result["first_final_ms"] = round((first_final_at - first_audio_at) * 1000)
             result["duplicate_final_count"] = count_duplicate_finals(events)
             result["_final_text"] = "".join(hypothesis_parts)
-            result["missing_tail"] = has_missing_tail(
-                _reference_for(wav_path), result["_final_text"]
-            )
+            result.update(classify_tail(_reference_for(wav_path), result["_final_text"]))
             return result
     except Exception as exc:
         result["error_code"] = type(exc).__name__

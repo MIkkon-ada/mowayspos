@@ -115,8 +115,20 @@ test('parser accepts and reconstructs every valid server message', async () => {
   const cases = [
     [{ type: 'ready' }, { type: 'ready' }],
     [
-      { type: 'started', model: 'fun-asr-realtime', session_id: 'session-1' },
-      { type: 'started', model: 'fun-asr-realtime', session_id: 'session-1' },
+      {
+        type: 'started',
+        model: 'fun-asr-realtime',
+        session_id: 'session-1',
+        packet_duration_ms: 100,
+        stop_timeout_seconds: 8,
+      },
+      {
+        type: 'started',
+        model: 'fun-asr-realtime',
+        session_id: 'session-1',
+        packet_duration_ms: 100,
+        stop_timeout_seconds: 8,
+      },
     ],
     [
       {
@@ -161,6 +173,7 @@ test('parser rejects malformed JSON, unknown types, non-objects, arrays, and mis
     '{"type":"unknown"}',
     '{}',
     '{"type":"started","model":"fun-asr-realtime"}',
+    '{"type":"started","model":"fun-asr-realtime","session_id":"session-1"}',
     '{"type":"transcript","segment_id":"seg-1","text":"结果"}',
     '{"type":"done","session_id":"session-1"}',
     '{"type":"error","code":"FAILED","message":"请重试"}',
@@ -172,8 +185,8 @@ test('parser rejects malformed fields for every message type', async () => {
   const { parseServerMessage } = await loadModule()
   const invalidValues = [
     { type: 'ready', unexpectedTypeConstraint: null, typeOverride: true },
-    { type: 'started', model: 1, session_id: 'session-1' },
-    { type: 'started', model: 'model', session_id: false },
+    { type: 'started', model: 1, session_id: 'session-1', packet_duration_ms: 100, stop_timeout_seconds: 8 },
+    { type: 'started', model: 'model', session_id: false, packet_duration_ms: 100, stop_timeout_seconds: 8 },
     { type: 'transcript', segment_id: 1, text: '结果', final: false },
     { type: 'transcript', segment_id: 'seg-1', text: 1, final: false },
     { type: 'transcript', segment_id: 'seg-1', text: '结果', final: 'false' },
@@ -227,9 +240,17 @@ test('parser trims identifiers, model, error code, and error message', async () 
         type: 'started',
         model: ' fun-asr-realtime ',
         session_id: ' session-1 ',
+        packet_duration_ms: 100,
+        stop_timeout_seconds: 8,
       }),
     ),
-    { type: 'started', model: 'fun-asr-realtime', session_id: 'session-1' },
+    {
+      type: 'started',
+      model: 'fun-asr-realtime',
+      session_id: 'session-1',
+      packet_duration_ms: 100,
+      stop_timeout_seconds: 8,
+    },
   )
   assert.deepEqual(
     parseServerMessage(
@@ -279,14 +300,60 @@ test('parser rejects invalid durations and transcript time ranges', async () => 
 test('parser filters extra and prototype-shaped properties from accepted messages', async () => {
   const { parseServerMessage } = await loadModule()
   const parsed = parseServerMessage(
-    '{"type":"started","model":"model","session_id":"session-1","extra":"drop","__proto__":{"polluted":true}}',
+    '{"type":"started","model":"model","session_id":"session-1","packet_duration_ms":100,"stop_timeout_seconds":8,"extra":"drop","__proto__":{"polluted":true}}',
   )
   assert.deepEqual(parsed, {
     type: 'started',
     model: 'model',
     session_id: 'session-1',
+    packet_duration_ms: 100,
+    stop_timeout_seconds: 8,
   })
   assert.equal(Object.hasOwn(parsed, 'extra'), false)
   assert.equal(Object.hasOwn(parsed, '__proto__'), false)
   assert.equal(parsed.polluted, undefined)
+})
+
+test('parser accepts started timing contract boundaries', async () => {
+  const { parseServerMessage } = await loadModule()
+  for (const timing of [
+    { packet_duration_ms: 40, stop_timeout_seconds: 2 },
+    { packet_duration_ms: 100, stop_timeout_seconds: 2.5 },
+    { packet_duration_ms: 250, stop_timeout_seconds: 30 },
+  ]) {
+    assert.deepEqual(
+      parseServerMessage(JSON.stringify({
+        type: 'started',
+        model: 'model',
+        session_id: 'session-1',
+        ...timing,
+      })),
+      {
+        type: 'started',
+        model: 'model',
+        session_id: 'session-1',
+        ...timing,
+      },
+    )
+  }
+})
+
+test('parser rejects out-of-range, non-integer, and non-finite started timing fields', async () => {
+  const { parseServerMessage } = await loadModule()
+  const invalidTimings = [
+    { packet_duration_ms: 39, stop_timeout_seconds: 8 },
+    { packet_duration_ms: 251, stop_timeout_seconds: 8 },
+    { packet_duration_ms: 100.5, stop_timeout_seconds: 8 },
+    { packet_duration_ms: 100, stop_timeout_seconds: 1.99 },
+    { packet_duration_ms: 100, stop_timeout_seconds: 31 },
+    { packet_duration_ms: 100, stop_timeout_seconds: Number.POSITIVE_INFINITY },
+  ]
+  for (const timing of invalidTimings) {
+    assert.equal(parseServerMessage(JSON.stringify({
+      type: 'started',
+      model: 'model',
+      session_id: 'session-1',
+      ...timing,
+    })), null)
+  }
 })

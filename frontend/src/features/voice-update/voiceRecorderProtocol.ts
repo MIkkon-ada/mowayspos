@@ -9,7 +9,13 @@ export type RecorderState =
 
 export type ServerMessage =
   | { type: 'ready' }
-  | { type: 'started'; model: string; session_id: string }
+  | {
+      type: 'started'
+      model: string
+      session_id: string
+      packet_duration_ms: number
+      stop_timeout_seconds: number
+    }
   | {
       type: 'transcript'
       segment_id: string
@@ -105,11 +111,26 @@ export function parseServerMessage(raw: string): ServerMessage | null {
     if (value.type === 'started') {
       const model = trimmedNonBlank(value.model)
       const sessionId = trimmedNonBlank(value.session_id)
-      if (!model || !sessionId) return null
+      const packetDurationMs = value.packet_duration_ms
+      const stopTimeoutSeconds = value.stop_timeout_seconds
+      if (
+        !model
+        || !sessionId
+        || typeof packetDurationMs !== 'number'
+        || !Number.isInteger(packetDurationMs)
+        || packetDurationMs < 40
+        || packetDurationMs > 250
+        || typeof stopTimeoutSeconds !== 'number'
+        || !Number.isFinite(stopTimeoutSeconds)
+        || stopTimeoutSeconds < 2
+        || stopTimeoutSeconds > 30
+      ) return null
       return {
         type: 'started',
         model,
         session_id: sessionId,
+        packet_duration_ms: packetDurationMs,
+        stop_timeout_seconds: stopTimeoutSeconds,
       }
     }
 

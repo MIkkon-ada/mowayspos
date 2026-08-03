@@ -7,15 +7,23 @@
  */
 
 const TARGET_SAMPLE_RATE = 16000;
-const PACKET_SAMPLES = TARGET_SAMPLE_RATE / 10;
+const DEFAULT_PACKET_SAMPLES = TARGET_SAMPLE_RATE / 10;
+const MIN_PACKET_SAMPLES = 640;
+const MAX_PACKET_SAMPLES = 4000;
 const SILENCE_THRESHOLD = 0.015;
 const SILENCE_DURATION_LIMIT = 2.0;
 const FRAMES_PER_NOTIFY = 10;
 
 class PcmAudioProcessor extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options) {
     super();
-    this._packet = new Float32Array(PACKET_SAMPLES);
+    const configuredPacketSamples = options?.processorOptions?.packetSamples;
+    this._packetSamples = Number.isInteger(configuredPacketSamples)
+      && configuredPacketSamples >= MIN_PACKET_SAMPLES
+      && configuredPacketSamples <= MAX_PACKET_SAMPLES
+      ? configuredPacketSamples
+      : DEFAULT_PACKET_SAMPLES;
+    this._packet = new Float32Array(this._packetSamples);
     this._packetLength = 0;
     this._silentSampleCount = 0;
     this._frameCount = 0;
@@ -72,7 +80,7 @@ class PcmAudioProcessor extends AudioWorkletProcessor {
     let sourceOffset = 0;
     while (sourceOffset < channelData.length) {
       const copyLength = Math.min(
-        PACKET_SAMPLES - this._packetLength,
+        this._packetSamples - this._packetLength,
         channelData.length - sourceOffset,
       );
       this._packet.set(
@@ -82,7 +90,7 @@ class PcmAudioProcessor extends AudioWorkletProcessor {
       this._packetLength += copyLength;
       sourceOffset += copyLength;
 
-      if (this._packetLength === PACKET_SAMPLES) {
+      if (this._packetLength === this._packetSamples) {
         this._emitPcm(this._packet);
         this._packetLength = 0;
       }

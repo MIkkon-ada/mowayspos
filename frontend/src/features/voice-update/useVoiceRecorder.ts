@@ -29,8 +29,17 @@ type Waiter = {
   timer: ReturnType<typeof setTimeout>
 }
 
+type TrackEndListener = {
+  track: MediaStreamTrack
+  listener: () => void
+}
+
+type ServerTiming = {
+  attempt: number
+  stopTimeoutSeconds: number
+}
+
 const SOCKET_TIMEOUT_MS = 6000
-const DONE_TIMEOUT_MS = 8000
 const FLUSH_TIMEOUT_MS = 1000
 
 async function releaseLocalMedia(
@@ -75,6 +84,8 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
   const attemptGenerationRef = useRef(0)
   const stoppingRef = useRef(false)
   const intentionalCloseSocketsRef = useRef(new WeakSet<WebSocket>())
+  const intentionalMediaStopRef = useRef(new WeakSet<MediaStream>())
+  const trackEndListenersRef = useRef(new WeakMap<MediaStream, TrackEndListener[]>())
   const backpressureRef = useRef(false)
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
@@ -83,6 +94,7 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
   const workletRef = useRef<AudioWorkletNode | null>(null)
   const flushWaiterRef = useRef<(() => void) | null>(null)
+  const serverTimingRef = useRef<ServerTiming | null>(null)
   const transcriptRef = useRef<TranscriptState>(emptyTranscript(''))
   const waitersRef = useRef(new Set<Waiter>())
 
@@ -129,6 +141,23 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
     })
   }, [])
 
+  const releaseMedia = useCallback(async (
+    context: AudioContext | null,
+    stream: MediaStream | null,
+    source: MediaStreamAudioSourceNode | null,
+    node: AudioWorkletNode | null,
+  ) => {
+    if (stream) {
+      intentionalMediaStopRef.current.add(stream)
+      const listeners = trackEndListenersRef.current.get(stream) ?? []
+      for (const { track, listener } of listeners) {
+        track.removeEventListener('ended', listener)
+      }
+      trackEndListenersRef.current.delete(stream)
+    }
+    await releaseLocalMedia(context, stream, source, node)
+  }, [])
+
   const releaseAttachedMedia = useCallback(async () => {
     const context = audioCtxRef.current
     const stream = streamRef.current
@@ -141,8 +170,8 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
     workletRef.current = null
     flushWaiterRef.current = null
     flushWaiter?.()
-    await releaseLocalMedia(context, stream, source, node)
-  }, [])
+    await releaseMedia(context, stream, source, node)
+  }, [releaseMedia])
 
   const cleanup = useCallback(async (options?: {
     invalidateAttempt?: boolean
@@ -164,6 +193,9 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
     sourceRef.current = null
     workletRef.current = null
     flushWaiterRef.current = null
+    if (serverTimingRef.current?.attempt !== preserveAttempt) {
+      serverTimingRef.current = null
+    }
 
     if (invalidateAttempt) attemptGenerationRef.current += 1
     if (socket) intentionalCloseSocketsRef.current.add(socket)
@@ -179,7 +211,7 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
       waiter.resolve(null)
     }
 
-    await releaseLocalMedia(context, stream, source, node)
+    await releaseMedia(context, stream, source, node)
     if (socket && socket.readyState < WebSocket.CLOSING) {
       try {
         socket.close(1000)
@@ -187,7 +219,7 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
         // Cleanup must stay idempotent.
       }
     }
-  }, [clearTimer])
+  }, [clearTimer, releaseMedia])
 
   const finishTerminal = useCallback(async (
     next: Extract<RecorderState, 'completed' | 'failed'>,
@@ -303,7 +335,11 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
     && (!ws || isCurrentAttempt(attempt, ws))
   ), [isCurrentAttempt])
 
-  const startMicrophone = useCallback(async (ws: WebSocket, attempt: number) => {
+  const startMicrophone = useCallback(async (
+    ws: WebSocket,
+    attempt: number,
+    packetDurationMs: number,
+  ) => {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error('当前浏览器不支持录音，请使用最新版 Chrome 或 Edge')
     }
@@ -316,7 +352,7 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
       context = new AudioContext({ sampleRate: 16000 })
       await context.audioWorklet.addModule('/worklets/pcm-audio-processor.js')
       if (!ownsStartAttempt(attempt, ws)) {
-        await releaseLocalMedia(context, stream, source, node)
+        await releaseMedia(context, stream, source, node)
         return false
       }
 
@@ -329,11 +365,15 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
         },
       })
       if (!ownsStartAttempt(attempt, ws)) {
-        await releaseLocalMedia(context, stream, source, node)
+        await releaseMedia(context, stream, source, node)
         return false
       }
 
-      node = new AudioWorkletNode(context, 'pcm-audio-processor')
+      node = new AudioWorkletNode(context, 'pcm-audio-processor', {
+        processorOptions: {
+          packetSamples: Math.round(16000 * packetDurationMs / 1000),
+        },
+      })
       source = context.createMediaStreamSource(stream)
 
       node.port.onmessage = (event: MessageEvent<WorkletMessage>) => {
@@ -362,7 +402,7 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
       source.connect(node)
       node.connect(context.destination)
       if (!ownsStartAttempt(attempt, ws)) {
-        await releaseLocalMedia(context, stream, source, node)
+        await releaseMedia(context, stream, source, node)
         return false
       }
 
@@ -370,19 +410,57 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
       streamRef.current = stream
       workletRef.current = node
       sourceRef.current = source
+      const listeners = stream.getTracks().map((track): TrackEndListener => {
+        const listener = () => {
+          if (intentionalMediaStopRef.current.has(stream!)) return
+          if (!mountedRef.current || attemptGenerationRef.current !== attempt) return
+          if (streamRef.current !== stream || terminalRef.current) return
+          void finishTerminal(
+            'failed',
+            '麦克风已断开或权限已撤回，请检查已识别文字后重试',
+            ws,
+            attempt,
+          )
+        }
+        track.addEventListener('ended', listener)
+        return { track, listener }
+      })
+      trackEndListenersRef.current.set(stream, listeners)
+
+      const settings = stream.getAudioTracks()[0]?.getSettings()
+      if (settings) {
+        console.info('[voice-recorder] microphone settings', {
+          sampleRate: settings.sampleRate,
+          channelCount: settings.channelCount,
+          echoCancellation: settings.echoCancellation,
+          noiseSuppression: settings.noiseSuppression,
+        })
+      }
+
+      for (const { track, listener } of listeners) {
+        if (track.readyState === 'ended') listener()
+      }
       return true
     } catch (error) {
-      await releaseLocalMedia(context, stream, source, node)
+      await releaseMedia(context, stream, source, node)
       if (error instanceof DOMException && error.name === 'NotAllowedError') {
         throw new Error('麦克风权限被拒绝，请在浏览器设置中允许使用麦克风')
       }
       throw error instanceof Error ? error : new Error('启动录音失败，请重试')
     }
-  }, [finishTerminal, isCurrentAttempt, ownsStartAttempt])
+  }, [finishTerminal, isCurrentAttempt, ownsStartAttempt, releaseMedia])
 
   const stopRecording = useCallback(async () => {
     if (stoppingRef.current || stateRef.current !== 'recording') return
     const attempt = attemptGenerationRef.current
+    const timing = serverTimingRef.current
+    const stopTimeoutSeconds = timing?.attempt === attempt
+      ? timing.stopTimeoutSeconds
+      : 30
+    const doneTimeoutMs = Math.min(
+      32000,
+      stopTimeoutSeconds * 1000 + 2000,
+    )
     stoppingRef.current = true
     clearTimer()
     updateState('stopping')
@@ -415,7 +493,7 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
     }
 
     // Register before sending because the server may answer immediately.
-    const terminal = waitForMessage(['done', 'error'], attempt, DONE_TIMEOUT_MS)
+    const terminal = waitForMessage(['done', 'error'], attempt, doneTimeoutMs)
     ws.send(JSON.stringify({ type: 'stop' }))
     const result = await terminal
     if (!result) {
@@ -498,7 +576,10 @@ export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
         return
       }
 
-      const attached = await startMicrophone(ws, attempt)
+      const packetDurationMs = startResult.packet_duration_ms
+      const stopTimeoutSeconds = startResult.stop_timeout_seconds
+      serverTimingRef.current = { attempt, stopTimeoutSeconds }
+      const attached = await startMicrophone(ws, attempt, packetDurationMs)
       if (!attached || !ownsStartAttempt(attempt, ws)) return
       updateState('recording')
       if (!ownsStartAttempt(attempt, ws)) return

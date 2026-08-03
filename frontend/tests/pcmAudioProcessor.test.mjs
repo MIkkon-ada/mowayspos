@@ -12,7 +12,7 @@ const workletPath = path.resolve(
 );
 const workletSource = fs.readFileSync(workletPath, "utf8");
 
-function createProcessor() {
+function createProcessor(processorOptions) {
   let ProcessorClass;
 
   class FakeAudioWorkletProcessor {
@@ -39,7 +39,7 @@ function createProcessor() {
   });
 
   assert.ok(ProcessorClass, "worklet should register its processor");
-  return new ProcessorClass();
+  return new ProcessorClass({ processorOptions });
 }
 
 function processSamples(processor, samples) {
@@ -153,4 +153,43 @@ test("empty inputs are safe and keep the worklet alive before stop", () => {
   assert.equal(processor.process([[]]), true);
   assert.equal(processSamples(processor, []), true);
   assert.equal(processor.port.messages.length, 0);
+});
+
+test("uses a 40ms packet size supplied through processorOptions", () => {
+  const processor = createProcessor({ packetSamples: 640 });
+
+  processSamples(processor, new Float32Array(640));
+
+  const [message] = messagesOfType(processor, "pcm");
+  assert.equal(message.buffer.byteLength, 1280);
+});
+
+test("uses a 250ms packet size supplied through processorOptions", () => {
+  const processor = createProcessor({ packetSamples: 4000 });
+
+  processSamples(processor, new Float32Array(4000));
+
+  const [message] = messagesOfType(processor, "pcm");
+  assert.equal(message.buffer.byteLength, 8000);
+});
+
+test("falls back to 100ms packets for invalid processorOptions", () => {
+  for (const packetSamples of [639, 4001, 1600.5, "1600", Number.NaN]) {
+    const processor = createProcessor({ packetSamples });
+    processSamples(processor, new Float32Array(1600));
+    const [message] = messagesOfType(processor, "pcm");
+    assert.equal(message.buffer.byteLength, 3200);
+  }
+});
+
+test("emits multiple packets using the configured packet size", () => {
+  const processor = createProcessor({ packetSamples: 640 });
+
+  processSamples(processor, new Float32Array(1400));
+  processor.port.onmessage({ data: { type: "stop" } });
+
+  assert.deepEqual(
+    messagesOfType(processor, "pcm").map(({ buffer }) => buffer.byteLength),
+    [1280, 1280, 240],
+  );
 });

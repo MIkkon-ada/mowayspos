@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import csv
 import json
+import os
 import time
 import wave
 from pathlib import Path
@@ -255,7 +256,7 @@ def main() -> None:
     parser.add_argument("--url", default="ws://127.0.0.1:8008/api/transcribe/stream")
     parser.add_argument("--project-id", type=int, required=True)
     parser.add_argument("--task-id", type=int, required=True)
-    parser.add_argument("--cookie", default=None)
+    parser.add_argument("--cookie", default=os.environ.get("MOWAYS_ASR_SESSION_COOKIE"))
     parser.add_argument("--output", required=True)
     parser.add_argument("--no-pace", action="store_true")
     args = parser.parse_args()

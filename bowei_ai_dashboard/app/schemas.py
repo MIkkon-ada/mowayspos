@@ -1,6 +1,8 @@
-from typing import Any
+import json
+from datetime import datetime
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class UserSubtaskContext(BaseModel):
@@ -109,6 +111,7 @@ class AchievementSubmissionPayload(BaseModel):
     file_link: str = ""
     scenario: str = ""
     reuse_tag: str = Field("", max_length=80)
+    attachment_ids: list[int] = Field(default_factory=list)
 
 
 class AchievementSubmissionRejectRequest(BaseModel):
@@ -384,6 +387,136 @@ class MeetingPayload(BaseModel):
     decision_items_json: str = ""
     risk_items_json: str = ""
     publish_status: str = "draft"
+
+
+class MeetingRevisionResponse(BaseModel):
+    id: int
+    meeting_id: int
+    version_no: int
+    is_legacy_snapshot: bool = False
+    saved_by: str = ""
+    saved_at: str | None = None
+    related_special_project: str = ""
+    meeting_type: str = ""
+    title: str = ""
+    meeting_date: str = ""
+    host: str = ""
+    participants: str = ""
+    transcript_text: str = ""
+    summary: str = ""
+    task_list_json: str = ""
+    decision_items_json: str = ""
+    risk_items_json: str = ""
+    publish_status: str = "draft"
+    transcript_source_id: int | None = None
+    transcript_revision_id: int | None = None
+    analysis_run_id: int | None = None
+    parent_revision_id: int | None = None
+    revision_kind: str = "draft_save"
+    agent_output_json: str = "{}"
+    validation_output_json: str = "{}"
+    human_output_json: str = "{}"
+    human_diff_json: str = "{}"
+
+
+class EvidenceRef(BaseModel):
+    source_id: int
+    transcript_revision_id: int | None = None
+    char_start: int
+    char_end: int
+    quote: str
+    source_hash: str
+    segment_id: str | None = None
+    start_ms: int | None = None
+    end_ms: int | None = None
+
+
+class CandidateReviewPayload(BaseModel):
+    review_status: Literal["accepted", "needs_confirmation", "ignored"]
+    final_value: dict[str, Any] = Field(default_factory=dict)
+    review_comment: str = ""
+
+
+class MeetingTranscriptRevisionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    source_id: int
+    revision_no: int
+    text: str
+    text_hash: str
+    created_by_person_id: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class MeetingAnalysisRunResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    project_id: int
+    meeting_id: int | None = None
+    source_id: int
+    transcript_revision_id: int | None = None
+    member_snapshot_json: dict[str, Any]
+    plan_snapshot_json: dict[str, Any]
+    agent_input_json: dict[str, Any]
+    raw_response_json: dict[str, Any]
+    normalized_output_json: dict[str, Any]
+    validation_output_json: dict[str, Any]
+    provider: str
+    model_name: str
+    policy_version: str
+    prompt_version: str
+    prompt_hash: str
+    input_hash: str
+    reference_at: datetime
+    timezone: str
+    status: str
+    created_by_person_id: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator(
+        "member_snapshot_json",
+        "plan_snapshot_json",
+        "agent_input_json",
+        "raw_response_json",
+        "normalized_output_json",
+        "validation_output_json",
+        mode="before",
+    )
+    @classmethod
+    def parse_json_object(cls, value: Any) -> Any:
+        return json.loads(value) if isinstance(value, str) else value
+
+
+class MeetingAnalysisCandidateResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_id: int
+    candidate_type: str
+    agent_proposal_json: dict[str, Any]
+    evidence_json: list[EvidenceRef]
+    validation_json: list[dict[str, Any]]
+    final_value_json: dict[str, Any]
+    validation_status: str
+    review_status: str
+    reviewer_person_id: int | None = None
+    review_comment: str | None = ""
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator("agent_proposal_json", "final_value_json", mode="before")
+    @classmethod
+    def parse_json_object(cls, value: Any) -> Any:
+        return json.loads(value) if isinstance(value, str) else value
+
+    @field_validator("evidence_json", "validation_json", mode="before")
+    @classmethod
+    def parse_json_list(cls, value: Any) -> Any:
+        return json.loads(value) if isinstance(value, str) else value
 
 
 class MeetingStatusPatch(BaseModel):

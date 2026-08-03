@@ -5,6 +5,26 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+def _safe_json_object(value: Any) -> dict[str, Any]:
+    if value in (None, ""):
+        return {}
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _safe_json_list(value: Any) -> list[Any]:
+    if value in (None, ""):
+        return []
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
 class UserSubtaskContext(BaseModel):
     id: int
     title: str
@@ -488,7 +508,7 @@ class MeetingAnalysisRunResponse(BaseModel):
     )
     @classmethod
     def parse_json_object(cls, value: Any) -> Any:
-        return json.loads(value) if isinstance(value, str) else value
+        return _safe_json_object(value)
 
 
 class MeetingAnalysisCandidateResponse(BaseModel):
@@ -511,12 +531,12 @@ class MeetingAnalysisCandidateResponse(BaseModel):
     @field_validator("agent_proposal_json", "final_value_json", mode="before")
     @classmethod
     def parse_json_object(cls, value: Any) -> Any:
-        return json.loads(value) if isinstance(value, str) else value
+        return _safe_json_object(value)
 
     @field_validator("evidence_json", "validation_json", mode="before")
     @classmethod
     def parse_json_list(cls, value: Any) -> Any:
-        return json.loads(value) if isinstance(value, str) else value
+        return _safe_json_list(value)
 
 
 class MeetingStatusPatch(BaseModel):

@@ -186,3 +186,57 @@ def test_analysis_response_contracts_parse_orm_json_into_typed_values():
     assert candidate_response.evidence_json[0].quote == "source"
     assert revision_response.text_hash == "b" * 64
     assert review_payload.final_value == {}
+
+
+def test_analysis_response_contracts_tolerate_legacy_invalid_json_strings():
+    db = make_session()
+    project = models.Project(name="Legacy JSON project")
+    source = models.MeetingTranscriptSource(raw_text="source", source_hash="a" * 64)
+    db.add_all([project, source])
+    db.flush()
+    transcript_revision = models.MeetingTranscriptRevision(
+        source_id=source.id,
+        revision_no=1,
+        text="revision",
+        text_hash="b" * 64,
+    )
+    db.add(transcript_revision)
+    db.flush()
+    run = models.MeetingAnalysisRun(
+        project_id=project.id,
+        source_id=source.id,
+        transcript_revision_id=transcript_revision.id,
+        member_snapshot_json="",
+        plan_snapshot_json="not-json",
+        agent_input_json='{"ok": true}',
+        raw_response_json="{broken",
+        normalized_output_json="[]",
+        validation_output_json="null",
+        reference_at=datetime(2026, 8, 3, 9, 0, 0),
+    )
+    db.add(run)
+    db.flush()
+    candidate = models.MeetingAnalysisCandidate(
+        run_id=run.id,
+        candidate_type="decision",
+        agent_proposal_json="",
+        evidence_json="not-json",
+        validation_json="{}",
+        final_value_json="null",
+    )
+    db.add(candidate)
+    db.commit()
+
+    run_response = schemas.MeetingAnalysisRunResponse.model_validate(run)
+    candidate_response = schemas.MeetingAnalysisCandidateResponse.model_validate(candidate)
+
+    assert run_response.member_snapshot_json == {}
+    assert run_response.plan_snapshot_json == {}
+    assert run_response.agent_input_json == {"ok": True}
+    assert run_response.raw_response_json == {}
+    assert run_response.normalized_output_json == {}
+    assert run_response.validation_output_json == {}
+    assert candidate_response.agent_proposal_json == {}
+    assert candidate_response.evidence_json == []
+    assert candidate_response.validation_json == []
+    assert candidate_response.final_value_json == {}

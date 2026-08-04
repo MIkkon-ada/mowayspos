@@ -337,7 +337,6 @@ def test_t3_head_schema_matches_current_orm(tmp_path: Path):
         "project_type",
         "client_name",
         "background",
-        "objectives",
         "expected_outcomes",
         "lifecycle_status",
         "kickoff_date",

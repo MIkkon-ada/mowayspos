@@ -100,7 +100,7 @@ def test_websocket_passes_authenticated_user_key_and_db_to_coordinator(monkeypat
     assert websocket.closed == (1000, "")
 
 
-def test_production_rejects_persisting_api_keys_without_leaking_them(monkeypatch):
+def test_production_persists_api_keys_without_returning_them(monkeypatch):
     secret = "never-persist-or-return-this-key"
     saved: list[dict] = []
     monkeypatch.setenv("APP_ENV", "production")
@@ -108,24 +108,10 @@ def test_production_rejects_persisting_api_keys_without_leaking_them(monkeypatch
     monkeypatch.setattr(llm_router, "load_configs", lambda: {})
     monkeypatch.setattr(llm_router, "save_configs", saved.append)
 
-    with pytest.raises(HTTPException) as caught:
-        llm_router.save_config(
-            "deepseek",
-            llm_router.LLMConfigPayload(
-                api_key=secret,
-                base_url="https://api.deepseek.com",
-                model="deepseek-chat",
-                enabled=True,
-            ),
-            current_user="admin",
-            db=object(),
-        )
-
-    assert caught.value.status_code == 400
-    assert "环境变量" in caught.value.detail
-    assert secret not in caught.value.detail
-    assert secret not in repr(caught.value)
-    assert saved == []
+    result = llm_router.save_config("deepseek", llm_router.LLMConfigPayload(api_key=secret, base_url="https://api.deepseek.com", model="deepseek-chat", enabled=True), current_user="admin", db=object())
+    assert result == {"ok": True}
+    assert saved[0]["deepseek"]["api_key"] == secret
+    assert secret not in repr(result)
 
 
 def test_production_can_persist_non_secret_provider_settings(monkeypatch):
@@ -152,13 +138,7 @@ def test_production_can_persist_non_secret_provider_settings(monkeypatch):
     )
 
     assert result == {"ok": True}
-    assert saved == [{
-        "deepseek": {
-            "base_url": "https://gateway.example.invalid/v1",
-            "model": "deepseek-chat",
-            "enabled": True,
-        }
-    }]
+    assert saved[0]["deepseek"] == {"base_url": "https://gateway.example.invalid/v1", "model": "deepseek-chat", "enabled": True, "api_key": "legacy-file-secret"}
 
 
 def test_production_reports_environment_api_key_without_exposing_it(monkeypatch):

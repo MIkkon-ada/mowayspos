@@ -20,7 +20,7 @@ def upgrade() -> None:
     if "objectives" not in columns:
         op.add_column(
             "projects",
-            sa.Column("objectives", sa.Text(), nullable=True, server_default=sa.text("''")),
+            sa.Column("objectives", sa.Text(), nullable=True),
         )
 
 

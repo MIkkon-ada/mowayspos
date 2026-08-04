@@ -28,7 +28,7 @@ def upgrade() -> None:
         sa.Column("uploaded_by", sa.String(length=50), nullable=True),
         sa.Column("uploaded_by_person_id", sa.Integer(), sa.ForeignKey("people.id"), nullable=True),
         sa.Column("deleted_at", sa.DateTime(), nullable=True),
-        sa.Column("deleted_by", sa.String(length=50), nullable=True, server_default=sa.text("''")),
+        sa.Column("deleted_by", sa.String(length=50), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=True),
         sa.Column("updated_at", sa.DateTime(), nullable=True),
     )

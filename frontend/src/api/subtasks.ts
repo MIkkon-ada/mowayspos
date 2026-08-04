@@ -78,6 +78,15 @@ export function restoreSubTask(id: number): Promise<SubTaskItem> {
 }
 
 export type SubTaskDetail = SubTaskItem & {
+  work_reports?: {
+    id: number
+    submitter: string
+    created_at: string | null
+    completed_items: string[]
+    next_steps: string[]
+    issues: Array<string | { description?: string }>
+    achievements: Array<{ name?: string; achievement_type?: string; file_link?: string }>
+  }[]
   parent_task?: { id: number; key_task: string; special_project: string } // legacy display fallback only
   source_submission?: {
     id: number

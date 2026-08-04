@@ -14,6 +14,7 @@ const TOOLBAR_FILE = 'src/components/task-management/PlanTableToolbar.tsx'
 const STATUS_FILE = 'src/components/task-management/PlanTableStatusBar.tsx'
 const CSS_FILE = 'src/components/task-management/planTableExcelV2.css'
 const VIEW_FILE = 'src/components/task-management/PlanTableViewV2.tsx'
+const DETAIL_FILE = 'src/components/task-management/KeyTaskExecutionDetailView.tsx'
 const PAGE_FILE = 'src/pages/TaskManagementPage.tsx'
 const EXPORT_FILE = 'src/utils/exportPlanTableExcel.ts'
 
@@ -252,6 +253,23 @@ test('execution view exposes create task from the project summary row instead of
   assert.doesNotMatch(page, /action === 'create'/)
 })
 
+test('execution detail does not render a status-chip strip above the project overview', () => {
+  const source = read(PAGE_FILE)
+  assert.doesNotMatch(source, /Status chips/)
+})
+
+test('key work create modal uses the compact two-column grouped form layout', () => {
+  const page = read(PAGE_FILE)
+
+  assert.match(page, /task-form-modal__context/)
+  assert.match(page, /task-form-modal__columns/)
+  assert.match(page, /task-form-modal__section/)
+  assert.match(page, /task-form-modal__footer-note/)
+  assert.match(page, /projectMembersByProject/)
+  assert.match(page, /请选择负责人/)
+  assert.match(page, /可不指定/)
+})
+
 test('archived plan rendering remains read-only and other global layouts stay out of scope', () => {
   const source = read(VIEW_FILE)
   // V2 has no inline destructive CRUD action buttons for delete/archive/restore.
@@ -261,24 +279,93 @@ test('archived plan rendering remains read-only and other global layouts stay ou
   assert.equal(exists('src/layouts/ProjectLayout.tsx'), true)
 })
 
-test('V2 layout uses banner + scroll + canvas hierarchy with proper z-ordering', () => {
+test('V2 layout uses a clean scroll + canvas hierarchy without extra chrome', () => {
   const view = read(VIEW_FILE)
   const css = read(CSS_FILE)
-  // V2 layout: v2-plan-view > v2-project-banner + v2-table-scroll > v2-table-canvas > v2-grid
+  // V2 layout: v2-plan-view > v2-table-scroll > v2-table-canvas > v2-grid
   assert.match(view, /v2-plan-view/)
-  assert.match(view, /v2-project-banner/)
   assert.match(view, /v2-table-scroll/)
   assert.match(view, /v2-table-canvas/)
   assert.match(view, /v2-grid/)
-  const bannerIdx = view.indexOf('v2-project-banner')
   const scrollIdx = view.indexOf('v2-table-scroll')
   const canvasIdx = view.indexOf('v2-table-canvas')
-  assert.ok(bannerIdx > -1 && scrollIdx > -1 && canvasIdx > -1, 'all three layers present')
-  assert.ok(bannerIdx < scrollIdx, 'banner must precede scroll area')
+  assert.ok(scrollIdx > -1 && canvasIdx > -1, 'scroll and canvas layers present')
   assert.ok(scrollIdx < canvasIdx, 'canvas must be inside scroll area')
+  assert.doesNotMatch(view, /v2-progress-topbar/)
+  assert.doesNotMatch(view, /v2-progress-summary/)
+  assert.doesNotMatch(view, /v2-footer-stats/)
+  assert.doesNotMatch(view, /v2-keytask-line__num/)
   assert.doesNotMatch(view, /plan-table-title-cell/)
   assert.doesNotMatch(css, /\.plan-table-title-cell/)
   assert.match(css, /position:\s*sticky/)
+})
+
+test('V2 table is a compact data table without a fake empty spreadsheet canvas', () => {
+  const source = read(VIEW_FILE)
+  const css = read(CSS_FILE)
+
+  assert.match(source, /v2-sheet-frame/)
+  assert.match(source, /v2-table-actions__project/)
+  assert.match(source, /v2-task-card__std-btn/)
+  assert.doesNotMatch(source, /v2-task-card__index/)
+  assert.doesNotMatch(source, /v2-keytask-line__num/)
+  assert.doesNotMatch(source, /v2-pager/)
+  assert.doesNotMatch(source, /v2-task-card__meta/)
+  assert.match(source, />\s*重点工作\s*</)
+  assert.match(source, />\s*关键任务\s*</)
+  assert.match(source, />\s*负责人\s*</)
+  assert.match(source, />\s*计划时间\s*</)
+  assert.match(source, />\s*协同人\s*</)
+  assert.match(source, />\s*状态\s*</)
+
+  assert.match(css, /\.v2-sheet-frame/)
+  assert.doesNotMatch(css, /\.v2-task-card__index/)
+  assert.match(css, /width:\s*1180px/)
+  assert.match(source, /<col style=\{\{ width: 300 \}\} \/>/)
+  assert.match(source, /<col style=\{\{ width: 430 \}\} \/>/)
+  assert.match(source, /<col style=\{\{ width: 80 \}\} \/>/)
+  assert.match(source, /<col style=\{\{ width: 155 \}\} \/>/)
+  assert.doesNotMatch(css, /repeating-linear-gradient/)
+  assert.doesNotMatch(css, /background-size:\s*80px 28px/)
+  assert.doesNotMatch(css, /\.v2-table-canvas\s*\{[^}]*height:\s*100%/s)
+  assert.doesNotMatch(css, /\.v2-grid\s*{[^}]*height:\s*100%/s)
+  assert.match(css, /\.v2-grid th,[\s\S]*vertical-align:\s*middle/)
+  assert.match(css, /\.v2-td--person\s*\{[^}]*text-overflow:\s*ellipsis/s)
+  assert.match(css, /\.v2-grid td\.v2-td--keytask\s*\{[^}]*padding:\s*14px 12px/s)
+  assert.match(css, /\.v2-keytask-line\s*\{[^}]*line-height:\s*1\.45/s)
+  assert.doesNotMatch(css, /\.v2-task-card__std-btn\s*{[^}]*display:\s*none/s)
+})
+
+test('work progress header keeps mode tabs next to the title', () => {
+  const page = read(PAGE_FILE)
+  assert.match(page, /work-progress-title-group/)
+  assert.match(page, /工作推进表[\s\S]*表格视图[\s\S]*执行详情/)
+  assert.doesNotMatch(page, /min-w-\[260px\]/)
+})
+
+test('key task execution detail is report-driven with optional criteria', () => {
+  const detail = read(DETAIL_FILE)
+  assert.match(detail, /工作汇报记录/)
+  assert.match(detail, /已完成内容/)
+  assert.match(detail, /下一步计划/)
+  assert.match(detail, /related_achievements/)
+  assert.match(detail, /暂无工作汇报/)
+  assert.match(detail, /const hasReports = reports\.length > 0/)
+  assert.doesNotMatch(detail, /function Step\(/)
+  assert.doesNotMatch(detail, /function Line\(/)
+})
+
+test('table-view key task editor keeps people, time and status on one row', () => {
+  const view = read(VIEW_FILE)
+  const css = read(CSS_FILE)
+  assert.match(view, /v2-edit-form__context/)
+  assert.match(view, /v2-edit-form__grid/)
+  assert.match(view, /v2-modal__footer/)
+  assert.match(view, /fetchSubtaskDetail/)
+  assert.match(view, /v2-edit-form__latest-progress/)
+  assert.match(css, /\.v2-modal--edit\s*\{[^}]*width:\s*760px/s)
+  assert.match(css, /\.v2-edit-form__grid\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/s)
+  assert.match(view, /责任人[\s\S]*协同人\s*\/\s*备注[\s\S]*计划时间[\s\S]*当前状态/)
 })
 
 test('page resolves an archived project detail without falling back to another project', () => {

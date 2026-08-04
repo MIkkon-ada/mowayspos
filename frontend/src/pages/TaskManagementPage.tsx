@@ -15,6 +15,8 @@ import type { TaskItem, SubTaskItem, Project, ProjectMember } from '../types'
 import { getProjectById, getProjectDisplayName, getProjectIdFromRecord } from '../domain/projectDisplay'
 import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
 import { PlanTableViewV2 } from '../components/task-management/PlanTableViewV2'
+import { ExecutionProgressView } from '../components/task-management/ExecutionProgressView'
+import { KeyTaskExecutionDetailView } from '../components/task-management/KeyTaskExecutionDetailView'
 import { toast } from '../utils/toast'
 
 const NOT_STARTED = new Set(['未开始', 'not_started', 'notstarted'])
@@ -490,6 +492,17 @@ export function TaskManagementPage() {
     ensurePlanTableSubTasksLoaded()
   }, [viewMode, planBaseTasks, planTableLoading, taskSubMap])
 
+  useEffect(() => {
+    if (viewMode !== 'execution') return
+    const missingIds = planBaseTasks.filter((task) => !(task.id in taskSubMap)).map((task) => task.id)
+    if (!missingIds.length) return
+    fetchSubTasksBatch(missingIds, false).then((batch) => setTaskSubMap((prev) => {
+      const next = { ...prev }
+      missingIds.forEach((id) => { next[id] = batch[String(id)] ?? [] })
+      return next
+    })).catch(() => {})
+  }, [viewMode, planBaseTasks, taskSubMap])
+
   // 进入计划视图时预加载项目成员列表（用于责任人下拉）
   useEffect(() => {
     if (viewMode !== 'plan' || !focusedProject) return
@@ -865,6 +878,8 @@ function handleFormSave(payload: TaskPayload) {
           task={formTask}
           projects={resolvedTaskProjects}
           defaultProjectId={formDefaultProjectId ?? effectiveTaskProjectId}
+          projectMembersByProject={projectMembersByProject}
+          onLoadProjectMembers={ensureProjectMembersLoaded}
           onSave={handleFormSave}
           onClose={() => { setFormOpen(false); setFormTask(null); setFormDefaultProjectId(null) }}
         />
@@ -912,8 +927,8 @@ function handleFormSave(payload: TaskPayload) {
       )}
 
       {/* Top Bar */}
-      <header className="h-16 px-6 gap-3 flex items-center flex-shrink-0 bg-white border-b overflow-x-auto" style={{ borderColor: '#E9EFF6' }}>
-        <div className="min-w-[260px] flex-shrink-0">
+      {!((viewMode === 'execution') && selectedSubTask) && <header className="h-14 px-6 gap-3 flex items-center flex-shrink-0 bg-white border-b overflow-x-auto" style={{ borderColor: '#E9EFF6' }}>
+        <div className="work-progress-title-group flex-shrink-0">
           <h1 className="text-base font-bold text-slate-800">工作推进表</h1>
         </div>
         <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
@@ -1024,53 +1039,17 @@ function handleFormSave(payload: TaskPayload) {
           </select>
         </div>
         )}
-      </header>
-
-      {/* Sub-header: stat chips + batch bar */}
-      {viewMode === 'execution' && (
-      <div className="bg-white border-b px-6 py-3 space-y-2.5 flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
-        {/* Status chips */}
-        <div className="flex items-center gap-3">
-          {[
-            { label: '未启动', filterVal: '未开始', val: count(tasks, NOT_STARTED), bg: '#F8FAFC', border: '#E2E8F0', color: '#64748B', iconBg: '#E2E8F0',
-              icon: <svg style={{ width: 15, height: 15 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2" /><path strokeLinecap="round" strokeWidth="2" d="M12 8v4" /><circle cx="12" cy="16" r="0.5" fill="currentColor" /></svg> },
-            { label: '进行中', filterVal: '进行中', val: count(tasks, IN_PROGRESS),  bg: '#EFF6FF', border: '#BFDBFE', color: '#2563EB', iconBg: '#DBEAFE',
-              icon: <svg style={{ width: 15, height: 15 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
-            { label: '已完成', filterVal: '已完成', val: count(tasks, COMPLETED),    bg: '#F0FDF4', border: '#BBF7D0', color: '#059669', iconBg: '#D1FAE5',
-              icon: <svg style={{ width: 15, height: 15 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
-            { label: '延期',   filterVal: '延期',   val: count(tasks, DELAYED), bg: '#FEF2F2', border: '#FECACA', color: '#DC2626', iconBg: '#FEE2E2',
-              icon: <svg style={{ width: 15, height: 15 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
-            { label: '暂缓',   filterVal: '暂缓',   val: count(tasks, PAUSED),       bg: '#FFFBEB', border: '#FDE68A', color: '#D97706', iconBg: '#FEF3C7',
-              icon: <svg style={{ width: 15, height: 15 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
-          ].map(({ label, filterVal, val, bg, border, color, iconBg, icon }) => {
-            const isActive = norm(filterStatus) === norm(filterVal)
-            return (
-              <div
-                key={label}
-                onClick={() => setFilterStatus(isActive ? '' : filterVal)}
-                className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl cursor-pointer transition-all hover:scale-[1.03]"
-                style={{
-                  background: bg,
-                  border: `${isActive ? '2px' : '1.5px'} solid ${isActive ? color : border}`,
-                  boxShadow: isActive ? `0 0 0 3px ${color}22` : undefined,
-                }}
-              >
-                <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: iconBg, color }}>
-                  {icon}
-                </div>
-                <div>
-                  <p className="text-xs font-medium leading-none" style={{ color }}>{label}</p>
-                  <p className="text-xl font-bold leading-none mt-0.5" style={{ color }}>{val}</p>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-
-      </div>
-      )}
+      </header>}
 
       {/* Main */}
+      {viewMode === 'execution' && selectedSubTask ? (
+        <KeyTaskExecutionDetailView
+          project={focusedProject}
+          task={tasks.find((task) => task.id === selectedSubTask.task_id) ?? null}
+          subTask={selectedSubTask}
+          onBack={() => clearSelection()}
+        />
+      ) : (
       <div className="flex-1 min-w-0 min-h-0 flex overflow-hidden" style={{ background: viewMode === 'plan' ? '#F8FAFC' : '#F1F5F9' }}>
         <div
           className={viewMode === 'plan' ? 'work-progress-plan-shell flex-1 min-w-0 overflow-hidden flex flex-col' : 'flex-1 overflow-y-auto'}
@@ -1127,6 +1106,13 @@ function handleFormSave(payload: TaskPayload) {
                 })
                 return updated
               }}
+            />
+          ) : viewMode === 'execution' ? (
+            <ExecutionProgressView
+              project={focusedProject}
+              tasks={planBaseTasks}
+              subTasks={taskSubMap}
+              onOpenSubTask={openSubDetail}
             />
           ) : loading ? (
             <div className="h-40 flex items-center justify-center text-slate-400 text-sm">加载中...</div>
@@ -1336,7 +1322,7 @@ function handleFormSave(payload: TaskPayload) {
           )}
         </div>
 
-        {(viewMode === 'execution' || selectedSubTask || subDetailLoading) && <aside
+        {viewMode !== 'execution' && (selectedSubTask || subDetailLoading) && <aside
           data-testid="work-progress-detail-panel"
           className="w-[380px] flex-shrink-0 border-l bg-white flex flex-col overflow-hidden"
           style={{ borderColor: '#E2E8F0' }}
@@ -1772,6 +1758,7 @@ function handleFormSave(payload: TaskPayload) {
         </aside>}
 
       </div>
+      )}
     </div>
   )
 }
@@ -2195,10 +2182,12 @@ function formatPlanTime(sy: number, sm: number, ey: number, em: number) {
   return `${sy}年${sm}月~${ey}年${em}月`
 }
 
-function TaskFormModal({ task, projects, defaultProjectId, onSave, onClose }: {
+function TaskFormModal({ task, projects, defaultProjectId, projectMembersByProject, onLoadProjectMembers, onSave, onClose }: {
   task: TaskItem | null
   projects: Project[]
   defaultProjectId?: number | null
+  projectMembersByProject: Record<number, ProjectMember[]>
+  onLoadProjectMembers: (projectId: number | null | undefined) => void
   onSave: (p: TaskPayload) => void
   onClose: () => void
 }) {
@@ -2222,6 +2211,14 @@ function TaskFormModal({ task, projects, defaultProjectId, onSave, onClose }: {
   const [sm, setSm] = useState(parsed.sm)
   const [ey, setEy] = useState(parsed.ey)
   const [em, setEm] = useState(parsed.em)
+  const selectedProject = projects.find((project) => project.id === form.project_id) ?? null
+  const memberNames = uniqueProjectMemberNames(
+    projectMembersByProject[form.project_id ?? 0] ?? [],
+    form.owner,
+    [...(selectedProject?.owners ?? []), ...(selectedProject?.collaborators ?? []), ...(selectedProject?.coaches ?? []), selectedProject?.coordinator ?? ''],
+  )
+
+  useEffect(() => { onLoadProjectMembers(form.project_id) }, [form.project_id, onLoadProjectMembers])
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -2234,35 +2231,43 @@ function TaskFormModal({ task, projects, defaultProjectId, onSave, onClose }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(15,23,42,0.4)' }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full overflow-hidden" style={{ maxWidth: 640, maxHeight: '90vh' }}>
+      <div className="task-form-modal flex w-full max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl" style={{ maxWidth: 980 }}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: '#E9EFF6' }}>
-          <h2 className="text-base font-bold text-slate-800">{task ? '编辑重点工作' : '新增重点工作'}</h2>
+          <div>
+            <h2 className="text-base font-bold text-slate-800">{task ? '编辑重点工作' : '新增重点工作'}</h2>
+            <p className="mt-1 text-xs text-slate-400">为项目拆解可执行的关键任务</p>
+          </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
             <svg style={{ width: 16, height: 16 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="overflow-y-auto px-6 py-5 space-y-4" style={{ maxHeight: 'calc(90vh - 130px)' }}>
+        <form onSubmit={handleSubmit} className="task-form-modal__body min-h-0 flex-1 overflow-y-auto px-6 py-5">
           {/* 专项 */}
-          <div>
+          <div className="task-form-modal__context mb-5 rounded-lg border border-slate-100 bg-slate-50 px-4 py-3">
             <label className={labelCls}>专项 *</label>
             <select
               className={inputCls}
               value={form.project_id ?? ''}
               onChange={e => {
                 const nextProjectId = e.target.value ? Number(e.target.value) : (projects[0]?.id ?? form.project_id)
-                setForm((f) => ({
-                  ...f,
-                  project_id: nextProjectId,
-                }))
+                    setForm((f) => ({
+                      ...f,
+                      project_id: nextProjectId,
+                      owner: '',
+                      collaborators: '',
+                    }))
               }}
             >
               {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
 
+          <div className="task-form-modal__columns grid gap-8 md:grid-cols-2">
+          <section className="task-form-modal__section space-y-4">
+          <h3 className="border-b border-slate-200 pb-2 text-sm font-semibold text-slate-800">工作定义</h3>
           {/* 重点工作 */}
           <div>
             <label className={labelCls}>重点工作 *</label>
@@ -2280,7 +2285,26 @@ function TaskFormModal({ task, projects, defaultProjectId, onSave, onClose }: {
             <label className={labelCls}>完成标准</label>
             <textarea className={inputCls} rows={2} value={form.completion_standard} onChange={e => setForm(f => ({ ...f, completion_standard: e.target.value }))} placeholder="如何判断该任务已完成" />
           </div>
+          </section>
 
+          <section className="task-form-modal__section space-y-4">
+          <h3 className="border-b border-slate-200 pb-2 text-sm font-semibold text-slate-800">执行安排</h3>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className={labelCls}>负责人</label>
+                  <select className={inputCls} value={form.owner} onChange={e => setForm(f => ({ ...f, owner: e.target.value }))}>
+                    <option value="">请选择负责人</option>
+                    {memberNames.map((name) => <option key={name} value={name}>{name}</option>)}
+                  </select>
+            </div>
+            <div>
+              <label className={labelCls}>协同人 <span className="font-normal text-slate-400">（选填）</span></label>
+                  <select className={inputCls} value={form.collaborators} onChange={e => setForm(f => ({ ...f, collaborators: e.target.value }))}>
+                    <option value="">可不指定</option>
+                    {memberNames.filter((name) => name !== form.owner).map((name) => <option key={name} value={name}>{name}</option>)}
+                  </select>
+            </div>
+          </div>
           {/* 计划完成时间 */}
           <div>
             <label className={labelCls}>计划时间段</label>
@@ -2313,16 +2337,19 @@ function TaskFormModal({ task, projects, defaultProjectId, onSave, onClose }: {
             </select>
             <p className="text-xs text-slate-400 mt-1">已完成状态由关键任务完成情况汇总，直接保存已完成会由后端校验。</p>
           </div>
+          </section>
+          </div>
 
           {/* 问题与协调 */}
-          <div>
+          <div className="mt-5 border-t border-slate-100 pt-4">
             <label className={labelCls}>问题与协调</label>
             <textarea className={inputCls} rows={2} value={form.problem_note} onChange={e => setForm(f => ({ ...f, problem_note: e.target.value }))} placeholder="当前存在的阻碍或需协调的事项" />
           </div>
         </form>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t flex justify-end gap-3 flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
+        <div className="px-6 py-4 border-t flex items-center justify-between gap-3 flex-shrink-0" style={{ borderColor: '#E9EFF6' }}>
+          <p className="task-form-modal__footer-note text-xs text-slate-400">创建后可继续补充关键任务</p>
           <button type="button" onClick={onClose} className="px-5 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50">取消</button>
           <button type="submit" form="" onClick={handleSubmit as any} className="px-5 py-2 rounded-xl text-white text-sm font-bold hover:opacity-90" style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}>
             {task ? '保存修改' : '创建任务'}

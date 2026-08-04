@@ -9,7 +9,6 @@ logger = logging.getLogger("bowei.extractor")
 from ..domain import issue_type as IT
 
 USE_LLM = os.getenv("BOWEI_USE_LLM", "false").lower() == "true"
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic").lower()
 # 单次 LLM 调用最长等待秒数，可通过环境变量覆盖
 _LLM_TIMEOUT = int(os.getenv("LLM_CALL_TIMEOUT", "45"))
 
@@ -1049,9 +1048,11 @@ def extract_tasks(text: str, provider: str | None = None, project_names: list[st
 
     effective_provider: str | None = None
     if provider and provider != "rules":
-        effective_provider = provider
+        from ..llm_config import resolve_provider
+        effective_provider = resolve_provider(provider)
     elif USE_LLM:
-        effective_provider = LLM_PROVIDER
+        from ..llm_config import resolve_provider
+        effective_provider = resolve_provider()
 
     if not effective_provider:
         raise RuntimeError("未配置可用AI引擎，请在系统设置中配置API Key")
@@ -1151,9 +1152,11 @@ def extract_update(
 
     effective_provider = None
     if provider and provider != "rules":
-        effective_provider = provider
+        from ..llm_config import resolve_provider
+        effective_provider = resolve_provider(provider)
     elif USE_LLM:
-        effective_provider = LLM_PROVIDER
+        from ..llm_config import resolve_provider
+        effective_provider = resolve_provider()
 
     if effective_provider:
         llm_data = _extract_with_llm(text, effective_provider, user_subtasks)

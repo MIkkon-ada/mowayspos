@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { fetchMeetings, patchMeetingStatus } from '../api/meetings'
+import { fetchMeetingRevisions, fetchMeetings, patchMeetingStatus, type MeetingRevisionItem } from '../api/meetings'
+import { getOverview } from '../api/dashboard'
 import { useProject } from '../context/ProjectContext'
 import type { MeetingItem } from '../types'
 import { InfoRow, MeetingSection, renderJsonList } from '../features/meeting/meetingShared'
@@ -28,6 +29,9 @@ export function MeetingPage() {
   const [showReturnInput, setShowReturnInput] = useState(false)
   const [showNewModal, setShowNewModal] = useState(false)
   const [editingItem, setEditingItem] = useState<MeetingItem | null>(null)
+  const [projectProgress, setProjectProgress] = useState<Record<number, number>>({})
+  const [revisions, setRevisions] = useState<MeetingRevisionItem[]>([])
+  const [selectedRevision, setSelectedRevision] = useState<MeetingRevisionItem | null>(null)
 
   const currentProject = projects.find((p) => p.id === currentProjectId) ?? null
   const effectiveProject = projects.find((p) => p.id === effectiveProjectId) ?? null
@@ -54,6 +58,57 @@ export function MeetingPage() {
       cancelled = true
     }
   }, [effectiveProjectId, urlMeetingId])
+
+  useEffect(() => {
+    if (!selected) {
+      setRevisions([])
+      setSelectedRevision(null)
+      return
+    }
+    let cancelled = false
+    fetchMeetingRevisions(selected.id)
+      .then((rows) => {
+        if (cancelled) return
+        setRevisions(rows)
+        setSelectedRevision(rows[0] ?? null)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRevisions([])
+          setSelectedRevision(null)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selected?.id])
+
+  useEffect(() => {
+    if (effectiveProjectId || projects.length === 0) return
+    let cancelled = false
+
+    getOverview()
+      .then((overview) => {
+        const cards = overview.project_cards
+        if (cancelled || !Array.isArray(cards)) return
+        const nextProgress: Record<number, number> = {}
+        cards.forEach((card) => {
+          if (!card || typeof card !== 'object') return
+          const item = card as Record<string, unknown>
+          const projectId = Number(item.project_id)
+          const completionRate = Number(item.completion_rate)
+          if (Number.isFinite(projectId) && Number.isFinite(completionRate)) {
+            nextProgress[projectId] = Math.max(0, Math.min(100, completionRate))
+          }
+        })
+        setProjectProgress(nextProgress)
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
+  }, [effectiveProjectId, projects.length])
 
   async function handleStatusChange(status: PublishStatus) {
     if (!selected) return
@@ -128,21 +183,70 @@ export function MeetingPage() {
 
       <main className="flex-1 overflow-y-auto p-6" style={{ background: '#F1F5F9' }}>
         {!effectiveProjectId && !loading && (
-          <div className="max-w-md mx-auto mt-16">
-            <div className="bg-white rounded-2xl border p-6 text-center" style={{ borderColor: '#E9EFF6' }}>
+          <div className="max-w-3xl mx-auto mt-12">
+            <div className="bg-white rounded-2xl border p-6 sm:p-8 text-center" style={{ borderColor: '#E9EFF6' }}>
               <h2 className="text-base font-bold text-slate-700 mb-2">请选择要查看的项目</h2>
               <p className="text-sm text-slate-400 mb-5">选择一个项目，即可查看和创建会议纪要</p>
-              <div className="space-y-2">
-                {projects.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => setSearchParams((prev) => { prev.set('projectId', String(p.id)); return prev })}
-                    className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 text-sm font-medium text-slate-700 hover:bg-blue-50 hover:border-blue-200 transition-colors"
-                  >
-                    <div>{p.name}</div>
-                    {p.code && <div className="text-xs text-slate-400 mt-0.5">{p.code}</div>}
-                  </button>
-                ))}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-left">
+                {projects.map((p) => {
+                  const manager = p.owners?.[0] ?? p.coordinator ?? '—'
+                  const memberCount = Object.values(p.member_counts ?? {}).reduce((sum, count) => sum + count, 0)
+                  const shortDate = (value?: string) => {
+                    if (!value) return '—'
+                    const [, month, day] = value.split('-')
+                    return `${Number(month)}月${Number(day)}日`
+                  }
+                  const period = p.start_date || p.end_date ? `${shortDate(p.start_date)} — ${shortDate(p.end_date)}` : '\u6682\u672a\u8bbe\u7f6e'
+                  const statusLabel = p.is_active ? '\u8fdb\u884c\u4e2d' : '\u672a\u542f\u7528'
+                  const progress = projectProgress[p.id] ?? 0
+
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => setSearchParams((prev) => { prev.set('projectId', String(p.id)); return prev })}
+                      className="aspect-square flex flex-col rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-50/40 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500 text-white shadow-sm">
+                          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M12 3v3m0 12v3M3 12h3m12 0h3M5.64 5.64l2.12 2.12m8.48 8.48 2.12 2.12m0-12.72-2.12 2.12m-8.48 8.48-2.12 2.12M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+                          </svg>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-base font-bold text-slate-800">{p.name}</div>
+                          {p.code && <div className="mt-0.5 truncate text-xs text-slate-400">{p.code}</div>}
+                        </div>
+                        <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold ${p.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>{statusLabel}</span>
+                      </div>
+
+                      <div className="mt-5 overflow-hidden rounded-xl border border-slate-100 bg-slate-50/60 text-sm">
+                        <div className="project-card-period flex items-center gap-4 border-b border-slate-100 p-3">
+                          <div className="w-20 shrink-0 text-[11px] text-slate-400">{'\u9879\u76ee\u5468\u671f'}</div>
+                          <div className="min-w-0 flex-1 truncate font-medium text-slate-700" title={period}>{period}</div>
+                        </div>
+                        <div className="project-card-manager flex items-center gap-4 border-b border-slate-100 p-3">
+                          <div className="w-20 shrink-0 text-[11px] text-slate-400">{'\u9879\u76ee\u7ecf\u7406'}</div>
+                          <div className="min-w-0 flex-1 truncate font-medium text-slate-700" title={manager}>{manager}</div>
+                        </div>
+                        <div className="project-card-members flex items-center gap-4 border-b border-slate-100 p-3">
+                          <div className="w-20 shrink-0 text-[11px] text-slate-400">{'\u9879\u76ee\u6210\u5458'}</div>
+                          <div className="mt-1 font-medium text-slate-700">{memberCount > 0 ? `${memberCount} \u4eba` : '—'}</div>
+                        </div>
+                        <div className="project-card-progress flex items-center gap-4 p-3">
+                          <div className="w-20 shrink-0 text-[11px] text-slate-400">{'\u5f53\u524d\u8fdb\u5ea6'}</div>
+                          <div className="min-w-0 flex-1 truncate font-medium text-slate-700">{`${progress}%`}</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-auto pt-5">
+                        <div className="h-1.5 overflow-hidden rounded-full bg-slate-100" role="progressbar" aria-label={'\u9879\u76ee\u5f53\u524d\u8fdb\u5ea6'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+                          <div className="h-full rounded-full bg-sky-500" style={{ width: `${progress}%` }} />
+                        </div>
+                        <div className="mt-3 text-right text-sm font-semibold text-sky-600">{'\u8fdb\u5165\u9879\u76ee \u2192'}</div>
+                      </div>
+                    </button>
+                  )
+                })}
               </div>
               <p className="text-xs text-slate-400 mt-4">
                 或从左侧菜单进入任意项目功能区，顶部栏会自动切换当前项目
@@ -179,11 +283,10 @@ export function MeetingPage() {
                   <InfoRow label="会议名称" value={selected.title ?? '-'} />
                   <InfoRow label="日期" value={selected.meeting_date ?? '-'} />
                   <InfoRow label="主持人" value={selected.host ?? '-'} />
-                  <InfoRow label="参会人" value={selected.participants ?? '-'} />
                   <InfoRow label="类型" value={typeLabel(selected.meeting_type)} />
                 </MeetingSection>
                 {selected.summary && (
-                  <MeetingSection title="会议摘要">
+                  <MeetingSection title="会议要点">
                     <p className="text-xs text-slate-600 leading-relaxed">{selected.summary}</p>
                   </MeetingSection>
                 )}
@@ -264,6 +367,40 @@ export function MeetingPage() {
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {selected && revisions.length > 0 && (
+          <div className="bg-white rounded-2xl border p-5 mb-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-bold text-slate-800">纪要版本历史</h2>
+              <span className="text-[11px] text-slate-400">只读</span>
+            </div>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {revisions.map((revision) => (
+                <button
+                  key={revision.id}
+                  type="button"
+                  onClick={() => setSelectedRevision(revision)}
+                  className={`rounded-lg border px-2.5 py-1.5 text-xs ${selectedRevision?.id === revision.id ? 'border-sky-400 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-600'}`}
+                >
+                  {revision.is_legacy_snapshot ? '升级前历史快照' : `V${revision.version_no}`}
+                </button>
+              ))}
+            </div>
+            {selectedRevision && (
+              <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+                <div className="mb-2 flex items-center justify-between text-[11px] text-slate-400">
+                  <span>{selectedRevision.saved_by || '系统'} · {fmtTime(selectedRevision.saved_at)}</span>
+                  <span>只读版本</span>
+                </div>
+                <p className="whitespace-pre-wrap leading-6">{selectedRevision.summary || '暂无摘要'}</p>
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-sky-700">查看该版本原始转写</summary>
+                  <p className="mt-2 whitespace-pre-wrap leading-6">{selectedRevision.transcript_text}</p>
+                </details>
+              </div>
+            )}
           </div>
         )}
 

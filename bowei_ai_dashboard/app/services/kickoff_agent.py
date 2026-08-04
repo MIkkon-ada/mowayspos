@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
@@ -49,3 +50,43 @@ def normalize_agent_result(result: dict[str, Any], snapshot: dict[str, Any]) -> 
     else:
         conclusion = "changes_proposed"
     return {"summary": str(result.get("summary") or ""), "snapshot": snapshot, "start_conclusion": conclusion, "proposals": normalized}
+
+
+def validate_proposal(proposal: dict[str, Any], snapshot: dict[str, Any]) -> list[str]:
+    """Keep model suggestions within the immutable project plan snapshot."""
+    target_type = proposal.get("target_type")
+    target_id = proposal.get("target_id")
+    if target_type not in {"task", "subtask"} or target_id is None:
+        return []
+    task_ids = {task.get("id") for task in snapshot.get("tasks", [])}
+    subtask_ids = {
+        subtask.get("id")
+        for task in snapshot.get("tasks", [])
+        for subtask in task.get("subtasks", [])
+    }
+    allowed = task_ids if target_type == "task" else subtask_ids
+    if target_id not in allowed:
+        return ["target_id does not belong to the frozen kickoff snapshot"]
+    return []
+
+
+def run_kickoff_agent(
+    transcript: str,
+    snapshot: dict[str, Any],
+    provider: Callable[[str], dict[str, Any] | str],
+) -> dict[str, Any]:
+    """Ask the provider for review-only proposals and deterministically validate them."""
+    prompt = (
+        "Return JSON only with summary and proposals. Each proposal must include proposal_type, "
+        "target_type, target_id, before, proposed, and evidence. Do not invent IDs.\n"
+        f"Frozen plan: {json.dumps(snapshot, ensure_ascii=False)}\nMeeting transcript: {transcript}"
+    )
+    raw = provider(prompt)
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    if not isinstance(raw, dict):
+        raise ValueError("kickoff Agent returned an invalid JSON object")
+    package = normalize_agent_result(raw, snapshot)
+    for proposal in package["proposals"]:
+        proposal["validation_errors"] = validate_proposal(proposal, snapshot)
+    return package

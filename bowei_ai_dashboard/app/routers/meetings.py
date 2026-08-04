@@ -28,10 +28,41 @@ from ..permissions import (
 )
 from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
-from ..services.kickoff_agent import build_kickoff_snapshot, normalize_agent_result
+from ..services.kickoff_agent import build_kickoff_snapshot, run_kickoff_agent
 from ..services.kickoff_writeback import confirm_kickoff_start
+from ..services.meeting_revisions import append_meeting_revision
+from ..services.meeting_traceability import normalize_action_items
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
+
+
+def _kickoff_run_payload(run: models.KickoffAgentRun, db: Session) -> dict:
+    payload = crud.to_dict(run)
+    payload["proposals"] = [
+        crud.to_dict(item)
+        for item in db.query(models.KickoffChangeProposal)
+        .filter_by(run_id=run.id)
+        .order_by(models.KickoffChangeProposal.id.asc())
+        .all()
+    ]
+    return payload
+
+
+@router.get("/kickoff-runs")
+def list_kickoff_runs(
+    project_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    require_project_access(current_user, project_id, db)
+    return [
+        _kickoff_run_payload(run, db)
+        for run in db.query(models.KickoffAgentRun)
+        .filter_by(project_id=project_id)
+        .order_by(models.KickoffAgentRun.id.desc())
+        .all()
+    ]
 
 
 @router.post("/kickoff-runs")
@@ -48,7 +79,16 @@ def create_kickoff_run(
         raise HTTPException(409, "项目不处于待启动会状态")
     account = db.query(models.Account).filter_by(username=current_user).first()
     snapshot = build_kickoff_snapshot(project_id, db)
-    package = normalize_agent_result({"summary": "", "proposals": []}, snapshot)
+    provider = _pick_provider()
+    try:
+        package = run_kickoff_agent(
+            payload.transcript_text,
+            snapshot,
+            lambda prompt: _do_analyze(payload.transcript_text, prompt, provider),
+        )
+    except Exception as exc:
+        logger.exception("kickoff Agent execution failed")
+        raise HTTPException(502, f"启动会 Agent 运行失败: {exc}") from exc
     run = models.KickoffAgentRun(project_id=project_id, snapshot_json=json.dumps(snapshot, ensure_ascii=False), result_json=json.dumps(package, ensure_ascii=False), status="draft", created_by_person_id=account.person_id if account else None)
     db.add(run)
     db.flush()
@@ -65,7 +105,30 @@ def create_kickoff_run(
         ))
     db.commit()
     db.refresh(run)
-    return crud.to_dict(run)
+    return _kickoff_run_payload(run, db)
+
+
+@router.post("/kickoff-runs/{run_id}/submit")
+def submit_kickoff_run(
+    run_id: int,
+    payload: schemas.KickoffRunSubmitPayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    run = db.get(models.KickoffAgentRun, run_id)
+    if not run:
+        raise HTTPException(404, "启动会审核包不存在")
+    require_project_role(current_user, run.project_id, [PROJECT_ROLE_OWNER_KEY], db)
+    if run.status != "draft":
+        raise HTTPException(409, "启动会审核包不能重复提交")
+    package = json.loads(run.result_json or "{}")
+    package["summary"] = payload.summary.strip() or package.get("summary", "")
+    run.result_json = json.dumps(package, ensure_ascii=False)
+    run.status = "submitted"
+    db.commit()
+    db.refresh(run)
+    return _kickoff_run_payload(run, db)
 
 
 @router.post("/kickoff-runs/{run_id}/confirm-start")
@@ -99,9 +162,11 @@ def review_kickoff_proposal(
     if not run or not proposal or proposal.run_id != run.id:
         raise HTTPException(404, "启动会提案不存在")
     require_project_role(current_user, run.project_id, [PROJECT_ROLE_CEO_KEY], db)
+    account = db.query(models.Account).filter_by(username=current_user).first()
+    if account and account.person_id and run.created_by_person_id == account.person_id:
+        raise HTTPException(403, "PM 不能审核自己提交的启动会")
     if payload.status not in {"approved", "returned"}:
         raise HTTPException(422, "审核状态必须为 approved 或 returned")
-    account = db.query(models.Account).filter_by(username=current_user).first()
     proposal.review_status = payload.status
     proposal.review_comment = payload.review_comment.strip()
     proposal.reviewer_person_id = account.person_id if account else None
@@ -224,6 +289,9 @@ def create_meeting(
         db,
     )
     require_project_business_writable(payload.project_id, db)
+    project = db.get(models.Project, payload.project_id)
+    if project and project.status == "pending_kickoff":
+        raise HTTPException(409, "项目待启动会确认，不能创建普通会议")
 
     project_name = resolve_project_context(
         db,
@@ -245,6 +313,7 @@ def create_meeting(
         row.related_special_project = project_name
     db.add(row)
     db.flush()
+    append_meeting_revision(db, row, saved_by=current_user)
     if row.publish_status == "draft" and row.project_id:
         from ..services.notify import company_ceo_person_ids, project_strict_owner_ids, send as _notify
         for recipient_id in set(project_strict_owner_ids(row.project_id, db) + company_ceo_person_ids(db)):
@@ -265,6 +334,49 @@ class MeetingAnalyzeRequest(BaseModel):
     member_names: list[str] | None = None  # 项目成员姓名列表，用于构建成员上下文
 
 
+def _project_member_names(project_id: int | None, db: Session) -> set[str]:
+    if not project_id:
+        return set()
+    rows = db.query(models.ProjectMember.person_name_snapshot).filter(
+        models.ProjectMember.project_id == project_id,
+    ).all()
+    return {str(row[0]).strip() for row in rows if row[0] and str(row[0]).strip()}
+
+
+def _tag_action_item_members(action_items: list, project_id: int | None, db: Session) -> list:
+    member_names = _project_member_names(project_id, db)
+    tagged: list = []
+    for item in action_items:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        candidate = str(row.get("member") or "").strip()
+        row["member"] = candidate if candidate in member_names else "待确认"
+        row["deadline"] = str(row.get("deadline") or "待确认").strip()
+        row["acceptance_criteria"] = str(row.get("acceptance_criteria") or "待确认").strip()
+        row["evidence_quote"] = str(
+            row.get("evidence_quote") or row.get("evidence") or "待确认"
+        ).strip()
+        tagged.append(row)
+    return tagged
+
+
+def _tag_report_members(reports: list, project_id: int | None, db: Session) -> list:
+    """仅将 AI 从原文提取出的发言归属与真实项目成员精确匹配。"""
+    member_names = _project_member_names(project_id, db)
+    tagged: list = []
+    for item in reports:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        if not str(row.get("content") or "").strip():
+            continue
+        candidate = str(row.get("member") or "").strip()
+        row["member"] = candidate if candidate in member_names else "待确认"
+        tagged.append(row)
+    return tagged
+
+
 @router.post("/analyze")
 async def analyze_meeting(
     payload: MeetingAnalyzeRequest,
@@ -278,11 +390,13 @@ async def analyze_meeting(
     if not payload.text.strip():
         raise HTTPException(422, "text 不能为空")
 
-    # 构建真实上下文
-    member_context_text = _build_all_members_context(
-        payload.member_names or [], payload.project_id, db
-    ) if payload.project_id else ""
-    tasks_context_text = _build_tasks_context(payload.project_id, db) if payload.project_id else ""
+    # 推进表只提供关联与核对上下文；会议原文仍是唯一的纪要事实来源。
+    project_member_names = sorted(_project_member_names(payload.project_id, db))
+    work_plan_context = _build_all_members_context(project_member_names, payload.project_id, db)
+    member_context_text = work_plan_context
+    tasks_context_text = work_plan_context
+
+    has_speakers = bool(re.search(r"\d+", payload.text))
 
     # 用户明确选择了模式就用指定 prompt；否则自动检测
     if payload.mode == "progress":
@@ -297,7 +411,6 @@ async def analyze_meeting(
         )
     else:
         # 自动检测：如果转写文本里有说话人编号，就使用带成员背景的提示词
-        has_speakers = bool(re.search(r"\d+", payload.text))
         if has_speakers:
             prompt = _PROMPT_REPORT.format(
                 member_context=member_context_text or "（暂无成员上下文）",
@@ -309,6 +422,15 @@ async def analyze_meeting(
                 text=payload.text[:8000],
             )
 
+    prompt += """
+HARD TRACEABILITY RULES:
+- Only extract work items, decisions, and risks explicitly supported by the transcript.
+- Every action_items entry must include member, task, deadline, acceptance_criteria, and evidence_quote.
+- evidence_quote must be a short verbatim quote from the transcript; if unavailable, return 待确认.
+- If member, deadline, or acceptance_criteria is not explicit, return 待确认 instead of inferring it.
+- Never use project context as evidence for a meeting fact.
+"""
+
     provider = _pick_provider()
     try:
         result = await asyncio.to_thread(_do_analyze, payload.text, prompt, provider)
@@ -316,24 +438,72 @@ async def analyze_meeting(
         logger.warning("meeting analyze failed: %s", exc)
         raise HTTPException(500, f"AI analysis failed: {exc}")
 
-    reports = result.get("reports") or []
-    decisions = result.get("decisions") or []
-    action_items = result.get("action_items") or result.get("task_list") or []
+    reports = _tag_report_members(result.get("reports") or [], payload.project_id, db)
+    confirmed_items = result.get("confirmed_items") or []
+    decision_requests = result.get("decision_requests") or []
+    action_items = _tag_action_item_members(
+        result.get("action_items") or result.get("task_list") or [],
+        payload.project_id,
+        db,
+    )
+    action_items = normalize_action_items(action_items, payload.text)
 
     return {
         "title": result.get("title", ""),
         "meeting_type": result.get("meeting_type", ""),
         "meeting_date": result.get("meeting_date", ""),
         "host": result.get("host", ""),
-        "participants": result.get("participants", ""),
+        "participants": "",
         "summary": result.get("summary", ""),
         "reports_json": json.dumps(reports, ensure_ascii=False),
         "task_list_json": json.dumps(action_items, ensure_ascii=False),
-        "decision_items_json": json.dumps(decisions, ensure_ascii=False),
-        "risk_items_json": json.dumps(result.get("risk_items") or [], ensure_ascii=False),
+        "confirmed_items_json": json.dumps(confirmed_items, ensure_ascii=False),
+        "decision_items_json": json.dumps(decision_requests, ensure_ascii=False),
+        "risk_items_json": json.dumps(confirmed_items, ensure_ascii=False),
         "transcript_text": payload.text,
         "has_speakers": has_speakers,
     }
+
+
+@router.get("/{row_id}/revisions")
+def list_meeting_revisions(
+    row_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    context = get_user_context_from_db(current_user, db)
+    row = db.get(models.Meeting, row_id)
+    if not row:
+        raise HTTPException(404, "meeting not found")
+    project_id = _row_project_id(row, db)
+    if row.publish_status != "published" and not _can_view_meeting_draft(row, current_user, context, db):
+        raise HTTPException(403, "permission denied")
+    if project_id is not None:
+        require_project_access(current_user, project_id, db)
+    elif not (context.get("is_tech_admin") or context.get("is_ceo")):
+        raise HTTPException(403, "permission denied")
+    rows = (
+        db.query(models.MeetingRevision)
+        .filter(models.MeetingRevision.meeting_id == row_id)
+        .order_by(models.MeetingRevision.version_no.desc(), models.MeetingRevision.id.desc())
+        .all()
+    )
+    return [crud.to_dict(item) for item in rows]
+
+
+@router.get("/{row_id}/revisions/{version_no}")
+def get_meeting_revision(
+    row_id: int,
+    version_no: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    rows = list_meeting_revisions(row_id, current_user, db)
+    for item in rows:
+        if item["version_no"] == version_no:
+            return item
+    raise HTTPException(404, "meeting revision not found")
 
 
 @router.get("/{row_id}")
@@ -386,11 +556,17 @@ def update_meeting(
         for k, v in payload.model_dump().items()
         if k not in {"project_id", "related_special_project"}
     }
-    crud.update_model(row, update_data)
     if context.get("is_tech_admin") and payload.project_id is not None:
         row.project_id = payload.project_id
     if context.get("is_tech_admin") and payload.related_special_project:
         row.related_special_project = payload.related_special_project
+    append_meeting_revision(
+        db,
+        row,
+        update_data,
+        saved_by=current_user,
+        preserve_legacy=True,
+    )
     crud.log(db, current_user, "meeting_update", "meeting", row.id, before, payload.model_dump())
     db.commit()
     return crud.to_dict(row)
@@ -631,9 +807,11 @@ async def generate_task_cards(
     return {"task_cards": enriched}
 
 
-_PROMPT_GENERIC = """你是一个会议纪要结构化提取助手。请从下面的会议文字中提取结构化信息，只输出 JSON。
+_PROMPT_GENERIC = """你是一个只做事实提取的会议纪要助手。请从下面的会议文字中提取结构化信息，只输出 JSON。
 
-【项目当前计划（供参考）】
+只可提取原文明确出现的事实。不得推断、评价、补全或编写原文没有的结论、负责人、截止时间、状态、风险或建议；原文未提及的字段必须留空或返回空数组。不得生成参会人员。
+
+【工作推进表上下文（仅用于理解和核对，不得作为会议事实写入）】
 {tasks_context}
 
 【会议文字】
@@ -647,23 +825,26 @@ _PROMPT_GENERIC = """你是一个会议纪要结构化提取助手。请从下�
   "meeting_type": "weekly/monthly/review/special/discuss/kickoff，选最合适的",
   "meeting_date": "YYYY-MM-DD，未提及则空字符串",
   "host": "主持人姓名，未提及则空字符串",
-  "participants": "参会人逗号分隔",
-  "summary": "100字以内整体摘要",
+  "participants": "",
+  "summary": "100字以内事实性会议要点",
   "reports": [],
-  "decisions": ["决策事项"],
+  "confirmed_items": ["会议已明确确认并可直接入库的事项"],
+  "decision_requests": ["需要企业教练判断的事项"],
   "action_items": [{{"member": "负责人", "task": "事项", "deadline": "时间或空字符串"}}]
 }}
 
 要求：
-- 对照「项目当前计划」，识别会议中讨论的新增、修改或取消的计划项
-- 决策事项中记录对计划的调整决定
-- action_items 中优先列出计划中未覆盖的新事项
+- confirmed_items 仅记录会议原文已明确拍板的结果；没有则空数组
+- decision_requests 仅记录原文明确要求企业教练判断、确认或裁定的事项；普通讨论、已拍板结果与待办不得放入此字段
+- 负责人或截止时间没有在原文明确出现时，分别填空字符串
 """
 
 # 项目汇报会提示词（有发言人映射 + 成员上下文时使用）
-_PROMPT_REPORT = """你是一个项目推进汇报会的会议纪要提取专家。
+_PROMPT_REPORT = """你是一个只做事实提取的会议纪要助手。
 
-【参会人员及背景】
+只可依据下方“会议转录文字”中明确出现的内容生成纪要。不得推断、评价、补全或润色为原文未表达的结论；不得生成参会人员。不能生成进度状态、角色、领导反馈、风险判断或常识性建议，除非原文逐项明确说明。会议要点只能复述原文的议题、已明确结论和待办，不能判断“整体按计划”“进展顺利”等原文未出现的状态。原文未提及的字段必须留空或返回空数组。
+
+【工作推进表上下文（仅用于理解和核对，不得作为会议事实写入）】
 {member_context}
 
 【会议转录文字】
@@ -695,25 +876,17 @@ _PROMPT_REPORT = """你是一个项目推进汇报会的会议纪要提取专家
   "meeting_type": "weekly/monthly/review/special/discuss/kickoff",
   "meeting_date": "YYYY-MM-DD或空字符串",
   "host": "主持人姓名",
-  "participants": "参会人逗号分隔",
-  "summary": "100字以内整体摘要，概括本次汇报的整体完成情况和核心议题",
+  "participants": "",
+  "summary": "100字以内会议要点，只复述原文明确出现的议题、结论和待办，不作状态判断",
   "reports": [
     {{
       "member": "成员姓名",
-      "role": "该成员在项目中的角色",
-      "completed_items": ["本期完成的事项"],
-      "vs_last_plan": "完成/部分完成/未完成/未提及",
-      "issues": ["遇到的问题或卡点"],
-      "requests": ["请求协助或需要决策的内容"],
-      "leader_feedback": {{
-        "positive": ["领导肯定的内容"],
-        "improve": ["领导指出需要改进的地方"],
-        "reminder": ["领导补充提醒但汇报人未提到的重要点"]
-      }},
-      "next_steps": [{{"task": "事项描述", "deadline": "时间节点或空字符串"}}]
+      "content": "该成员在本次会议中明确说出的进度更新；无实际更新不得生成该成员对象",
+      "related_task": "仅可填写工作推进表中可精确关联的任务名称；无法精确关联则空字符串"
     }}
   ],
-  "decisions": ["本次会议整体决策事项"],
+  "confirmed_items": ["会议已明确确认并可直接入库的事项"],
+  "decision_requests": ["需要企业教练判断的事项"],
   "action_items": [{{"member": "负责人", "task": "事项", "deadline": "时间或空字符串"}}]
 }}
 """
@@ -895,10 +1068,13 @@ def _do_analyze(text: str, prompt: str, provider: str) -> dict:
         )
         raw = resp.choices[0].message.content or ""
 
-    match = re.search(r"\{[\s\S]+\}", raw.strip())
-    if not match:
+    start = raw.find("{")
+    if start < 0:
         raise ValueError("LLM 未返回有效 JSON")
-    return json.loads(match.group())
+    result, _ = json.JSONDecoder().raw_decode(raw[start:])
+    if not isinstance(result, dict):
+        raise ValueError("LLM 未返回有效 JSON")
+    return result
 
 
 def _pick_provider() -> str:

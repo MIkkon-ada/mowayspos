@@ -13,10 +13,12 @@ depends_on = None
 
 def upgrade() -> None:
     with op.batch_alter_table("meetings") as batch_op:
-        batch_op.add_column(sa.Column("creator_person_id", sa.Integer(), sa.ForeignKey("people.id"), nullable=True))
+        batch_op.add_column(sa.Column("creator_person_id", sa.Integer(), nullable=True))
+        batch_op.create_foreign_key("fk_meetings_creator_person_id_people", "people", ["creator_person_id"], ["id"])
         batch_op.create_index("ix_meetings_creator_person_id", ["creator_person_id"])
 
 def downgrade() -> None:
     with op.batch_alter_table("meetings") as batch_op:
         batch_op.drop_index("ix_meetings_creator_person_id")
+        batch_op.drop_constraint("fk_meetings_creator_person_id_people", type_="foreignkey")
         batch_op.drop_column("creator_person_id")

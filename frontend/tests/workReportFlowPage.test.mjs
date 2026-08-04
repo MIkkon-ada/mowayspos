@@ -536,6 +536,12 @@ test('editor uses one cohesive SaaS workspace with a compact visible footer', ()
   assert.match(css, /\.voice-update-footer-bar\s*\{[^}]*height:\s*56px/s)
 })
 
+test('result panel declares its border in one rule to avoid shorthand conflicts', () => {
+  const css = read(CSS)
+  assert.match(css, /\.voice-update-result-panel\s*\{[^}]*border:\s*0[^}]*border-left:\s*1px solid/s)
+  assert.doesNotMatch(css, /\.voice-update-result-panel\s*\{[^}]*\}\s*\.voice-update-result-panel\s*\{[^}]*border-left:/s)
+})
+
 test('unconfirmed Agent ownership blocks formal submission without changing createUpdate', async () => {
   const { hasUnconfirmedOwnership } = await loadFlowModel()
   assert.equal(hasUnconfirmedOwnership([{ type: 'progress', match_status: 'matched', matched_subtask_id: 1 }]), false)

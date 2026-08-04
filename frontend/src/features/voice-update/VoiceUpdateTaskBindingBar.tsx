@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Project } from '../../types'
 import type { VoiceTaskContext } from './useVoiceTaskBinding'
 import type { VoiceReportScope } from './voiceUpdateResultTypes'
@@ -17,6 +18,7 @@ type VoiceUpdateTaskBindingBarProps = {
   onProjectChange: (projectId: number | null) => void
   onScopeChange: (scope: VoiceReportScope) => void
   onTaskChange: (subtaskId: number | null) => void
+  onQuickTaskSelect: (projectId: number, subtaskId: number) => void
   onOpenTaskDetail: () => void
 }
 
@@ -35,17 +37,41 @@ export function VoiceUpdateTaskBindingBar({
   onProjectChange,
   onScopeChange,
   onTaskChange,
+  onQuickTaskSelect,
   onOpenTaskDetail,
 }: VoiceUpdateTaskBindingBarProps) {
+  const [scopeMenuOpen, setScopeMenuOpen] = useState(false)
+  const [hoveredScope, setHoveredScope] = useState<VoiceReportScope | null>(null)
+  const scopeLabel = scope === 'project' ? '指定项目' : scope === 'task' ? '指定关键任务' : '我的全部工作'
+
+  function chooseScope(nextScope: VoiceReportScope) {
+    onScopeChange(nextScope)
+    setScopeMenuOpen(false)
+    setHoveredScope(null)
+  }
+
   return (
     <section className="voice-update-binding" aria-label="汇报任务绑定">
-      <label className="voice-update-binding-field is-scope">
-        <select value={scope} disabled={controlsLocked} onChange={(event) => onScopeChange(event.target.value as VoiceReportScope)}>
-          <option value="all">我的全部工作</option>
-          <option value="project">指定项目</option>
-          <option value="task">指定关键任务</option>
-        </select>
-      </label>
+      <div className="voice-update-scope-menu" onMouseLeave={() => setHoveredScope(null)}>
+        <button type="button" className="voice-update-scope-trigger" disabled={controlsLocked} onClick={() => setScopeMenuOpen((open) => !open)} aria-expanded={scopeMenuOpen}>
+          <span>{scopeLabel}</span><span className="voice-update-binding-scope-arrow" aria-hidden="true" />
+        </button>
+        {scopeMenuOpen && <div className="voice-update-scope-options">
+          <button type="button" className={scope === 'all' ? 'is-selected' : ''} onClick={() => chooseScope('all')}>我的全部工作</button>
+          <div className="voice-update-scope-option-group" onMouseEnter={() => setHoveredScope('project')}>
+            <button type="button" className={scope === 'project' ? 'is-selected' : ''} onClick={() => chooseScope('project')}>指定项目 <span>›</span></button>
+            {hoveredScope === 'project' && <div className="voice-update-scope-submenu">
+              {activeProjects.map((project) => <button type="button" key={project.id} onClick={() => { onScopeChange('project'); onProjectChange(project.id); setScopeMenuOpen(false) }}>{project.name}</button>)}
+            </div>}
+          </div>
+          <div className="voice-update-scope-option-group" onMouseEnter={() => setHoveredScope('task')}>
+            <button type="button" className={scope === 'task' ? 'is-selected' : ''} onClick={() => chooseScope('task')}>指定关键任务 <span>›</span></button>
+            {hoveredScope === 'task' && <div className="voice-update-scope-submenu voice-update-scope-task-submenu">
+              {taskOptions.length ? taskOptions.map((task) => <button type="button" key={task.id} onClick={() => { const projectId = task.project_id ?? task.parent_project_id; if (projectId) onQuickTaskSelect(projectId, task.id); setScopeMenuOpen(false) }}><strong>{task.title}</strong><small>{task.project_name || task.parent_key_task}</small></button>) : <p>暂无可选关键任务</p>}
+            </div>}
+          </div>
+        </div>}
+      </div>
 
       {scope !== 'all' && (
       <label className="voice-update-binding-field">

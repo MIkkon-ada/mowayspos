@@ -275,6 +275,37 @@ def _take_sentences(text: str, include: list[str], exclude: list[str] | None = N
     return _dedupe(rows)[:limit]
 
 
+def _rule_report_fragments(text: str) -> tuple[list[str], list[str], list[str]]:
+    """Split mixed report sentences before classifying facts for the rules path."""
+    completion_words = ["\u5b8c\u6210", "\u5df2\u5b8c\u6210", "\u4ea7\u51fa", "\u5f62\u6210", "\u4ea4\u4ed8", "\u4e0a\u7ebf", "\u6574\u7406"]
+    plan_words = ["\u4e0b\u5468", "\u4e0b\u4e00\u6b65", "\u8ba1\u5212", "\u51c6\u5907", "\u7ee7\u7eed", "\u540e\u7eed"]
+    issue_words = ["\u95ee\u9898", "\u98ce\u9669", "\u53d7\u963b", "\u5ef6\u671f", "\u5361\u4f4f", "\u65e0\u6cd5", "\u6743\u9650"]
+    fragments: list[str] = []
+    for sentence in _sentences(text):
+        fragments.extend(
+            part.strip()
+            for part in re.split(
+                r"[\uFF0C,]\s*(?=(?:\u4f46\u662f|\u4f46|\u4e0d\u8fc7|\u7136\u800c|\u4e0b\u5468|\u4e0b\u4e00\u6b65|\u540e\u7eed|\u7ee7\u7eed))",
+                sentence,
+            )
+            if part.strip()
+        )
+    issue_fragments = [fragment for fragment in fragments if _contains_any(fragment, issue_words)]
+    plan_fragments = [
+        fragment
+        for fragment in fragments
+        if _contains_any(fragment, plan_words) and not _contains_any(fragment, issue_words)
+    ]
+    completed_fragments = [
+        fragment
+        for fragment in fragments
+        if _contains_any(fragment, completion_words)
+        and not _contains_any(fragment, issue_words)
+        and not _contains_any(fragment, plan_words)
+    ]
+    return _dedupe(completed_fragments), _dedupe(issue_fragments), _dedupe(plan_fragments)
+
+
 _SOFT_PROGRESS_OR_PLAN_WORDS = [
     "正在推进",
     "目前正在",
@@ -846,8 +877,11 @@ def _rule_extract(source_type: str, text: str, submitter: str | None, ceo_name: 
         ["已完成"],
         limit=5,
     )
+    completed_fragments, issue_fragments, plan_fragments = _rule_report_fragments(clean_text)
+    completed = completed_fragments[:5]
+    next_steps = plan_fragments[:5]
     achievements = _achievement_rows(clean_text, project, submitter)
-    issues = _issue_rows(clean_text, project, submitter, ceo_name)
+    issues = _issue_rows("\n".join(issue_fragments), project, submitter, ceo_name)
     for row in issues:
         row["issue_type"] = IF.normalize_type(row.get("issue_type"))
         if not row.get("status"):

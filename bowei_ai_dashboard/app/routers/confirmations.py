@@ -1224,6 +1224,24 @@ def confirm(
                 ach.related_subtask_id = related_subtask_id
                 if effective_project_id:
                     ach.project_id = effective_project_id
+                attachment_ids = ach_item.get("attachment_ids") or []
+                if attachment_ids:
+                    if not isinstance(attachment_ids, list) or not all(isinstance(value, int) for value in attachment_ids):
+                        raise HTTPException(422, "achievement attachment_ids must be an array of ids")
+                    if len(attachment_ids) != len(set(attachment_ids)):
+                        raise HTTPException(422, "achievement attachment_ids must not contain duplicates")
+                    attachments = db.query(models.AchievementAttachment).filter(
+                        models.AchievementAttachment.id.in_(attachment_ids),
+                        models.AchievementAttachment.project_id == effective_project_id,
+                        models.AchievementAttachment.achievement_id.is_(None),
+                        models.AchievementAttachment.achievement_submission_id.is_(None),
+                        models.AchievementAttachment.uploaded_by == (row.submitter or ""),
+                        models.AchievementAttachment.deleted_at.is_(None),
+                    ).with_for_update().all()
+                    if len(attachments) != len(attachment_ids):
+                        raise HTTPException(422, "achievement attachments must be unbound evidence uploaded by the submitter")
+                    for attachment in attachments:
+                        attachment.achievement_id = ach.id
 
         def write_issue_item(
             issue_item: object,

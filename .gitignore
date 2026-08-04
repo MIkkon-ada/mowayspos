@@ -97,6 +97,7 @@ migration_project_members_execute_report.txt
 pw-qa/
 pw-qa2/
 pw-qa3/
+bowei_ai_dashboard/attachment-storage/
 
 # Claude Code config
 .claude/

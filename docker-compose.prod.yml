@@ -52,6 +52,7 @@ services:
       - "8008"
     volumes:
       - "${MOWAYS_DATA_ROOT:-/data/mowayspos}/env/llm_configs.json:/app/llm_configs.json"
+      - "${MOWAYS_DATA_ROOT:-/data/mowayspos}/achievement-attachments:/app/data/achievement-attachments"
     depends_on:
       postgres:
         condition: service_healthy

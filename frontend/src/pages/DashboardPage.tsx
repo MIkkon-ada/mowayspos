@@ -364,6 +364,9 @@ export function DashboardPage() {
       <header className="h-16 flex items-center px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
         <div className="flex-1">
           <h1 className="text-base font-bold text-slate-800">首页驾驶舱</h1>
+          {!canViewGlobalDashboard && (
+            <p className="text-xs text-slate-500">实时掌握我参与项目的进度、风险、成果与待决策事项</p>
+          )}
         </div>
 
         {/* 专项筛选 —— 这里是仪表盘自己的筛选，与 URL 项目无关 */}

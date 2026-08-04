@@ -53,7 +53,7 @@ test('navigation keeps every existing item and permission boundary', () => {
   }
 
   for (const condition of [
-    'isPrivileged && hasActiveProject',
+    'showParticipantModules && hasActiveProject',
     'showParticipantModules && isPrivileged',
     "globalUserRoles.includes('project_ceo')",
     "globalUserRoles.includes('owner')",

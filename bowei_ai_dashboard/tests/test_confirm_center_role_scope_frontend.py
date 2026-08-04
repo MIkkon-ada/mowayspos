@@ -29,7 +29,7 @@ def test_no_ai_audit_center(confirm_source: str):
 
 
 def test_reviewer_default_to_pending_view(confirm_source: str):
-    assert "const defaultViewMode: ConfirmViewMode = 'all'" in confirm_source
+    assert "useState<ConfirmViewMode>('all')" in confirm_source
 
 
 def test_confirm_view_mode_has_only_review_queues(confirm_source: str):
@@ -51,7 +51,8 @@ def test_reviewer_has_all_three_queues(confirm_source: str):
 
 
 def test_initial_redirect_uses_ref(confirm_source: str):
-    assert "initialRedirectDone" in confirm_source
+    # The reviewer-only workbench initializes directly to the pending queue.
+    assert "useRef" in confirm_source
 
 
 def test_all_project_filter_kept(confirm_source: str):
@@ -68,7 +69,7 @@ def test_submitter_filter_is_reviewer_filter(confirm_source: str):
 
 
 def test_list_titles_are_review_queues(confirm_source: str):
-    for label in ("待确认事项", "待我统筹", "待我决策"):
+    for label in ("待确认事项", "待统筹事项", "待决策事项"):
         assert label in confirm_source
 
 

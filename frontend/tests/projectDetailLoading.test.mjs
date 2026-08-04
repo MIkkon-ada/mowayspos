@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 
-const source = readFileSync(resolve('frontend/src/pages/ProjectDetailPage.tsx'), 'utf8')
+const source = readFileSync(new URL('../src/pages/ProjectDetailPage.tsx', import.meta.url), 'utf8')
 
 assert.match(
   source,

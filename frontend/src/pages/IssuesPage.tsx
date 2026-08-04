@@ -383,7 +383,7 @@ export function IssuesPage() {
                         : '成员'
                       return (
                         <tr key={project.id} className="transition-colors hover:bg-purple-50/50">
-                          <td className="px-5 py-2.5">
+                          <td className="px-5 py-2.5 issue-home-project-name border-l-4 border-violet-500">
                             <p className="font-bold text-slate-950">{project.name}</p>
                             <p className="mt-0.5 text-xs text-slate-400">项目编号：{project.code || `#${project.id}`}</p>
                           </td>
@@ -492,7 +492,7 @@ export function IssuesPage() {
                     <tr><td colSpan={8} className="px-5 py-12 text-center text-sm text-slate-400">暂无可查看项目</td></tr>
                   ) : visibleProjects.map((project) => (
                     <tr key={project.id} className="transition-colors hover:bg-purple-50/50">
-                      <td className="px-5 py-2.5">
+                      <td className="px-5 py-2.5 issue-home-project-name border-l-4 border-violet-500">
                         <p className="font-bold text-slate-950">{project.name}</p>
                         <p className="mt-0.5 text-xs text-slate-400">项目编号：{project.code || `#${project.id}`}</p>
                       </td>

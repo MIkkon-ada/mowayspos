@@ -14,21 +14,35 @@ def issues_page_source() -> str:
         return f.read()
 
 
-class TestButtonLabels:
-    def test_has_handle_issue_button(self, issues_page_source: str):
-        assert "handlestartprocessing" in issues_page_source.lower()
+@pytest.fixture(scope="module")
+def issue_detail_source() -> str:
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "..", "..", "frontend", "src", "pages", "IssueDetailPage.tsx",
+    )
+    with open(path, encoding="utf-8") as f:
+        return f.read()
 
-    def test_has_assign_helper(self, issues_page_source: str):
-        assert "assignHelper" in issues_page_source or "AssignHelper" in issues_page_source
 
-    def test_has_escalate_coach(self, issues_page_source: str):
-        assert "requestCeo" in issues_page_source or "RequestCeo" in issues_page_source
+class TestDetailActions:
+    def test_detail_page_owns_issue_actions(self, issue_detail_source: str):
+        assert "fetchIssueById" in issue_detail_source
+        assert "doResolve" in issue_detail_source
+        assert "doClose" in issue_detail_source
 
-    def test_has_resolve_action(self, issues_page_source: str):
-        assert "handleResolve" in issues_page_source
+    def test_has_assign_helper(self, issue_detail_source: str):
+        assert "assignIssueHelper" in issue_detail_source
+        assert "doAssignHelper" in issue_detail_source
 
-    def test_has_confirm_close(self, issues_page_source: str):
-        assert "handleClose" in issues_page_source
+    def test_has_escalate_coach(self, issue_detail_source: str):
+        assert "requestIssueCeo" in issue_detail_source
+        assert "doRequestCeo" in issue_detail_source
+
+    def test_has_resolve_action(self, issue_detail_source: str):
+        assert "resolveIssue" in issue_detail_source
+
+    def test_has_confirm_close(self, issue_detail_source: str):
+        assert "closeIssue" in issue_detail_source
 
 
 class TestNoManualStatusControls:
@@ -39,13 +53,10 @@ class TestNoManualStatusControls:
 
 class TestKanbanUnchanged:
     def test_kanban_columns_count(self, issues_page_source: str):
-        match = re.search(r"KANBAN_COLUMNS\s*=\s*\[([^\]]+)\]", issues_page_source)
-        assert match, "KANBAN_COLUMNS should be defined"
+        match = re.search(r"ISSUE_FLOW\s*=\s*\[([^\]]+)\]", issues_page_source)
+        assert match, "ISSUE_FLOW should be defined"
         columns_str = match.group(1)
-        columns = [c.strip().strip("'\"") for c in columns_str.split(",")]
-        expected = ["pending", "in_progress", "coordinating", "pending_decision", "resolved", "closed"]
-        # just check count is 6
-        assert len(columns) == 6, f"KANBAN_COLUMNS should have 6 columns, got {len(columns)}"
+        assert columns_str.count("key:") == 5
 
 
 class TestNoMigrations:

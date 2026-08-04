@@ -83,6 +83,11 @@ def upgrade() -> None:
 def downgrade() -> None:
     for column in ("parent_revision_id", "analysis_run_id", "transcript_revision_id", "transcript_source_id"):
         op.drop_index(f"ix_meeting_revisions_{column}", table_name="meeting_revisions")
+    op.drop_index("ix_meeting_revisions_meeting_id", table_name="meeting_revisions")
+    op.drop_index("ix_meeting_revisions_id", table_name="meeting_revisions")
+    # meeting_revisions holds foreign keys to the analysis and transcript tables.
+    # PostgreSQL requires it to be removed before those referenced tables.
+    op.drop_table("meeting_revisions")
     for table, columns in {
         "meeting_analysis_candidates": ("reviewer_person_id", "review_status", "validation_status", "candidate_type", "run_id", "id"),
         "meeting_analysis_runs": ("created_by_person_id", "status", "transcript_revision_id", "source_id", "meeting_id", "project_id", "id"),
@@ -95,6 +100,3 @@ def downgrade() -> None:
     op.drop_table("meeting_analysis_runs")
     op.drop_table("meeting_transcript_revisions")
     op.drop_table("meeting_transcript_sources")
-    op.drop_index("ix_meeting_revisions_meeting_id", table_name="meeting_revisions")
-    op.drop_index("ix_meeting_revisions_id", table_name="meeting_revisions")
-    op.drop_table("meeting_revisions")

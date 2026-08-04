@@ -364,8 +364,8 @@ def get_user_context_from_db(name: str, db) -> dict:
         else:
             row = db.execute(
             text(
-                "SELECT id, system_role, COALESCE(is_admin, 0) "
-                "FROM people WHERE name=:name AND is_active=1"
+                "SELECT id, system_role, COALESCE(is_admin, FALSE) "
+                "FROM people WHERE name=:name AND is_active IS TRUE"
             ),
             {"name": name},
             ).fetchone()
@@ -505,7 +505,7 @@ def get_person_id(person_name: str, db) -> int | None:
         return None
     try:
         row = db.execute(
-            text("SELECT id FROM people WHERE name = :name AND is_active = 1"),
+            text("SELECT id FROM people WHERE name = :name AND is_active IS TRUE"),
             {"name": person_name.strip()},
         ).fetchone()
         return int(row[0]) if row else None

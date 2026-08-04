@@ -78,6 +78,15 @@ def test_meeting_analyzer_uses_first_json_object_when_model_returns_multiple(mon
         )
     )
     monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setattr(
+        meetings,
+        "get_provider_config",
+        lambda _provider: {
+            "api_key": "test-key",
+            "base_url": "https://example.invalid/v1",
+            "model": "test-model",
+        },
+    )
 
     result = meetings._do_analyze("sample", "prompt", "dashscope")
 

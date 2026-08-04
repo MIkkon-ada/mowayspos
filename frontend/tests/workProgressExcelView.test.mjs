@@ -336,6 +336,16 @@ test('V2 table is a compact data table without a fake empty spreadsheet canvas',
   assert.doesNotMatch(css, /\.v2-task-card__std-btn\s*{[^}]*display:\s*none/s)
 })
 
+test('table view only exposes the project-standard button when a project standard exists', () => {
+  const source = read(VIEW_FILE)
+
+  assert.match(source, /const hasProjectStandard = Boolean\(project\?\.objectives\?\.trim\(\)\)/)
+  assert.match(
+    source,
+    /\{hasProjectStandard && \(\s*<button type="button" className="v2-project-banner__toggle"/s,
+  )
+})
+
 test('work progress header keeps mode tabs next to the title', () => {
   const page = read(PAGE_FILE)
   assert.match(page, /work-progress-title-group/)

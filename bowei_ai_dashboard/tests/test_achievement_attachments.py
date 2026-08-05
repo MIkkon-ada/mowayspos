@@ -39,7 +39,7 @@ db.commit(); db.close()
 from app.main import app
 from fastapi.testclient import TestClient
 client = TestClient(app)
-def cookies(username): return {"bowei_session": create_session(username)}
+def cookies(username): return {__import__("os").environ.get("SESSION_COOKIE_NAME", "bowei_session"): create_session(username)}
 
 blocked = client.post("/api/achievement-attachments", data={"project_id": "1", "achievement_id": "1"}, files={"file": ("movie.mp4", b"x", "video/mp4")}, cookies=cookies("member"))
 assert blocked.status_code == 422, blocked.text
@@ -122,7 +122,7 @@ storage = Path(os.environ["ATTACHMENT_TEST_ROOT"])
 achievement_attachments._ROOT = storage
 main.get_session_user = lambda _sid: "member"
 app.dependency_overrides[achievement_attachments.get_current_user_name] = lambda: "member"
-session_cookie = {"bowei_session": "test"}
+session_cookie = {__import__("os").environ.get("SESSION_COOKIE_NAME", "bowei_session"): "test"}
 original_commit = SessionLocal.class_.commit
 def fail_commit(self): raise RuntimeError("database unavailable")
 SessionLocal.class_.commit = fail_commit
@@ -234,7 +234,7 @@ pending_id, deleted_id = pending.id, deleted.id
 from app.main import app
 from fastapi.testclient import TestClient
 client = TestClient(app)
-cookies = {"bowei_session": create_session("member")}
+cookies = {__import__("os").environ.get("SESSION_COOKIE_NAME", "bowei_session"): create_session("member")}
 created = client.post("/api/achievement-submissions", json={
     "project_id": 1, "related_task_id": 1, "name": "Result",
     "attachment_ids": [pending_id],
@@ -250,7 +250,7 @@ db.commit(); db.close()
 
 confirmed = client.patch(
     f"/api/achievement-submissions/{submission_id}/confirm",
-    cookies={"bowei_session": create_session("owner")},
+    cookies={__import__("os").environ.get("SESSION_COOKIE_NAME", "bowei_session"): create_session("owner")},
 )
 assert confirmed.status_code == 200, confirmed.text
 achievement_id = confirmed.json()["achievement"]["id"]
@@ -310,7 +310,7 @@ db.close()
 from app.main import app
 from fastapi.testclient import TestClient
 client = TestClient(app)
-cookies = {"bowei_session": create_session("member")}
+cookies = {__import__("os").environ.get("SESSION_COOKIE_NAME", "bowei_session"): create_session("member")}
 for attachment_id in attachment_ids:
     response = client.post("/api/achievement-submissions", json={
         "project_id": 1, "related_task_id": 1, "name": "Result",
@@ -364,7 +364,7 @@ def upload(data, user="member"):
     return client.post(
         "/api/achievement-attachments", data=data,
         files={"file": ("proof.pdf", b"pdf", "application/pdf")},
-        cookies={"bowei_session": create_session(user)},
+        cookies={__import__("os").environ.get("SESSION_COOKIE_NAME", "bowei_session"): create_session(user)},
     )
 
 assert upload({"project_id": "1"}).status_code == 201
@@ -377,7 +377,7 @@ db = SessionLocal(); db.get(models.Project, 1).status = "pending_close"; db.comm
 assert upload({"project_id": "1", "achievement_submission_id": "1"}).status_code == 409
 assert client.delete(
     f"/api/achievement-attachments/{owner_upload.json()['id']}",
-    cookies={"bowei_session": create_session("owner")},
+    cookies={__import__("os").environ.get("SESSION_COOKIE_NAME", "bowei_session"): create_session("owner")},
 ).status_code == 409
 '''
     database_path = (tmp_path / "attachment-upload-scope.db").resolve()
@@ -415,7 +415,7 @@ db.add(attachment); db.commit(); attachment_id = attachment.id; db.close()
 from app.main import app
 from fastapi.testclient import TestClient
 client = TestClient(app)
-cookies = {"bowei_session": create_session("member")}
+cookies = {__import__("os").environ.get("SESSION_COOKIE_NAME", "bowei_session"): create_session("member")}
 payload = {"project_id": 1, "related_task_id": 1, "name": "Result", "attachment_ids": [attachment_id]}
 first = client.post("/api/achievement-submissions", json=payload, cookies=cookies)
 assert first.status_code == 200, first.text
@@ -459,7 +459,7 @@ db.commit(); db.close()
 from app.main import app
 from fastapi.testclient import TestClient
 client = TestClient(app)
-cookies = {"bowei_session": create_session("owner")}
+cookies = {__import__("os").environ.get("SESSION_COOKIE_NAME", "bowei_session"): create_session("owner")}
 first = client.patch("/api/achievement-submissions/1/confirm", cookies=cookies)
 assert first.status_code == 200, first.text
 second = client.patch("/api/achievement-submissions/1/confirm", cookies=cookies)

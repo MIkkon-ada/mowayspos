@@ -15,6 +15,8 @@ def test_attachment_api_rejects_unauthorized_and_disallowed_files_and_soft_delet
     """The HTTP contract enforces project scope, type checks, and soft deletion."""
     script = r'''
 from app.database import Base, engine, SessionLocal
+from pathlib import Path
+import os
 from app import models
 from app.auth import create_session
 
@@ -37,7 +39,9 @@ db.add_all([
 db.commit(); db.close()
 
 from app.main import app
+from app.routers import achievement_attachments
 from fastapi.testclient import TestClient
+achievement_attachments._ROOT = Path(os.environ["ATTACHMENT_TEST_ROOT"])
 client = TestClient(app)
 def cookies(username): return {__import__("os").environ.get("SESSION_COOKIE_NAME", "bowei_session"): create_session(username)}
 
@@ -56,7 +60,6 @@ assert download.status_code == 200 and download.content == b"pdf", download.text
 assert download.headers["content-type"].startswith("application/pdf")
 assert download.headers["x-content-type-options"] == "nosniff"
 assert download.headers["content-disposition"].startswith("attachment;")
-from app.routers import achievement_attachments
 original_attachment_path = achievement_attachments._attachment_path
 class UnlinkFailure:
     def unlink(self, **_kwargs): raise OSError("storage temporarily unavailable")
@@ -89,7 +92,7 @@ assert client.delete(f"/api/achievement-attachments/{project_b_attachment_id}", 
 '''
     database_path = (tmp_path / "attachments.db").resolve()
     env = os.environ.copy()
-    env.update({"APP_ENV": "test", "DATABASE_URL": f"sqlite:///{database_path.as_posix()}", "FRONTEND_ORIGIN": ""})
+    env.update({"APP_ENV": "test", "DATABASE_URL": f"sqlite:///{database_path.as_posix()}", "FRONTEND_ORIGIN": "", "ATTACHMENT_TEST_ROOT": str((tmp_path / "attachment-storage").resolve())})
     result = subprocess.run([sys.executable, "-c", script], cwd=BACKEND_ROOT, env=env, capture_output=True, text=True)
     assert result.returncode == 0, f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
 

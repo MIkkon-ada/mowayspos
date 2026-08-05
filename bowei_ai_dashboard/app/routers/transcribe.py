@@ -1,47 +1,86 @@
-"""Audio transcription via Dashscope Paraformer."""
+"""Audio transcription routes."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import secrets
 import tempfile
+import time
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, WebSocket
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, WebSocket
 from fastapi.websockets import WebSocketDisconnect
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy.orm import Session
 
+from ..auth import get_session_user
+from ..database import get_db
 from ..llm_config import get_provider_config
 from ..permissions import get_current_user_name
-from ..auth import get_session_user
-from ..settings import get_settings
+from ..services.asr_context import build_work_report_asr_context
+from ..services.realtime_asr import DashScopeRealtimeAsr
+from ..settings import get_asr_settings, get_settings
 
 router = APIRouter(prefix="/api/transcribe", tags=["transcribe"])
-
 logger = logging.getLogger(__name__)
 
 _SUPPORTED_FORMATS = {
-    ".mp3", ".mp4", ".wav", ".flac", ".aac", ".ogg",
-    ".m4a", ".wma", ".amr", ".webm",
+    ".mp3",
+    ".mp4",
+    ".wav",
+    ".flac",
+    ".aac",
+    ".ogg",
+    ".m4a",
+    ".wma",
+    ".amr",
+    ".webm",
 }
+_MAX_SESSION_AUDIO_BYTES = 16000 * 2 * 60 * 60 * 4
+_CLEANUP_GRACE_SECONDS = 0.1
+_START_MESSAGE_TIMEOUT_SECONDS = 10.0
+_SESSION_IDLE_TIMEOUT_SECONDS = 30.0
+_MAX_SESSION_SECONDS = 60.0 * 60 * 4
+_SAFE_PROVIDER_ERROR_CODES = {"ASR_PROVIDER_ERROR", "ASR_STOP_TIMEOUT"}
+_MAX_PROVIDER_REQUEST_ID_LENGTH = 128
+
+
+class StreamStart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["start"]
+    scene: Literal["work_report"]
+    project_id: int = Field(gt=0)
+    selected_task_id: int = Field(gt=0)
+    sample_rate: Literal[16000]
+    format: Literal["pcm"]
 
 
 def _detect_format(filename: str) -> str:
     ext = os.path.splitext(filename)[1].lower()
     fmt_map = {
-        ".mp3": "mp3", ".wav": "wav", ".flac": "flac",
-        ".aac": "aac", ".ogg": "ogg-opus", ".m4a": "m4a",
-        ".wma": "wma", ".amr": "amr", ".webm": "opus",
+        ".mp3": "mp3",
+        ".wav": "wav",
+        ".flac": "flac",
+        ".aac": "aac",
+        ".ogg": "ogg-opus",
+        ".m4a": "m4a",
+        ".wma": "wma",
+        ".amr": "amr",
+        ".webm": "opus",
         ".mp4": "mp4",
     }
     return fmt_map.get(ext, "mp3")
 
 
 def _do_transcribe(file_bytes: bytes, filename: str, api_key: str) -> str:
-    from dashscope.audio.asr import Recognition  # noqa: PLC0415
     import dashscope
+    from dashscope.audio.asr import Recognition
 
     dashscope.api_key = api_key
-
     suffix = os.path.splitext(filename)[1].lower() or ".mp3"
     fmt = _detect_format(filename)
 
@@ -59,17 +98,20 @@ def _do_transcribe(file_bytes: bytes, filename: str, api_key: str) -> str:
             callback=None,
         )
         result = recognition.call(tmp_path)
-
         if result.status_code != 200:
-            raise RuntimeError(f"转写失败（{result.status_code}）: {result.message}")
+            raise RuntimeError(
+                f"转写失败（{result.status_code}）: {result.message}"
+            )
 
         output = result.output or {}
         sentences = output.get("sentence") or []
         if sentences:
-            text = "".join(s.get("text", "") for s in sentences if s.get("text"))
-            return text  # 可能是空字符串（静音），正常返回
-        text = output.get("text", "")
-        return text  # 空字符串表示静音，交给前端处理
+            return "".join(
+                sentence.get("text", "")
+                for sentence in sentences
+                if sentence.get("text")
+            )
+        return output.get("text", "")
     finally:
         try:
             os.unlink(tmp_path)
@@ -89,132 +131,606 @@ async def transcribe(
 
     api_key = get_provider_config("dashscope").get("api_key", "")
     if not api_key:
-        raise HTTPException(500, "未配置 Dashscope API Key，请在系统设置中填写")
+        raise HTTPException(
+            500,
+            "未配置 Dashscope API Key，请在系统设置中填写",
+        )
 
     content = await file.read()
-    if len(content) > 200 * 1024 * 1024:  # 200 MB limit
+    if len(content) > 200 * 1024 * 1024:
         raise HTTPException(413, "文件过大，最大支持 200MB")
 
     try:
-        text = await asyncio.to_thread(_do_transcribe, content, filename, api_key)
+        text = await asyncio.to_thread(
+            _do_transcribe,
+            content,
+            filename,
+            api_key,
+        )
         return {"text": text, "filename": filename}
-    except Exception as e:
-        raise HTTPException(500, f"{type(e).__name__}: {e}")
+    except Exception as exc:
+        raise HTTPException(500, f"{type(exc).__name__}: {exc}") from exc
+
+
+async def run_transcribe_stream(
+    websocket,
+    *,
+    current_user: str,
+    db: Session,
+    context_builder=build_work_report_asr_context,
+    asr_factory=DashScopeRealtimeAsr,
+    api_key: str,
+) -> None:
+    """Coordinate one authenticated work-report transcription session."""
+    settings = get_asr_settings()
+    loop = asyncio.get_running_loop()
+    outbound: asyncio.Queue[
+        tuple[dict[str, Any], asyncio.Future[None]] | None
+    ] = asyncio.Queue()
+    writer_task: asyncio.Task[None]
+
+    async def write_outbound() -> None:
+        while True:
+            item = await outbound.get()
+            if item is None:
+                return
+            payload, acknowledgement = item
+            try:
+                await websocket.send_json(payload)
+            except BaseException as exc:
+                if not acknowledgement.done():
+                    acknowledgement.set_exception(exc)
+                while True:
+                    try:
+                        pending = outbound.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    if pending is not None and not pending[1].done():
+                        pending[1].set_exception(exc)
+                raise
+            else:
+                if not acknowledgement.done():
+                    acknowledgement.set_result(None)
+
+    writer_task = asyncio.create_task(write_outbound())
+
+    async def emit(
+        payload: dict[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> None:
+        if writer_task.done():
+            await writer_task
+            raise RuntimeError("websocket writer stopped")
+        acknowledgement = loop.create_future()
+        outbound.put_nowait((payload, acknowledgement))
+        timeout = settings.stop_timeout_seconds
+        if deadline is not None:
+            timeout = max(0.0, deadline - loop.time())
+        await asyncio.wait_for(acknowledgement, timeout=timeout)
+
+    session = None
+    session_started = False
+    session_failed = False
+    terminal_error = False
+    explicit_stop = False
+    transport_failed = False
+    cleanup_deadline: float | None = None
+    packet_count = 0
+    audio_bytes = 0
+    queue_peak = 0
+    started_at = time.monotonic()
+    first_result_at: float | None = None
+    stop_started_at = time.monotonic()
+    audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=50)
+    audio_task: asyncio.Task[None] | None = None
+    result_task: asyncio.Task[None] | None = None
+    receive_task: asyncio.Task[dict] | None = None
+    stop_task: asyncio.Task[None] | None = None
+
+    async def emit_terminal_error(
+        code: str,
+        message: str,
+        *,
+        retryable: bool,
+    ) -> None:
+        nonlocal session_failed, terminal_error
+        session_failed = True
+        if terminal_error or transport_failed:
+            return
+        terminal_error = True
+        await emit(
+            {
+                "type": "error",
+                "code": code,
+                "message": message,
+                "retryable": retryable,
+            }
+        )
+
+    async def send_results() -> None:
+        nonlocal first_result_at, session_failed, terminal_error
+        while True:
+            event = await session.next_event()
+            if event is None:
+                return
+            if event.get("type") == "error":
+                provider_code = str(event.get("code") or "")
+                safe_code = (
+                    provider_code
+                    if provider_code in _SAFE_PROVIDER_ERROR_CODES
+                    else "ASR_PROVIDER_ERROR"
+                )
+                request_id = (
+                    str(event.get("request_id") or "")
+                    .replace("\r", " ")
+                    .replace("\n", " ")[:_MAX_PROVIDER_REQUEST_ID_LENGTH]
+                )
+                logger.warning(
+                    "ASR provider event code=%s request_id=%s",
+                    safe_code,
+                    request_id,
+                )
+                session_failed = True
+                if not terminal_error:
+                    terminal_error = True
+                    await emit(
+                        {
+                            "type": "error",
+                            "code": safe_code,
+                            "message": "语音识别服务发生错误，请重试",
+                            "retryable": bool(event.get("retryable", True)),
+                        }
+                    )
+                return
+            if terminal_error:
+                continue
+            if first_result_at is None and event.get("type") == "transcript":
+                first_result_at = time.monotonic()
+            safe_event = {
+                key: value
+                for key, value in event.items()
+                if key != "request_id"
+            }
+            await emit(safe_event)
+
+    async def send_audio() -> None:
+        while True:
+            data = await audio_queue.get()
+            if data is None:
+                return
+            await session.send_audio(data)
+
+    def remaining(deadline: float) -> float:
+        return max(0.0, deadline - loop.time())
+
+    async def cancel_tasks(*tasks: asyncio.Task | None) -> None:
+        current = asyncio.current_task()
+        pending = [
+            task
+            for task in tasks
+            if task is not None and task is not current and not task.done()
+        ]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    async def cleanup_session() -> None:
+        nonlocal session_failed, cleanup_deadline, stop_task
+        if not session_started or session is None:
+            return
+        cleanup_deadline = (
+            loop.time()
+            + settings.stop_timeout_seconds
+            + _CLEANUP_GRACE_SECONDS
+        )
+        await cancel_tasks(receive_task)
+        phase_budget = max(
+            0.01,
+            (
+                settings.stop_timeout_seconds
+                + _CLEANUP_GRACE_SECONDS
+            )
+            / 3,
+        )
+
+        try:
+            await asyncio.wait_for(
+                audio_queue.put(None),
+                timeout=min(remaining(cleanup_deadline), phase_budget),
+            )
+            if audio_task is not None:
+                await asyncio.wait_for(
+                    asyncio.shield(audio_task),
+                    timeout=min(remaining(cleanup_deadline), phase_budget),
+                )
+        except Exception:
+            session_failed = True
+            await cancel_tasks(audio_task)
+
+        stop_task = asyncio.create_task(session.stop())
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(stop_task),
+                timeout=remaining(cleanup_deadline),
+            )
+        except Exception:
+            session_failed = True
+            await cancel_tasks(stop_task)
+
+        if result_task is not None:
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(result_task),
+                    timeout=remaining(cleanup_deadline),
+                )
+            except Exception:
+                session_failed = True
+                await cancel_tasks(result_task)
+
+        await cancel_tasks(audio_task, result_task, receive_task, stop_task)
+
+    async def cleanup_session_safely() -> None:
+        cleanup_task = asyncio.create_task(cleanup_session())
+        try:
+            await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError:
+            await cleanup_task
+            raise
+
+    async def shutdown_writer() -> None:
+        nonlocal cleanup_deadline
+        if writer_task.done():
+            await asyncio.gather(writer_task, return_exceptions=True)
+            return
+        if cleanup_deadline is None:
+            cleanup_deadline = (
+                loop.time()
+                + settings.stop_timeout_seconds
+                + _CLEANUP_GRACE_SECONDS
+            )
+        outbound.put_nowait(None)
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(writer_task),
+                timeout=remaining(cleanup_deadline),
+            )
+        except asyncio.CancelledError:
+            await cancel_tasks(writer_task)
+            raise
+        except Exception:
+            await cancel_tasks(writer_task)
+
+    try:
+        try:
+            await emit({"type": "ready"})
+            try:
+                first = await asyncio.wait_for(
+                    websocket.receive(),
+                    timeout=_START_MESSAGE_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                await emit_terminal_error(
+                    "PROTOCOL_TIMEOUT",
+                    "录音启动等待超时，请重试",
+                    retryable=True,
+                )
+                return
+            except (WebSocketDisconnect, RuntimeError, ConnectionError):
+                transport_failed = True
+                return
+            try:
+                start = StreamStart.model_validate_json(first.get("text") or "")
+            except (ValidationError, ValueError, TypeError, AttributeError):
+                await emit_terminal_error(
+                    "PROTOCOL_ERROR",
+                    "录音启动参数无效，请重新开始",
+                    retryable=False,
+                )
+                return
+
+            try:
+                validated_context = context_builder(
+                    current_user,
+                    start.project_id,
+                    start.selected_task_id,
+                    db,
+                )
+                context = validated_context if settings.context_enabled else ""
+            except HTTPException as exc:
+                await emit_terminal_error(
+                    (
+                        "CONTEXT_FORBIDDEN"
+                        if exc.status_code == 403
+                        else "CONTEXT_INVALID"
+                    ),
+                    "当前项目或关键任务不可用于录音汇报",
+                    retryable=False,
+                )
+                return
+            except Exception:
+                logger.warning("ASR context validation failed")
+                await emit_terminal_error(
+                    "CONTEXT_INVALID",
+                    "当前项目或关键任务不可用于录音汇报",
+                    retryable=False,
+                )
+                return
+
+            session = asr_factory(
+                api_key=api_key,
+                settings=settings,
+                context=context,
+            )
+            try:
+                await session.start()
+            except Exception:
+                logger.warning("ASR session start failed")
+                await emit_terminal_error(
+                    "ASR_START_FAILED",
+                    "语音识别服务启动失败，请重试",
+                    retryable=True,
+                )
+                return
+
+            session_started = True
+            session_id = secrets.token_urlsafe(18)
+            await emit(
+                {
+                    "type": "started",
+                        "model": settings.realtime_model,
+                        "session_id": session_id,
+                        "packet_duration_ms": settings.packet_duration_ms,
+                        "stop_timeout_seconds": settings.stop_timeout_seconds,
+                    }
+                )
+
+            audio_task = asyncio.create_task(send_audio())
+            result_task = asyncio.create_task(send_results())
+            receive_task = asyncio.create_task(websocket.receive())
+            session_wallclock_started = loop.time()
+            last_receive_at = session_wallclock_started
+            max_packet_bytes = (
+                start.sample_rate
+                * 2
+                * settings.packet_duration_ms
+                // 1000
+                * 2
+            )
+
+            while True:
+                watched = {
+                    task
+                    for task in (
+                        receive_task,
+                        audio_task,
+                        result_task,
+                        writer_task,
+                    )
+                    if task is not None
+                }
+                max_deadline = session_wallclock_started + _MAX_SESSION_SECONDS
+                idle_deadline = last_receive_at + _SESSION_IDLE_TIMEOUT_SECONDS
+                wait_deadline = min(max_deadline, idle_deadline)
+                done, _ = await asyncio.wait(
+                    watched,
+                    return_when=asyncio.FIRST_COMPLETED,
+                    timeout=max(0.0, wait_deadline - loop.time()),
+                )
+
+                if not done:
+                    if max_deadline <= idle_deadline:
+                        await emit_terminal_error(
+                            "SESSION_LIMIT_REACHED",
+                            "录音已达到最长时限，请重新开始",
+                            retryable=False,
+                        )
+                    else:
+                        await emit_terminal_error(
+                            "SESSION_IDLE_TIMEOUT",
+                            "长时间未收到音频，录音已结束",
+                            retryable=True,
+                        )
+                    break
+
+                if writer_task in done:
+                    transport_failed = True
+                    session_failed = True
+                    if not writer_task.cancelled():
+                        await asyncio.gather(
+                            writer_task,
+                            return_exceptions=True,
+                        )
+                    break
+
+                if audio_task in done:
+                    audio_error = (
+                        None
+                        if audio_task.cancelled()
+                        else audio_task.exception()
+                    )
+                    if audio_error is not None or not terminal_error:
+                        await emit_terminal_error(
+                            "ASR_STREAM_FAILED",
+                            "语音识别音频流处理失败，请重试",
+                            retryable=True,
+                        )
+                    break
+
+                if result_task in done:
+                    result_error = (
+                        None
+                        if result_task.cancelled()
+                        else result_task.exception()
+                    )
+                    if result_error is not None:
+                        await emit_terminal_error(
+                            "ASR_STREAM_FAILED",
+                            "语音识别结果流处理失败，请重试",
+                            retryable=True,
+                        )
+                    elif not terminal_error:
+                        await emit_terminal_error(
+                            "ASR_STREAM_FAILED",
+                            "语音识别结果流提前结束，请重试",
+                            retryable=True,
+                        )
+                    break
+
+                if receive_task not in done:
+                    continue
+                try:
+                    message = receive_task.result()
+                except (WebSocketDisconnect, RuntimeError, ConnectionError):
+                    transport_failed = True
+                    session_failed = True
+                    break
+                receive_task = None
+                last_receive_at = loop.time()
+
+                if message.get("type") == "websocket.disconnect":
+                    transport_failed = True
+                    session_failed = True
+                    break
+
+                if message.get("bytes") is not None:
+                    data = message["bytes"]
+                    if (
+                        not data
+                        or len(data) % 2
+                        or len(data) > max_packet_bytes
+                        or audio_bytes + len(data) > _MAX_SESSION_AUDIO_BYTES
+                    ):
+                        await emit_terminal_error(
+                            "AUDIO_PACKET_INVALID",
+                            "音频数据包无效，请重新开始录音",
+                            retryable=False,
+                        )
+                        break
+                    packet_count += 1
+                    audio_bytes += len(data)
+                    try:
+                        audio_queue.put_nowait(data)
+                    except asyncio.QueueFull:
+                        await emit_terminal_error(
+                            "AUDIO_BACKPRESSURE",
+                            "网络或语音服务积压过高，请检查已有文字后重试",
+                            retryable=True,
+                        )
+                        break
+                    queue_peak = max(queue_peak, audio_queue.qsize())
+                    receive_task = asyncio.create_task(websocket.receive())
+                    continue
+
+                raw = message.get("text") or ""
+                try:
+                    control = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    control = {}
+                if raw == "stop" or (
+                    isinstance(control, dict)
+                    and control.get("type") == "stop"
+                    and set(control) == {"type"}
+                ):
+                    explicit_stop = True
+                    break
+                await emit_terminal_error(
+                    "PROTOCOL_ERROR",
+                    "录音消息顺序无效",
+                    retryable=False,
+                )
+                break
+
+            stop_started_at = time.monotonic()
+            try:
+                await cleanup_session_safely()
+            finally:
+                session_started = False
+            if (
+                explicit_stop
+                and not session_failed
+                and not terminal_error
+                and not transport_failed
+            ):
+                await emit(
+                    {
+                        "type": "done",
+                        "session_id": session_id,
+                        "duration_ms": audio_bytes * 1000 // (16000 * 2),
+                    },
+                    deadline=cleanup_deadline,
+                )
+                logger.info(
+                    "ASR session complete session_id=%s model=%s packets=%d "
+                    "audio_ms=%d queue_peak=%d first_result_ms=%s "
+                    "stop_done_ms=%d",
+                    session_id,
+                    settings.realtime_model,
+                    packet_count,
+                    audio_bytes * 1000 // (16000 * 2),
+                    queue_peak,
+                    (
+                        round((first_result_at - started_at) * 1000)
+                        if first_result_at is not None
+                        else None
+                    ),
+                    round((time.monotonic() - stop_started_at) * 1000),
+                )
+        except (WebSocketDisconnect, RuntimeError, ConnectionError, TimeoutError):
+            transport_failed = True
+            session_failed = True
+            return
+    finally:
+        try:
+            if session_started:
+                await cleanup_session_safely()
+        finally:
+            await shutdown_writer()
 
 
 @router.websocket("/stream")
-async def transcribe_stream(websocket: WebSocket):
-    """实时流式 ASR。前端以 PCM 16kHz Int16 帧流式发送，后端实时推送句子识别结果。
-
-    消息协议：
-    - 客户端 → 服务端：binary（PCM 帧） 或 text "stop"（结束录音）
-    - 服务端 → 客户端：JSON {"text": str, "final": bool} 或 {"error": str}
-    """
-    # 先 accept 再校验，保证前端能收到错误消息而非裸连接失败
+async def transcribe_stream(
+    websocket: WebSocket,
+    db: Session = Depends(get_db),
+):
+    """Authenticate and run one realtime work-report transcription stream."""
     await websocket.accept()
-
     session_id = websocket.cookies.get(get_settings().session_cookie_name)
     username = get_session_user(session_id) if session_id else None
     if not username:
-        await websocket.send_json({"error": "未登录，请重新登录后重试"})
+        await websocket.send_json(
+            {
+                "type": "error",
+                "code": "UNAUTHENTICATED",
+                "message": "未登录，请重新登录后重试",
+                "retryable": False,
+            }
+        )
         await websocket.close(code=4001)
         return
 
     api_key = get_provider_config("dashscope").get("api_key", "")
     if not api_key:
-        await websocket.send_json({"error": "未配置语音识别服务，请联系管理员配置 Dashscope API Key"})
+        await websocket.send_json(
+            {
+                "type": "error",
+                "code": "ASR_NOT_CONFIGURED",
+                "message": "未配置语音识别服务，请联系管理员",
+                "retryable": False,
+            }
+        )
         await websocket.close(code=4002)
         return
 
-    loop = asyncio.get_event_loop()
-    result_q: asyncio.Queue = asyncio.Queue()
-    audio_q: asyncio.Queue = asyncio.Queue(maxsize=200)  # 音频帧队列，缓冲 200 帧 ≈ 1.6s
-
-    class _ASRCallback:
-        """Dashscope 实时语音识别回调 — SDK 要求回调对象有 on_open/on_event 等方法，不能传裸函数。"""
-
-        def on_open(self) -> None:
-            pass
-
-        def on_close(self) -> None:
-            pass
-
-        def on_complete(self) -> None:
-            pass
-
-        def on_error(self, result: Any) -> None:
-            pass
-
-        def on_event(self, result: Any) -> None:
-            if result.status_code == 200:
-                sentence = (result.output or {}).get("sentence") or {}
-                text = (sentence.get("text") or "").strip()
-                if text:
-                    asyncio.run_coroutine_threadsafe(
-                        result_q.put({"text": text, "final": bool(sentence.get("sentence_end", False))}),
-                        loop,
-                    )
-
-    import dashscope  # noqa: PLC0415
-    from dashscope.audio.asr import Recognition  # noqa: PLC0415
-
-    dashscope.api_key = api_key
     try:
-        rec = Recognition(
-            model="paraformer-realtime-v2",
-            format="pcm",
-            sample_rate=16000,
-            language_hints=["zh", "en"],
-            callback=_ASRCallback(),
+        await run_transcribe_stream(
+            websocket,
+            current_user=username,
+            db=db,
+            api_key=api_key,
         )
-        await asyncio.to_thread(rec.start)
-    except Exception as exc:
-        logger.exception("Dashscope recognition start failed")
-        await websocket.send_json({"error": f"语音识别服务启动失败：{exc}"})
-        await websocket.close(code=4003)
-        return
-
-    async def _result_sender():
-        """持续从结果队列取出识别结果发送给前端"""
-        while True:
-            item = await result_q.get()
-            if item is None:
-                break
-            try:
-                await websocket.send_json(item)
-            except Exception:
-                break
-
-    async def _audio_sender():
-        """从音频队列取出 PCM 帧发送给 Dashscope，与 WebSocket 接收解耦"""
-        while True:
-            data = await audio_q.get()
-            if data is None:
-                break
-            await asyncio.to_thread(rec.send_audio_frame, data)
-
-    result_task = asyncio.create_task(_result_sender())
-    audio_task = asyncio.create_task(_audio_sender())
-
-    try:
-        while True:
-            try:
-                msg = await websocket.receive()
-            except (WebSocketDisconnect, Exception):
-                break
-            if msg["type"] == "websocket.disconnect":
-                break
-            if msg.get("bytes"):
-                await audio_q.put(msg["bytes"])  # 非阻塞入队，不等待 Dashscope 响应
-            elif msg.get("text") == "stop":
-                break
     finally:
-        await audio_q.put(None)
-        await audio_task
-        await asyncio.to_thread(rec.stop)
-        await asyncio.sleep(0.8)  # 等待最后一批回调触发
-        await result_q.put(None)
-        await result_task
         try:
             await websocket.close()
         except Exception:

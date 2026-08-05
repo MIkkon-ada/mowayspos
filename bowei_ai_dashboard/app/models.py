@@ -110,6 +110,126 @@ class Meeting(Base, TimestampMixin):
     publish_status = Column(String(20), default="draft")
 
 
+class MeetingTranscriptSource(Base, TimestampMixin):
+    __tablename__ = "meeting_transcript_sources"
+
+    id = Column(Integer, primary_key=True, index=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=True, index=True)
+    raw_text = Column(Text, nullable=False)
+    source_hash = Column(String(64), nullable=False, index=True)
+    source_type = Column(String(20), nullable=False, default="manual")
+    created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True)
+
+
+class MeetingTranscriptRevision(Base, TimestampMixin):
+    __tablename__ = "meeting_transcript_revisions"
+    __table_args__ = (
+        UniqueConstraint("source_id", "revision_no", name="uq_meeting_transcript_revision"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_id = Column(
+        Integer, ForeignKey("meeting_transcript_sources.id"), nullable=False, index=True
+    )
+    revision_no = Column(Integer, nullable=False)
+    text = Column(Text, nullable=False)
+    text_hash = Column(String(64), nullable=False)
+    created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True)
+
+
+class MeetingAnalysisRun(Base, TimestampMixin):
+    __tablename__ = "meeting_analysis_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=True, index=True)
+    source_id = Column(
+        Integer, ForeignKey("meeting_transcript_sources.id"), nullable=False, index=True
+    )
+    transcript_revision_id = Column(
+        Integer, ForeignKey("meeting_transcript_revisions.id"), nullable=True, index=True
+    )
+    member_snapshot_json = Column(Text, nullable=False, default="{}")
+    plan_snapshot_json = Column(Text, nullable=False, default="{}")
+    agent_input_json = Column(Text, nullable=False, default="{}")
+    raw_response_json = Column(Text, nullable=False, default="{}")
+    normalized_output_json = Column(Text, nullable=False, default="{}")
+    validation_output_json = Column(Text, nullable=False, default="{}")
+    provider = Column(String(64), nullable=False, default="")
+    model_name = Column(String(120), nullable=False, default="")
+    policy_version = Column(String(64), nullable=False, default="")
+    prompt_version = Column(String(64), nullable=False, default="")
+    prompt_hash = Column(String(64), nullable=False, default="")
+    input_hash = Column(String(64), nullable=False, default="")
+    reference_at = Column(DateTime, nullable=False)
+    timezone = Column(String(64), nullable=False, default="Asia/Shanghai")
+    status = Column(String(20), nullable=False, default="review", index=True)
+    created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+
+
+class MeetingAnalysisCandidate(Base, TimestampMixin):
+    __tablename__ = "meeting_analysis_candidates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("meeting_analysis_runs.id"), nullable=False, index=True)
+    candidate_type = Column(String(32), nullable=False, index=True)
+    agent_proposal_json = Column(Text, nullable=False, default="{}")
+    evidence_json = Column(Text, nullable=False, default="[]")
+    validation_json = Column(Text, nullable=False, default="[]")
+    final_value_json = Column(Text, nullable=False, default="{}")
+    validation_status = Column(
+        String(24), nullable=False, default="needs_confirmation", index=True
+    )
+    review_status = Column(String(24), nullable=False, default="pending", index=True)
+    reviewer_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    review_comment = Column(Text, default="")
+
+
+class MeetingRevision(Base):
+    """Immutable full snapshot of one saved meeting-minutes version."""
+
+    __tablename__ = "meeting_revisions"
+    __table_args__ = (
+        UniqueConstraint("meeting_id", "version_no", name="uq_meeting_revisions_meeting_version"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=False, index=True)
+    version_no = Column(Integer, nullable=False)
+    is_legacy_snapshot = Column(Boolean, nullable=False, default=False)
+    saved_by = Column(String(100), nullable=False, default="")
+    saved_at = Column(DateTime, nullable=False, default=now)
+    related_special_project = Column(String(80), default="")
+    meeting_type = Column(String(40), default="")
+    title = Column(String(200), default="")
+    meeting_date = Column(String(20), default="")
+    host = Column(String(50), default="")
+    participants = Column(Text, default="")
+    transcript_text = Column(Text, nullable=False, default="")
+    summary = Column(Text, default="")
+    task_list_json = Column(Text, default="")
+    decision_items_json = Column(Text, default="")
+    risk_items_json = Column(Text, default="")
+    publish_status = Column(String(20), default="draft")
+    transcript_source_id = Column(
+        Integer, ForeignKey("meeting_transcript_sources.id"), nullable=True, index=True
+    )
+    transcript_revision_id = Column(
+        Integer, ForeignKey("meeting_transcript_revisions.id"), nullable=True, index=True
+    )
+    analysis_run_id = Column(
+        Integer, ForeignKey("meeting_analysis_runs.id"), nullable=True, index=True
+    )
+    parent_revision_id = Column(
+        Integer, ForeignKey("meeting_revisions.id"), nullable=True, index=True
+    )
+    revision_kind = Column(String(32), default="draft_save")
+    agent_output_json = Column(Text, default="{}")
+    validation_output_json = Column(Text, default="{}")
+    human_output_json = Column(Text, default="{}")
+    human_diff_json = Column(Text, default="{}")
+
+
 class KickoffAgentRun(Base, TimestampMixin):
     __tablename__ = "kickoff_agent_runs"
 

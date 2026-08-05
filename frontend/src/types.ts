@@ -331,6 +331,25 @@ export type MeetingItem = {
   [key: string]: unknown
 }
 
+export type MeetingRevisionItem = {
+  id: number
+  meeting_id: number
+  version_no: number
+  is_legacy_snapshot: boolean
+  saved_by: string
+  saved_at?: string
+  transcript_text: string
+  title?: string
+  meeting_date?: string
+  host?: string
+  summary?: string
+  task_list_json?: string
+  decision_items_json?: string
+  risk_items_json?: string
+  publish_status?: string
+  [key: string]: unknown
+}
+
 /**
  * SubTaskItem 业务语义：关键任务 / KeyTask（三层结构第三层）
  *

@@ -20,7 +20,7 @@ _PROFILE_COLUMNS = (
     sa.Column("project_type", sa.Text(), nullable=True, server_default=sa.text("''")),
     sa.Column("client_name", sa.Text(), nullable=True, server_default=sa.text("''")),
     sa.Column("background", sa.Text(), nullable=True, server_default=sa.text("''")),
-    sa.Column("objectives", sa.Text(), nullable=True, server_default=sa.text("''")),
+    sa.Column("objectives", sa.Text(), nullable=True),
     sa.Column("expected_outcomes", sa.Text(), nullable=True, server_default=sa.text("''")),
     sa.Column("lifecycle_status", sa.Text(), nullable=True, server_default=sa.text("'draft'")),
     sa.Column("kickoff_date", sa.Text(), nullable=True, server_default=sa.text("''")),

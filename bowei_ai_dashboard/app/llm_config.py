@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from .settings import get_llm_effective_config
@@ -44,6 +45,20 @@ def save_configs(configs: dict) -> None:
     _CONFIG_FILE.write_text(json.dumps(configs, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def get_default_provider() -> str:
+    provider = str(load_configs().get("default_provider") or "").strip().lower()
+    return provider if provider in PROVIDERS else ""
+
+
+def set_default_provider(provider: str) -> None:
+    provider = str(provider or "").strip().lower()
+    if provider and provider not in PROVIDERS:
+        raise ValueError(f"Unsupported LLM provider: {provider}")
+    configs = load_configs()
+    configs["default_provider"] = provider
+    save_configs(configs)
+
+
 def get_provider_config(provider: str) -> dict:
     """Return provider config with env precedence and file fallback.
 
@@ -66,3 +81,23 @@ def get_provider_config(provider: str) -> dict:
         "model": effective.get("model") or meta.get("default_model", ""),
         "enabled": stored.get("enabled", False),
     }
+
+
+def resolve_provider(explicit_provider: str | None = None) -> str:
+    """Resolve an enabled provider with credentials using stable precedence."""
+    candidates = [
+        explicit_provider,
+        get_default_provider(),
+        os.getenv("LLM_PROVIDER", ""),
+        *PROVIDERS.keys(),
+    ]
+    seen: set[str] = set()
+    for candidate in candidates:
+        provider = str(candidate or "").strip().lower()
+        if not provider or provider in seen or provider not in PROVIDERS:
+            continue
+        seen.add(provider)
+        config = get_provider_config(provider)
+        if config.get("enabled") and config.get("api_key"):
+            return provider
+    return ""

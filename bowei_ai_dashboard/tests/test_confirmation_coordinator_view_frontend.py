@@ -17,6 +17,14 @@ def test_coordinator_actions_are_project_role_scoped():
     assert "currentUser?.is_ceo" not in source[source.index("const canCoordinatorAct"):source.index("const canCoachAct")]
 
 
+def test_coordinator_and_coach_permissions_are_separate_project_roles():
+    source = _page()
+    permission_block = source[source.index("const canCoordinatorAct"):source.index("const activeReviewCard")]
+    assert "selectedProjectRoles.includes('coordinator')" in permission_block
+    assert "selectedProjectRoles.includes('project_ceo')" in permission_block
+    assert "currentUser?.is_tech_admin" in permission_block
+
+
 def test_coordinator_queue_loads_card_level_records():
     source = _page()
     assert "getPending(coordProjectId, 'coordinator', { includeCardLevel: true })" in source
@@ -45,3 +53,10 @@ def test_owner_actions_remain_locked_while_card_waits_for_coordinator():
     assert "const cardWaitingCoordinator" in source
     assert "disabled={acting || projectArchived || cardWaitingCoordinator}" in source
     assert "!cardWaitingCoordinator && activeCard.confirmationStatus !== 'coordinator_given'" in source
+
+
+def test_coordinator_feedback_requires_a_note_before_submission():
+    source = _page()
+    feedback_area = source[source.index("handleCoordinatorCardFeedback"):]
+    assert "!coordinatorCardNote.trim()" in feedback_area
+    assert "disabled={coordinatorActing || !coordinatorCardNote.trim()}" in source

@@ -4,11 +4,37 @@ import { readFileSync } from 'node:fs'
 
 const source = readFileSync(new URL('../src/pages/AchievementsPage.tsx', import.meta.url), 'utf8')
 
-test('achievement filters use a stable two-row layout for long task names', () => {
+test('achievement filters use the compact single-row layout', () => {
   assert.match(source, /flex flex-col gap-3 border-b border-slate-100 bg-white px-4 py-3/)
-  assert.match(source, /flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto/)
-  assert.match(source, /max-w-\[420px\][^"]*truncate/)
-  assert.match(source, /relative w-full sm:max-w-\[280px\]/)
+  assert.match(source, /flex max-w-full flex-wrap items-center gap-x-4 gap-y-2/)
+  assert.match(source, /relative w-full sm:w-\[220px\]/)
+  assert.match(source, /重置/)
+})
+
+test('achievement filters expose only work and task selectors', () => {
+  for (const label of ['重点工作筛选', '关键任务筛选']) assert.match(source, new RegExp(`aria-label="${label}"`))
+  for (const label of ['成果类型筛选', '来源筛选', '入库时间筛选', '入库开始日期', '入库结束日期']) assert.doesNotMatch(source, new RegExp(`aria-label="${label}"`))
+  assert.match(source, /<option value="">/)
+  assert.match(source, /filterSubtaskId/)
+  assert.match(source, /allSubtasks\.filter/)
+})
+
+test('achievement detail shows a prompt until a row is selected', () => {
+  assert.doesNotMatch(source, /if \(!prev\) return rows\[0\] \?\? null/)
+  assert.doesNotMatch(source, /rows\.find\(\(item\) => item\.id === prev\.id\) \?\? rows\[0\] \?\? null/)
+  assert.match(source, /onClick=\{\(\) => \{ setSelected\(item\); setEditMode\(false\) \}\}/)
+  assert.match(source, /选择左侧成果查看详情/)
+  assert.match(source, /\{!selected \? \(/)
+})
+
+test('achievement list keeps core columns plus the submitter', () => {
+  assert.match(source, /<th className="px-4 py-3 font-semibold">成果名称<\/th>/)
+  assert.match(source, /<th className="px-3 py-3 font-semibold">成果类型<\/th>/)
+  assert.match(source, /关联重点工作 \/ 关键任务/)
+  assert.match(source, /<th className="px-3 py-3 font-semibold">提交\/登记人<\/th>/)
+  assert.match(source, /<td colSpan=\{4\}/)
+  assert.doesNotMatch(source, /<th className="px-3 py-3 font-semibold">来源<\/th>/)
+  assert.doesNotMatch(source, /<th className="px-3 py-3 font-semibold">确认\/入库人<\/th>/)
 })
 
 test('achievement library overview matches the full project table information architecture', () => {

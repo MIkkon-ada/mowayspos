@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { fetchMeetings, patchMeetingStatus } from '../api/meetings'
+import { fetchMeetingRevisions, fetchMeetings, patchMeetingStatus, type MeetingRevisionItem } from '../api/meetings'
 import { getOverview } from '../api/dashboard'
 import { useProject } from '../context/ProjectContext'
 import type { MeetingItem } from '../types'
@@ -30,6 +30,8 @@ export function MeetingPage() {
   const [showNewModal, setShowNewModal] = useState(false)
   const [editingItem, setEditingItem] = useState<MeetingItem | null>(null)
   const [projectProgress, setProjectProgress] = useState<Record<number, number>>({})
+  const [revisions, setRevisions] = useState<MeetingRevisionItem[]>([])
+  const [selectedRevision, setSelectedRevision] = useState<MeetingRevisionItem | null>(null)
 
   const currentProject = projects.find((p) => p.id === currentProjectId) ?? null
   const effectiveProject = projects.find((p) => p.id === effectiveProjectId) ?? null
@@ -56,6 +58,30 @@ export function MeetingPage() {
       cancelled = true
     }
   }, [effectiveProjectId, urlMeetingId])
+
+  useEffect(() => {
+    if (!selected) {
+      setRevisions([])
+      setSelectedRevision(null)
+      return
+    }
+    let cancelled = false
+    fetchMeetingRevisions(selected.id)
+      .then((rows) => {
+        if (cancelled) return
+        setRevisions(rows)
+        setSelectedRevision(rows[0] ?? null)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRevisions([])
+          setSelectedRevision(null)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selected?.id])
 
   useEffect(() => {
     if (effectiveProjectId || projects.length === 0) return
@@ -165,7 +191,12 @@ export function MeetingPage() {
                 {projects.map((p) => {
                   const manager = p.owners?.[0] ?? p.coordinator ?? '—'
                   const memberCount = Object.values(p.member_counts ?? {}).reduce((sum, count) => sum + count, 0)
-                  const period = p.start_date || p.end_date ? `${p.start_date ?? '—'} — ${p.end_date ?? '—'}` : '\u6682\u672a\u8bbe\u7f6e'
+                  const shortDate = (value?: string) => {
+                    if (!value) return '—'
+                    const [, month, day] = value.split('-')
+                    return `${Number(month)}月${Number(day)}日`
+                  }
+                  const period = p.start_date || p.end_date ? `${shortDate(p.start_date)} — ${shortDate(p.end_date)}` : '\u6682\u672a\u8bbe\u7f6e'
                   const statusLabel = p.is_active ? '\u8fdb\u884c\u4e2d' : '\u672a\u542f\u7528'
                   const progress = projectProgress[p.id] ?? 0
 
@@ -188,22 +219,22 @@ export function MeetingPage() {
                         <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold ${p.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>{statusLabel}</span>
                       </div>
 
-                      <div className="mt-5 grid grid-cols-2 overflow-hidden rounded-xl border border-slate-100 bg-slate-50/60 text-sm">
-                        <div className="project-card-period border-b border-r border-slate-100 p-3">
-                          <div className="text-[11px] text-slate-400">{'\u9879\u76ee\u5468\u671f'}</div>
-                          <div className="mt-1 truncate font-medium text-slate-700" title={period}>{period}</div>
+                      <div className="mt-5 overflow-hidden rounded-xl border border-slate-100 bg-slate-50/60 text-sm">
+                        <div className="project-card-period flex items-center gap-4 border-b border-slate-100 p-3">
+                          <div className="w-20 shrink-0 text-[11px] text-slate-400">{'\u9879\u76ee\u5468\u671f'}</div>
+                          <div className="min-w-0 flex-1 truncate font-medium text-slate-700" title={period}>{period}</div>
                         </div>
-                        <div className="project-card-manager border-b border-slate-100 p-3">
-                          <div className="text-[11px] text-slate-400">{'\u9879\u76ee\u7ecf\u7406'}</div>
-                          <div className="mt-1 truncate font-medium text-slate-700" title={manager}>{manager}</div>
+                        <div className="project-card-manager flex items-center gap-4 border-b border-slate-100 p-3">
+                          <div className="w-20 shrink-0 text-[11px] text-slate-400">{'\u9879\u76ee\u7ecf\u7406'}</div>
+                          <div className="min-w-0 flex-1 truncate font-medium text-slate-700" title={manager}>{manager}</div>
                         </div>
-                        <div className="project-card-members border-r border-slate-100 p-3">
-                          <div className="text-[11px] text-slate-400">{'\u9879\u76ee\u6210\u5458'}</div>
+                        <div className="project-card-members flex items-center gap-4 border-b border-slate-100 p-3">
+                          <div className="w-20 shrink-0 text-[11px] text-slate-400">{'\u9879\u76ee\u6210\u5458'}</div>
                           <div className="mt-1 font-medium text-slate-700">{memberCount > 0 ? `${memberCount} \u4eba` : '—'}</div>
                         </div>
-                        <div className="project-card-progress p-3">
-                          <div className="text-[11px] text-slate-400">{'\u5f53\u524d\u8fdb\u5ea6'}</div>
-                          <div className="mt-1 font-medium text-slate-700">{`${progress}%`}</div>
+                        <div className="project-card-progress flex items-center gap-4 p-3">
+                          <div className="w-20 shrink-0 text-[11px] text-slate-400">{'\u5f53\u524d\u8fdb\u5ea6'}</div>
+                          <div className="min-w-0 flex-1 truncate font-medium text-slate-700">{`${progress}%`}</div>
                         </div>
                       </div>
 
@@ -336,6 +367,40 @@ export function MeetingPage() {
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {selected && revisions.length > 0 && (
+          <div className="bg-white rounded-2xl border p-5 mb-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-bold text-slate-800">纪要版本历史</h2>
+              <span className="text-[11px] text-slate-400">只读</span>
+            </div>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {revisions.map((revision) => (
+                <button
+                  key={revision.id}
+                  type="button"
+                  onClick={() => setSelectedRevision(revision)}
+                  className={`rounded-lg border px-2.5 py-1.5 text-xs ${selectedRevision?.id === revision.id ? 'border-sky-400 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-600'}`}
+                >
+                  {revision.is_legacy_snapshot ? '升级前历史快照' : `V${revision.version_no}`}
+                </button>
+              ))}
+            </div>
+            {selectedRevision && (
+              <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+                <div className="mb-2 flex items-center justify-between text-[11px] text-slate-400">
+                  <span>{selectedRevision.saved_by || '系统'} · {fmtTime(selectedRevision.saved_at)}</span>
+                  <span>只读版本</span>
+                </div>
+                <p className="whitespace-pre-wrap leading-6">{selectedRevision.summary || '暂无摘要'}</p>
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-sky-700">查看该版本原始转写</summary>
+                  <p className="mt-2 whitespace-pre-wrap leading-6">{selectedRevision.transcript_text}</p>
+                </details>
+              </div>
+            )}
           </div>
         )}
 

@@ -177,8 +177,20 @@ def test_meeting_analysis_tags_only_exact_project_member_matches(monkeypatch):
     ))
 
     assert json.loads(result["task_list_json"]) == [
-        {"member": "Owner", "task": "Confirm scope", "deadline": ""},
-        {"member": "待确认", "task": "Review risks", "deadline": ""},
+        {
+            "member": "Owner",
+            "task": "Confirm scope",
+            "deadline": "待确认",
+            "acceptance_criteria": "待确认",
+            "evidence_quote": "待确认",
+        },
+        {
+            "member": "待确认",
+            "task": "Review risks",
+            "deadline": "待确认",
+            "acceptance_criteria": "待确认",
+            "evidence_quote": "待确认",
+        },
     ]
     assert json.loads(result["reports_json"]) == [
         {"member": "Member", "role": "项目经理", "content": "说明当前安排"},

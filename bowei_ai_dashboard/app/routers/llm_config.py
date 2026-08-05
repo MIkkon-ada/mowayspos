@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
+import os
+
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..llm_config import PROVIDERS, get_provider_config, load_configs, save_configs
+from ..llm_config import PROVIDERS, get_default_provider, get_provider_config, load_configs, save_configs, set_default_provider
 from ..permissions import get_current_user_name, get_user_context_from_db
 
 router = APIRouter(prefix="/api/llm-config", tags=["llm-config"])
@@ -20,6 +22,10 @@ class LLMConfigPayload(BaseModel):
     base_url: str = ""
     model: str = ""
     enabled: bool = False
+
+
+class LLMDefaultProviderPayload(BaseModel):
+    provider: str = ""
 
 
 @router.get("/available")
@@ -64,6 +70,29 @@ def list_configs(
             "enabled": cfg.get("enabled", False),
         })
     return result
+
+
+@router.get("/default-provider")
+def get_default_provider_config(
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user, db)
+    return {"provider": get_default_provider()}
+
+
+@router.put("/default-provider")
+def save_default_provider_config(
+    payload: LLMDefaultProviderPayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user, db)
+    try:
+        set_default_provider(payload.provider)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "provider": get_default_provider()}
 
 
 @router.put("/{provider}")

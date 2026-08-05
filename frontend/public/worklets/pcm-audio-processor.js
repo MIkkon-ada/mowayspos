@@ -1,76 +1,122 @@
 /**
- * AudioWorklet 处理器：Float32 → Int16 PCM 编码 + VAD 静音检测。
+ * AudioWorklet processor for 16kHz mono Float32 audio.
  *
- * 不再做降采样 — 改为创建 16kHz AudioContext，让浏览器内置重采样器处理采样率转换。
- * 浏览器重采样器有专业抗混叠滤波器，质量远高于手写的简单平均。
- *
- * 输入：16kHz Float32 单声道（AudioContext 已处理重采样）
- * 输出：通过 MessagePort 回传主线程
- *   - { type: "pcm", buffer: ArrayBuffer }  → Int16 PCM @ 16kHz
- *   - { type: "silence", duration: number }  → 连续静音时长（秒）
+ * Audio is converted to signed Int16 PCM and sent in 100ms packets. RMS-based
+ * silence messages are diagnostics only: silent samples are never discarded
+ * and silence never stops the processor.
  */
 
 const TARGET_SAMPLE_RATE = 16000;
+const DEFAULT_PACKET_SAMPLES = TARGET_SAMPLE_RATE / 10;
+const MIN_PACKET_SAMPLES = 640;
+const MAX_PACKET_SAMPLES = 4000;
 const SILENCE_THRESHOLD = 0.015;
 const SILENCE_DURATION_LIMIT = 2.0;
-/** 每 N 帧检测一次静音，减少 postMessage 开销 */
 const FRAMES_PER_NOTIFY = 10;
 
 class PcmAudioProcessor extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options) {
     super();
-    this._silenceFrames = 0;
+    const configuredPacketSamples = options?.processorOptions?.packetSamples;
+    this._packetSamples = Number.isInteger(configuredPacketSamples)
+      && configuredPacketSamples >= MIN_PACKET_SAMPLES
+      && configuredPacketSamples <= MAX_PACKET_SAMPLES
+      ? configuredPacketSamples
+      : DEFAULT_PACKET_SAMPLES;
+    this._packet = new Float32Array(this._packetSamples);
+    this._packetLength = 0;
+    this._silentSampleCount = 0;
     this._frameCount = 0;
-    this.port.onmessage = (e) => {
-      if (e.data?.type === "stop") this._stopped = true;
+    this._stopped = false;
+    this._flushed = false;
+    this.port.onmessage = (event) => {
+      if (event.data?.type === "stop") this._stop();
     };
   }
 
-  /**
-   * Float32 [-1,1] → Int16 PCM
-   */
   _toPcm(samples) {
-    const out = new Int16Array(samples.length);
-    for (let i = 0; i < samples.length; i++) {
-      const s = Math.max(-1, Math.min(1, samples[i]));
-      out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    const output = new Int16Array(samples.length);
+    for (let index = 0; index < samples.length; index += 1) {
+      const sample = Math.max(-1, Math.min(1, samples[index]));
+      output[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
     }
-    return out.buffer;
+    return output.buffer;
   }
 
-  /**
-   * RMS 能量计算
-   */
   _rms(samples) {
     let sum = 0;
-    for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+    for (let index = 0; index < samples.length; index += 1) {
+      sum += samples[index] * samples[index];
+    }
     return Math.sqrt(sum / samples.length);
+  }
+
+  _emitPcm(samples) {
+    const buffer = this._toPcm(samples);
+    this.port.postMessage({ type: "pcm", buffer }, [buffer]);
+  }
+
+  _recordRms(channelData) {
+    const energy = this._rms(channelData);
+    if (energy < SILENCE_THRESHOLD) {
+      this._silentSampleCount += channelData.length;
+    } else {
+      this._silentSampleCount = 0;
+    }
+
+    this._frameCount += 1;
+    if (this._frameCount % FRAMES_PER_NOTIFY !== 0) return;
+
+    const silenceDuration = this._silentSampleCount / TARGET_SAMPLE_RATE;
+    if (silenceDuration >= SILENCE_DURATION_LIMIT) {
+      this.port.postMessage({
+        type: "silence",
+        duration: Math.round(silenceDuration * 10) / 10,
+      });
+    }
+  }
+
+  _append(channelData) {
+    let sourceOffset = 0;
+    while (sourceOffset < channelData.length) {
+      const copyLength = Math.min(
+        this._packetSamples - this._packetLength,
+        channelData.length - sourceOffset,
+      );
+      this._packet.set(
+        channelData.subarray(sourceOffset, sourceOffset + copyLength),
+        this._packetLength,
+      );
+      this._packetLength += copyLength;
+      sourceOffset += copyLength;
+
+      if (this._packetLength === this._packetSamples) {
+        this._emitPcm(this._packet);
+        this._packetLength = 0;
+      }
+    }
+  }
+
+  _stop() {
+    if (this._flushed) return;
+
+    this._stopped = true;
+    if (this._packetLength > 0) {
+      this._emitPcm(this._packet.subarray(0, this._packetLength));
+      this._packetLength = 0;
+    }
+    this.port.postMessage({ type: "flushed" });
+    this._flushed = true;
   }
 
   process(inputs) {
     if (this._stopped) return false;
 
-    const input = inputs[0];
-    if (!input?.[0] || input[0].length === 0) return true;
+    const channelData = inputs[0]?.[0];
+    if (!channelData || channelData.length === 0) return true;
 
-    const channelData = input[0]; // Float32Array @ 16kHz（浏览器已重采样）
-
-    // VAD 静音检测
-    const energy = this._rms(channelData);
-    energy < SILENCE_THRESHOLD ? this._silenceFrames++ : (this._silenceFrames = 0);
-
-    this._frameCount++;
-    if (this._frameCount % FRAMES_PER_NOTIFY === 0) {
-      const silenceDuration = (this._silenceFrames * channelData.length) / TARGET_SAMPLE_RATE;
-      if (silenceDuration >= SILENCE_DURATION_LIMIT) {
-        this.port.postMessage({ type: "silence", duration: Math.round(silenceDuration * 10) / 10 });
-      }
-    }
-
-    // Float32 → Int16 PCM，transfer 零拷贝
-    const pcmBuffer = this._toPcm(channelData);
-    this.port.postMessage({ type: "pcm", buffer: pcmBuffer }, [pcmBuffer]);
-
+    this._recordRms(channelData);
+    this._append(channelData);
     return true;
   }
 }

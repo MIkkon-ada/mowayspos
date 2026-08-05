@@ -26,6 +26,7 @@ const SUBMISSION = 'src/features/voice-update/useVoiceSubmission.ts'
 const DRAFT = 'src/features/voice-update/useVoiceDraft.ts'
 const CSS = 'src/features/voice-update/voiceUpdateFlow.css'
 const ROUTES = 'src/app/routes.tsx'
+const RECORDER = 'src/features/voice-update/useVoiceRecorder.ts'
 
 async function loadFlowModel() {
   const source = read(TYPES)
@@ -535,6 +536,12 @@ test('editor uses one cohesive SaaS workspace with a compact visible footer', ()
   assert.match(css, /\.voice-update-footer-bar\s*\{[^}]*height:\s*56px/s)
 })
 
+test('result panel declares its border in one rule to avoid shorthand conflicts', () => {
+  const css = read(CSS)
+  assert.match(css, /\.voice-update-result-panel\s*\{[^}]*border:\s*0[^}]*border-left:\s*1px solid/s)
+  assert.doesNotMatch(css, /\.voice-update-result-panel\s*\{[^}]*\}\s*\.voice-update-result-panel\s*\{[^}]*border-left:/s)
+})
+
 test('unconfirmed Agent ownership blocks formal submission without changing createUpdate', async () => {
   const { hasUnconfirmedOwnership } = await loadFlowModel()
   assert.equal(hasUnconfirmedOwnership([{ type: 'progress', match_status: 'matched', matched_subtask_id: 1 }]), false)
@@ -611,4 +618,128 @@ test('each AI-extracted achievement can upload unbound evidence for confirmation
   assert.match(reports, /projectId/)
   assert.match(reports, /type="file"/)
   assert.match(api, /projectId: number; achievementId\?: number; achievementSubmissionId\?: number/)
+})
+
+test('realtime recording is scoped to one active project task', () => {
+  const page = read(PAGE)
+  const recorder = read(RECORDER)
+  assert.match(page, /const canRecord = reportScope === 'task'[\s\S]{0,220}selectedProjectIsActive/)
+  assert.match(page, /projectId:\s*selectedProjectId/)
+  assert.match(page, /selectedTaskId:\s*taskBinding\.selectedSubtaskId/)
+  assert.match(page, /canRecord,/)
+  assert.match(recorder, /scene:\s*'work_report'/)
+  assert.doesNotMatch(recorder, /meeting/i)
+})
+
+test('realtime recorder uses one permanent message handler and the explicit lifecycle protocol', () => {
+  const source = read(RECORDER)
+  assert.equal((source.match(/ws\.onmessage\s*=/g) ?? []).length, 1)
+  for (const helper of ['parseServerMessage', 'emptyTranscript', 'mergeTranscript', 'composeTranscript']) {
+    assert.match(source, new RegExp(helper))
+  }
+  assert.match(source, /type:\s*'start'/)
+  assert.match(source, /waitForMessage\('ready'/)
+  assert.match(source, /waitForMessage\('started'/)
+  assert.match(source, /waitForMessage\(\['done',\s*'error'\]/)
+  assert.doesNotMatch(source, /setTimeout\(resolve,\s*1500\)/)
+})
+
+test('realtime recorder applies packet and stop timing from the validated started message', () => {
+  const source = read(RECORDER)
+  assert.match(source, /startResult\.packet_duration_ms/)
+  assert.match(source, /startResult\.stop_timeout_seconds/)
+  assert.match(source, /processorOptions:\s*\{\s*packetSamples:/)
+  assert.match(source, /Math\.round\(16000\s*\*\s*packetDurationMs\s*\/\s*1000\)/)
+  assert.match(source, /stopTimeoutSeconds\s*\*\s*1000\s*\+\s*2000/)
+  assert.match(source, /Math\.min\(\s*32000,/)
+  assert.doesNotMatch(source, /DONE_TIMEOUT_MS\s*=\s*8000/)
+})
+
+test('realtime recorder treats only the current non-intentional microphone track end as terminal', () => {
+  const source = read(RECORDER)
+  assert.match(source, /track\.addEventListener\('ended'/)
+  assert.match(source, /track\.removeEventListener\('ended'/)
+  assert.match(source, /intentionalMediaStopRef/)
+  assert.match(source, /streamRef\.current !== stream/)
+  assert.match(source, /attemptGenerationRef\.current !== attempt/)
+  assert.match(source, /terminalRef\.current/)
+  assert.match(source, /麦克风已断开或权限已撤回，请检查已识别文字后重试/)
+  assert.match(source, /sampleRate[\s\S]*channelCount[\s\S]*echoCancellation[\s\S]*noiseSuppression/)
+  assert.doesNotMatch(source, /getSettings\(\)[\s\S]{0,300}(label|deviceId)/)
+})
+
+test('realtime recorder flushes tail audio before sending stop and cleans up on unmount', () => {
+  const source = read(RECORDER)
+  assert.match(source, /postMessage\(\{\s*type:\s*'stop'\s*\}\)[\s\S]*await Promise\.race\([\s\S]*flushed[\s\S]*ws\.send\(JSON\.stringify\(\{\s*type:\s*'stop'/)
+  assert.match(source, /bufferedAmount\s*>\s*512\s*\*\s*1024/)
+  assert.match(source, /useEffect\(\(\)\s*=>\s*\{[\s\S]*mountedRef\.current = false[\s\S]*void cleanup/)
+})
+
+test('recording locks only media controls and shows connection and finalization states', () => {
+  const page = read(PAGE)
+  const input = read(INPUT)
+  assert.match(page, /const mediaActive =/)
+  assert.match(page, /const controlsLocked = phase === 'extracting' \|\| phase === 'submitting' \|\| mediaActive/)
+  assert.match(page, /mediaActive=\{mediaActive\}/)
+  assert.match(page, /recorderState=\{recorderState\}/)
+  assert.match(input, /readOnly=\{mediaActive\}/)
+  assert.match(input, /正在连接语音服务/)
+  assert.match(input, /正在完成最后一句/)
+  assert.match(input, /请先选择执行中的项目和关键任务/)
+  assert.match(input, /disabled=\{recording \? false : controlsLocked \|\| voiceBusy \|\| !canRecord\}/)
+})
+
+test('realtime recorder terminal events converge on idempotent cleanup', () => {
+  const source = read(RECORDER)
+  assert.match(source, /const finishTerminal = useCallback/)
+  assert.match(source, /message\.type === 'error'[\s\S]*void finishTerminal\('failed'/)
+  assert.match(source, /message\.type === 'done'[\s\S]*void finishTerminal\('completed'/)
+  assert.match(source, /handleTransportFailure[\s\S]*void finishTerminal\(\s*'failed'/)
+  assert.match(source, /terminalRef/)
+})
+
+test('realtime recorder invalidates stale microphone starts and handles socket error immediately', () => {
+  const source = read(RECORDER)
+  assert.match(source, /attemptGenerationRef/)
+  assert.match(source, /const isCurrentAttempt =/)
+  assert.match(source, /await context\.audioWorklet\.addModule[\s\S]*isCurrentAttempt/)
+  assert.match(source, /await navigator\.mediaDevices\.getUserMedia[\s\S]*isCurrentAttempt/)
+  assert.match(source, /ws\.addEventListener\('error',\s*finishWithFailure/)
+  assert.match(source, /removeEventListener\('error',\s*finishWithFailure/)
+})
+
+test('realtime recorder atomically detaches owned resources before awaiting disposal', () => {
+  const source = read(RECORDER)
+  const cleanupStart = source.indexOf('const cleanup = useCallback')
+  const cleanupEnd = source.indexOf('const finishTerminal = useCallback')
+  const cleanupSource = source.slice(cleanupStart, cleanupEnd)
+  assert.match(cleanupSource, /const socket = wsRef\.current[\s\S]*wsRef\.current = null/)
+  assert.match(cleanupSource, /const context = audioCtxRef\.current[\s\S]*audioCtxRef\.current = null/)
+  assert.match(cleanupSource, /const stream = streamRef\.current[\s\S]*streamRef\.current = null/)
+  assert.match(cleanupSource, /const node = workletRef\.current[\s\S]*workletRef\.current = null/)
+  assert.match(cleanupSource, /wsRef\.current = null[\s\S]*workletRef\.current = null[\s\S]*await releaseMedia/)
+  assert.doesNotMatch(cleanupSource, /await releaseMedia[\s\S]*wsRef\.current/)
+})
+
+test('realtime recorder synchronously owns one mounted start attempt and scopes socket events and waiters', () => {
+  const source = read(RECORDER)
+  assert.match(source, /startInFlightRef/)
+  assert.match(source, /mountedRef/)
+  assert.match(source, /if \(startInFlightRef\.current \|\| mediaActiveRef\.current\) return/)
+  assert.match(source, /startInFlightRef\.current = true[\s\S]*const attempt =/)
+  assert.match(source, /installSocketHandlers\(ws,\s*attempt\)/)
+  assert.match(source, /if \(!ownsAttempt\(ws,\s*attempt\)\) return/)
+  assert.match(source, /attempt:\s*number/)
+  assert.match(source, /waiter\.attempt !== attempt/)
+  assert.match(source, /finally[\s\S]*startOwnerRef\.current === attempt/)
+})
+
+test('audio upload and realtime recording are mutually exclusive without disabling idle text or upload modes', () => {
+  const page = read(PAGE)
+  const input = read(INPUT)
+  assert.match(page, /const canRecord = reportScope === 'task'[\s\S]*&& !uploading/)
+  assert.match(page, /const controlsLocked = phase === 'extracting' \|\| phase === 'submitting' \|\| mediaActive \|\| uploading/)
+  assert.match(input, /disabled=\{uploading \|\| mediaActive\}/)
+  assert.match(input, /if \(!mediaActive\) onUploadFile\(file\)/)
+  assert.doesNotMatch(page, /canRecord\s*=\s*false/)
 })

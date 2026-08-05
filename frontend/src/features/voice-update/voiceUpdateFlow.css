@@ -103,8 +103,7 @@
 .voice-update-main-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0; }
 .voice-update-workspace { display: grid; grid-template-columns: minmax(0, 40fr) minmax(0, 60fr); align-items: start; gap: 0; min-width: 0; }
 .voice-update-input-panel,
-.voice-update-result-panel { min-width: 0; border: 0; border-radius: 0; background: #fff; box-shadow: none; }
-.voice-update-result-panel { border-left: 1px solid #e2e8f0; }
+.voice-update-result-panel { min-width: 0; border: 0; border-left: 1px solid #e2e8f0; border-radius: 0; background: #fff; box-shadow: none; }
 .voice-update-left-column { display: flex; min-width: 0; min-height: 100%; flex-direction: column; background: #fff; }
 .voice-update-input-panel { display: flex; min-height: auto; flex-direction: column; padding: 0 24px 22px; }
 .voice-update-result-panel { display: flex; min-height: 0; flex-direction: column; overflow: hidden; }
@@ -127,6 +126,7 @@
 .voice-update-input-heading span { color: #94a3b8; font-size: 11px; }
 .voice-update-textarea { width: 100%; height: 240px; min-height: 240px; resize: vertical; border: 1px solid #d7dee8; border-radius: 8px; padding: 14px; color: #334155; font: inherit; line-height: 1.6; outline: none; }
 .voice-update-textarea:focus { border-color: #38bdf8; box-shadow: 0 0 0 3px rgb(56 189 248 / 12%); }
+.voice-update-textarea.is-media-read-only { background: #f8fafc; color: #475569; cursor: progress; }
 .voice-update-character-count { margin-top: 6px; color: #64748b; font-size: 12px; font-weight: 700; text-align: right; }
 .voice-update-input-hints { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 10px 0 0; border: 0; padding: 0; color: #64748b; font-size: 11px; }
 .voice-update-extract-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; margin-top: 22px; }
@@ -174,6 +174,7 @@
 .voice-update-record-button:hover { background: #075985; }
 .voice-update-stop-button { background: #ef4444; color: #fff; }
 .voice-update-stop-button:hover { background: #dc2626; }
+.voice-update-recorder-bar button:disabled { cursor: wait; opacity: .65; }
 
 .voice-update-result-header { min-height: 64px; padding: 0 24px; }
 .voice-update-result-header h2 { margin: 0; color: #0f172a; font-size: 16px; font-weight: 800; }

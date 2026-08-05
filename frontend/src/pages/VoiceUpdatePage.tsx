@@ -155,8 +155,28 @@ export function VoiceUpdatePage() {
     setText,
   })
 
-  const { recording, transcribing, timer, startRecording, stopRecording } = useVoiceRecorder({ setText, setError: setExtractionError })
   const { uploading, uploadFileName, uploadInputRef, handleUploadFile } = useVoiceUpload({ setText, setError: setExtractionError })
+  const canRecord = reportScope === 'task'
+    && selectedProjectIsActive
+    && selectedProjectId !== null
+    && taskBinding.selectedSubtaskId !== null
+    && !uploading
+  const {
+    recorderState,
+    recording,
+    transcribing,
+    timer,
+    startRecording,
+    stopRecording,
+  } = useVoiceRecorder({
+    projectId: selectedProjectId,
+    selectedTaskId: taskBinding.selectedSubtaskId,
+    canRecord,
+    initialText: text,
+    setText,
+    setError: setExtractionError,
+  })
+  const mediaActive = ['connecting', 'starting', 'recording', 'stopping'].includes(recorderState)
   const historyState = useVoiceHistory({ activeProjectId: selectedProjectId })
   useEffect(() => {
     if (!historyRequested || historyDeepLinkHandled.current) return
@@ -186,7 +206,7 @@ export function VoiceUpdatePage() {
     refreshHistory: historyState.refreshHistory,
   })
 
-  const controlsLocked = phase === 'extracting' || phase === 'submitting'
+  const controlsLocked = phase === 'extracting' || phase === 'submitting' || mediaActive || uploading
   const extractDisabled = !canExtractVoiceUpdate({
     scope: reportScope,
     candidateCount: taskBinding.taskOptions.length,
@@ -290,6 +310,9 @@ export function VoiceUpdatePage() {
                   extractDisabled={extractDisabled}
                   recording={recording}
                   transcribing={transcribing}
+                  mediaActive={mediaActive}
+                  recorderState={recorderState}
+                  canRecord={canRecord}
                   timerLabel={formatTime(timer)}
                   text={text}
                   onTextChange={setText}

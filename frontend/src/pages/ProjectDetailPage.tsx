@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getProject, getProjectMembers } from '../api/projects'
+import { dispatchProject, getProject, getProjectMembers } from '../api/projects'
 import { fetchTasks } from '../api/tasks'
 import { fetchSubTasksBatch } from '../api/subtasks'
 import { useProject } from '../context/ProjectContext'
 import { DetailPanel } from '../features/settings/ProjectsMgmtSection'
 import { ApprovalMaterialsWorkbenchModal } from '../features/settings/ProjectsMgmtSection'
+import { createProjectDetailDispatcher } from '../domain/projectDetailDispatch'
 import type { Project, ProjectMember, TaskItem, SubTaskWithParent } from '../types'
+import { toast } from '../utils/toast'
 
 export default function ProjectDetailPage() {
   const { projectId: pidStr } = useParams<{ projectId: string }>()
@@ -19,12 +21,23 @@ export default function ProjectDetailPage() {
   const [tasks, setTasks] = useState<TaskItem[]>([])
   const [subtasks, setSubtasks] = useState<SubTaskWithParent[]>([])
   const [loading, setLoading] = useState(true)
+  const [dispatching, setDispatching] = useState(false)
 
   // modals
   const [approvalMaterialsProject, setApprovalMaterialsProject] = useState<Project | null>(null)
   const [closeFlowProjectId, setCloseFlowProjectId] = useState<number | null>(null)
 
   const myPersonId = currentUser?.person_id ?? null
+  const dispatchFromDetail = useMemo(
+    () => createProjectDetailDispatcher<Project>({
+      dispatch: dispatchProject,
+      refresh: getProject,
+      onSuccess: (recipientCount) => toast.success(`已下发给 ${recipientCount} 位负责人`),
+      onDispatchError: (message) => toast.error(message),
+      onRefreshError: () => toast.warning('下发成功，但页面状态刷新失败，请手动刷新'),
+    }),
+    [],
+  )
 
   useEffect(() => {
     if (!projectId) return
@@ -98,6 +111,19 @@ export default function ProjectDetailPage() {
 
   const goBack = () => navigate('/home/projects')
 
+  async function handleDispatch() {
+    if (!project) return
+    const dispatchAttempt = dispatchFromDetail(project.id)
+    if (!dispatchAttempt) return
+    setDispatching(true)
+    try {
+      const refreshedProject = await dispatchAttempt
+      if (refreshedProject) setProject(refreshedProject)
+    } finally {
+      setDispatching(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#F8FAFC]">
@@ -147,9 +173,8 @@ export default function ProjectDetailPage() {
           wide
           onClose={goBack}
           onEdit={() => navigate(`/home/projects?edit=${project.id}`)}
-          onDispatch={async () => {
-            // TODO: dispatch logic
-          }}
+          onDispatch={() => void handleDispatch()}
+          dispatching={dispatching}
           onOwnerSubmit={() => {
             // TODO: owner submit logic - needs OwnerFillProject modal
           }}

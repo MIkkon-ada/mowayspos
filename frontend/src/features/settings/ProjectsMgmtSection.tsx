@@ -1127,7 +1127,7 @@ function LifecycleMoreMenu({
 
 export function DetailPanel({
   project, projectMembers, tasks, subtasks, roles, onClose, wide,
-  onEdit, onDispatch, onOwnerSubmit, onOpenApprovalMaterials, onReturn, onWorkProgress, onOpenCloseFlow, onOpenArchive,
+  onEdit, onDispatch, dispatching = false, onOwnerSubmit, onOpenApprovalMaterials, onReturn, onWorkProgress, onOpenCloseFlow, onOpenArchive,
 }: {
   project: Project
   projectMembers: ProjectMember[]
@@ -1137,6 +1137,7 @@ export function DetailPanel({
   onClose: () => void
   onEdit: () => void
   onDispatch: () => void
+  dispatching?: boolean
   onOwnerSubmit: () => void
   onOpenApprovalMaterials: () => void
   onReturn: () => void
@@ -1237,6 +1238,7 @@ export function DetailPanel({
                   key={btn.label}
                   type="button"
                   onClick={btn.onClick}
+                  disabled={dispatching && btn.onClick === onDispatch}
                   className={`w-full rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${
                     btn.primary
                       ? 'bg-slate-900 text-white hover:bg-slate-800'
@@ -1245,7 +1247,7 @@ export function DetailPanel({
                         : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  {btn.label}
+                  {dispatching && btn.onClick === onDispatch ? '下发中...' : btn.label}
                 </button>
               ))}
             </div>
@@ -1309,6 +1311,7 @@ export function DetailPanel({
                   key={btn.label}
                   type="button"
                   onClick={btn.onClick}
+                  disabled={dispatching && btn.onClick === onDispatch}
                   className={`w-full rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
                     btn.primary
                       ? 'bg-slate-900 text-white hover:bg-slate-800'
@@ -1317,7 +1320,7 @@ export function DetailPanel({
                         : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  {btn.label}
+                  {dispatching && btn.onClick === onDispatch ? '下发中...' : btn.label}
                 </button>
               ))}
             </div>

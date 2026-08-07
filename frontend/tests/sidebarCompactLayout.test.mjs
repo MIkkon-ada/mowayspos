@@ -15,12 +15,14 @@ const archiveCss = fs.readFileSync(
   'utf8',
 )
 
-test('sidebar uses the fixed 176px shell width without the legacy width class', () => {
+test('sidebar uses 64px compact width and expands to 176px at xl', () => {
   assert.match(
     sidebarSource,
-    /<aside className="w-44 flex-shrink-0 flex flex-col overflow-hidden"/,
+    /<aside className="app-sidebar w-16 xl:w-44 flex-shrink-0 flex flex-col overflow-hidden"/,
   )
   assert.doesNotMatch(sidebarSource, /\bw-56\b/)
+  assert.doesNotMatch(sidebarSource, /addEventListener\(['"]resize['"]/)
+  assert.doesNotMatch(sidebarSource, /window\.innerWidth/)
 })
 
 test('brand header renders only the existing logo or fallback and notification bell', () => {
@@ -29,9 +31,10 @@ test('brand header renders only the existing logo or fallback and notification b
   assert.doesNotMatch(sidebarSource, /\{platformName\s*\}/)
   assert.match(sidebarSource, /<img src=\{logoUrl\} alt="logo"/)
   assert.match(sidebarSource, /linear-gradient\(135deg,var\(--brand-accent/)
-  assert.match(sidebarSource, /<NotificationBell \/>/)
-  assert.match(sidebarSource, /className="flex items-center justify-between px-3 h-14 flex-shrink-0"/)
-  assert.match(sidebarSource, /height: 32, maxWidth: 90, objectFit: 'contain'/)
+  assert.match(sidebarSource, /className="hidden xl:block"[\s\S]*?<NotificationBell \/>/)
+  assert.match(sidebarSource, /className="flex items-center justify-center xl:justify-between px-3 h-14 flex-shrink-0"/)
+  assert.match(sidebarSource, /className="h-8 max-w-8 xl:max-w-\[90px\] object-contain flex-shrink-0"/)
+  assert.doesNotMatch(sidebarSource, /maxWidth\s*:/)
 })
 
 test('navigation keeps every existing item and permission boundary', () => {
@@ -68,18 +71,22 @@ test('navigation keeps its click routing and compact readable dimensions', () =>
   assert.match(sidebarSource, /navigate\('\/home\/dashboard'\)/)
   assert.match(sidebarSource, /onNavigate\(page\)/)
   assert.match(sidebarSource, /onClick=\{\(\) => handleNavigate\(entry\.page\)\}/)
+  assert.match(sidebarSource, /title=\{entry\.label\}/)
   assert.match(sidebarSource, /<nav className="flex-1 px-2 py-3 space-y-0\.5 overflow-y-auto">/)
   assert.match(sidebarSource, /className="pt-3"/)
   assert.match(sidebarSource, /gap: 8/)
   assert.match(sidebarSource, /padding: '8px 10px'/)
   assert.match(sidebarSource, /fontSize: 13/)
-  assert.match(sidebarSource, /<span style=\{\{ flex: 1, minWidth: 0 \}\}>\{entry\.label\}<\/span>/)
+  assert.match(sidebarSource, /className="justify-center xl:justify-start"/)
+  assert.match(sidebarSource, /<span className="hidden xl:block flex-1 min-w-0">\{entry\.label\}<\/span>/)
+  assert.match(sidebarSource, /className="hidden xl:inline-flex"/)
   assert.match(sidebarSource, /entry\.badge > 99 \? '99\+' : entry\.badge/)
 })
 
-test('account footer retains identity password and logout controls in compact dimensions', () => {
-  assert.match(sidebarSource, /className="px-3 py-2\.5 flex items-center gap-2 flex-shrink-0"/)
+test('account footer stacks compact controls and restores the wide row at xl', () => {
+  assert.match(sidebarSource, /className="px-3 py-2\.5 flex flex-col xl:flex-row items-center gap-2 flex-shrink-0"/)
   assert.match(sidebarSource, /className="w-7 h-7 rounded-full/)
+  assert.match(sidebarSource, /className="hidden xl:block flex-1 min-w-0"[\s\S]*?\{userName \|\|/)
   assert.match(sidebarSource, /\{userName \|\| '未登录'\}/)
   assert.match(sidebarSource, /\{roleText \|\| '暂无角色'\}/)
   assert.match(sidebarSource, /navigate\('\/change-password'\)/)
@@ -88,10 +95,10 @@ test('account footer retains identity password and logout controls in compact di
   assert.match(sidebarSource, /title="退出登录"/)
 })
 
-test('archived project mobile rule follows the compact sidebar class below 768px', () => {
+test('archived project mobile rule follows the stable sidebar class below 768px', () => {
   assert.doesNotMatch(archiveCss, /aside\.w-56/)
   assert.match(
     archiveCss,
-    /@media \(max-width: 767px\)[\s\S]*?body:has\(\.project-archive-page\) aside\.w-44 \{ display: none; \}/,
+    /@media \(max-width: 767px\)[\s\S]*?body:has\(\.project-archive-page\) aside\.app-sidebar \{ display: none; \}/,
   )
 })

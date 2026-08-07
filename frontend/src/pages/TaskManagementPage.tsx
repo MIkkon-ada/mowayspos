@@ -927,7 +927,7 @@ function handleFormSave(payload: TaskPayload) {
       )}
 
       {/* Top Bar */}
-      {!((viewMode === 'execution') && selectedSubTask) && <header className="h-14 px-6 gap-3 flex items-center flex-shrink-0 bg-white border-b overflow-x-auto" style={{ borderColor: '#E9EFF6' }}>
+      {!((viewMode === 'execution') && selectedSubTask) && <header className="min-h-14 px-4 py-2 lg:px-6 gap-3 flex flex-wrap items-center flex-shrink-0 bg-white border-b overflow-x-auto" style={{ borderColor: '#E9EFF6' }}>
         <div className="work-progress-title-group flex-shrink-0">
           <h1 className="text-base font-bold text-slate-800">工作推进表</h1>
         </div>
@@ -1324,7 +1324,7 @@ function handleFormSave(payload: TaskPayload) {
 
         {viewMode !== 'execution' && (selectedSubTask || subDetailLoading) && <aside
           data-testid="work-progress-detail-panel"
-          className="w-[380px] flex-shrink-0 border-l bg-white flex flex-col overflow-hidden"
+          className="fixed inset-y-0 right-0 z-40 w-[min(380px,calc(100vw-64px))] flex-shrink-0 border-l bg-white flex flex-col overflow-hidden shadow-2xl lg:static lg:z-auto lg:w-[340px] lg:shadow-none xl:w-[380px]"
           style={{ borderColor: '#E2E8F0' }}
         >
           {(() => {

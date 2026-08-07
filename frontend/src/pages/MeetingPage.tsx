@@ -122,12 +122,12 @@ export function MeetingPage() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <header className="h-16 flex items-center px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
-        <div className="flex-1">
+      <header className="min-h-16 flex flex-wrap items-center px-4 py-3 lg:px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
+        <div className="flex-1 min-w-0">
           <h1 className="text-base font-bold text-slate-800">会议纪要</h1>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <select
             className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none"
             value={typeFilter}
@@ -155,7 +155,7 @@ export function MeetingPage() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto p-6" style={{ background: '#F1F5F9' }}>
+      <main className="flex-1 overflow-y-auto p-4 lg:p-6" style={{ background: '#F1F5F9' }}>
         {!effectiveProjectId && !loading && (
           <div className="max-w-3xl mx-auto mt-12">
             <div className="bg-white rounded-2xl border p-6 sm:p-8 text-center" style={{ borderColor: '#E9EFF6' }}>
@@ -233,8 +233,8 @@ export function MeetingPage() {
             )}
 
         {selected && (
-          <div className="grid grid-cols-5 gap-5 mb-5">
-            <div className="bg-white rounded-2xl border p-5 col-span-2 overflow-y-auto" style={{ maxHeight: 560, borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-5 mb-5">
+            <div className="bg-white rounded-2xl border p-5 col-span-2 lg:col-span-3 xl:col-span-2 overflow-y-auto" style={{ maxHeight: 560, borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <div className="w-6 h-6 rounded-md flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#6366F1,#0EA5E9)' }}>
@@ -264,7 +264,7 @@ export function MeetingPage() {
               </div>
             </div>
 
-            <div className="col-span-3 flex flex-col gap-4">
+            <div className="col-span-2 lg:col-span-3 xl:col-span-3 flex flex-col gap-4">
               <div className="bg-white rounded-2xl border p-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-sm font-bold text-slate-800">提交原文</h2>

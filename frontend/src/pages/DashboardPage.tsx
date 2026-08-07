@@ -361,8 +361,8 @@ export function DashboardPage() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Top Bar */}
-      <header className="h-16 flex items-center px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
-        <div className="flex-1">
+      <header className="min-h-16 flex flex-wrap items-center px-4 py-3 lg:px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
+        <div className="flex-1 min-w-0">
           <h1 className="text-base font-bold text-slate-800">首页驾驶舱</h1>
           {!canViewGlobalDashboard && (
             <p className="text-xs text-slate-500">实时掌握我参与项目的进度、风险、成果与待决策事项</p>
@@ -370,7 +370,7 @@ export function DashboardPage() {
         </div>
 
         {/* 专项筛选 —— 这里是仪表盘自己的筛选，与 URL 项目无关 */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <select
             value={scopeMode === 'project' ? String(scopeId ?? '') : scopeMode}
             onChange={(e) => handleScopeChange(e.target.value)}
@@ -394,7 +394,7 @@ export function DashboardPage() {
           </select>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* 通知铃铛 */}
           <div ref={notifRef} className="relative">
             <button
@@ -518,7 +518,7 @@ export function DashboardPage() {
       </header>
 
       {/* Content */}
-      <main className="flex-1 overflow-y-auto p-6 space-y-5" style={{ background: '#F1F5F9' }}>
+      <main className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-5" style={{ background: '#F1F5F9' }}>
         {shouldBlockDashboardLoading && (
           <div className="rounded-2xl border bg-white p-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
             <div>
@@ -679,7 +679,7 @@ export function DashboardPage() {
           const toAchs = () => pid && navigate(`/project/${pid}/achievements`)
           const toDecisions = () => pid && navigate(`/project/${pid}/decisions`)
           return (
-            <div className={`grid gap-4 ${canViewDecisions ? 'grid-cols-6' : 'grid-cols-5'}`}>
+            <div className={`grid gap-4 ${canViewDecisions ? 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-6' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-5'}`}>
               <StatCard label="任务总数" value={total} sub={notStarted > 0 ? `未开始 ${notStarted} 项` : '全部已启动'} subColor="#64748B"
                 onClick={toTasks()}
                 icon={<IconBox bg="#EFF6FF" color="#2563EB"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></IconBox>}
@@ -711,7 +711,7 @@ export function DashboardPage() {
         })()}
 
         {/* ─── 本月重点 / 延迟任务 / 需决策 ─── */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
           {(() => {
             const pid = scopeId ?? currentProjectId
             const toTasks = (status?: string) => pid
@@ -809,8 +809,8 @@ export function DashboardPage() {
         </div>
 
         {/* ─── 专项进度 + 状态环形图 ─── */}
-        <div className="grid grid-cols-5 gap-4">
-          <div className="bg-white rounded-2xl border p-5 col-span-3" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+          <div className="bg-white rounded-2xl border p-5 col-span-2 lg:col-span-2 xl:col-span-3" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-sm font-bold text-slate-800">专项进度总览</h2>
               <span className="text-xs text-slate-400">更新于 {selectedMonth || '全部月份'}</span>
@@ -868,7 +868,7 @@ export function DashboardPage() {
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl border p-5 col-span-2" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
+          <div className="bg-white rounded-2xl border p-5 col-span-2 lg:col-span-1 xl:col-span-2" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
             <h2 className="text-sm font-bold text-slate-800 mb-4">任务状态分布</h2>
             <div className="flex items-center gap-4">
               <div style={{ width: 140, height: 140, flexShrink: 0 }}>

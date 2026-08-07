@@ -382,6 +382,15 @@ class ProjectWorkProgressTaskDraft(BaseModel):
     subtasks: list[ProjectWorkProgressSubTaskDraft] = Field(default_factory=list)
 
 
+class ProjectInitAnalysisCreate(BaseModel):
+    attachment_ids: list[int] = Field(min_length=1, max_length=10)
+    current_draft: list[ProjectWorkProgressTaskDraft] = Field(default_factory=list)
+
+
+class ProjectInitAnalysisAction(BaseModel):
+    action: Literal["retry", "applied"]
+
+
 class ProjectProfilePayload(BaseModel):
     """负责人填报立项信息（不含名称/状态等管理字段）。"""
     project_type: str | None = None

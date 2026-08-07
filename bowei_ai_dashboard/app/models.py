@@ -326,6 +326,41 @@ class AchievementAttachment(Base, TimestampMixin):
     deleted_by = Column(String(50), default="")
 
 
+class ProjectInitAttachment(Base, TimestampMixin):
+    __tablename__ = "project_init_attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    storage_key = Column(String(255), nullable=False, unique=True)
+    original_name = Column(String(255), nullable=False)
+    mime_type = Column(String(120), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    uploaded_by = Column(String(50), nullable=False, index=True)
+    uploaded_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    deleted_by = Column(String(50), default="")
+
+
+class ProjectInitAnalysisRun(Base, TimestampMixin):
+    __tablename__ = "project_init_analysis_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    attachment_ids_json = Column(Text, nullable=False, default="[]")
+    current_draft_json = Column(Text, nullable=False, default="[]")
+    status = Column(String(24), nullable=False, default="queued", index=True)
+    stage = Column(String(24), nullable=False, default="reading")
+    progress = Column(Integer, nullable=False, default=0)
+    result_json = Column(Text, nullable=False, default="{}")
+    file_results_json = Column(Text, nullable=False, default="[]")
+    error_summary = Column(Text, nullable=False, default="")
+    provider = Column(String(30), nullable=False, default="")
+    model_name = Column(String(100), nullable=False, default="")
+    created_by = Column(String(50), nullable=False, index=True)
+    created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    applied_at = Column(DateTime, nullable=True)
+
+
 class Issue(Base, TimestampMixin):
     __tablename__ = "issues"
 

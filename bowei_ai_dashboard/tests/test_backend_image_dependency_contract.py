@@ -57,12 +57,15 @@ def test_backend_dockerfile_installs_the_tracked_runtime_contract():
 def test_backend_dockerfile_runs_as_an_unprivileged_runtime_user():
     dockerfile = DOCKERFILE_PATH.read_text(encoding="utf-8")
 
-    assert "groupadd --system app" in dockerfile
-    assert "useradd --system --gid app" in dockerfile
+    assert "groupadd --system --gid 10001 app" in dockerfile
+    assert "useradd --system --uid 10001 --gid 10001" in dockerfile
     assert "mkdir -p /app/data" in dockerfile
-    assert "chown -R app:app /app" in dockerfile
+    assert "touch /app/llm_configs.json" in dockerfile
+    assert "chown -R app:app /app/data" in dockerfile
+    assert "chown app:app /app/llm_configs.json" in dockerfile
+    assert "chown -R app:app /app\n" not in dockerfile
     assert "USER app:app" in dockerfile
-    assert dockerfile.index("chown -R app:app /app") < dockerfile.index("USER app:app")
+    assert dockerfile.index("chown -R app:app /app/data") < dockerfile.index("USER app:app")
     assert dockerfile.index("USER app:app") < dockerfile.index('CMD ["uvicorn"')
 
 

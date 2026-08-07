@@ -1,6 +1,26 @@
 name: mowayspos
 
 services:
+  backend-permissions-init:
+    image: ${MOWAYS_BACKEND_REPOSITORY:-mowayspos-backend}:${MOWAYS_IMAGE_TAG:?MOWAYS_IMAGE_TAG is required}
+    container_name: mowayspos-backend-permissions-init
+    user: "0:0"
+    restart: "no"
+    network_mode: "none"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        test -f /app/llm_configs.json
+        test -d /app/data/achievement-attachments
+        chown 10001:10001 /app/llm_configs.json
+        chmod 600 /app/llm_configs.json
+        chown -R 10001:10001 /app/data/achievement-attachments
+        chmod -R u+rwX,go-rwx /app/data/achievement-attachments
+    volumes:
+      - "${MOWAYS_DATA_ROOT:-/data/mowayspos}/env/llm_configs.json:/app/llm_configs.json"
+      - "${MOWAYS_DATA_ROOT:-/data/mowayspos}/achievement-attachments:/app/data/achievement-attachments"
+
   postgres:
     image: ${MOWAYS_POSTGRES_IMAGE:-postgres:16-alpine}
     container_name: mowayspos-postgres
@@ -54,6 +74,8 @@ services:
       - "${MOWAYS_DATA_ROOT:-/data/mowayspos}/env/llm_configs.json:/app/llm_configs.json"
       - "${MOWAYS_DATA_ROOT:-/data/mowayspos}/achievement-attachments:/app/data/achievement-attachments"
     depends_on:
+      backend-permissions-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     healthcheck:

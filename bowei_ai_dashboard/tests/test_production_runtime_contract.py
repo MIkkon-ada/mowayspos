@@ -167,3 +167,20 @@ def test_github_actions_gate_runs_the_complete_isolated_runtime_contract():
         "SSH_KEY",
     ):
         assert forbidden not in workflow
+
+
+def test_cloud_gate_provisions_and_exercises_backend_bind_mount_permissions():
+    workflow = _read(".github/workflows/cloud-p1b2a-gate.yml")
+
+    for expected in (
+        '"$MOWAYS_DATA_ROOT/achievement-attachments"',
+        "mowayspos-backend-permissions-init",
+        "stat -c '%u:%g'",
+        'test "$config_owner" = "10001:10001"',
+        'test "$attachments_owner" = "10001:10001"',
+        "assert os.getuid() == 10001",
+        "assert os.getgid() == 10001",
+        'Path("/app/llm_configs.json").open("a").close()',
+        'Path("/app/data/achievement-attachments/.permission-probe")',
+    ):
+        assert expected in workflow

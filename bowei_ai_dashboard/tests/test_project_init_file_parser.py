@@ -47,6 +47,15 @@ def test_txt_falls_back_to_gb18030(tmp_path):
     ]
 
 
+def test_dispatches_by_original_name_when_storage_path_has_no_suffix(tmp_path):
+    path = tmp_path / "opaque-storage-key"
+    path.write_text("项目计划", encoding="utf-8")
+
+    assert parse_project_init_file(path, "plan.txt") == [
+        SourceChunk("plan.txt", "第 1-1 行", "项目计划")
+    ]
+
+
 def test_docx_preserves_ordered_paragraph_text_and_twenty_paragraph_ranges(tmp_path):
     path = tmp_path / "plan.docx"
     document = Document()

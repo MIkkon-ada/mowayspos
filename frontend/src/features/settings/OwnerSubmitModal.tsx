@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ownerSubmitProfile } from '../../api/projects'
+import { fetchPeople } from '../../api/people'
 import type { ProjectProfilePayload, ProjectWorkProgressTaskDraft } from '../../api/projects'
 import { toast } from '../../utils/toast'
-import type { Project } from '../../types'
+import type { Person, Project } from '../../types'
 
 type Props = {
   project: Project
@@ -14,7 +15,9 @@ type LocalSubTaskDraft = {
   title: string
   evaluation_standard: string
   assignee: string
+  assigneeId: number | ''
   helper: string
+  helperIds: number[]
   plan_start: string
   plan_end: string
 }
@@ -38,7 +41,9 @@ const EMPTY_SUBTASK: LocalSubTaskDraft = {
   title: '',
   evaluation_standard: '',
   assignee: '',
+  assigneeId: '',
   helper: '',
+  helperIds: [],
   plan_start: '',
   plan_end: '',
 }
@@ -113,7 +118,9 @@ function toPayloadDraft(tasks: LocalTaskDraft[]): ProjectWorkProgressTaskDraft[]
           title: subtask.title.trim(),
           evaluation_standard: subtask.evaluation_standard.trim(),
           assignee: subtask.assignee.trim(),
+          assignee_id: subtask.assigneeId || undefined,
           helper: subtask.helper.trim(),
+          helper_ids: subtask.helperIds,
           plan_start: subtask.plan_start,
           plan_end: subtask.plan_end,
         }))
@@ -123,6 +130,9 @@ function toPayloadDraft(tasks: LocalTaskDraft[]): ProjectWorkProgressTaskDraft[]
 }
 
 export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
+  const [people, setPeople] = useState<Person[]>([])
+  const [peopleLoading, setPeopleLoading] = useState(true)
+  const [peopleError, setPeopleError] = useState('')
   const [fillForm, setFillForm] = useState<ProjectProfilePayload>(() => ({
     project_type: project.project_type ?? '',
     client_name: project.client_name ?? '',
@@ -135,6 +145,27 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
   const [projectPeriod, setProjectPeriod] = useState(() => composeProjectPeriod(project.start_date, project.end_date))
   const [draftTasks, setDraftTasks] = useState<LocalTaskDraft[]>([cloneEmptyTask()])
   const [fillLoading, setFillLoading] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setPeopleLoading(true)
+    fetchPeople()
+      .then((rows) => {
+        if (cancelled) return
+        setPeople(rows.filter((person) => person.is_active !== false))
+        setPeopleError('')
+      })
+      .catch((error: any) => {
+        if (cancelled) return
+        setPeopleError(error?.message || '人员列表加载失败')
+      })
+      .finally(() => {
+        if (!cancelled) setPeopleLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   function addTaskDraft() {
     setDraftTasks((prev) => [...prev, cloneEmptyTask()])
@@ -181,6 +212,61 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
     )
   }
 
+  function updateSubTaskAssignee(taskIndex: number, subIndex: number, value: string) {
+    const assigneeId = value ? Number(value) : ''
+    const person = people.find((item) => item.id === assigneeId)
+    setDraftTasks((prev) =>
+      prev.map((task, idx) =>
+        idx === taskIndex
+          ? {
+              ...task,
+              subtasks: task.subtasks.map((subtask, sidx) =>
+                sidx === subIndex
+                  ? {
+                      ...subtask,
+                      assigneeId,
+                      assignee: person?.name ?? '',
+                      helperIds: subtask.helperIds.filter((id) => id !== assigneeId),
+                      helper: subtask.helperIds
+                        .filter((id) => id !== assigneeId)
+                        .map((id) => people.find((item) => item.id === id)?.name)
+                        .filter(Boolean)
+                        .join('、'),
+                    }
+                  : subtask,
+              ),
+            }
+          : task,
+      ),
+    )
+  }
+
+  function toggleSubTaskHelper(taskIndex: number, subIndex: number, personId: number) {
+    setDraftTasks((prev) =>
+      prev.map((task, idx) =>
+        idx === taskIndex
+          ? {
+              ...task,
+              subtasks: task.subtasks.map((subtask, sidx) => {
+                if (sidx !== subIndex) return subtask
+                const helperIds = subtask.helperIds.includes(personId)
+                  ? subtask.helperIds.filter((id) => id !== personId)
+                  : [...subtask.helperIds, personId]
+                return {
+                  ...subtask,
+                  helperIds,
+                  helper: helperIds
+                    .map((id) => people.find((item) => item.id === id)?.name)
+                    .filter(Boolean)
+                    .join('、'),
+                }
+              }),
+            }
+          : task,
+      ),
+    )
+  }
+
   function updateSubTaskPeriod(taskIndex: number, subIndex: number, value: string) {
     const parsed = parseTaskPeriod(value)
     setDraftTasks((prev) =>
@@ -199,6 +285,14 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
 
   async function handleSubmit() {
     if (!project?.id) return
+    if (peopleLoading) {
+      toast.error('人员列表加载中，请稍候')
+      return
+    }
+    if (peopleError) {
+      toast.error(peopleError)
+      return
+    }
     const workProgressDraft = toPayloadDraft(draftTasks)
     if (workProgressDraft.length === 0) {
       toast.error('请至少新增一条重点工作')
@@ -207,6 +301,10 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
     const subtaskCount = workProgressDraft.reduce((total, task) => total + (task.subtasks?.length ?? 0), 0)
     if (subtaskCount === 0) {
       toast.error('请至少添加一个关键任务')
+      return
+    }
+    if (workProgressDraft.some((task) => task.subtasks?.some((subtask) => !subtask.assignee_id))) {
+      toast.error('请选择关键任务负责人')
       return
     }
 
@@ -443,20 +541,38 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                                 />
                               </td>
                               <td className="px-3 py-3">
-                                <input
-                                  value={subtask.assignee}
-                                  onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'assignee', e.target.value)}
-                                  placeholder="责任人"
-                                  className="w-full border-none p-0 bg-transparent text-sm text-slate-800 placeholder:text-slate-300 focus:ring-0"
-                                />
+                                <select
+                                  value={subtask.assigneeId}
+                                  onChange={(e) => updateSubTaskAssignee(taskIndex, subIndex, e.target.value)}
+                                  className="w-full border-none bg-transparent p-0 text-sm text-slate-800 focus:ring-0"
+                                >
+                                  <option value="">请选择负责人</option>
+                                  {people.map((person) => (
+                                    <option key={person.id} value={person.id}>
+                                      {person.name}{person.department ? ` · ${person.department}` : ''}
+                                    </option>
+                                  ))}
+                                </select>
                               </td>
                               <td className="px-3 py-3">
-                                <input
-                                  value={subtask.helper}
-                                  onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'helper', e.target.value)}
-                                  placeholder="协助人"
-                                  className="w-full border-none p-0 bg-transparent text-sm text-slate-600 placeholder:text-slate-300 focus:ring-0"
-                                />
+                                <div data-multiple="true" className="max-h-24 space-y-1 overflow-y-auto text-xs text-slate-600">
+                                  {people.length === 0 ? (
+                                    <span className="text-slate-400">{peopleLoading ? '人员加载中…' : peopleError || '暂无可选人员'}</span>
+                                  ) : (
+                                    people
+                                      .filter((person) => person.id !== subtask.assigneeId)
+                                      .map((person) => (
+                                        <label key={person.id} className="flex items-center gap-1.5">
+                                          <input
+                                            type="checkbox"
+                                            checked={subtask.helperIds.includes(person.id)}
+                                            onChange={() => toggleSubTaskHelper(taskIndex, subIndex, person.id)}
+                                          />
+                                          <span>{person.name}</span>
+                                        </label>
+                                      ))
+                                  )}
+                                </div>
                               </td>
                               <td className="px-3 py-3">
                                 <input

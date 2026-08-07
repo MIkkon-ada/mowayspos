@@ -365,7 +365,9 @@ class ProjectWorkProgressSubTaskDraft(BaseModel):
     title: str = Field("", max_length=200)
     evaluation_standard: str = ""
     assignee: str = Field("", max_length=50)
+    assignee_id: int | None = None
     helper: str = Field("", max_length=100)
+    helper_ids: list[int] = Field(default_factory=list)
     plan_start: str = Field("", max_length=20)
     plan_end: str = Field("", max_length=20)
 

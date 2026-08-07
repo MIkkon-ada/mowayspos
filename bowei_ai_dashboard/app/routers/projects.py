@@ -90,6 +90,32 @@ def _helper_note(helper: str | None) -> str:
     return f"协助人：{value}" if value else ""
 
 
+def _resolve_work_progress_people(
+    payload: schemas.ProjectProfilePayload,
+    db: Session,
+) -> dict[int, models.Person]:
+    """Validate picker IDs before owner-submit mutates any project data."""
+    person_ids: set[int] = set()
+    for task_draft in payload.work_progress_draft or []:
+        for sub_draft in task_draft.subtasks or []:
+            if not (sub_draft.title or "").strip():
+                continue
+            if sub_draft.assignee_id is not None:
+                person_ids.add(sub_draft.assignee_id)
+            person_ids.update(sub_draft.helper_ids or [])
+
+    people = {
+        person.id: person
+        for person in db.query(models.Person)
+        .filter(models.Person.id.in_(person_ids), models.Person.is_active.is_(True))
+        .all()
+    } if person_ids else {}
+    invalid_ids = sorted(person_ids - people.keys())
+    if invalid_ids:
+        raise HTTPException(422, f"存在无效或已停用的人员 ID：{', '.join(map(str, invalid_ids))}")
+    return people
+
+
 def _normalize_lifecycle_status(value: str | None, default: str = "draft") -> str:
     return PL.normalize(value, default)
 
@@ -582,10 +608,35 @@ def _save_work_progress_draft(
     *,
     current_user: str,
     db: Session,
+    resolved_people: dict[int, models.Person] | None = None,
 ) -> None:
     drafts = payload.work_progress_draft or []
     if not drafts:
         return
+
+    resolved_people = resolved_people if resolved_people is not None else _resolve_work_progress_people(payload, db)
+    selected_ids = {
+        person_id
+        for task_draft in drafts
+        for sub_draft in task_draft.subtasks or []
+        if (sub_draft.title or "").strip()
+        for person_id in ([sub_draft.assignee_id] if sub_draft.assignee_id is not None else []) + (sub_draft.helper_ids or [])
+    }
+    for person_id in selected_ids:
+        person = resolved_people[person_id]
+        existing = db.query(models.ProjectMember).filter_by(
+            project_id=project.id, person_id=person.id, role="member"
+        ).first()
+        if not existing:
+            db.add(models.ProjectMember(
+                project_id=project.id,
+                person_id=person.id,
+                person_name_snapshot=person.name,
+                role="member",
+                joined_at=utc_now(),
+            ))
+    db.flush()
+    _sync_project_old_fields(project.id, db)
 
     project_name = project.name or ""
     for task_draft in drafts:
@@ -636,12 +687,21 @@ def _save_work_progress_draft(
                 db.add(subtask)
 
             subtask.title = sub_title[:200]
-            subtask.assignee = (sub_draft.assignee or "").strip()
-            subtask.assignee_id = _person_id_for_name(subtask.assignee, db)
+            if sub_draft.assignee_id is not None:
+                assignee_person = resolved_people[sub_draft.assignee_id]
+                subtask.assignee = assignee_person.name
+                subtask.assignee_id = assignee_person.id
+            else:
+                subtask.assignee = (sub_draft.assignee or "").strip()
+                subtask.assignee_id = _person_id_for_name(subtask.assignee, db)
             subtask.plan_time = _format_work_progress_plan_time(sub_draft.plan_start, sub_draft.plan_end)
             subtask.status = subtask.status or TS.S_NOT_STARTED
             subtask.completion_criteria = (sub_draft.evaluation_standard or "").strip()
-            subtask.notes = _helper_note(sub_draft.helper)
+            if sub_draft.helper_ids:
+                helper_names = _join_names(resolved_people[person_id].name for person_id in sub_draft.helper_ids)
+                subtask.notes = _helper_note(helper_names)
+            else:
+                subtask.notes = _helper_note(sub_draft.helper)
 
 
 def _extract_special_project_from_json(raw_json: str | None) -> list[str]:
@@ -2079,6 +2139,8 @@ def owner_submit_project_profile(
     if lifecycle == "pending_review":
         raise HTTPException(409, "项目已在审核中")
 
+    resolved_people = _resolve_work_progress_people(payload, db)
+
     _set_project_lifecycle(project, "pending_review", db=db, project_id=project_id)
     _update_project_columns(
         db,
@@ -2092,7 +2154,13 @@ def owner_submit_project_profile(
         end_date=(payload.end_date or "").strip() if payload.end_date is not None else None,
         description=(payload.description or "").strip() if payload.description is not None else None,
     )
-    _save_work_progress_draft(project, payload, current_user=current_user, db=db)
+    _save_work_progress_draft(
+        project,
+        payload,
+        current_user=current_user,
+        db=db,
+        resolved_people=resolved_people,
+    )
     crud.log(db, current_user, "owner_submit_project", "project", project_id, {"status": lifecycle}, {"status": "pending_review"})
     db.commit()
 

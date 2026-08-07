@@ -46,6 +46,8 @@ def test_owner_submit_modal_builds_work_progress_draft_submit_payload():
         "subtasks?: ProjectWorkProgressSubTaskDraft[]",
         "evaluation_standard?: string",
         "assignee?: string",
+        "assignee_id?: number",
+        "helper_ids?: number[]",
     ]:
         assert expected in api_source
 
@@ -61,6 +63,8 @@ def test_owner_submit_modal_builds_work_progress_draft_submit_payload():
         "title: subtask.title.trim()",
         "evaluation_standard: subtask.evaluation_standard.trim()",
         "assignee: subtask.assignee.trim()",
+        "assignee_id: subtask.assigneeId || undefined",
+        "helper_ids: subtask.helperIds",
         "helper: subtask.helper.trim()",
         "plan_start: subtask.plan_start",
         "plan_end: subtask.plan_end",
@@ -70,6 +74,14 @@ def test_owner_submit_modal_builds_work_progress_draft_submit_payload():
         "work_progress_draft: workProgressDraft",
     ]:
         assert expected in source
+
+
+def test_owner_submit_modal_uses_people_picker_for_key_tasks():
+    source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
+
+    for expected in ["fetchPeople", "assigneeId", "helperIds", "multiple", 'type="checkbox"']:
+        assert expected in source
+    assert 'placeholder="责任人"' not in source
 
 
 def test_project_review_view_contains_work_progress_draft_summary_and_list():

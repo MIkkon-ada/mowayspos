@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -383,8 +383,18 @@ class ProjectWorkProgressTaskDraft(BaseModel):
 
 
 class ProjectInitAnalysisCreate(BaseModel):
-    attachment_ids: list[int] = Field(min_length=1, max_length=10)
+    attachment_ids: list[Annotated[int, Field(strict=True, gt=0)]] = Field(
+        min_length=1,
+        max_length=10,
+    )
     current_draft: list[ProjectWorkProgressTaskDraft] = Field(default_factory=list)
+
+    @field_validator("attachment_ids")
+    @classmethod
+    def require_unique_attachment_ids(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("attachment_ids must be unique")
+        return value
 
 
 class ProjectInitAnalysisAction(BaseModel):

@@ -75,16 +75,24 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+const AI_SERVICE_UNAVAILABLE_MESSAGE = 'AI 分析服务暂时不可用，请稍后重试。'
+const AI_INITIALIZATION_UNAVAILABLE_MESSAGE = '暂时无法获取 AI 分析状态，请先选择资料文件，上传后再重试。'
+
 function errorMessage(error: unknown): string {
   if (error instanceof ProjectInitApiError) {
-    if (error.detail === 'server_error' || error.code === 'SERVER_ERROR') return 'AI 服务暂时不可用，你仍可先上传资料，稍后再开始分析。'
+    if (error.detail === 'server_error' || error.code === 'SERVER_ERROR') return AI_SERVICE_UNAVAILABLE_MESSAGE
     return error.detail
   }
   if (error instanceof Error) {
-    if (error.message === 'server_error') return 'AI 服务暂时不可用，你仍可先上传资料，稍后再开始分析。'
+    if (error.message === 'server_error') return AI_SERVICE_UNAVAILABLE_MESSAGE
     return error.message
   }
   return '操作失败，请稍后重试'
+}
+
+function initializationErrorMessage(error: unknown): string {
+  const message = errorMessage(error)
+  return message === AI_SERVICE_UNAVAILABLE_MESSAGE ? AI_INITIALIZATION_UNAVAILABLE_MESSAGE : message
 }
 
 function statusLabel(status: ProjectInitAnalysisRun['status']): string {
@@ -311,7 +319,7 @@ export function OwnerSubmitAiPanel({
       })
       .catch((nextError) => {
         if (!cancelled && mountedRef.current && !controller.signal.aborted) {
-          setError(errorMessage(nextError))
+          setError(initializationErrorMessage(nextError))
           setPanelState('idle')
         }
       })
@@ -576,7 +584,7 @@ export function OwnerSubmitAiPanel({
         {onClose && <button type="button" onClick={handleClose} disabled={disabled} className="rounded-lg px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 disabled:opacity-50" aria-label="关闭 AI 文件面板">关闭</button>}
       </header>
 
-      {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      {error && <div role={error === AI_INITIALIZATION_UNAVAILABLE_MESSAGE ? 'status' : 'alert'} className={error === AI_INITIALIZATION_UNAVAILABLE_MESSAGE ? 'rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800' : 'rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700'}>{error}</div>}
 
       {showUploadStage && (
         <div className="space-y-3">

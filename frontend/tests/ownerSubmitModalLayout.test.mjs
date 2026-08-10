@@ -49,5 +49,5 @@ test('workbench uses a compact balanced two-column layout', () => {
 test('upload entry remains available when AI initialization fails', () => {
   assert.match(aiSource, /const showUploadStage = panelState === 'idle' \|\| panelState === 'uploading' \|\| \(panelState === 'failed' && !run\)/)
   assert.match(aiSource, /\{showUploadStage && \(/)
-  assert.match(aiSource, /server_error/)
+  assert.match(aiSource, /暂时无法获取 AI 分析状态，请先选择资料文件，上传后再重试。/)
 })

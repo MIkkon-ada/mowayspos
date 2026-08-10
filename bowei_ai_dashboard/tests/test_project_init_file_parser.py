@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import subprocess
 import zipfile
 import zlib
@@ -296,6 +297,27 @@ def test_xlsx_falls_back_to_formula_when_cached_value_is_absent(tmp_path):
     ]
 
 
+def test_xlsx_preserves_formula_text_when_cached_result_exists(tmp_path):
+    source_path = tmp_path / "formula.xlsx"
+    path = tmp_path / "formula-with-cache.xlsx"
+    workbook = Workbook()
+    workbook.active["A1"] = "=1+1"
+    workbook.save(source_path)
+
+    with zipfile.ZipFile(source_path) as source, zipfile.ZipFile(
+        path, "w", compression=zipfile.ZIP_DEFLATED
+    ) as destination:
+        for member in source.infolist():
+            content = source.read(member.filename)
+            if member.filename == "xl/worksheets/sheet1.xml":
+                content = content.replace(
+                    b"<f>1+1</f><v></v>", b"<f>1+1</f><v>2</v>"
+                )
+            destination.writestr(member, content)
+
+    assert parse_project_init_file(path, "formula.xlsx")[0].text == "=1+1"
+
+
 def test_xlsx_worksheet_limit_is_enforced(tmp_path, monkeypatch):
     path = tmp_path / "many-sheets.xlsx"
     workbook = Workbook()
@@ -413,17 +435,39 @@ def test_pdf_uses_injected_reader_and_preserves_non_empty_page_numbers(tmp_path)
     assert received_paths == [path]
 
 
+class FakeAntiwordProcess:
+    def __init__(self, stdout=b"", stderr=b"", returncode=0, timeout=False):
+        self.stdout = io.BytesIO(stdout)
+        self.stderr = io.BytesIO(stderr)
+        self.returncode = returncode
+        self.timeout = timeout
+        self.killed = False
+        self.wait_calls = []
+
+    def wait(self, timeout=None):
+        self.wait_calls.append(timeout)
+        if self.timeout and not self.killed:
+            raise subprocess.TimeoutExpired(["antiword"], timeout)
+        return self.returncode
+
+    def poll(self):
+        return None if self.timeout and not self.killed else self.returncode
+
+    def kill(self):
+        self.killed = True
+
+
 def test_doc_invokes_antiword_without_shell_and_with_bounded_timeout(tmp_path, monkeypatch):
     path = tmp_path / "-option-shaped-storage-key"
     path.write_bytes(b"legacy-doc")
     calls = []
+    process = FakeAntiwordProcess("第一行\n第二行".encode("utf-8"))
 
-    def fake_run(args, **kwargs):
+    def fake_popen(args, **kwargs):
         calls.append((args, kwargs))
-        kwargs["stdout"].write("第一行\n第二行".encode("utf-8"))
-        return SimpleNamespace(returncode=0)
+        return process
 
-    monkeypatch.setattr(parser.subprocess, "run", fake_run)
+    monkeypatch.setattr(parser.subprocess, "Popen", fake_popen)
 
     assert parse_project_init_file(path, "旧版文档.doc") == [
         SourceChunk("旧版文档.doc", "第 1-2 行", "第一行\n第二行")
@@ -432,26 +476,24 @@ def test_doc_invokes_antiword_without_shell_and_with_bounded_timeout(tmp_path, m
         (
             ["antiword", "-w", "0", str(path.resolve())],
             {
-                "stdout": calls[0][1]["stdout"],
-                "stderr": calls[0][1]["stderr"],
-                "timeout": 30,
-                "check": False,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "shell": False,
             },
         )
     ]
-    assert "shell" not in calls[0][1]
-    assert "capture_output" not in calls[0][1]
+    assert process.wait_calls == [30]
 
 
 def test_doc_decodes_gb18030_when_strict_utf8_fails(tmp_path, monkeypatch):
     path = tmp_path / "legacy-storage"
     path.write_bytes(b"legacy-doc")
+    process = FakeAntiwordProcess("旧版内容".encode("gb18030"))
 
-    def fake_run(_args, **kwargs):
-        kwargs["stdout"].write("旧版内容".encode("gb18030"))
-        return SimpleNamespace(returncode=0)
+    def fake_popen(_args, **_kwargs):
+        return process
 
-    monkeypatch.setattr(parser.subprocess, "run", fake_run)
+    monkeypatch.setattr(parser.subprocess, "Popen", fake_popen)
 
     assert parse_project_init_file(path, "legacy.doc") == [
         SourceChunk("legacy.doc", "第 1-1 行", "旧版内容")
@@ -461,7 +503,7 @@ def test_doc_decodes_gb18030_when_strict_utf8_fails(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     ("limit_name", "stream_name"),
     [
-        ("MAX_ANTIWORD_OUTPUT_BYTES", "stdout"),
+        ("MAX_SUBPROCESS_OUTPUT_BYTES", "stdout"),
         ("MAX_ANTIWORD_STDERR_BYTES", "stderr"),
     ],
 )
@@ -474,26 +516,30 @@ def test_doc_enforces_antiword_stream_limits(
     path = tmp_path / "legacy-storage"
     path.write_bytes(b"legacy-doc")
     monkeypatch.setattr(parser, limit_name, 3)
+    process = FakeAntiwordProcess(
+        stdout=b"1234" if stream_name == "stdout" else b"",
+        stderr=b"1234" if stream_name == "stderr" else b"",
+    )
 
-    def fake_run(_args, **kwargs):
-        kwargs[stream_name].write(b"1234")
-        return SimpleNamespace(returncode=0)
+    def fake_popen(_args, **_kwargs):
+        return process
 
-    monkeypatch.setattr(parser.subprocess, "run", fake_run)
+    monkeypatch.setattr(parser.subprocess, "Popen", fake_popen)
 
     with pytest.raises(ProjectInitFileParseError, match="bounded\\.doc"):
         parse_project_init_file(path, "bounded.doc")
+    assert process.killed
 
 
 def test_doc_rejects_output_invalid_in_utf8_and_gb18030(tmp_path, monkeypatch):
     path = tmp_path / "legacy-storage"
     path.write_bytes(b"legacy-doc")
+    process = FakeAntiwordProcess(stdout=b"\xff")
 
-    def fake_run(_args, **kwargs):
-        kwargs["stdout"].write(b"\xff")
-        return SimpleNamespace(returncode=0)
+    def fake_popen(_args, **_kwargs):
+        return process
 
-    monkeypatch.setattr(parser.subprocess, "run", fake_run)
+    monkeypatch.setattr(parser.subprocess, "Popen", fake_popen)
 
     with pytest.raises(ProjectInitFileParseError, match="invalid-encoding\\.doc"):
         parse_project_init_file(path, "invalid-encoding.doc")
@@ -511,15 +557,49 @@ def test_doc_normalizes_antiword_failures(tmp_path, monkeypatch, failure):
     path = tmp_path / "broken.doc"
     path.write_bytes(b"broken")
 
-    def fake_run(*_args, **_kwargs):
+    def fake_popen(*_args, **_kwargs):
         if isinstance(failure, BaseException):
             raise failure
-        return failure
+        return FakeAntiwordProcess(returncode=failure.returncode)
 
-    monkeypatch.setattr(parser.subprocess, "run", fake_run)
+    monkeypatch.setattr(parser.subprocess, "Popen", fake_popen)
 
     with pytest.raises(ProjectInitFileParseError, match="原始损坏文档\\.doc"):
         parse_project_init_file(path, "原始损坏文档.doc")
+
+
+def test_doc_timeout_kills_antiword_process(tmp_path, monkeypatch):
+    path = tmp_path / "slow.doc"
+    path.write_bytes(b"legacy-doc")
+    process = FakeAntiwordProcess(timeout=True)
+    monkeypatch.setattr(parser.subprocess, "Popen", lambda *_args, **_kwargs: process)
+
+    with pytest.raises(ProjectInitFileParseError, match="slow\\.doc"):
+        parse_project_init_file(path, "slow.doc")
+
+    assert process.killed
+
+
+def test_txt_chunking_is_lazy_before_global_limits_are_enforced(tmp_path):
+    path = tmp_path / "many-lines.txt"
+    path.write_text("\n".join(f"line {index}" for index in range(161)), encoding="utf-8")
+
+    chunks = parser._parse_txt(path, "many-lines.txt")
+
+    assert not isinstance(chunks, list)
+
+
+def test_doc_chunking_is_lazy_before_global_limits_are_enforced(tmp_path, monkeypatch):
+    path = tmp_path / "many-lines.doc"
+    path.write_bytes(b"legacy-doc")
+    process = FakeAntiwordProcess(
+        "\n".join(f"line {index}" for index in range(161)).encode("utf-8")
+    )
+    monkeypatch.setattr(parser.subprocess, "Popen", lambda *_args, **_kwargs: process)
+
+    chunks = parser._parse_doc(path, "many-lines.doc")
+
+    assert not isinstance(chunks, list)
 
 
 def test_corrupt_third_party_file_error_is_normalized_with_original_filename(tmp_path):

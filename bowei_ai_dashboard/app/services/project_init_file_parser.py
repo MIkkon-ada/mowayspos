@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import subprocess
-import tempfile
+import threading
 import zipfile
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -38,7 +39,7 @@ MAX_DOCX_TABLE_CELLS = 100_000
 MAX_EXTRACTED_CHARS = 5_000_000
 MAX_CHUNK_CHARS = 1_000_000
 MAX_CHUNKS = 10_000
-MAX_ANTIWORD_OUTPUT_BYTES = 20 * 1024 * 1024
+MAX_SUBPROCESS_OUTPUT_BYTES = 20 * 1024 * 1024
 MAX_ANTIWORD_STDERR_BYTES = 64 * 1024
 
 
@@ -120,49 +121,94 @@ def _parse_pdf(
         yield SourceChunk(original_name, f"第 {page_number} 页", text)
 
 
-def _parse_doc(path: Path, original_name: str) -> list[SourceChunk]:
+def _parse_doc(path: Path, original_name: str) -> Iterable[SourceChunk]:
     resolved_path = path.resolve()
-    with tempfile.SpooledTemporaryFile(
-        max_size=min(MAX_ANTIWORD_OUTPUT_BYTES, 1024 * 1024),
-        mode="w+b",
-    ) as stdout_file, tempfile.SpooledTemporaryFile(
-        max_size=min(MAX_ANTIWORD_STDERR_BYTES, 64 * 1024),
-        mode="w+b",
-    ) as stderr_file:
-        result = subprocess.run(
-            ["antiword", "-w", "0", str(resolved_path)],
-            stdout=stdout_file,
-            stderr=stderr_file,
-            timeout=30,
-            check=False,
-        )
-        stdout = _read_bounded_stream(
-            stdout_file,
-            MAX_ANTIWORD_OUTPUT_BYTES,
-            original_name,
-        )
-        _read_bounded_stream(
-            stderr_file,
-            MAX_ANTIWORD_STDERR_BYTES,
-            original_name,
-        )
-        if result.returncode != 0:
+    process = subprocess.Popen(
+        ["antiword", "-w", "0", str(resolved_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=False,
+    )
+    stdout = bytearray()
+    stderr = bytearray()
+    output_exceeded = threading.Event()
+    readers = [
+        threading.Thread(
+            target=_read_subprocess_stream,
+            args=(
+                process.stdout,
+                MAX_SUBPROCESS_OUTPUT_BYTES,
+                stdout,
+                output_exceeded,
+                process,
+            ),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=_read_subprocess_stream,
+            args=(
+                process.stderr,
+                MAX_ANTIWORD_STDERR_BYTES,
+                stderr,
+                output_exceeded,
+                process,
+            ),
+            daemon=True,
+        ),
+    ]
+    for reader in readers:
+        reader.start()
+    try:
+        try:
+            returncode = process.wait(timeout=30)
+        except subprocess.TimeoutExpired as exc:
+            _kill_process(process)
+            process.wait()
             raise ProjectInitFileParseError(
-                f"无法解析项目初始化文件：{original_name}"
-            )
-    return _chunk_lines(_decode_antiword_output(stdout, original_name), original_name)
+                f"antiword 执行超时：{original_name}"
+            ) from exc
+    finally:
+        if process.poll() is None:
+            _kill_process(process)
+        for reader in readers:
+            reader.join()
+        process.stdout.close()
+        process.stderr.close()
+
+    if output_exceeded.is_set():
+        raise ProjectInitFileParseError(f"antiword 输出超过限制：{original_name}")
+    if returncode != 0:
+        raise ProjectInitFileParseError(
+            f"无法解析项目初始化文件：{original_name}"
+        )
+    return _chunk_lines(_decode_antiword_output(bytes(stdout), original_name), original_name)
 
 
-def _read_bounded_stream(
+def _read_subprocess_stream(
     stream: Any,
     byte_limit: int,
-    original_name: str,
-) -> bytes:
-    stream.seek(0, 2)
-    if stream.tell() > byte_limit:
-        raise ProjectInitFileParseError(f"antiword 输出超过限制：{original_name}")
-    stream.seek(0)
-    return stream.read(byte_limit + 1)
+    output: bytearray,
+    output_exceeded: threading.Event,
+    process: Any,
+) -> None:
+    bytes_read = 0
+    while True:
+        chunk = stream.read(max(1, min(64 * 1024, byte_limit - bytes_read + 1)))
+        if not chunk:
+            return
+        bytes_read += len(chunk)
+        if bytes_read > byte_limit:
+            output_exceeded.set()
+            _kill_process(process)
+            return
+        output.extend(chunk)
+
+
+def _kill_process(process: Any) -> None:
+    try:
+        process.kill()
+    except OSError:
+        pass
 
 
 def _decode_antiword_output(output: bytes, original_name: str) -> str:
@@ -312,7 +358,9 @@ def _parse_xlsx(path: Path, original_name: str) -> list[SourceChunk]:
             )
             rows = [
                 [
-                    cached_cell.value
+                    formula_cell.value
+                    if formula_cell.data_type == "f"
+                    else cached_cell.value
                     if cached_cell.value is not None
                     else formula_cell.value
                     for cached_cell, formula_cell in zip(cached_row, formula_row)
@@ -349,7 +397,7 @@ def _xls_cell_value(cell: Any, datemode: int) -> Any:
     return cell.value
 
 
-def _parse_txt(path: Path, original_name: str) -> list[SourceChunk]:
+def _parse_txt(path: Path, original_name: str) -> Iterable[SourceChunk]:
     with path.open("rb") as source:
         raw = source.read(MAX_INPUT_BYTES + 1)
     if len(raw) > MAX_INPUT_BYTES:
@@ -403,27 +451,45 @@ def _enforce_chunk_limits(
     return bounded
 
 
-def _chunk_lines(text: str, original_name: str) -> list[SourceChunk]:
-    return _chunk_numbered_text(text.splitlines(), 80, "行", original_name)
+def _chunk_lines(text: str, original_name: str) -> Iterable[SourceChunk]:
+    return _chunk_numbered_text(_iter_lines(text), 80, "行", original_name)
+
+
+def _iter_lines(text: str) -> Iterable[str]:
+    source = io.StringIO(text, newline=None)
+    try:
+        for line in source:
+            yield line.rstrip("\r\n")
+    finally:
+        source.close()
 
 
 def _chunk_numbered_text(
-    values: Sequence[str],
+    values: Iterable[str],
     chunk_size: int,
     unit: str,
     original_name: str,
-) -> list[SourceChunk]:
-    chunks = []
-    for start_index in range(0, len(values), chunk_size):
-        end_index = min(start_index + chunk_size, len(values))
-        chunks.append(
-            SourceChunk(
+) -> Iterable[SourceChunk]:
+    batch = []
+    start_index = 1
+    for value in values:
+        batch.append(value)
+        if len(batch) == chunk_size:
+            end_index = start_index + len(batch) - 1
+            yield SourceChunk(
                 original_name,
-                f"第 {start_index + 1}-{end_index} {unit}",
-                "\n".join(values[start_index:end_index]),
+                f"第 {start_index}-{end_index} {unit}",
+                "\n".join(batch),
             )
+            start_index = end_index + 1
+            batch.clear()
+    if batch:
+        end_index = start_index + len(batch) - 1
+        yield SourceChunk(
+            original_name,
+            f"第 {start_index}-{end_index} {unit}",
+            "\n".join(batch),
         )
-    return chunks
 
 
 def _worksheet_chunk(

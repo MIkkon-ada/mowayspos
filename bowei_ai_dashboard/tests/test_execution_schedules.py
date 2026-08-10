@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine
@@ -51,3 +52,8 @@ def test_schedule_projection_marks_overdue_and_due_soon():
     projected = execution_schedules.to_schedule_dict(row, today=date(2026, 8, 12))
     assert projected["is_overdue"] is True
     assert projected["is_due_soon"] is False
+
+
+def test_subtask_detail_includes_execution_schedule_summary():
+    source = Path(__file__).resolve().parents[1] / "app" / "routers" / "subtasks.py"
+    assert 'result["execution_schedules"]' in source.read_text(encoding="utf-8")

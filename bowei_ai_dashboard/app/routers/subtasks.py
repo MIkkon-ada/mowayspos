@@ -385,6 +385,12 @@ def get_subtask_detail(
             raise HTTPException(403, "permission denied")
 
     result = crud.to_dict(row)
+    from .execution_schedules import to_schedule_dict
+    schedules = db.query(models.ExecutionSchedule).filter(
+        models.ExecutionSchedule.subtask_id == row.id,
+        models.ExecutionSchedule.is_deleted.is_(False),
+    ).order_by(models.ExecutionSchedule.start_date, models.ExecutionSchedule.due_date, models.ExecutionSchedule.id).all()
+    result["execution_schedules"] = [to_schedule_dict(schedule) for schedule in schedules]
 
     # 执行详情使用：按关键任务聚合已确认/已提交的工作汇报，保留四项固定结构。
     import json as _json

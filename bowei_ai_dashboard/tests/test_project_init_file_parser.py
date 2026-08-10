@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import io
+import os
+import signal
 import subprocess
 import zipfile
 import zlib
@@ -533,7 +535,7 @@ def test_xlsx_closes_both_workbooks_when_one_close_fails(
     assert set(close_calls) == {"formula", "cached"}
 
 
-def test_worksheet_chunk_supports_one_shot_rows_iterables():
+def test_worksheet_chunk_rejects_one_shot_rows_iterables():
     rows = iter(
         [
             [None, "value", "other"],
@@ -541,11 +543,8 @@ def test_worksheet_chunk_supports_one_shot_rows_iterables():
         ]
     )
 
-    assert parser._worksheet_chunk("Sheet", rows, "plan.xlsx") == SourceChunk(
-        "plan.xlsx",
-        "'Sheet'!B1:C2",
-        "value\tother\n\tlast",
-    )
+    with pytest.raises(TypeError, match="row factory"):
+        parser._worksheet_chunk("Sheet", rows, "plan.xlsx")
 
 
 def test_xls_uses_sheet_name_and_actual_non_empty_range(tmp_path, monkeypatch):
@@ -671,16 +670,14 @@ def test_doc_invokes_antiword_without_shell_and_with_bounded_timeout(tmp_path, m
     assert parse_project_init_file(path, "旧版文档.doc") == [
         SourceChunk("旧版文档.doc", "第 1-2 行", "第一行\n第二行")
     ]
-    assert calls == [
-        (
-            ["antiword", "-w", "0", str(path.resolve())],
-            {
-                "stdout": subprocess.PIPE,
-                "stderr": subprocess.PIPE,
-                "shell": False,
-            },
-        )
-    ]
+    assert calls[0][0] == ["antiword", "-w", "0", str(path.resolve())]
+    assert calls[0][1]["stdout"] is subprocess.PIPE
+    assert calls[0][1]["stderr"] is subprocess.PIPE
+    assert calls[0][1]["shell"] is False
+    if os.name == "nt":
+        assert calls[0][1]["creationflags"] & subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        assert calls[0][1]["start_new_session"] is True
     assert process.wait_calls == [30]
 
 
@@ -777,6 +774,39 @@ def test_doc_timeout_kills_antiword_process(tmp_path, monkeypatch):
         parse_project_init_file(path, "slow.doc")
 
     assert process.killed
+
+
+def test_antiword_cleanup_bounds_wait_and_reader_join_when_termination_fails():
+    process = FakeAntiwordProcess(timeout=True)
+    process.pid = 12345
+
+    def failed_kill():
+        raise OSError("termination failed")
+
+    process.kill = failed_kill
+    joins = []
+    reader = SimpleNamespace(join=lambda timeout=None: joins.append(timeout))
+
+    parser._cleanup_antiword_process(process, [reader])
+
+    assert process.wait_calls == [parser.ANTIWORD_CLEANUP_WAIT_SECONDS]
+    assert joins == [parser.ANTIWORD_READER_JOIN_SECONDS]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups are not available")
+def test_antiword_termination_targets_the_process_group(monkeypatch):
+    calls = []
+    process = SimpleNamespace(pid=12345, kill=lambda: calls.append("direct"))
+    monkeypatch.setattr(parser.os, "getpgid", lambda pid: pid + 1)
+    monkeypatch.setattr(
+        parser.os,
+        "killpg",
+        lambda pgid, sig: calls.append((pgid, sig)),
+    )
+
+    parser._terminate_process_tree(process)
+
+    assert calls == [(12346, signal.SIGKILL), "direct"]
 
 
 def test_txt_chunking_is_lazy_before_global_limits_are_enforced(tmp_path):

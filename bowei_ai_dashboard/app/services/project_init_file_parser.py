@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import io
+import os
+import signal
 import subprocess
 import threading
 import zipfile
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time
-from itertools import tee
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,9 @@ MAX_CHUNK_CHARS = 1_000_000
 MAX_CHUNKS = 10_000
 MAX_SUBPROCESS_OUTPUT_BYTES = 20 * 1024 * 1024
 MAX_ANTIWORD_STDERR_BYTES = 64 * 1024
+ANTIWORD_TIMEOUT_SECONDS = 30
+ANTIWORD_CLEANUP_WAIT_SECONDS = 2
+ANTIWORD_READER_JOIN_SECONDS = 2
 
 
 class ProjectInitFileParseError(Exception):
@@ -124,11 +128,22 @@ def _parse_pdf(
 
 def _parse_doc(path: Path, original_name: str) -> Iterable[SourceChunk]:
     resolved_path = path.resolve()
+    popen_kwargs = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "shell": False,
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = getattr(
+            subprocess,
+            "CREATE_NEW_PROCESS_GROUP",
+            0,
+        )
+    else:
+        popen_kwargs["start_new_session"] = True
     process = subprocess.Popen(
         ["antiword", "-w", "0", str(resolved_path)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        shell=False,
+        **popen_kwargs,
     )
     stdout = bytearray()
     stderr = bytearray()
@@ -161,20 +176,14 @@ def _parse_doc(path: Path, original_name: str) -> Iterable[SourceChunk]:
         reader.start()
     try:
         try:
-            returncode = process.wait(timeout=30)
+            returncode = process.wait(timeout=ANTIWORD_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired as exc:
-            _kill_process(process)
-            process.wait()
+            _terminate_process_tree(process)
             raise ProjectInitFileParseError(
                 f"antiword 执行超时：{original_name}"
             ) from exc
     finally:
-        if process.poll() is None:
-            _kill_process(process)
-        for reader in readers:
-            reader.join()
-        process.stdout.close()
-        process.stderr.close()
+        _cleanup_antiword_process(process, readers)
 
     if output_exceeded.is_set():
         raise ProjectInitFileParseError(f"antiword 输出超过限制：{original_name}")
@@ -193,22 +202,72 @@ def _read_subprocess_stream(
     process: Any,
 ) -> None:
     bytes_read = 0
-    while True:
-        chunk = stream.read(max(1, min(64 * 1024, byte_limit - bytes_read + 1)))
-        if not chunk:
-            return
-        bytes_read += len(chunk)
-        if bytes_read > byte_limit:
-            output_exceeded.set()
-            _kill_process(process)
-            return
-        output.extend(chunk)
+    try:
+        while True:
+            chunk = stream.read(max(1, min(64 * 1024, byte_limit - bytes_read + 1)))
+            if not chunk:
+                return
+            bytes_read += len(chunk)
+            if bytes_read > byte_limit:
+                output_exceeded.set()
+                _terminate_process_tree(process)
+                return
+            output.extend(chunk)
+    except (OSError, ValueError):
+        return
 
 
-def _kill_process(process: Any) -> None:
+def _cleanup_antiword_process(process: Any, readers: Sequence[threading.Thread]) -> None:
+    if _process_is_running(process):
+        _terminate_process_tree(process)
+        try:
+            process.wait(timeout=ANTIWORD_CLEANUP_WAIT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    for stream in (getattr(process, "stdout", None), getattr(process, "stderr", None)):
+        if stream is None:
+            continue
+        try:
+            stream.close()
+        except (OSError, ValueError):
+            pass
+    for reader in readers:
+        try:
+            reader.join(timeout=ANTIWORD_READER_JOIN_SECONDS)
+        except RuntimeError:
+            pass
+
+
+def _process_is_running(process: Any) -> bool:
+    try:
+        return process.poll() is None
+    except (AttributeError, OSError):
+        return True
+
+
+def _terminate_process_tree(process: Any) -> None:
+    pid = getattr(process, "pid", None)
+    if pid is not None and os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                check=False,
+                shell=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=ANTIWORD_CLEANUP_WAIT_SECONDS,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    elif pid is not None:
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
     try:
         process.kill()
-    except OSError:
+    except (AttributeError, OSError):
         pass
 
 
@@ -585,16 +644,13 @@ def _chunk_numbered_text(
 
 def _worksheet_chunk(
     sheet_name: str,
-    rows: Callable[[], Iterable[Sequence[Any]]] | Iterable[Sequence[Any]],
+    rows: Callable[[], Iterable[Sequence[Any]]],
     original_name: str,
     limits: _IncrementalChunkLimits | None = None,
 ) -> SourceChunk | None:
-    if callable(rows):
-        row_factory = rows
-    else:
-        first_pass, second_pass = tee(rows)
-        passes = iter((first_pass, second_pass))
-        row_factory = lambda: next(passes)
+    if not callable(rows):
+        raise TypeError("_worksheet_chunk requires a row factory callable")
+    row_factory = rows
     limits = limits or _IncrementalChunkLimits(original_name)
     min_row = max_row = min_column = max_column = None
     worksheet_chars = 0

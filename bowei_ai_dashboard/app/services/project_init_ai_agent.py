@@ -45,7 +45,7 @@ class AgentWarning(BaseModel):
 class Evidence(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    attachment_id: _POSITIVE_ID
+    attachment_id: _POSITIVE_ID | None = None
     file_name: str = Field(min_length=1, max_length=255)
     location: str = Field(min_length=1, max_length=200)
     excerpt: str = Field(min_length=1, max_length=300)
@@ -120,11 +120,11 @@ class _RawEnvelope(BaseModel):
 
 
 def _normalise_name(value: object) -> str:
-    return re.sub(r"[\W_]+", "", str(value or "").casefold())
+    return str(value or "").strip().casefold()
 
 
 def _normalise_title(value: object) -> str:
-    return _normalise_name(value)
+    return re.sub(r"[\W_]+", "", str(value or "").strip().casefold())
 
 
 def _person_candidates(values: Iterable[PersonCandidate | dict[str, Any]]) -> list[PersonCandidate]:
@@ -147,6 +147,8 @@ def _warning(code: str, person_name: str) -> AgentWarning:
         "ambiguous_person": "存在多个同名在职人员，未自动绑定",
         "inactive_person": "仅找到停用人员，未自动绑定",
         "unmatched_person": "未找到可自动绑定的人员，保留原始姓名",
+        "helper_conflicts_with_owner": "负责人不能同时作为协助人，已移除重复协助人",
+        "helper_conflicts_with_assignee": "关键任务负责人不能同时作为协助人，已移除重复协助人",
     }
     return AgentWarning(code=code, message=messages.get(code, code), person_name=person_name)
 
@@ -189,11 +191,92 @@ def _dedupe_warnings(values: Iterable[AgentWarning]) -> list[AgentWarning]:
     return result
 
 
+def _dedupe_evidence(values: Iterable[Evidence]) -> list[Evidence]:
+    result: list[Evidence] = []
+    seen: set[tuple[int | None, str, str, str]] = set()
+    for value in values:
+        key = (value.attachment_id, value.file_name, value.location, value.excerpt)
+        if key not in seen:
+            seen.add(key)
+            result.append(value)
+    return result
+
+
+def _merge_non_empty(left: str, right: str) -> str:
+    return left or right
+
+
+def _merge_subtask_values(left: AgentSubTask, right: AgentSubTask) -> AgentSubTask:
+    merged = left.model_copy(deep=True)
+    for field_name in (
+        "description",
+        "assignee_name",
+        "priority",
+        "status",
+        "deadline",
+        "evaluation_standard",
+        "source",
+        "duplicate_reason",
+    ):
+        setattr(merged, field_name, _merge_non_empty(getattr(merged, field_name), getattr(right, field_name)))
+    merged.confidence = max(merged.confidence, right.confidence)
+    merged.helper_names = _dedupe_strings([*merged.helper_names, *right.helper_names])
+    merged.helper_ids = list(dict.fromkeys([*merged.helper_ids, *right.helper_ids]))
+    merged.evidence = _dedupe_evidence([*merged.evidence, *right.evidence])
+    merged.warnings = _dedupe_warnings([*merged.warnings, *right.warnings])
+    return merged
+
+
+def _merge_task_values(left: AgentTask, right: AgentTask) -> AgentTask:
+    merged = left.model_copy(deep=True)
+    for field_name in (
+        "description",
+        "owner_name",
+        "priority",
+        "status",
+        "deadline",
+        "source",
+        "duplicate_reason",
+    ):
+        setattr(merged, field_name, _merge_non_empty(getattr(merged, field_name), getattr(right, field_name)))
+    merged.confidence = max(merged.confidence, right.confidence)
+    merged.evidence = _dedupe_evidence([*merged.evidence, *right.evidence])
+    merged.warnings = _dedupe_warnings([*merged.warnings, *right.warnings])
+    subtasks: dict[str, AgentSubTask] = {
+        _normalise_title(item.title): item.model_copy(deep=True) for item in merged.subtasks
+    }
+    for subtask in right.subtasks:
+        key = _normalise_title(subtask.title)
+        if key in subtasks:
+            subtasks[key] = _merge_subtask_values(subtasks[key], subtask)
+        else:
+            subtasks[key] = subtask.model_copy(deep=True)
+    merged.subtasks = list(subtasks.values())
+    return merged
+
+
+def _merge_tasks(values: Iterable[AgentTask]) -> list[AgentTask]:
+    merged: dict[str, AgentTask] = {}
+    for task in values:
+        key = _normalise_title(task.title)
+        if key in merged:
+            merged[key] = _merge_task_values(merged[key], task)
+        else:
+            merged[key] = task.model_copy(deep=True)
+    return list(merged.values())
+
+
 def _source_parts(value: SourceChunk | dict[str, Any]) -> tuple[str, str, str, int | None]:
     if isinstance(value, SourceChunk):
         return value.file_name, value.location, value.text, None
     if isinstance(value, tuple) and len(value) == 4:
-        return value
+        file_name, location, text, attachment_id = value
+        if attachment_id is not None:
+            try:
+                attachment_id = _POSITIVE_ID_ADAPTER.validate_python(attachment_id)
+            except Exception as exc:
+                raise ProjectInitAiError("来源片段包含非法附件 ID") from exc
+        return str(file_name), str(location), str(text), attachment_id
     if not isinstance(value, dict):
         raise ProjectInitAiError("来源片段格式无效")
     try:
@@ -227,7 +310,7 @@ def _safe_evidence(raw: Evidence, sources: list[tuple[str, str, str, int | None]
         if source[0] == raw.file_name
         and source[1] == raw.location
         and raw.excerpt in source[2]
-        and (source[3] is None or source[3] == raw.attachment_id)
+        and source[3] == raw.attachment_id
     ]
     if not matches:
         raise ProjectInitAiError(f"AI 返回了无法追溯的来源：{raw.file_name} · {raw.location}")
@@ -241,8 +324,8 @@ def _safe_evidence(raw: Evidence, sources: list[tuple[str, str, str, int | None]
 
 
 def _safe_evidence_list(values: list[Evidence], sources: list[tuple[str, str, str, int | None]]) -> list[Evidence]:
-    if not sources:
-        return values
+    if values and not sources:
+        raise ProjectInitAiError("AI 返回了无法追溯的来源")
     return [_safe_evidence(value, sources) for value in values]
 
 
@@ -298,7 +381,7 @@ def _reconcile_task(
 ) -> AgentTask:
     owner_id, owner_warnings = _match_person(task.owner_name, people)
     task.evidence = _safe_evidence_list(task.evidence, sources)
-    if task.evidence and not task.source:
+    if task.evidence:
         task.source = task.evidence[0].source_label
     merge_status, duplicate_of, duplicate_reason = _classify_duplicate(task.title, existing_tasks)
     reconciled_subtasks: list[AgentSubTask] = []
@@ -308,11 +391,21 @@ def _reconcile_task(
         helper_warnings: list[AgentWarning] = []
         for helper_name in _dedupe_strings(subtask.helper_names):
             helper_id, warnings = _match_person(helper_name, people)
-            if helper_id is not None and helper_id not in helper_ids:
-                helper_ids.append(helper_id)
             helper_warnings.extend(warnings)
+            if helper_id is None:
+                continue
+            if helper_id == owner_id:
+                helper_warnings.append(_warning("helper_conflicts_with_owner", helper_name.strip()))
+                if helper_id == assignee_id:
+                    helper_warnings.append(_warning("helper_conflicts_with_assignee", helper_name.strip()))
+                continue
+            if helper_id == assignee_id:
+                helper_warnings.append(_warning("helper_conflicts_with_assignee", helper_name.strip()))
+                continue
+            if helper_id not in helper_ids:
+                helper_ids.append(helper_id)
         subtask.evidence = _safe_evidence_list(subtask.evidence or task.evidence, sources)
-        if subtask.evidence and not subtask.source:
+        if subtask.evidence:
             subtask.source = subtask.evidence[0].source_label
         sub_merge, sub_duplicate_of, sub_duplicate_reason = _classify_duplicate(subtask.title, existing_subtasks)
         subtask.assignee_id = assignee_id
@@ -414,6 +507,28 @@ def _context_prompt(
     )
 
 
+def _final_merge_prompt(
+    tasks: list[AgentTask],
+    sources: list[tuple[str, str, str, int | None]],
+) -> str:
+    source_catalog = [
+        {
+            "attachment_id": attachment_id,
+            "file_name": file_name,
+            "location": location,
+            "excerpt": text[:300],
+        }
+        for file_name, location, text, attachment_id in sources
+    ]
+    return (
+        "你是项目初始化工作推进表的最终合并 Agent。只返回严格 JSON 对象，结构必须是 {\"tasks\": [...] }。"
+        "请将批次候选中归一化标题相同的任务合并为一条，保留全部 evidence、warnings 和 subtasks；"
+        "不得发明任务、人员 ID 或来源，也不得删除唯一来源。每条 evidence 必须逐字引用下方候选或来源目录中的真实 attachment_id、file_name、location 和 excerpt。"
+        f"\n候选任务：{json.dumps([task.model_dump() for task in tasks], ensure_ascii=False)}"
+        f"\n允许的来源目录：{json.dumps(source_catalog, ensure_ascii=False)}"
+    )
+
+
 def _parse_json_response(raw: str | dict[str, Any]) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
@@ -437,14 +552,11 @@ def _parse_json_response(raw: str | dict[str, Any]) -> dict[str, Any]:
 def _validate_batch_sources(tasks: Iterable[AgentTask], batch: list[tuple[str, str, str, int | None]]) -> None:
     """Fail closed if one batch cites a file/location from another batch."""
     for task in tasks:
-        task_evidence = task.evidence
-        if not task_evidence and task.subtasks:
-            task_evidence = task.subtasks[0].evidence
-        if not task_evidence:
+        if not task.evidence and not any(subtask.evidence for subtask in task.subtasks):
             raise ProjectInitAiError("AI 任务缺少来源证据")
-        _safe_evidence_list(task_evidence, batch)
+        _safe_evidence_list(task.evidence, batch)
         for subtask in task.subtasks:
-            _safe_evidence_list(subtask.evidence or task_evidence, batch)
+            _safe_evidence_list(subtask.evidence or task.evidence, batch)
 
 
 def _invoke_llm(llm_call: Callable[..., Any], prompt: str, provider: str) -> Any:
@@ -511,8 +623,10 @@ def generate_project_init_draft(
     indexed_tasks, _ = _existing_task_index(existing_tasks)
     provider = resolve_provider() if llm_call is None else "injected"
     caller = llm_call or _default_llm_call
-    all_tasks: list[dict[str, Any]] = []
-    for batch in _split_batches(source_values):
+    batches = _split_batches(source_values)
+    canonical_sources = [source for batch in batches for source in batch]
+    all_tasks: list[AgentTask] = []
+    for batch in batches:
         prompt = _context_prompt(batch, people, indexed_tasks)
         try:
             raw = _invoke_llm(caller, prompt, provider)
@@ -525,14 +639,27 @@ def generate_project_init_draft(
         except Exception as exc:
             raise ProjectInitAiError("AI 草稿处理失败") from exc
         _validate_batch_sources(envelope.tasks, batch)
-        all_tasks.extend(task.model_dump() for task in envelope.tasks)
+        all_tasks = _merge_tasks([*all_tasks, *_merge_tasks(envelope.tasks)])
     if not all_tasks:
         raise ProjectInitAiEmptyResult("AI 未提取到可用任务")
+    if len(batches) > 1:
+        try:
+            merge_raw = _invoke_llm(caller, _final_merge_prompt(all_tasks, canonical_sources), provider)
+            merge_payload = _parse_json_response(merge_raw)
+            merge_envelope = _RawEnvelope.model_validate(merge_payload)
+            _validate_batch_sources(merge_envelope.tasks, canonical_sources)
+        except ProjectInitAiError:
+            raise
+        except ValidationError as exc:
+            raise ProjectInitAiError("AI 最终合并结构或字段类型无效") from exc
+        except Exception as exc:
+            raise ProjectInitAiError("AI 最终合并处理失败") from exc
+        all_tasks = _merge_tasks([*all_tasks, *_merge_tasks(merge_envelope.tasks)])
     result = normalize_agent_result(
-        {"tasks": all_tasks},
+        {"tasks": [task.model_dump() for task in all_tasks]},
         people,
         existing_tasks=indexed_tasks,
-        chunks=source_values,
+        chunks=canonical_sources,
         provider=provider,
         model_name=get_provider_config(provider).get("model", "") if provider != "injected" else "",
     )

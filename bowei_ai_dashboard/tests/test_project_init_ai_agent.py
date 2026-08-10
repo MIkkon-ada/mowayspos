@@ -13,7 +13,11 @@ from app.services.project_init_ai_agent import (
 from app.services.project_init_file_parser import SourceChunk
 
 
-def chunk(text: str, *, name: str = "plan.txt", location: str = "lines 1-2") -> SourceChunk:
+def chunk(text: str, *, name: str = "plan.txt", location: str = "lines 1-2") -> dict:
+    return {"attachment_id": 7, "file_name": name, "location": location, "text": text}
+
+
+def source_chunk(text: str, *, name: str = "plan.txt", location: str = "lines 1-2") -> SourceChunk:
     return SourceChunk(file_name=name, location=location, text=text)
 
 
@@ -131,7 +135,7 @@ def test_duplicate_classification_is_deterministic_and_never_merges():
 
 
 def test_source_evidence_is_preserved_and_model_text_is_not_used_as_evidence():
-    evidence = [{"attachment_id": 99, "file_name": "source.docx", "location": "paragraphs 2-3", "excerpt": "原文片段"}]
+    evidence = [{"attachment_id": 7, "file_name": "source.docx", "location": "paragraphs 2-3", "excerpt": "原文片段"}]
     result = generate_project_init_draft(
         [chunk("原文片段", name="source.docx", location="paragraphs 2-3")],
         [],
@@ -203,3 +207,136 @@ def test_prompt_forbids_side_effects_and_model_invented_ids():
     generate_project_init_draft([chunk("实施交付")], [{"id": 1, "name": "张三", "is_active": True}], [], llm_call=llm)
     assert "不执行数据库、项目或成员修改" in prompts[0]
     assert "不得发明人员、日期或人员 ID" in prompts[0]
+
+
+def test_person_matching_keeps_punctuation_and_internal_spaces_significant():
+    result = generate_project_init_draft(
+        [chunk("实施交付 张三")],
+        [{"id": 1, "name": "张-三", "is_active": True}],
+        [],
+        llm_call=fake_llm({"tasks": [raw_task(owner_name="张三", assignee_name="张三")]}),
+    )
+
+    task = result.tasks[0]
+    assert task.owner_id is None
+    assert task.subtasks[0].assignee_id is None
+    assert any(warning.code == "unmatched_person" for warning in task.warnings)
+
+
+def test_owner_or_assignee_is_removed_from_helpers_with_conflict_warning():
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [{"id": 1, "name": "张三", "is_active": True}],
+        [],
+        llm_call=fake_llm({"tasks": [raw_task(helper_names=["张三"])]}),
+    )
+
+    subtask = result.tasks[0].subtasks[0]
+    assert subtask.assignee_id == 1
+    assert subtask.helper_ids == []
+    assert any(warning.code == "helper_conflicts_with_assignee" for warning in subtask.warnings)
+
+
+def test_long_source_evidence_uses_canonical_part_location():
+    long_text = "A" * 40_001
+
+    def llm(prompt: str, provider: str) -> str:
+        location = "lines 1-2 part 1" if "plan.txt · lines 1-2 part 1" in prompt else "lines 1-2 part 2"
+        return json.dumps({"tasks": [raw_task(
+            title="长来源任务",
+            assignee_name="",
+            evidence=[{
+                "attachment_id": 7,
+                "file_name": "plan.txt",
+                "location": location,
+                "excerpt": "A",
+            }],
+        )]}, ensure_ascii=False)
+
+    result = generate_project_init_draft(
+        [{"attachment_id": 7, "file_name": "plan.txt", "location": "lines 1-2", "text": long_text}],
+        [],
+        [],
+        llm_call=llm,
+    )
+    assert result.tasks[0].evidence[0].location == "lines 1-2 part 1"
+
+
+def test_source_without_attachment_id_accepts_only_none_evidence_id():
+    result = generate_project_init_draft(
+        [source_chunk("原文片段", name="plan.txt", location="lines 1")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [raw_task(evidence=[{
+            "attachment_id": None,
+            "file_name": "plan.txt",
+            "location": "lines 1",
+            "excerpt": "原文片段",
+        }])]}),
+    )
+    assert result.tasks[0].evidence[0].attachment_id is None
+
+
+def test_source_chunk_cannot_be_used_to_forge_an_attachment_id():
+    with pytest.raises(ProjectInitAiError):
+        generate_project_init_draft(
+            [source_chunk("原文片段", name="plan.txt", location="lines 1")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [raw_task(evidence=[{
+                "attachment_id": 7,
+                "file_name": "plan.txt",
+                "location": "lines 1",
+                "excerpt": "原文片段",
+            }])]}),
+        )
+
+
+def test_same_title_tasks_across_batches_merge_all_evidence_and_subtasks():
+    calls: list[str] = []
+
+    def llm(prompt: str, provider: str) -> str:
+        calls.append(prompt)
+        if "a.txt · lines 1" in prompt:
+            evidence = [{"attachment_id": 7, "file_name": "a.txt", "location": "lines 1", "excerpt": "A"}]
+            subtask_title = "方案确认"
+        else:
+            evidence = [{"attachment_id": 8, "file_name": "b.txt", "location": "lines 2", "excerpt": "B"}]
+            subtask_title = "上线确认"
+        return json.dumps({"tasks": [raw_task(
+            title="同标题任务",
+            assignee_name="",
+            evidence=evidence,
+        ) | {"subtasks": [{
+            "title": subtask_title,
+            "evidence": evidence,
+        }]}]}, ensure_ascii=False)
+
+    result = generate_project_init_draft(
+        [
+            {"attachment_id": 7, "file_name": "a.txt", "location": "lines 1", "text": "A" * 21_000},
+            {"attachment_id": 8, "file_name": "b.txt", "location": "lines 2", "text": "B" * 21_000},
+        ],
+        [],
+        [],
+        llm_call=llm,
+    )
+
+    assert len(calls) >= 2
+    assert "最终合并 Agent" in calls[-1]
+    assert len(result.tasks) == 1
+    assert {item.file_name for item in result.tasks[0].evidence} == {"a.txt", "b.txt"}
+    assert {item.title for item in result.tasks[0].subtasks} == {"方案确认", "上线确认"}
+
+
+def test_all_task_and_subtask_ids_are_positive_strict_ints_or_none():
+    with pytest.raises(ValidationError):
+        AgentTask.model_validate({**raw_task(), "owner_id": "1"})
+    with pytest.raises(ValidationError):
+        AgentTask.model_validate({**raw_task(), "duplicate_of": 0})
+    with pytest.raises(ValidationError):
+        AgentTask.model_validate({**raw_task(), "subtasks": [{
+            "title": "x",
+            "assignee_id": -1,
+            "helper_ids": ["2"],
+        }]})

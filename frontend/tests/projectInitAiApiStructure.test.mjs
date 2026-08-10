@@ -24,9 +24,13 @@ test('exports the strict project-init AI contract types', () => {
   ]) {
     assert.match(source, new RegExp(`export (type|interface|class) ${typeName}`), `${typeName} is missing`)
   }
-  for (const status of ['queued', 'processing', 'completed', 'partial_failed', 'failed']) {
+  for (const status of ['queued', 'processing', 'retrying', 'completed', 'partial_failed', 'failed']) {
     assert.match(source, new RegExp(`'${status}'`))
   }
+  for (const mergeStatus of ['new', 'possible_duplicate', 'definite_duplicate']) {
+    assert.match(source, new RegExp(`'${mergeStatus}'`))
+  }
+  assert.doesNotMatch(source, /confirmed_duplicate/)
   assert.match(source, /applied_at/)
   assert.match(source, /snapshot/)
   assert.match(source, /error_message/)
@@ -62,4 +66,6 @@ test('validates positive IDs, deduplicates attachment IDs, and preserves API err
   assert.match(source, /status/)
   assert.match(source, /detail/)
   assert.match(source, /JSON_PARSE_ERROR/)
+  assert.match(source, /setTimeout|timeout\s*=/)
+  assert.match(source, /current_draft/)
 })

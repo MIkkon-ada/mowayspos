@@ -227,7 +227,7 @@ export function OwnerSubmitAiPanel({
   const [applying, setApplying] = useState(false)
   const [applySuccess, setApplySuccess] = useState(false)
   const mountedRef = useRef(true)
-  const pollInFlightRef = useRef(false)
+  const pollInFlightTokenRef = useRef<number | undefined>(undefined)
   const activeRunIdRef = useRef<number | undefined>(undefined)
   const pollTimerRef = useRef<number | undefined>(undefined)
   const pollControllerRef = useRef<AbortController | undefined>(undefined)
@@ -254,7 +254,6 @@ export function OwnerSubmitAiPanel({
     pollControllerRef.current?.abort()
     pollControllerRef.current = undefined
     pollTokenRef.current += 1
-    pollInFlightRef.current = false
   }, [])
 
   const updateRun = useCallback((nextRun: ProjectInitAnalysisRun) => {
@@ -271,16 +270,16 @@ export function OwnerSubmitAiPanel({
   }, [clearPolling])
 
   const pollRun = useCallback(async (runId: number, token: number, controller: AbortController) => {
-    if (controller.signal.aborted || activeRunIdRef.current !== runId || pollInFlightRef.current) return
-    pollInFlightRef.current = true
+    if (controller.signal.aborted || activeRunIdRef.current !== runId || pollInFlightTokenRef.current !== undefined) return
+    pollInFlightTokenRef.current = token
     try {
-      const nextRun = await getInitAnalysisRun(projectId, runId)
+      const nextRun = await getInitAnalysisRun(projectId, runId, controller.signal)
       if (controller.signal.aborted || !mountedRef.current || activeRunIdRef.current !== runId || nextRun.id !== runId || pollTokenRef.current !== token) return
       updateRun(nextRun)
     } catch (nextError) {
       if (mountedRef.current && !controller.signal.aborted && activeRunIdRef.current === runId && pollTokenRef.current === token) setError(errorMessage(nextError))
     } finally {
-      pollInFlightRef.current = false
+      if (pollInFlightTokenRef.current === token) pollInFlightTokenRef.current = undefined
     }
   }, [projectId, updateRun])
 
@@ -373,7 +372,8 @@ export function OwnerSubmitAiPanel({
   }
 
   function isAbortError(nextError: unknown): boolean {
-    return nextError instanceof DOMException && nextError.name === 'AbortError'
+    return (nextError instanceof ProjectInitApiError && nextError.code === 'ABORT_ERROR')
+      || (nextError instanceof DOMException && nextError.name === 'AbortError')
   }
 
   async function uploadQueueItem(item: UploadItem, controller: AbortController): Promise<ProjectInitAttachment> {

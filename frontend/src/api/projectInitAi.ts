@@ -457,14 +457,7 @@ async function projectJson<T>(request: () => Promise<unknown>, decode: (value: u
   }
 }
 
-async function apiPostWithSignal(path: string, body: unknown, signal: AbortSignal): Promise<unknown> {
-  const response = await fetch(path, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal,
-  })
+async function decodeApiResponse(response: Response): Promise<unknown> {
   const text = await response.text()
   let parsed: unknown = null
   if (text) {
@@ -478,6 +471,68 @@ async function apiPostWithSignal(path: string, body: unknown, signal: AbortSigna
     throw new ProjectInitApiError(response.status, errorDetail(parsed, `request failed: ${response.status}`), parsed, 'HTTP_ERROR')
   }
   return parsed
+}
+
+async function apiRequestWithSignal(
+  method: 'GET' | 'POST',
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let externallyAborted = false
+  let timedOut = false
+  let rejectAbort: ((error: ProjectInitApiError) => void) | undefined
+  const abortError = () => new ProjectInitApiError(0, 'request cancelled', null, 'ABORT_ERROR')
+  const timeoutError = () => new ProjectInitApiError(0, 'request timed out; please try again', null, 'TIMEOUT_ERROR')
+
+  if (signal?.aborted) throw abortError()
+  const abort = signal
+    ? new Promise<never>((_, reject) => { rejectAbort = reject })
+    : undefined
+  const onExternalAbort = () => {
+    externallyAborted = true
+    controller.abort()
+    rejectAbort?.(abortError())
+  }
+  signal?.addEventListener('abort', onExternalAbort, { once: true })
+
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+      reject(timeoutError())
+    }, PROJECT_INIT_AI_TIMEOUT_MS)
+  })
+
+  try {
+    const request = fetch(path, {
+      method,
+      credentials: 'include',
+      headers: method === 'POST'
+        ? { Accept: 'application/json', 'Content-Type': 'application/json' }
+        : { Accept: 'application/json' },
+      ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+      signal: controller.signal,
+    }).then(decodeApiResponse)
+    return await Promise.race(abort ? [request, timeout, abort] : [request, timeout])
+  } catch (error) {
+    if (timedOut) throw timeoutError()
+    if (externallyAborted) throw abortError()
+    throw error
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+    signal?.removeEventListener('abort', onExternalAbort)
+  }
+}
+
+async function apiPostWithSignal(path: string, body: unknown, signal?: AbortSignal): Promise<unknown> {
+  return apiRequestWithSignal('POST', path, body, signal)
+}
+
+async function apiGetWithSignal(path: string, signal?: AbortSignal): Promise<unknown> {
+  return apiRequestWithSignal('GET', path, undefined, signal)
 }
 
 export function listInitAttachments(projectId: number): Promise<ProjectInitAttachment[]> {
@@ -604,35 +659,30 @@ export function createInitAnalysisRun(
   positiveId(projectId, 'projectId')
   const uniqueAttachmentIds = [...new Set(attachmentIds.map((id) => positiveId(id, 'attachmentId')))]
   return projectJson(
-    () => signal
-      ? apiPostWithSignal(projectPath(projectId, '/init-analysis-runs'), {
+    () => apiPostWithSignal(projectPath(projectId, '/init-analysis-runs'), {
         attachment_ids: uniqueAttachmentIds,
         current_draft: currentDraft,
-      }, signal)
-      : apiPost<unknown>(projectPath(projectId, '/init-analysis-runs'), {
-      attachment_ids: uniqueAttachmentIds,
-      current_draft: currentDraft,
-    }),
+      }, signal),
     decodeRun,
   )
 }
 
 export function getLatestInitAnalysisRun(projectId: number): Promise<ProjectInitAnalysisRun> {
   positiveId(projectId, 'projectId')
-  return projectJson(() => apiGet<unknown>(projectPath(projectId, '/init-analysis-runs/latest')), decodeRun)
+  return projectJson(() => apiGetWithSignal(projectPath(projectId, '/init-analysis-runs/latest')), decodeRun)
 }
 
-export function getInitAnalysisRun(projectId: number, runId: number): Promise<ProjectInitAnalysisRun> {
+export function getInitAnalysisRun(projectId: number, runId: number, signal?: AbortSignal): Promise<ProjectInitAnalysisRun> {
   positiveId(projectId, 'projectId')
   positiveId(runId, 'runId')
-  return projectJson(() => apiGet<unknown>(projectPath(projectId, `/init-analysis-runs/${positiveId(runId, 'runId')}`)), decodeRun)
+  return projectJson(() => apiGetWithSignal(projectPath(projectId, `/init-analysis-runs/${positiveId(runId, 'runId')}`), signal), decodeRun)
 }
 
 export function retryInitAnalysisRun(projectId: number, runId: number, signal?: AbortSignal): Promise<ProjectInitAnalysisRun> {
   positiveId(projectId, 'projectId')
   positiveId(runId, 'runId')
   const path = projectPath(projectId, `/init-analysis-runs/${positiveId(runId, 'runId')}/retry`)
-  return projectJson(() => signal ? apiPostWithSignal(path, {}, signal) : apiPost<unknown>(path, {}), decodeRun)
+  return projectJson(() => apiPostWithSignal(path, {}, signal), decodeRun)
 }
 
 export function applyInitAnalysisRun(projectId: number, runId: number): Promise<ProjectInitAnalysisRun> {

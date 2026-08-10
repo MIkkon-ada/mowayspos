@@ -132,8 +132,10 @@ test('upload client rejects on timeout and preserves FastAPI detail arrays', asy
 })
 
 test('analysis responses reject invalid status and non-positive IDs at runtime', async () => {
-  globalThis.__projectInitFakeClient = {
-    get: async () => ({
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({
       id: 0,
       project_id: 7,
       attachment_ids: [8],
@@ -148,16 +150,16 @@ test('analysis responses reject invalid status and non-positive IDs at runtime',
       finished_at: null,
       applied_at: null,
     }),
-    post: async () => ({}),
-    delete: async () => ({}),
-  }
+  })
   const api = await loadApi()
   await assert.rejects(api.getLatestInitAnalysisRun(7), (error) => error?.name === 'ProjectInitApiError' && error.code === 'RESPONSE_VALIDATION_ERROR')
 })
 
 test('failed analysis runs accept an empty draft and preserve status and error message', async () => {
-  globalThis.__projectInitFakeClient = {
-    get: async () => ({
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify({
       id: 9,
       project_id: 7,
       attachment_ids: [8],
@@ -172,9 +174,7 @@ test('failed analysis runs accept an empty draft and preserve status and error m
       finished_at: '2026-08-10T00:00:00Z',
       applied_at: null,
     }),
-    post: async () => ({}),
-    delete: async () => ({}),
-  }
+  })
   const api = await loadApi()
   const run = await api.getInitAnalysisRun(7, 9)
   assert.equal(run.status, 'failed')
@@ -204,11 +204,11 @@ test('analysis draft validators still reject invalid task elements and IDs', asy
   ]
 
   for (const response of invalidResponses) {
-    globalThis.__projectInitFakeClient = {
-      get: async () => response,
-      post: async () => ({}),
-      delete: async () => ({}),
-    }
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(response),
+    })
     const api = await loadApi()
     await assert.rejects(api.getInitAnalysisRun(7, 9), (error) => error?.name === 'ProjectInitApiError' && error.code === 'RESPONSE_VALIDATION_ERROR')
   }
@@ -216,11 +216,12 @@ test('analysis draft validators still reject invalid task elements and IDs', asy
 
 test('analysis creation sends the typed current_draft snapshot and deduplicated attachment IDs', async () => {
   let requestBody
-  globalThis.__projectInitFakeClient = {
-    get: async () => ({}),
-    post: async (_path, body) => {
-      requestBody = body
-      return {
+  globalThis.fetch = async (_path, options) => {
+    requestBody = JSON.parse(options.body)
+    return {
+      ok: true,
+      status: 201,
+      text: async () => JSON.stringify({
         id: 9,
         project_id: 7,
         attachment_ids: [8],
@@ -234,9 +235,8 @@ test('analysis creation sends the typed current_draft snapshot and deduplicated 
         started_at: null,
         finished_at: null,
         applied_at: null,
-      }
-    },
-    delete: async () => ({}),
+      }),
+    }
   }
   const api = await loadApi()
   const currentDraft = [{
@@ -296,6 +296,78 @@ test('analysis creation and retry forward AbortSignal to fetch', async () => {
   await api.createInitAnalysisRun(7, [8], [], controller.signal)
   await api.retryInitAnalysisRun(7, 9, controller.signal)
   assert.equal(calls.length, 2)
-  assert.equal(calls[0].options.signal, controller.signal)
-  assert.equal(calls[1].options.signal, controller.signal)
+  assert.notEqual(calls[0].options.signal, controller.signal)
+  assert.notEqual(calls[1].options.signal, controller.signal)
+  assert.equal(calls[0].options.signal.aborted, false)
+  assert.equal(calls[1].options.signal.aborted, false)
+})
+
+test('analysis run GET forwards cancellation and rejects with a stable abort error', async () => {
+  let observedSignal
+  let abortObserved = false
+  const originalClearTimeout = globalThis.clearTimeout
+  let clearCalls = 0
+  globalThis.clearTimeout = (handle) => {
+    clearCalls += 1
+    return originalClearTimeout(handle)
+  }
+  globalThis.fetch = async (_path, options) => {
+    observedSignal = options.signal
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        abortObserved = true
+        reject(new DOMException('aborted', 'AbortError'))
+      }, { once: true })
+    })
+  }
+  globalThis.__projectInitFakeClient = {
+    get: async () => ({}),
+    post: async () => ({}),
+    delete: async () => ({}),
+  }
+  try {
+    const api = await loadApi()
+    const controller = new AbortController()
+    const request = api.getInitAnalysisRun(7, 9, controller.signal)
+    controller.abort()
+    await assert.rejects(request, (error) => error?.name === 'ProjectInitApiError' && error.code === 'ABORT_ERROR')
+    assert.ok(observedSignal)
+    assert.equal(observedSignal.aborted, true)
+    assert.equal(abortObserved, true)
+    assert.equal(clearCalls, 1)
+  } finally {
+    globalThis.clearTimeout = originalClearTimeout
+  }
+})
+
+test('stalled analysis POST times out and clears its timer', async () => {
+  const originalSetTimeout = globalThis.setTimeout
+  const originalClearTimeout = globalThis.clearTimeout
+  let clearCalls = 0
+  globalThis.setTimeout = (callback, delay) => {
+    assert.equal(delay, 90_000)
+    callback()
+    return 123
+  }
+  globalThis.clearTimeout = (handle) => {
+    assert.equal(handle, 123)
+    clearCalls += 1
+  }
+  globalThis.fetch = async () => new Promise(() => {})
+  globalThis.__projectInitFakeClient = {
+    get: async () => ({}),
+    post: async () => ({}),
+    delete: async () => ({}),
+  }
+  try {
+    const api = await loadApi()
+    await assert.rejects(
+      api.createInitAnalysisRun(7, [8], [], new AbortController().signal),
+      (error) => error?.name === 'ProjectInitApiError' && error.code === 'TIMEOUT_ERROR',
+    )
+    assert.equal(clearCalls, 1)
+  } finally {
+    globalThis.setTimeout = originalSetTimeout
+    globalThis.clearTimeout = originalClearTimeout
+  }
 })

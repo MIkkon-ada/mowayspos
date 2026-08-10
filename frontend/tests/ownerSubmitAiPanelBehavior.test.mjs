@@ -36,6 +36,14 @@ test('panel aborts analysis requests on close and ignores late results', () => {
   assert.match(source, /isCurrentAnalysisRequest\(requestId, controller\) && !isAbortError\(nextError\)/)
 })
 
+test('panel aborts polling requests and prevents stale polling overlap', () => {
+  assert.match(source, /getInitAnalysisRun\(projectId, runId, controller\.signal\)/)
+  assert.match(source, /pollControllerRef\.current\?\.abort\(\)/)
+  assert.match(source, /pollTokenRef\.current \+= 1/)
+  assert.match(source, /pollInFlightTokenRef/)
+  assert.match(source, /pollInFlightTokenRef\.current === token/)
+})
+
 test('panel exposes attachment actions, complete warnings, partial file results, and awaited apply errors', () => {
   assert.match(source, /downloadInitAttachmentUrl\(projectId, attachment\.id\)/)
   assert.match(source, /deleteInitAttachment\(projectId, item\.attachment\.id\)/)

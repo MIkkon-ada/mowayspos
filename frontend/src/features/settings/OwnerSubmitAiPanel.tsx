@@ -76,8 +76,14 @@ function formatBytes(bytes: number): string {
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof ProjectInitApiError) return error.detail
-  if (error instanceof Error) return error.message
+  if (error instanceof ProjectInitApiError) {
+    if (error.detail === 'server_error' || error.code === 'SERVER_ERROR') return 'AI 服务暂时不可用，你仍可先上传资料，稍后再开始分析。'
+    return error.detail
+  }
+  if (error instanceof Error) {
+    if (error.message === 'server_error') return 'AI 服务暂时不可用，你仍可先上传资料，稍后再开始分析。'
+    return error.message
+  }
   return '操作失败，请稍后重试'
 }
 
@@ -306,7 +312,7 @@ export function OwnerSubmitAiPanel({
       .catch((nextError) => {
         if (!cancelled && mountedRef.current && !controller.signal.aborted) {
           setError(errorMessage(nextError))
-          setPanelState('failed')
+          setPanelState('idle')
         }
       })
       .finally(() => {
@@ -556,6 +562,7 @@ export function OwnerSubmitAiPanel({
   }
 
   const canStartAnalysis = successfulAttachmentIds.length > 0 || queue.some((item) => item.status === 'queued' || ((item.status === 'failed' || item.status === 'cancelled') && item.retryable === true))
+  const showUploadStage = panelState === 'idle' || panelState === 'uploading' || (panelState === 'failed' && !run)
 
   if (loading) return <section aria-busy="true" className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">正在加载 AI 分析状态…</section>
 
@@ -571,7 +578,7 @@ export function OwnerSubmitAiPanel({
 
       {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
-      {(panelState === 'idle' || panelState === 'uploading') && (
+      {showUploadStage && (
         <div className="space-y-3">
           <label htmlFor="owner-submit-ai-files" className="block cursor-pointer rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/50 p-5 text-center hover:border-blue-400">
             <span className="block text-sm font-semibold text-blue-800">选择资料文件</span>

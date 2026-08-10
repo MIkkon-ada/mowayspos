@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const sourcePath = path.resolve(here, '../src/features/settings/OwnerSubmitModal.tsx')
 const source = fs.readFileSync(sourcePath, 'utf8')
+const aiSourcePath = path.resolve(here, '../src/features/settings/OwnerSubmitAiPanel.tsx')
+const aiSource = fs.readFileSync(aiSourcePath, 'utf8')
 
 test('assignee picker renders outside the table overflow container', () => {
   assert.match(source, /from ['"]react-dom['"]/)
@@ -42,4 +44,10 @@ test('workbench uses a compact balanced two-column layout', () => {
   assert.match(source, /min-h-\[68px\]/)
   assert.match(source, /gap-6 px-6 py-6/)
   assert.match(source, /lg:w-\[280px\] xl:w-\[300px\]/)
+})
+
+test('upload entry remains available when AI initialization fails', () => {
+  assert.match(aiSource, /const showUploadStage = panelState === 'idle' \|\| panelState === 'uploading' \|\| \(panelState === 'failed' && !run\)/)
+  assert.match(aiSource, /\{showUploadStage && \(/)
+  assert.match(aiSource, /server_error/)
 })

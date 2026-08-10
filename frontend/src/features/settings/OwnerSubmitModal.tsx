@@ -16,6 +16,8 @@ type Props = {
 }
 
 type LocalSubTaskDraft = {
+  id?: number
+  subtask_id?: number
   title: string
   evaluation_standard: string
   assignee: string
@@ -28,6 +30,8 @@ type LocalSubTaskDraft = {
 }
 
 type LocalTaskDraft = {
+  id?: number
+  task_id?: number
   title: string
   description: string
   owner: string
@@ -113,6 +117,8 @@ function parsePeriodValue(value: string): ParsedPeriod {
 function toPayloadDraft(tasks: LocalTaskDraft[]): ProjectWorkProgressTaskDraft[] {
   return tasks
     .map((task) => ({
+      ...(task.id !== undefined ? { id: task.id } : {}),
+      ...(task.task_id !== undefined ? { task_id: task.task_id } : {}),
       title: task.title.trim(),
       description: task.description.trim(),
       owner: task.owner.trim(),
@@ -121,6 +127,8 @@ function toPayloadDraft(tasks: LocalTaskDraft[]): ProjectWorkProgressTaskDraft[]
       plan_end: task.plan_end,
       subtasks: task.subtasks
         .map((subtask) => ({
+          ...(subtask.id !== undefined ? { id: subtask.id } : {}),
+          ...(subtask.subtask_id !== undefined ? { subtask_id: subtask.subtask_id } : {}),
           title: subtask.title.trim(),
           evaluation_standard: subtask.evaluation_standard.trim(),
           assignee: subtask.assignee.trim(),
@@ -377,6 +385,13 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
   const [showAiPanel, setShowAiPanel] = useState(false)
   const [aiPreview, setAiPreview] = useState<OwnerSubmitMergePreview | null>(null)
   const [aiError, setAiError] = useState('')
+  const draftTasksRef = useRef<LocalTaskDraft[]>(draftTasks)
+  const savedAiDraftRef = useRef<ProjectInitAiDraft | null>(null)
+  const savedAiDecisionsRef = useRef<DraftDecision[]>([])
+
+  useEffect(() => {
+    draftTasksRef.current = draftTasks
+  }, [draftTasks])
 
   useEffect(() => {
     let cancelled = false
@@ -515,14 +530,34 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
     )
   }
 
-  function currentAiDraft(): ProjectInitCurrentDraft {
-    return toCurrentDraft(toPayloadDraft(draftTasks))
+  function currentAiDraft(tasks: LocalTaskDraft[] = draftTasks): ProjectInitCurrentDraft {
+    return toCurrentDraft(toPayloadDraft(tasks))
+  }
+
+  function mergeContextFor(draft: ProjectInitCurrentDraft) {
+    const taskIds = new Set<number>()
+    const subtaskIds = new Set<number>()
+    draft.forEach((task) => {
+      const taskRecord = task as typeof task & { id?: number; task_id?: number }
+      for (const id of [taskRecord.id, taskRecord.task_id]) if (typeof id === 'number' && Number.isInteger(id) && id > 0) taskIds.add(id)
+      for (const subtask of task.subtasks ?? []) {
+        const subtaskRecord = subtask as typeof subtask & { id?: number; subtask_id?: number }
+        for (const id of [subtaskRecord.id, subtaskRecord.subtask_id]) if (typeof id === 'number' && Number.isInteger(id) && id > 0) subtaskIds.add(id)
+      }
+    })
+    return {
+      knownMemberIds: people.map((person) => person.id),
+      knownTaskIds: [...taskIds],
+      knownSubtaskIds: [...subtaskIds],
+    }
   }
 
   function applyMergedDraftToForm(nextDraft: ProjectInitCurrentDraft) {
     const nextTasks = nextDraft.map((task) => {
-      const taskRecord = task as ProjectWorkProgressTaskDraft & { evidence?: unknown[] }
+      const taskRecord = task as ProjectWorkProgressTaskDraft & { id?: number; task_id?: number; evidence?: unknown[] }
       return {
+        ...(taskRecord.id !== undefined ? { id: taskRecord.id } : {}),
+        ...(taskRecord.task_id !== undefined ? { task_id: taskRecord.task_id } : {}),
         title: taskRecord.title ?? '',
         description: taskRecord.description ?? '',
         owner: taskRecord.owner ?? '',
@@ -531,6 +566,8 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
         plan_end: taskRecord.plan_end ?? '',
         evidence: Array.isArray(taskRecord.evidence) ? taskRecord.evidence as LocalTaskDraft['evidence'] : [],
         subtasks: (taskRecord.subtasks ?? []).map((subtask) => ({
+          ...((subtask as typeof subtask & { id?: number }).id !== undefined ? { id: (subtask as typeof subtask & { id?: number }).id } : {}),
+          ...((subtask as typeof subtask & { subtask_id?: number }).subtask_id !== undefined ? { subtask_id: (subtask as typeof subtask & { subtask_id?: number }).subtask_id } : {}),
           title: subtask.title ?? '',
           evaluation_standard: subtask.evaluation_standard ?? '',
           assignee: subtask.assignee ?? '',
@@ -550,23 +587,35 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
 
   function handleAiDraft(draft: ProjectInitAiDraft, decisions: ProjectInitAiDecision[]) {
     try {
-      const preview = buildAiMergePreview(currentAiDraft(), draft, decisions as DraftDecision[], {
-        knownMemberIds: people.map((person) => person.id),
-      })
+      const selectedDecisions = decisions as DraftDecision[]
+      const current = currentAiDraft(draftTasksRef.current)
+      const preview = buildAiMergePreview(current, draft, selectedDecisions, mergeContextFor(current))
+      savedAiDraftRef.current = draft
+      savedAiDecisionsRef.current = selectedDecisions
       setAiPreview(preview)
       setAiError('')
     } catch (error: any) {
-      setAiError(error?.message || 'AI 草稿无法安全合并，请检查人员和任务 ID')
+      const message = error?.message || 'AI 草稿无法安全合并，请检查人员和任务 ID'
+      setAiError(message)
+      throw error
     }
   }
 
   function confirmAiPreview() {
-    if (!aiPreview) return
-    applyMergedDraftToForm(aiPreview.draft)
-    setAiPreview(null)
-    setShowAiPanel(false)
-    setAiError('')
-    toast.success('AI 草稿已合并到当前表单，请继续检查后提交')
+    if (!aiPreview || !savedAiDraftRef.current) return
+    try {
+      const current = currentAiDraft(draftTasksRef.current)
+      const latestPreview = buildAiMergePreview(current, savedAiDraftRef.current, savedAiDecisionsRef.current, mergeContextFor(current))
+      applyMergedDraftToForm(latestPreview.draft)
+      setAiPreview(null)
+      savedAiDraftRef.current = null
+      savedAiDecisionsRef.current = []
+      setShowAiPanel(false)
+      setAiError('')
+      toast.success('AI 草稿已合并到当前表单，请继续检查后提交')
+    } catch (error: any) {
+      setAiError(error?.message || 'AI 草稿无法安全合并，请检查人员和任务 ID')
+    }
   }
 
   async function handleSubmit() {

@@ -132,4 +132,73 @@ describe('mergeAiDraft', () => {
     expect((result[0] as any).evidence).toHaveLength(1)
     expect((result[0] as any).evidence[0].source_label).toBe('原始文件')
   })
+
+  it('removes an owner from helper ids and deduplicates helper ids without mutating the current draft', () => {
+    const current = [{
+      ...currentDraft()[0],
+      owner_id: 7,
+      helper_ids: [7, 9, 9],
+    }] as any
+    const ai = aiTask({ title: '已有任务', merge_status: 'definite_duplicate' })
+    const result = mergeAiDraft(current, { tasks: [ai] }, [
+      { key: 'task-0', action: 'supplement', itemType: 'task', taskIndex: 0, title: ai.title },
+    ], { knownMemberIds: [7, 8, 9] })
+
+    expect((result[0] as any).helper_ids).toEqual([9])
+    expect(current[0].helper_ids).toEqual([7, 9, 9])
+  })
+
+  it('supports camel-case member fields and rejects unknown helper ids explicitly', () => {
+    const current = [{
+      ...currentDraft()[0],
+      ownerId: 7,
+      helperIds: [7, 9, 9],
+    }] as any
+    const ai = aiTask({ title: '已有任务', merge_status: 'definite_duplicate', owner_id: 7 as any })
+    const result = mergeAiDraft(current, { tasks: [ai] }, [
+      { key: 'task-0', action: 'supplement', itemType: 'task', taskIndex: 0, title: ai.title },
+    ], { knownMemberIds: [7, 8, 9] })
+    expect((result[0] as any).helperIds).toEqual([9])
+
+    const invalid = aiTask({ helperIds: [99] } as any)
+    expect(() => mergeAiDraft([], { tasks: [invalid] }, [], { knownMemberIds: [7, 8, 9] })).toThrow(/unknown member/i)
+  })
+
+  it('requires and applies each duplicate subtask decision under a new task', () => {
+    const duplicateSubtask = { ...aiTask().subtasks[0], merge_status: 'possible_duplicate' as const, duplicate_of: null }
+    const ai = aiTask({ merge_status: 'new', subtasks: [duplicateSubtask] })
+    expect(() => mergeAiDraft([], { tasks: [ai] }, [], { knownMemberIds: [7, 8, 9] })).toThrow(/subtask.*decision/i)
+
+    const ignored = mergeAiDraft([], { tasks: [ai] }, [
+      { key: 'task-0-subtask-0', action: 'ignore', itemType: 'subtask', taskIndex: 0, subtaskIndex: 0, title: duplicateSubtask.title },
+    ], { knownMemberIds: [7, 8, 9] })
+    expect(ignored[0].subtasks).toHaveLength(0)
+  })
+
+  it('throws when supplement cannot resolve its task or subtask target', () => {
+    const duplicateTask = aiTask({ merge_status: 'definite_duplicate', duplicate_of: 42 as any })
+    expect(() => mergeAiDraft([], { tasks: [duplicateTask] }, [
+      { key: 'task-0', action: 'supplement', itemType: 'task', taskIndex: 0, title: duplicateTask.title },
+    ], { knownTaskIds: [42], knownMemberIds: [7, 8, 9] })).toThrow(/supplement.*task/i)
+
+    const duplicateSubtask = { ...aiTask().subtasks[0], merge_status: 'possible_duplicate' as const, duplicate_of: 42 as any }
+    const newTask = aiTask({ merge_status: 'new', subtasks: [duplicateSubtask] })
+    expect(() => mergeAiDraft([], { tasks: [newTask] }, [
+      { key: 'task-0-subtask-0', action: 'supplement', itemType: 'subtask', taskIndex: 0, subtaskIndex: 0, title: duplicateSubtask.title },
+    ], { knownSubtaskIds: [42], knownMemberIds: [7, 8, 9] })).toThrow(/supplement.*subtask/i)
+  })
+
+  it('does not count a newly added task as a supplemented task', () => {
+    const preview = buildAiMergePreview([], { tasks: [aiTask()] }, [], { knownMemberIds: [7, 8, 9] })
+    expect(preview.addedTaskCount).toBe(1)
+    expect(preview.supplementedTaskCount).toBe(0)
+  })
+
+  it('counts only actual supplemented fields and evidence', () => {
+    const ai = aiTask({ title: '已有任务', merge_status: 'definite_duplicate' })
+    const preview = buildAiMergePreview(currentDraft(), { tasks: [ai] }, [
+      { key: 'task-0', action: 'supplement', itemType: 'task', taskIndex: 0, title: ai.title },
+    ], { knownMemberIds: [7, 8, 9] })
+    expect(preview.supplementedTaskCount).toBeGreaterThan(0)
+  })
 })

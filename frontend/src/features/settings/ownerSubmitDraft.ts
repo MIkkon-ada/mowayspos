@@ -68,7 +68,7 @@ function positiveId(value: unknown, label: string): number | null {
 
 function validateKnownId(value: unknown, label: string, known: ReadonlySet<number> | undefined): number | null {
   const id = positiveId(value, label)
-  if (id !== null && known && !known.has(id)) throw new RangeError(`${label} references unknown ${label.includes('member') ? 'member' : 'snapshot record'} ID`)
+  if (id !== null && known && !known.has(id)) throw new RangeError(`${label} references unknown ${label.includes('member') || label.includes('helper') ? 'member' : 'snapshot record'} ID`)
   return id
 }
 
@@ -76,10 +76,46 @@ function asSet(values?: ReadonlyArray<number>): Set<number> | undefined {
   if (!values) return undefined
   const result = new Set<number>()
   values.forEach((value, index) => {
-    positiveId(value, `known ID ${index}`)
-    result.add(value)
+    const id = positiveId(value, `known ID ${index}`)
+    if (id !== null) result.add(id)
   })
   return result
+}
+
+function readFirst(record: DraftRecord, keys: string[]): unknown {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) return record[key]
+  }
+  return undefined
+}
+
+function readOptionalId(record: DraftRecord, keys: string[], label: string, known?: ReadonlySet<number>): number | null {
+  return validateKnownId(readFirst(record, keys), label, known)
+}
+
+function readHelperIds(record: DraftRecord, label: string, known?: ReadonlySet<number>): number[] {
+  const rawValues: unknown[] = []
+  for (const key of ['helper_ids', 'helperIds']) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      if (!Array.isArray(record[key])) throw new TypeError(`${label} must be an array`)
+      rawValues.push(...record[key])
+    }
+  }
+  const result: number[] = []
+  for (const value of rawValues) {
+    const id = validateKnownId(value, label, known)
+    if (id !== null && !result.includes(id)) result.push(id)
+  }
+  return result
+}
+
+function normaliseOwnerHelpers(record: DraftRecord, ownerId: number | null, label: string, known?: ReadonlySet<number>): void {
+  const hasSnake = Object.prototype.hasOwnProperty.call(record, 'helper_ids')
+  const hasCamel = Object.prototype.hasOwnProperty.call(record, 'helperIds')
+  if (!hasSnake && !hasCamel) return
+  const helperIds = readHelperIds(record, label, known).filter((id) => id !== ownerId)
+  if (hasSnake) record.helper_ids = [...helperIds]
+  if (hasCamel) record.helperIds = [...helperIds]
 }
 
 function readId(record: DraftRecord, keys: string[], label: string, known?: ReadonlySet<number>): number | null {
@@ -139,26 +175,29 @@ function validateCurrentIds(current: ProjectInitCurrentDraft, context: OwnerSubm
     const taskRecord = task as DraftRecord
     const taskId = readId(taskRecord, ['id', 'task_id'], `task ${taskIndex}`, taskIds.size > 0 ? taskIds : undefined)
     if (taskId !== null) taskIds.add(taskId)
+    readOptionalId(taskRecord, ['owner_id', 'ownerId'], `task ${taskIndex} owner`, memberIds)
+    readHelperIds(taskRecord, `task ${taskIndex} helper`, memberIds)
     const subtasks = Array.isArray(taskRecord.subtasks) ? taskRecord.subtasks : []
     subtasks.forEach((subtask: DraftRecord, subtaskIndex: number) => {
       const subtaskId = readId(subtask, ['id', 'subtask_id'], `subtask ${taskIndex}-${subtaskIndex}`, subtaskIds.size > 0 ? subtaskIds : undefined)
       if (subtaskId !== null) subtaskIds.add(subtaskId)
-      validateKnownId(subtask.assignee_id, `subtask ${taskIndex}-${subtaskIndex} member`, memberIds)
-      for (const helperId of Array.isArray(subtask.helper_ids) ? subtask.helper_ids : []) validateKnownId(helperId, `subtask ${taskIndex}-${subtaskIndex} member`, memberIds)
+      readOptionalId(subtask, ['owner_id', 'ownerId', 'assignee_id', 'assigneeId'], `subtask ${taskIndex}-${subtaskIndex} member`, memberIds)
+      readHelperIds(subtask, `subtask ${taskIndex}-${subtaskIndex} helper`, memberIds)
     })
   })
   return { taskIds, subtaskIds, memberIds }
 }
 
 function validateAiIds(task: DraftRecord, context: { taskIds: ReadonlySet<number>; subtaskIds: ReadonlySet<number>; memberIds?: ReadonlySet<number> }): void {
-  validateKnownId(task.owner_id, 'task member', context.memberIds)
-  validateKnownId(task.duplicate_of, 'task duplicate_of', context.taskIds)
+  readOptionalId(task, ['owner_id', 'ownerId'], 'task member', context.memberIds)
+  readOptionalId(task, ['duplicate_of', 'duplicateOf'], 'task duplicate_of', context.taskIds)
+  readHelperIds(task, 'task helper', context.memberIds)
   const taskWarnings = hasBlockingPersonWarning(task)
   if (taskWarnings && task.owner_id !== null && task.owner_id !== undefined) positiveId(task.owner_id, 'task owner_id')
   for (const subtask of Array.isArray(task.subtasks) ? task.subtasks : []) {
-    validateKnownId(subtask.assignee_id, 'subtask member', context.memberIds)
-    validateKnownId(subtask.duplicate_of, 'subtask duplicate_of', context.subtaskIds)
-    for (const helperId of Array.isArray(subtask.helper_ids) ? subtask.helper_ids : []) validateKnownId(helperId, 'subtask member', context.memberIds)
+    readOptionalId(subtask, ['assignee_id', 'assigneeId', 'owner_id', 'ownerId'], 'subtask member', context.memberIds)
+    readOptionalId(subtask, ['duplicate_of', 'duplicateOf'], 'subtask duplicate_of', context.subtaskIds)
+    readHelperIds(subtask, 'subtask helper', context.memberIds)
   }
 }
 
@@ -176,7 +215,13 @@ function prepareTask(task: AgentTask, isNew: boolean): DraftRecord {
   }
   // A newly created task never trusts model-selected member IDs. Names remain
   // visible so the owner can choose a person in the existing picker.
-  if (!isNew && !hasBlockingPersonWarning(source) && source.owner_id !== null && source.owner_id !== undefined) result.owner_id = source.owner_id
+  if (!isNew && !hasBlockingPersonWarning(source)) {
+    const ownerId = readOptionalId(source, ['owner_id', 'ownerId'], 'task member')
+    if (ownerId !== null) result.owner_id = ownerId
+    if (Object.prototype.hasOwnProperty.call(source, 'helper_ids') || Object.prototype.hasOwnProperty.call(source, 'helperIds')) {
+      result.helper_ids = readHelperIds(source, 'task helper').filter((id) => id !== ownerId)
+    }
+  }
   return result
 }
 
@@ -194,8 +239,9 @@ function prepareSubtask(subtask: AgentSubTask, isNew: boolean): DraftRecord {
     evidence: mergeEvidence([], source.evidence, source.source ?? ''),
   }
   if (!isNew && !hasBlockingPersonWarning(source)) {
-    if (source.assignee_id !== null && source.assignee_id !== undefined) result.assignee_id = source.assignee_id
-    result.helper_ids = Array.isArray(source.helper_ids) ? [...source.helper_ids] : []
+    const assigneeId = readOptionalId(source, ['assignee_id', 'assigneeId', 'owner_id', 'ownerId'], 'subtask member')
+    if (assigneeId !== null) result.assignee_id = assigneeId
+    result.helper_ids = readHelperIds(source, 'subtask helper').filter((id) => id !== assigneeId)
   }
   return result
 }
@@ -224,13 +270,26 @@ function findSubtaskIndex(current: DraftRecord[], subtask: DraftRecord, duplicat
 
 function applyTaskSupplement(target: DraftRecord, source: DraftRecord): void {
   mergeEmptyFields(target, source, ['description', 'owner', 'helper', 'plan_start', 'plan_end', 'status', 'priority'])
+  const ownerId = readOptionalId(target, ['owner_id', 'ownerId'], 'task member') ?? readOptionalId(source, ['owner_id', 'ownerId'], 'task member')
+  if (ownerId !== null && isBlank(readFirst(target, ['owner_id', 'ownerId']))) target.owner_id = ownerId
+  const mergedHelpers = [...readHelperIds(target, 'task helper'), ...readHelperIds(source, 'task helper')]
+  if (mergedHelpers.length > 0 || Object.prototype.hasOwnProperty.call(target, 'helper_ids') || Object.prototype.hasOwnProperty.call(source, 'helper_ids')) {
+    target.helper_ids = [...new Set(mergedHelpers)].filter((id) => id !== ownerId)
+  }
+  normaliseOwnerHelpers(target, ownerId, 'task helper')
   target.evidence = mergeEvidence(target.evidence, source.evidence, source.source ?? '')
 }
 
 function applySubtaskSupplement(target: DraftRecord, source: DraftRecord): void {
   mergeEmptyFields(target, source, ['evaluation_standard', 'assignee', 'helper', 'plan_start', 'plan_end', 'status', 'priority'])
-  if (isBlank(target.assignee_id) && !isBlank(source.assignee_id)) target.assignee_id = source.assignee_id
-  if ((!Array.isArray(target.helper_ids) || target.helper_ids.length === 0) && Array.isArray(source.helper_ids) && source.helper_ids.length > 0) target.helper_ids = [...source.helper_ids]
+  const ownerId = readOptionalId(target, ['assignee_id', 'assigneeId', 'owner_id', 'ownerId'], 'subtask member') ?? readOptionalId(source, ['assignee_id', 'assigneeId', 'owner_id', 'ownerId'], 'subtask member')
+  if (ownerId !== null && isBlank(readFirst(target, ['assignee_id', 'assigneeId', 'owner_id', 'ownerId']))) target.assignee_id = ownerId
+  const currentHelpers = readHelperIds(target, 'subtask helper')
+  const incomingHelpers = readHelperIds(source, 'subtask helper')
+  if (currentHelpers.length > 0 || incomingHelpers.length > 0 || Object.prototype.hasOwnProperty.call(target, 'helper_ids')) {
+    target.helper_ids = [...new Set([...currentHelpers, ...incomingHelpers])].filter((id) => id !== ownerId)
+  }
+  normaliseOwnerHelpers(target, ownerId, 'subtask helper')
   target.evidence = mergeEvidence(target.evidence, source.evidence, source.source ?? '')
 }
 
@@ -241,18 +300,31 @@ function addSubtasks(target: DraftRecord, task: AgentTask, actionMap: Map<string
     const source = subtask as DraftRecord
     const key = `task-${taskIndex}-subtask-${subtaskIndex}`
     const action = actionMap.get(key)
+    const duplicate = source.merge_status !== 'new'
+    if (duplicate && !action) throw new Error(`${key}: duplicate subtask requires a decision`)
     if (action === 'ignore') return
-    if (source.merge_status !== 'new' && !action && !isNewTask) return
-    const prepared = prepareSubtask(subtask, isNewTask)
-    if (action === 'supplement' && !isNewTask) {
-      const existingIndex = findSubtaskIndex(next, source, source.duplicate_of ?? null)
-      if (existingIndex >= 0) applySubtaskSupplement(next[existingIndex], prepared)
+    if (action === 'supplement') {
+      const duplicateOf = readOptionalId(source, ['duplicate_of', 'duplicateOf'], `${key} duplicate_of`)
+      const existingIndex = findSubtaskIndex(next, source, duplicateOf)
+      if (existingIndex < 0) throw new Error(`${key}: supplement target subtask was not found`)
+      applySubtaskSupplement(next[existingIndex], prepareSubtask(subtask, false))
       return
     }
-    if (action !== 'new' && source.merge_status !== 'new' && !isNewTask) return
-    next.push(prepared)
+    if (duplicate && action !== 'new') throw new Error(`${key}: invalid subtask decision`)
+    next.push(prepareSubtask(subtask, isNewTask))
   })
   target.subtasks = next
+}
+
+function normaliseDraftMembers(draft: DraftRecord[], memberIds?: ReadonlySet<number>): void {
+  draft.forEach((task) => {
+    const taskOwnerId = readOptionalId(task, ['owner_id', 'ownerId'], 'task member', memberIds)
+    normaliseOwnerHelpers(task, taskOwnerId, 'task helper', memberIds)
+    for (const subtask of Array.isArray(task.subtasks) ? task.subtasks as DraftRecord[] : []) {
+      const ownerId = readOptionalId(subtask, ['owner_id', 'ownerId', 'assignee_id', 'assigneeId'], 'subtask member', memberIds)
+      normaliseOwnerHelpers(subtask, ownerId, 'subtask helper', memberIds)
+    }
+  })
 }
 
 export function mergeAiDraft(
@@ -273,22 +345,22 @@ export function mergeAiDraft(
     const duplicate = source.merge_status !== 'new'
     if (duplicate && !action) return
     if (action === 'ignore') return
-    const duplicateOf = positiveId(source.duplicate_of, `task ${taskIndex} duplicate_of`)
+    const duplicateOf = readOptionalId(source, ['duplicate_of', 'duplicateOf'], `task ${taskIndex} duplicate_of`, ids.taskIds)
     const existingIndex = findTaskIndex(result, source, duplicateOf, action === 'supplement')
-    const isNewTask = action === 'new' || (!duplicate && action !== 'supplement') || (duplicate && existingIndex < 0 && action !== 'supplement')
-    if (action === 'supplement' && existingIndex >= 0) {
+    if (action === 'supplement') {
+      if (existingIndex < 0) throw new Error(`task ${taskIndex}: supplement target task was not found`)
       const target = result[existingIndex]
       applyTaskSupplement(target, prepareTask(task, false))
       addSubtasks(target, task, actionMap, taskIndex, false)
       return
     }
-    if (action === 'supplement' && existingIndex < 0) return
-    if (isNewTask) {
+    if (!duplicate || action === 'new') {
       const prepared = prepareTask(task, true)
       addSubtasks(prepared, task, actionMap, taskIndex, true)
       result.push(prepared)
     }
   })
+  normaliseDraftMembers(result, ids.memberIds)
   return result as ProjectInitCurrentDraft
 }
 
@@ -301,11 +373,49 @@ function collectWarnings(aiDraft: ProjectInitAiDraft, decisions: OwnerSubmitAiDe
     warnings.push(...task.warnings.map((item) => `${item.code}: ${item.message}`))
     task.subtasks.forEach((subtask, subtaskIndex) => {
       const key = `${taskKey}-subtask-${subtaskIndex}`
-      if (subtask.merge_status !== 'new' && !actionMap.has(key) && actionMap.has(taskKey)) warnings.push(`${key}: duplicate candidate requires a decision`)
+      if (subtask.merge_status !== 'new' && !actionMap.has(key)) warnings.push(`${key}: duplicate candidate requires a decision`)
       warnings.push(...subtask.warnings.map((item) => `${item.code}: ${item.message}`))
     })
   })
   return [...new Set(warnings)]
+}
+
+function countEvidenceAdditions(before: unknown, after: unknown): number {
+  const beforeKeys = new Set((Array.isArray(before) ? before : []).filter(Boolean).map((item) => evidenceKey(item as DraftRecord)))
+  return (Array.isArray(after) ? after : []).filter(Boolean).reduce((count, item) => count + (beforeKeys.has(evidenceKey(item as DraftRecord)) ? 0 : 1), 0)
+}
+
+function countSupplementalChanges(before: DraftRecord, after: DraftRecord): number {
+  const fields = ['description', 'owner', 'helper', 'plan_start', 'plan_end', 'status', 'priority', 'evaluation_standard', 'assignee', 'assignee_id', 'helper_ids']
+  let count = fields.reduce((total, field) => total + (isBlank(before[field]) && !isBlank(after[field]) ? 1 : 0), 0)
+  count += countEvidenceAdditions(before.evidence, after.evidence)
+  const beforeSubtasks = Array.isArray(before.subtasks) ? before.subtasks as DraftRecord[] : []
+  const afterSubtasks = Array.isArray(after.subtasks) ? after.subtasks as DraftRecord[] : []
+  for (const subtask of afterSubtasks) {
+    const index = findSubtaskIndex(beforeSubtasks, subtask, readOptionalId(subtask, ['id', 'subtask_id'], 'subtask'))
+    if (index < 0) {
+      count += 1
+      continue
+    }
+    count += countSupplementalChanges(beforeSubtasks[index], subtask)
+  }
+  return count
+}
+
+function countSupplementalChangesForPreview(currentDraft: ProjectInitCurrentDraft, mergedDraft: ProjectInitCurrentDraft, aiDraft: ProjectInitAiDraft, decisions: OwnerSubmitAiDecision[]): number {
+  const actionMap = decisionMap(decisions)
+  const current = currentDraft as DraftRecord[]
+  const merged = mergedDraft as DraftRecord[]
+  let count = 0
+  aiDraft.tasks.forEach((task, taskIndex) => {
+    if (actionMap.get(`task-${taskIndex}`) !== 'supplement') return
+    const source = task as DraftRecord
+    const duplicateOf = readOptionalId(source, ['duplicate_of', 'duplicateOf'], `task ${taskIndex} duplicate_of`)
+    const beforeIndex = findTaskIndex(current, source, duplicateOf, true)
+    const afterIndex = findTaskIndex(merged, source, duplicateOf, true)
+    if (beforeIndex >= 0 && afterIndex >= 0) count += countSupplementalChanges(current[beforeIndex], merged[afterIndex])
+  })
+  return count
 }
 
 export function buildAiMergePreview(
@@ -318,9 +428,8 @@ export function buildAiMergePreview(
   const warnings = collectWarnings(aiDraft, decisions)
   const currentJson = JSON.stringify(currentDraft)
   const nextJson = JSON.stringify(draft)
-  const currentTasks = currentDraft.length
-  const addedTaskCount = Math.max(0, draft.length - currentTasks)
-  const supplementedTaskCount = Math.max(0, draft.length - addedTaskCount) - currentTasks + (currentJson === nextJson ? 0 : 1)
+  const addedTaskCount = Math.max(0, draft.length - currentDraft.length)
+  const supplementedTaskCount = countSupplementalChangesForPreview(currentDraft, draft, aiDraft, decisions)
   return {
     draft,
     changeCount: currentJson === nextJson ? 0 : Math.max(1, addedTaskCount + supplementedTaskCount),
@@ -332,6 +441,8 @@ export function buildAiMergePreview(
 }
 
 export function toCurrentDraft(tasks: Array<{
+  id?: number
+  task_id?: number
   title: string
   description?: string
   owner?: string
@@ -339,6 +450,8 @@ export function toCurrentDraft(tasks: Array<{
   plan_start?: string
   plan_end?: string
   subtasks?: Array<{
+    id?: number
+    subtask_id?: number
     title: string
     evaluation_standard?: string
     assignee?: string
@@ -350,6 +463,8 @@ export function toCurrentDraft(tasks: Array<{
   }>
 }>): ProjectInitCurrentDraft {
   return tasks.map((task) => ({
+    ...(task.id !== undefined ? { id: task.id } : {}),
+    ...(task.task_id !== undefined ? { task_id: task.task_id } : {}),
     title: task.title ?? '',
     description: task.description ?? '',
     owner: task.owner ?? '',
@@ -357,6 +472,8 @@ export function toCurrentDraft(tasks: Array<{
     plan_start: task.plan_start ?? '',
     plan_end: task.plan_end ?? '',
     subtasks: (task.subtasks ?? []).map((subtask) => ({
+      ...(subtask.id !== undefined ? { id: subtask.id } : {}),
+      ...(subtask.subtask_id !== undefined ? { subtask_id: subtask.subtask_id } : {}),
       title: subtask.title ?? '',
       evaluation_standard: subtask.evaluation_standard ?? '',
       assignee: subtask.assignee ?? '',

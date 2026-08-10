@@ -17,7 +17,10 @@ test('OwnerSubmitModal routes AI results through a local preview before the subm
 })
 
 test('AI merge confirmation updates local form state and retains submit validation flow', () => {
-  assert.match(source, /applyMergedDraftToForm\(aiPreview\.draft\)/)
+  assert.match(source, /const current = currentAiDraft\(draftTasksRef\.current\)/)
+  assert.match(source, /buildAiMergePreview\(current, savedAiDraftRef\.current, savedAiDecisionsRef\.current/)
+  assert.match(source, /draftTasksRef\.current/)
+  assert.doesNotMatch(source, /applyMergedDraftToForm\(aiPreview\.draft\)/)
   assert.match(source, /setDraftTasks\(nextTasks\.length > 0 \? nextTasks : \[cloneEmptyTask\(\)\]\)/)
   assert.match(source, /if \(workProgressDraft\.length === 0\)/)
   assert.match(source, /if \(subtaskCount === 0\)/)

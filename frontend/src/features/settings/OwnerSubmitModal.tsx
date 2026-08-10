@@ -129,6 +129,72 @@ function toPayloadDraft(tasks: LocalTaskDraft[]): ProjectWorkProgressTaskDraft[]
     .filter((task) => task.title)
 }
 
+function AssigneePicker({
+  people,
+  value,
+  disabled,
+  onChange,
+}: {
+  people: Person[]
+  value: number | ''
+  disabled?: boolean
+  onChange: (value: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const selected = people.find((person) => person.id === value)
+  const filtered = people.filter((person) => {
+    const haystack = `${person.name} ${person.department ?? ''}`.toLowerCase()
+    return haystack.includes(query.trim().toLowerCase())
+  })
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-left text-xs font-semibold text-slate-700 outline-none transition-colors hover:border-blue-300 hover:bg-white focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <span className="truncate">{selected?.name ?? '请选择负责人'}</span>
+        <span className={`text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}>⌄</span>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-[calc(100%+6px)] z-30 w-[240px] overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]">
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索姓名或部门"
+            className="mb-2 h-8 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs text-slate-700 outline-none focus:border-blue-400 focus:bg-white"
+          />
+          <div className="max-h-52 space-y-0.5 overflow-y-auto">
+            <button
+              type="button"
+              onClick={() => { onChange(''); setOpen(false); setQuery('') }}
+              className="w-full rounded-lg px-2.5 py-2 text-left text-xs text-slate-400 hover:bg-slate-50"
+            >
+              请选择负责人
+            </button>
+            {filtered.map((person) => (
+              <button
+                key={person.id}
+                type="button"
+                onClick={() => { onChange(String(person.id)); setOpen(false); setQuery('') }}
+                className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs transition-colors hover:bg-blue-50 ${person.id === value ? 'bg-blue-50 text-blue-700' : 'text-slate-700'}`}
+              >
+                <span className="min-w-0 truncate font-semibold">{person.name}</span>
+                <span className="ml-2 shrink-0 text-[10px] text-slate-400">{person.department || '未填写部门'}</span>
+              </button>
+            ))}
+            {filtered.length === 0 && <p className="px-2.5 py-3 text-xs text-slate-400">未找到匹配人员</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
   const [people, setPeople] = useState<Person[]>([])
   const [peopleLoading, setPeopleLoading] = useState(true)
@@ -334,18 +400,18 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
       onClick={() => !fillLoading && onClose()}
     >
       <div
-        className="owner-submit-workbench-shell flex h-[90vh] w-[96vw] max-w-[1280px] flex-col overflow-hidden rounded-xl bg-[#f6f9ff] text-slate-900 shadow-2xl"
+        className="owner-submit-workbench-shell flex h-[92vh] w-[96vw] max-w-[1440px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-[#f7f9fc] text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.24)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="owner-submit-workbench-header flex h-[72px] shrink-0 items-center justify-between border-b border-[#e0c0b1] bg-white px-6">
-          <div className="flex min-w-0 items-center gap-4">
-            <div className="h-10 w-1.5 rounded-full bg-orange-500" aria-hidden="true" />
+        <header className="owner-submit-workbench-header flex min-h-[76px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-7 py-4">
+          <div className="flex min-w-0 items-center gap-3.5">
+            <div className="h-11 w-1.5 rounded-full bg-orange-500" aria-hidden="true" />
             <div className="min-w-0">
-              <h2 className="truncate text-lg font-semibold tracking-[-0.01em] text-slate-900">
+              <h2 className="truncate text-xl font-bold tracking-[-0.02em] text-slate-900">
                 填写立项信息 — {project.name}
               </h2>
               <div className="mt-1 flex flex-wrap items-center gap-2">
-                <span className="rounded border border-orange-200 bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-orange-800">
+                <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-[11px] font-bold text-orange-700">
                   待负责人完善
                 </span>
                 <span className="text-xs text-slate-500">补全项目资料，提交后进入企业教练审核。</span>
@@ -363,13 +429,13 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
           </button>
         </header>
 
-        <main className="owner-submit-workbench-main flex-1 overflow-y-auto bg-[#f6f9ff] pb-8">
-          <div className="owner-submit-workbench-columns mx-auto flex gap-6 items-start max-w-[1440px] px-6 py-6">
-            <aside className="owner-submit-left-pane sticky top-6 w-[400px] shrink-0 space-y-6">
-              <section className="owner-submit-core-card overflow-hidden rounded-xl border border-[#e0c0b1]/70 bg-white shadow-sm">
+        <main className="owner-submit-workbench-main min-h-0 flex-1 overflow-y-auto bg-[#f7f9fc] pb-6">
+          <div className="owner-submit-workbench-columns mx-auto flex max-w-[1440px] flex-col items-stretch gap-5 px-5 py-5 lg:flex-row lg:items-start lg:px-7">
+            <aside className="owner-submit-left-pane w-full shrink-0 space-y-4 lg:sticky lg:top-5 lg:w-[300px] xl:w-[330px]">
+              <section className="owner-submit-core-card overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
                 <h3 className="sr-only">项目核心信息</h3>
-                <div className="p-6">
-                  <div className="space-y-6">
+                <div className="p-5">
+                  <div className="space-y-5">
                     <div className="space-y-2">
                       <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                         项目名称
@@ -377,7 +443,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                       <input
                         value={project.name}
                         disabled
-                        className="w-full border-none p-0 bg-transparent text-lg font-semibold text-slate-900 placeholder:text-slate-300 focus:ring-0 disabled:opacity-100"
+                        className="w-full border-none bg-transparent p-0 text-xl font-bold text-slate-900 placeholder:text-slate-300 focus:ring-0 disabled:opacity-100"
                       />
                     </div>
                     <div className="space-y-2">
@@ -388,7 +454,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                         value={projectPeriod}
                         onChange={(e) => setProjectPeriod(e.target.value)}
                         placeholder="例如：2026-07-01 至 2026-12-31"
-                        className="w-full border-none p-0 bg-transparent text-base text-slate-800 placeholder:text-slate-300 focus:ring-0"
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800 placeholder:text-slate-400 focus:border-orange-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-orange-100"
                       />
                     </div>
                     <div className="space-y-2">
@@ -400,7 +466,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                         onChange={(e) => setFillForm((prev) => ({ ...prev, objectives: e.target.value }))}
                         placeholder="描述项目完成后如何验收，例如关键结果、通过标准、交付边界等"
                         rows={3}
-                        className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                        className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-orange-100"
                       />
                     </div>
                   </div>
@@ -456,17 +522,17 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
             </aside>
 
             <section className="owner-submit-right-pane flex-1 min-w-0">
-              <div className="owner-submit-workplan-heading mb-4 flex items-center justify-between gap-4">
+              <div className="owner-submit-workplan-heading mb-5 flex flex-wrap items-start justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <h3 className="text-lg font-semibold text-slate-900">工作推进方案</h3>
-                  <span className="text-sm italic text-slate-500">
+                  <span className="mt-1 block max-w-3xl text-xs leading-5 text-slate-500">
                     规划重点工作方向，并细化关键任务执行计划。重点工作用于归类工作方向；关键任务才需要明确责任人、协助人和时间段。
                   </span>
                 </div>
                 <button
                   type="button"
                   onClick={addTaskDraft}
-                  className="flex shrink-0 items-center gap-1.5 rounded-lg border border-orange-500 bg-white px-4 py-2 text-xs font-semibold text-orange-700 transition-colors hover:bg-orange-50"
+                  className="flex shrink-0 items-center gap-1.5 rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-xs font-bold text-blue-700 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
                 >
                   + 新增重点工作
                 </button>
@@ -476,10 +542,10 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                 {draftTasks.map((task, taskIndex) => (
                   <div
                     key={taskIndex}
-                    className="owner-submit-task-group mb-6 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm"
+                    className="owner-submit-task-group mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.05)]"
                   >
-                    <div className="owner-submit-task-group-header flex items-start gap-4 border-b border-slate-200 bg-slate-100/70 px-6 py-4">
-                      <div className="flex w-8 h-8 shrink-0 items-center justify-center rounded bg-orange-50 text-lg font-semibold text-orange-700">
+                    <div className="owner-submit-task-group-header flex items-start gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white shadow-sm">
                         {taskIndex + 1}
                       </div>
                       <div className="grid flex-1 grid-cols-1 gap-4 md:grid-cols-2">
@@ -491,7 +557,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                             value={task.title}
                             onChange={(e) => updateTaskDraft(taskIndex, 'title', e.target.value)}
                             placeholder="请输入重点工作"
-                            className="w-full border-none p-0 bg-transparent text-lg font-semibold text-slate-900 placeholder:text-slate-300 focus:ring-0"
+                            className="w-full border-none bg-transparent p-0 text-base font-bold text-slate-900 placeholder:text-slate-400 focus:ring-0"
                           />
                         </div>
                         <div>
@@ -502,7 +568,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                             value={task.description}
                             onChange={(e) => updateTaskDraft(taskIndex, 'description', e.target.value)}
                             placeholder="请输入完成准则"
-                            className="w-full border-none p-0 bg-transparent text-sm text-slate-600 placeholder:text-slate-300 focus:ring-0"
+                            className="w-full border-none bg-transparent p-0 text-sm font-medium text-slate-700 placeholder:text-slate-400 focus:ring-0"
                           />
                         </div>
                       </div>
@@ -510,17 +576,17 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                         type="button"
                         onClick={() => removeTaskDraft(taskIndex)}
                         disabled={draftTasks.length <= 1}
-                        className="rounded p-1 text-xs text-slate-400 transition-colors hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-30"
+                        className="rounded-lg px-2 py-1 text-xs font-semibold text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-30"
                         aria-label={`删除重点工作 ${taskIndex + 1}`}
                       >
                         删除
                       </button>
                     </div>
 
-                    <div className="overflow-x-auto">
-                      <table className="owner-submit-subtask-table w-full border-collapse text-left text-sm">
+                    <div className="overflow-x-auto px-3 pb-1">
+                      <table className="owner-submit-subtask-table min-w-[920px] w-full border-separate border-spacing-0 text-left text-sm">
                         <thead>
-                          <tr className="border-b border-slate-200/80 bg-slate-50/80 text-[11px] font-semibold text-slate-500">
+                          <tr className="border-b border-slate-200 bg-white text-[11px] font-bold tracking-wide text-slate-500">
                             <th className="w-[250px] py-2 pl-6 pr-3">关键任务</th>
                             <th className="w-[100px] px-3 py-2">责任人</th>
                             <th className="w-[100px] px-3 py-2">协助人</th>
@@ -531,31 +597,25 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {task.subtasks.map((subtask, subIndex) => (
-                            <tr key={subIndex} className="group transition-colors hover:bg-slate-50">
+                            <tr key={subIndex} className="group transition-colors hover:bg-blue-50/40">
                               <td className="py-3 pl-6 pr-3">
                                 <input
                                   value={subtask.title}
                                   onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'title', e.target.value)}
                                   placeholder="例如：任务名称"
-                                  className="w-full border-none p-0 bg-transparent text-sm text-slate-800 placeholder:text-slate-300 focus:ring-0"
+                                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
                                 />
                               </td>
-                              <td className="px-3 py-3">
-                                <select
+                              <td className="px-3 py-2.5 align-top">
+                                <AssigneePicker
+                                  people={people}
                                   value={subtask.assigneeId}
-                                  onChange={(e) => updateSubTaskAssignee(taskIndex, subIndex, e.target.value)}
-                                  className="w-full border-none bg-transparent p-0 text-sm text-slate-800 focus:ring-0"
-                                >
-                                  <option value="">请选择负责人</option>
-                                  {people.map((person) => (
-                                    <option key={person.id} value={person.id}>
-                                      {person.name}{person.department ? ` · ${person.department}` : ''}
-                                    </option>
-                                  ))}
-                                </select>
+                                  disabled={peopleLoading || Boolean(peopleError)}
+                                  onChange={(value) => updateSubTaskAssignee(taskIndex, subIndex, value)}
+                                />
                               </td>
-                              <td className="px-3 py-3">
-                                <div data-multiple="true" className="max-h-24 space-y-1 overflow-y-auto text-xs text-slate-600">
+                              <td className="relative px-3 py-2.5 align-top">
+                                <div data-multiple="true" className="max-h-20 space-y-1 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50/70 p-2 text-xs text-slate-600">
                                   {people.length === 0 ? (
                                     <span className="text-slate-400">{peopleLoading ? '人员加载中…' : peopleError || '暂无可选人员'}</span>
                                   ) : (
@@ -579,7 +639,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                                   value={composeTaskPeriod(subtask.plan_start, subtask.plan_end)}
                                   onChange={(e) => updateSubTaskPeriod(taskIndex, subIndex, e.target.value)}
                                   placeholder="7.1 - 7.5"
-                                  className="w-full border-none p-0 bg-transparent text-sm text-slate-600 placeholder:text-slate-300 focus:ring-0"
+                                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
                                 />
                               </td>
                               <td className="px-3 py-3">
@@ -610,7 +670,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                       <button
                         type="button"
                         onClick={() => addSubTaskDraft(taskIndex)}
-                        className="text-xs font-semibold text-orange-700 transition-colors hover:underline"
+                        className="text-xs font-bold text-blue-700 transition-colors hover:text-blue-800 hover:underline"
                       >
                         + 新增关键任务
                       </button>
@@ -622,12 +682,12 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
           </div>
         </main>
 
-        <footer className="owner-submit-workbench-footer flex h-[72px] shrink-0 items-center justify-between border-t border-[#e0c0b1] bg-white px-6 shadow-[0_-4px_12px_-2px_rgba(0,0,0,0.05)]">
+        <footer className="owner-submit-workbench-footer sticky bottom-0 z-10 flex min-h-[64px] shrink-0 items-center justify-between border-t border-slate-200 bg-white/95 px-5 py-3 shadow-[0_-8px_20px_rgba(15,23,42,0.06)] backdrop-blur lg:px-7">
           <button
             type="button"
             onClick={onClose}
             disabled={fillLoading}
-            className="h-10 rounded-lg border border-slate-300 px-6 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
+            className="h-10 rounded-xl border border-slate-200 bg-white px-5 text-sm font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"
           >
             取消
           </button>
@@ -635,7 +695,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
             type="button"
             onClick={handleSubmit}
             disabled={fillLoading}
-            className="h-10 rounded-lg bg-orange-600 px-10 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-700 disabled:opacity-50"
+            className="h-10 rounded-xl bg-orange-600 px-8 text-sm font-bold text-white shadow-[0_6px_16px_rgba(234,88,12,0.22)] transition-colors hover:bg-orange-700 disabled:opacity-50"
           >
             {fillLoading ? '提交中…' : '提交立项审核'}
           </button>

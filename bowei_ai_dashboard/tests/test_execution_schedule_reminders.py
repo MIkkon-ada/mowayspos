@@ -57,3 +57,8 @@ def test_scan_creates_one_start_notification_per_recipient():
     assert reminders.scan_execution_schedule_reminders(db, today=date(2026, 8, 12)) == 1
     assert db.query(models.Notification).count() == 1
     assert reminders.scan_execution_schedule_reminders(db, today=date(2026, 8, 12)) == 0
+
+
+def test_wecom_failure_is_returned_as_a_non_blocking_error(monkeypatch):
+    monkeypatch.setattr(reminders, "send_text_message", lambda *_: (_ for _ in ()).throw(RuntimeError("offline")))
+    assert reminders.deliver_wecom_notice(["u1"], "提醒") == "offline"

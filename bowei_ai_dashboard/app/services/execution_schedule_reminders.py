@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..services import notify
+from ..services.wecom import send_text_message
 
 CHINA = ZoneInfo("Asia/Shanghai")
 ONE_DAY = timedelta(days=1)
@@ -28,6 +29,14 @@ def reminder_kinds_for(schedule: models.ExecutionSchedule, today: date) -> set[s
 
 def notification_type(kind: str) -> str:
     return f"execution_schedule_{kind}"
+
+
+def deliver_wecom_notice(userids: list[str], content: str) -> str:
+    try:
+        send_text_message(userids, content)
+    except Exception as exc:
+        return str(exc)
+    return ""
 
 
 def recipient_ids_for(db: Session, schedule: models.ExecutionSchedule, kind: str) -> set[int]:
@@ -78,5 +87,12 @@ def scan_execution_schedule_reminders(db: Session, *, today: date | None = None)
             for recipient_id in recipient_ids_for(db, schedule, kind):
                 if create_reminder_notification(db, schedule=schedule, recipient_id=recipient_id, kind=kind, due_on=today, project_id=project.id, link=link):
                     created += 1
+                    person = db.get(models.Person, recipient_id)
+                    error = deliver_wecom_notice([person.wecom_userid] if person else [], f"执行安排提醒：{schedule.title}，截止日期：{schedule.due_date.isoformat()}")
+                    if error:
+                        reminder = db.query(models.ExecutionScheduleReminder).filter_by(
+                            schedule_id=schedule.id, reminder_kind=kind, due_on=today, recipient_id=recipient_id,
+                        ).one()
+                        reminder.wecom_error = error
     db.commit()
     return created

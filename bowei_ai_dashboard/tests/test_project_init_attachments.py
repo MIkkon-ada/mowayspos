@@ -581,7 +581,7 @@ def test_project_init_attachment_lifecycle_lock_does_not_depend_on_noop_update_r
         def execute(self, *_args, **_kwargs):
             raise AssertionError("lifecycle lock must not use a no-op UPDATE rowcount")
 
-    monkeypatch.setattr(project_init_ai, "require_project_owner_or_admin", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(project_init_ai, "require_project_manager", lambda *_args, **_kwargs: None)
     locked = project_init_ai._lock_editable_project(1, "owner", FakeDB())
 
     assert locked is project

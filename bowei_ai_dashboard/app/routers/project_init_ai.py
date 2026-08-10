@@ -23,7 +23,6 @@ from ..permissions import (
     get_user_context_from_db,
     require_project_access,
     require_project_manager,
-    require_project_owner_or_admin,
 )
 from ..time_utils import utc_now
 from ..services.project_init_analysis import (
@@ -87,7 +86,7 @@ def _authorize_access(project_id: int, current_user: str, db: Session) -> models
 
 def _authorize_edit(project_id: int, current_user: str, db: Session) -> models.Project:
     project = _require_editable_project(project_id, db)
-    require_project_owner_or_admin(current_user, project_id, db)
+    require_project_manager(current_user, project_id, db)
     return project
 
 
@@ -113,7 +112,7 @@ def _lock_editable_project(project_id: int, current_user: str, db: Session) -> m
         db.refresh(project)
         if str(project.status or "").strip().lower() not in _EDITABLE_LIFECYCLES:
             raise HTTPException(status_code=409, detail="project lifecycle is not editable")
-    require_project_owner_or_admin(current_user, project_id, db)
+    require_project_manager(current_user, project_id, db)
     return project
 
 
@@ -598,7 +597,8 @@ def latest_project_init_analysis_run(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    _authorize_access(project_id, current_user, db)
+    require_project_manager(current_user, project_id, db)
+    _get_project(project_id, db)
     recover_stale_runs(db, project_id)
     run = (
         db.query(models.ProjectInitAnalysisRun)
@@ -618,7 +618,8 @@ def get_project_init_analysis_run(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    _authorize_access(project_id, current_user, db)
+    require_project_manager(current_user, project_id, db)
+    _get_project(project_id, db)
     recover_stale_runs(db, project_id)
     return _analysis_run_response(_get_analysis_run(project_id, run_id, db))
 

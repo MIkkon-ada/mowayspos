@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ownerSubmitProfile } from '../../api/projects'
+import { applyInitAnalysisRun } from '../../api/projectInitAi'
 import { fetchPeople } from '../../api/people'
 import type { ProjectProfilePayload, ProjectWorkProgressTaskDraft } from '../../api/projects'
 import { toast } from '../../utils/toast'
@@ -385,9 +386,14 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
   const [showAiPanel, setShowAiPanel] = useState(false)
   const [aiPreview, setAiPreview] = useState<OwnerSubmitMergePreview | null>(null)
   const [aiError, setAiError] = useState('')
+  const [aiAuditPendingRunId, setAiAuditPendingRunId] = useState<number | null>(null)
+  const [aiAuditRetrying, setAiAuditRetrying] = useState(false)
   const draftTasksRef = useRef<LocalTaskDraft[]>(draftTasks)
   const savedAiDraftRef = useRef<ProjectInitAiDraft | null>(null)
   const savedAiDecisionsRef = useRef<DraftDecision[]>([])
+  const pendingAiRunIdRef = useRef<number | null>(null)
+  const savedAiRunIdRef = useRef<number | null>(null)
+  const submittedResultRef = useRef<(Project & { submitted_for_review: boolean }) | null>(null)
 
   useEffect(() => {
     draftTasksRef.current = draftTasks
@@ -585,13 +591,14 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
     setDraftTasks(nextTasks.length > 0 ? nextTasks : [cloneEmptyTask()])
   }
 
-  function handleAiDraft(draft: ProjectInitAiDraft, decisions: ProjectInitAiDecision[]) {
+  function handleAiDraft(draft: ProjectInitAiDraft, decisions: ProjectInitAiDecision[], runId: number) {
     try {
       const selectedDecisions = decisions as DraftDecision[]
       const current = currentAiDraft(draftTasksRef.current)
       const preview = buildAiMergePreview(current, draft, selectedDecisions, mergeContextFor(current))
       savedAiDraftRef.current = draft
       savedAiDecisionsRef.current = selectedDecisions
+      pendingAiRunIdRef.current = runId
       setAiPreview(preview)
       setAiError('')
     } catch (error: any) {
@@ -607,6 +614,8 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
       const current = currentAiDraft(draftTasksRef.current)
       const latestPreview = buildAiMergePreview(current, savedAiDraftRef.current, savedAiDecisionsRef.current, mergeContextFor(current))
       applyMergedDraftToForm(latestPreview.draft)
+      savedAiRunIdRef.current = pendingAiRunIdRef.current
+      pendingAiRunIdRef.current = null
       setAiPreview(null)
       savedAiDraftRef.current = null
       savedAiDecisionsRef.current = []
@@ -615,6 +624,33 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
       toast.success('AI 草稿已合并到当前表单，请继续检查后提交')
     } catch (error: any) {
       setAiError(error?.message || 'AI 草稿无法安全合并，请检查人员和任务 ID')
+    }
+  }
+
+  function cancelAiPreview() {
+    setAiPreview(null)
+    savedAiDraftRef.current = null
+    savedAiDecisionsRef.current = []
+    pendingAiRunIdRef.current = null
+  }
+
+  async function retryAiApplyAudit() {
+    const runId = aiAuditPendingRunId
+    const submittedResult = submittedResultRef.current
+    if (!runId || !submittedResult || aiAuditRetrying) return
+    setAiAuditRetrying(true)
+    try {
+      await applyInitAnalysisRun(project.id, runId)
+      savedAiRunIdRef.current = null
+      setAiAuditPendingRunId(null)
+      setAiError('')
+      toast.success('AI 分析审计已补记成功')
+      if (onSuccess) onSuccess(submittedResult)
+      else onClose()
+    } catch (error: any) {
+      setAiError(`工作推进表已成功提交，但 AI 审计仍未补记成功：${error?.message || '请稍后重试'}`)
+    } finally {
+      setAiAuditRetrying(false)
     }
   }
 
@@ -643,6 +679,10 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
       return
     }
 
+    if (aiAuditPendingRunId) {
+      toast.error('工作推进表已经提交，请先补记 AI 审计，不要重复提交')
+      return
+    }
     const parsedProjectPeriod = parseProjectPeriod(projectPeriod)
     setFillLoading(true)
     try {
@@ -652,6 +692,21 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
         end_date: parsedProjectPeriod.end,
         work_progress_draft: workProgressDraft,
       })
+      submittedResultRef.current = result
+      const auditRunId = savedAiRunIdRef.current
+      if (auditRunId) {
+        try {
+          await applyInitAnalysisRun(project.id, auditRunId)
+          savedAiRunIdRef.current = null
+          setAiAuditPendingRunId(null)
+        } catch (auditError: any) {
+          setAiAuditPendingRunId(auditRunId)
+          const message = `工作推进表已成功提交，但 AI 审计未记录：${auditError?.message || '请点击重试补记'}`
+          setAiError(message)
+          toast.error(message)
+          return
+        }
+      }
       toast.success('已提交审核，等待企业教练审核通过后正式启动')
       if (onSuccess) onSuccess(result)
       else onClose()
@@ -831,7 +886,12 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                 </div>
               )}
 
-              {aiError && <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{aiError}</div>}
+              {aiError && <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+                <p>{aiError}</p>
+                {aiAuditPendingRunId && <button type="button" onClick={() => void retryAiApplyAudit()} disabled={aiAuditRetrying} className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50">
+                  {aiAuditRetrying ? '正在补记审计…' : '重试补记 AI 审计'}
+                </button>}
+              </div>}
 
               {aiPreview && (
                 <section className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4" aria-label="AI 草稿合并预览" data-testid="owner-submit-ai-preview">
@@ -841,7 +901,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                       <p className="mt-1 text-xs text-emerald-800">将新增 {aiPreview.addedTaskCount} 项重点工作，检测到 {aiPreview.changeCount} 项字段或结构变化；现有非空内容不会被覆盖。</p>
                     </div>
                     <div className="flex gap-2">
-                      <button type="button" onClick={() => setAiPreview(null)} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100">取消</button>
+                      <button type="button" onClick={cancelAiPreview} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100">取消</button>
                       <button type="button" onClick={confirmAiPreview} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700">确认合并到表单</button>
                     </div>
                   </div>

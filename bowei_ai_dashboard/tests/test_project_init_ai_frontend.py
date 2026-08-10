@@ -37,3 +37,9 @@ def test_owner_submit_ai_panel_does_not_apply_to_backend_or_render_untrusted_htm
 
     assert "applyInitAnalysisRun" not in source
     assert "dangerouslySetInnerHTML" not in source
+
+
+def test_owner_submit_ai_warning_preview_labels_ambiguous_inactive_and_unmatched_people():
+    source = _frontend_source("features/settings/OwnerSubmitAiPanel.tsx")
+    for label in ("低置信度", "人员匹配不明确", "人员已停用", "未匹配人员"):
+        assert label in source

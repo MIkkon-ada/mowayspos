@@ -395,3 +395,72 @@ def test_retry_unique_link_deduplicates_across_sessions_and_uses_frozen_snapshot
     assert background_two.tasks == []
     first.close()
     second.close()
+
+
+def test_project_manager_can_create_retry_apply_and_ordinary_member_is_denied():
+    from app.routers import project_init_ai
+
+    db = make_session()
+    project, _owner = add_project_graph(db)
+    manager = models.Person(id=20, name="Project CEO", is_active=True)
+    member = models.Person(id=21, name="Ordinary Member", is_active=True)
+    db.add_all([
+        manager,
+        member,
+        models.ProjectMember(project_id=project.id, person_id=manager.id, role="project_ceo"),
+        models.ProjectMember(project_id=project.id, person_id=member.id, role="member"),
+        models.Account(username="project-ceo", password_hash="x", person_id=manager.id, status="active"),
+        models.Account(username="member", password_hash="x", person_id=member.id, status="active"),
+    ])
+    attachment = add_attachment(db, project_id=project.id, attachment_id=77)
+    old = models.ProjectInitAnalysisRun(
+        project_id=project.id,
+        attachment_ids_json="[77]",
+        snapshot_json=json.dumps({
+            "project": {"id": project.id, "status": "dispatched"},
+            "attachments": [{"id": 77, "storage_key": attachment.storage_key, "original_name": attachment.original_name, "size_bytes": 1}],
+            "current_draft": [],
+        }),
+        status="failed",
+        created_by="project-ceo",
+    )
+    completed = models.ProjectInitAnalysisRun(project_id=project.id, status="completed", created_by="project-ceo")
+    db.add_all([old, completed])
+    db.commit()
+
+    background = SimpleNamespace(tasks=[], add_task=lambda fn, run_id: background.tasks.append(run_id))
+    created = project_init_ai.create_project_init_analysis_run(
+        project_id=project.id,
+        payload=schemas.ProjectInitAnalysisCreate(attachment_ids=[77], current_draft=[]),
+        background_tasks=background,
+        current_user="project-ceo",
+        db=db,
+    )
+    assert created["status"] == "queued"
+    retry = project_init_ai.retry_project_init_analysis_run(
+        project.id,
+        old.id,
+        background,
+        current_user="project-ceo",
+        db=db,
+    )
+    assert retry["status"] == "queued"
+    applied = project_init_ai.apply_project_init_analysis_run(
+        project.id,
+        completed.id,
+        current_user="project-ceo",
+        db=db,
+    )
+    assert applied["applied_at"] is not None
+    project_init_ai.delete_init_attachment(project.id, attachment.id, current_user="project-ceo", db=db)
+    assert db.get(models.ProjectInitAttachment, attachment.id).deleted_at is not None
+
+    with pytest.raises(HTTPException) as denied:
+        project_init_ai.create_project_init_analysis_run(
+            project_id=project.id,
+            payload=schemas.ProjectInitAnalysisCreate(attachment_ids=[77], current_draft=[]),
+            background_tasks=background,
+            current_user="member",
+            db=db,
+        )
+    assert denied.value.status_code == 403

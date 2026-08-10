@@ -12,7 +12,9 @@ test('OwnerSubmitModal routes AI results through a local preview before the subm
   assert.match(source, /buildAiMergePreview/)
   assert.match(source, /data-testid="owner-submit-ai-preview"/)
   assert.match(source, /confirmAiPreview/)
-  assert.doesNotMatch(source, /applyInitAnalysisRun/)
+  assert.match(source, /applyInitAnalysisRun/)
+  assert.match(source, /submittedResultRef\.current = result[\s\S]*await applyInitAnalysisRun\(project\.id, auditRunId\)/)
+  assert.match(source, /setAiError\(message\)[\s\S]*toast\.error\(message\)/)
   assert.equal((source.match(/ownerSubmitProfile\(/g) ?? []).length, 1)
 })
 
@@ -26,4 +28,14 @@ test('AI merge confirmation updates local form state and retains submit validati
   assert.match(source, /if \(subtaskCount === 0\)/)
   assert.match(source, /!subtask\.assignee_id/)
   assert.match(source, /setFillLoading\(true\)/)
+})
+
+test('successful business submit records the AI apply audit afterward and exposes recovery', () => {
+  assert.match(source, /function handleAiDraft\(draft: ProjectInitAiDraft, decisions: ProjectInitAiDecision\[\], runId: number\)/)
+  assert.match(source, /pendingAiRunIdRef\.current = runId/)
+  assert.match(source, /savedAiRunIdRef\.current = pendingAiRunIdRef\.current/)
+  assert.match(source, /submittedResultRef\.current = result[\s\S]*await applyInitAnalysisRun\(project\.id, auditRunId\)/)
+  assert.match(source, /setAiAuditPendingRunId\(auditRunId\)/)
+  assert.match(source, /retryAiApplyAudit/)
+  assert.match(source, /function cancelAiPreview\(\)[\s\S]*pendingAiRunIdRef\.current = null/)
 })

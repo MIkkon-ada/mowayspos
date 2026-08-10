@@ -52,7 +52,7 @@ export type OwnerSubmitAiPanelProps = {
   projectId: number
   currentDraft: ProjectInitCurrentDraft
   existingAttachments?: ProjectInitAttachment[]
-  onApplyDraft: (draft: ProjectInitAiDraft, decisions: ProjectInitAiDecision[]) => void | Promise<void>
+  onApplyDraft: (draft: ProjectInitAiDraft, decisions: ProjectInitAiDecision[], runId: number) => void | Promise<void>
   onClose?: () => void
   disabled?: boolean
 }
@@ -127,7 +127,20 @@ function duplicateLabel(status: AgentTask['merge_status']): string {
 }
 
 function warningText(task: AgentTask | AgentSubTask): string[] {
-  return task.warnings.map((warning) => `${warning.code}: ${warning.message}`)
+  return task.warnings.map((warning) => {
+    const code = warning.code.toLowerCase()
+    const message = warning.message.trim()
+    const label = code.includes('low_confidence') || code.includes('confidence')
+      ? '低置信度'
+      : code.includes('ambiguous')
+        ? '人员匹配不明确'
+        : code.includes('inactive')
+          ? '人员已停用'
+          : code.includes('unmatched') || code.includes('not_found')
+            ? '未匹配人员'
+            : '需要人工确认'
+    return `${label}（${warning.code}）：${message}`
+  })
 }
 
 type FileResult = {
@@ -525,7 +538,10 @@ export function OwnerSubmitAiPanel({
       })
     })
     try {
-      await onApplyDraft(draft, selected)
+      if (!run?.id) {
+        throw new Error('AI 分析运行记录不存在，无法建立审计关联；请重新分析文件')
+      }
+      await onApplyDraft(draft, selected, run.id)
       if (mountedRef.current) setApplySuccess(true)
     } catch (nextError) {
       if (mountedRef.current) setError(`应用失败：${errorMessage(nextError)}`)

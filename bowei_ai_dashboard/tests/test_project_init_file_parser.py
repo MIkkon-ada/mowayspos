@@ -682,18 +682,17 @@ def test_doc_invokes_antiword_without_shell_and_with_bounded_timeout(tmp_path, m
     assert process.wait_calls == [30]
 
 
-def test_doc_captures_process_tree_identifier_at_startup(tmp_path, monkeypatch):
+def test_doc_uses_saved_pid_as_process_group_id_on_posix(tmp_path, monkeypatch):
     path = tmp_path / "legacy-storage"
     path.write_bytes(b"legacy-doc")
     process = FakeAntiwordProcess(stdout=b"content")
     process.pid = 12345
     captured = []
 
-    if os.name == "nt":
-        expected_identifier = process.pid
-    else:
-        expected_identifier = 23456
-        monkeypatch.setattr(parser.os, "getpgid", lambda _pid: expected_identifier)
+    expected_identifier = process.pid
+
+    def fail_getpgid(_pid):
+        raise AssertionError("antiword process group must not be re-discovered")
 
     def fake_cleanup(received, readers, *, process_group_id=None):
         captured.append((received, process_group_id))
@@ -703,7 +702,12 @@ def test_doc_captures_process_tree_identifier_at_startup(tmp_path, monkeypatch):
     monkeypatch.setattr(parser.subprocess, "Popen", lambda *_args, **_kwargs: process)
     monkeypatch.setattr(parser, "_cleanup_antiword_process", fake_cleanup)
 
-    parse_project_init_file(path, "legacy.doc")
+    original_os = parser.os
+    try:
+        parser.os = SimpleNamespace(name="posix", getpgid=fail_getpgid)
+        parse_project_init_file(path, "legacy.doc")
+    finally:
+        parser.os = original_os
 
     assert captured == [(process, expected_identifier)]
 

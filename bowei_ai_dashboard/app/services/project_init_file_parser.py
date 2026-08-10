@@ -295,12 +295,9 @@ def _capture_process_group_id(process: Any) -> int | None:
     pid = getattr(process, "pid", None)
     if pid is None:
         return None
-    if os.name == "nt":
-        return pid
-    try:
-        return os.getpgid(pid)
-    except (OSError, ProcessLookupError):
-        return None
+    # POSIX antiword starts a new session, so its PID is also the stable
+    # process-group leader even if the parent exits before cleanup begins.
+    return pid
 
 
 def _terminate_process_tree(

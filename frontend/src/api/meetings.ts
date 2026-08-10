@@ -27,6 +27,65 @@ export function fetchMeetingRevisions(meetingId: number): Promise<MeetingRevisio
   return apiGet<MeetingRevisionItem[]>(`/api/meetings/${meetingId}/revisions`)
 }
 
+export type MeetingProgressStatus = 'completed' | 'in_progress' | 'blocked' | 'not_started' | 'not_mentioned'
+export type MeetingProgressReviewStatus = 'pending' | 'accepted' | 'ignored'
+
+export type MeetingProgressReviewItem = {
+  id: number
+  project_id: number
+  meeting_id: number
+  baseline_run_id: number
+  baseline_task_id?: number | null
+  baseline_subtask_id?: number | null
+  member_name: string
+  baseline_snapshot_json: string
+  report_text: string
+  status: MeetingProgressStatus
+  evidence_quote: string
+  suggested_task_status: string
+  review_status: MeetingProgressReviewStatus
+  reviewer_person_id?: number | null
+  reviewed_at?: string | null
+  review_comment?: string
+  validation_json: string
+  analysis_version: number
+}
+
+export type MeetingProgressReviewAnalysis = {
+  meeting_id: number
+  analysis_version: number
+  reviews: MeetingProgressReviewItem[]
+}
+
+export function analyzeProgressReview(meetingId: number): Promise<MeetingProgressReviewAnalysis> {
+  return apiPost<MeetingProgressReviewAnalysis>(`/api/meetings/${meetingId}/progress-review/analyze`)
+}
+
+export function fetchProgressReviews(meetingId: number): Promise<MeetingProgressReviewItem[]> {
+  return apiGet<MeetingProgressReviewItem[]>(`/api/meetings/${meetingId}/progress-review`)
+}
+
+export function patchProgressReview(
+  meetingId: number,
+  reviewId: number,
+  payload: {
+    status?: MeetingProgressStatus
+    suggested_task_status?: string
+    review_status?: 'pending' | 'ignored'
+    review_comment?: string
+  },
+): Promise<MeetingProgressReviewItem> {
+  return apiPatch<MeetingProgressReviewItem>(`/api/meetings/${meetingId}/progress-review/${reviewId}`, payload)
+}
+
+export function confirmProgressReview(
+  meetingId: number,
+  reviewId: number,
+  payload: { status?: MeetingProgressStatus; suggested_task_status?: string; review_comment?: string },
+): Promise<MeetingProgressReviewItem & { task_updated: boolean }> {
+  return apiPost<MeetingProgressReviewItem & { task_updated: boolean }>(`/api/meetings/${meetingId}/progress-review/${reviewId}/confirm`, payload)
+}
+
 export function patchMeetingStatus(
   id: number,
   publish_status: 'draft' | 'published' | 'returned',

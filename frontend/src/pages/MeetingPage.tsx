@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { fetchMeetingRevisions, fetchMeetings, patchMeetingStatus, type MeetingRevisionItem } from '../api/meetings'
+import { analyzeProgressReview, fetchMeetingRevisions, fetchMeetings, patchMeetingStatus, type MeetingRevisionItem } from '../api/meetings'
 import { getOverview } from '../api/dashboard'
 import { useProject } from '../context/ProjectContext'
 import type { MeetingItem } from '../types'
@@ -9,6 +9,7 @@ import { toast } from '../utils/toast'
 import { SkeletonTableRows } from '../components/Skeleton'
 import { NewMeetingModal } from '../features/meeting/NewMeetingModal'
 import { KickoffAgentWorkspace } from '../features/meeting/KickoffAgentWorkspace'
+import { MeetingProgressReviewSection } from '../features/meeting/MeetingProgressReviewSection'
 import { STATUS_CONFIG, TYPE_STYLE, fmtTime, getStatus, typeLabel, type PublishStatus } from '../features/meeting/meetingUtils'
 import { getProjectDisplayName } from '../domain/projectDisplay'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
@@ -32,6 +33,7 @@ export function MeetingPage() {
   const [projectProgress, setProjectProgress] = useState<Record<number, number>>({})
   const [revisions, setRevisions] = useState<MeetingRevisionItem[]>([])
   const [selectedRevision, setSelectedRevision] = useState<MeetingRevisionItem | null>(null)
+  const [progressReviewRefresh, setProgressReviewRefresh] = useState(0)
 
   const currentProject = projects.find((p) => p.id === currentProjectId) ?? null
   const effectiveProject = projects.find((p) => p.id === effectiveProjectId) ?? null
@@ -126,7 +128,7 @@ export function MeetingPage() {
     }
   }
 
-  function handleCreated(m: MeetingItem) {
+  async function handleCreated(m: MeetingItem) {
     setMeetings((prev) => {
       const idx = prev.findIndex((x) => x.id === m.id)
       if (idx >= 0) {
@@ -139,6 +141,12 @@ export function MeetingPage() {
     setSelected(m)
     setShowNewModal(false)
     setEditingItem(null)
+    try {
+      await analyzeProgressReview(m.id)
+      setProgressReviewRefresh((value) => value + 1)
+    } catch {
+      toast.error('会议已保存，但成员完成情况分析未完成，可在详情中重试')
+    }
   }
 
   const typeOptions = [...new Set(meetings.map((m) => typeLabel(m.meeting_type)).filter((l) => l !== '-'))]
@@ -402,6 +410,10 @@ export function MeetingPage() {
               </div>
             )}
           </div>
+        )}
+
+        {selected && !pending_kickoff && (
+          <MeetingProgressReviewSection meetingId={selected.id} refreshToken={progressReviewRefresh} />
         )}
 
         <div className="bg-white rounded-2xl border p-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>

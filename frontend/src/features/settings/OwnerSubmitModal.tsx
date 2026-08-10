@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ownerSubmitProfile } from '../../api/projects'
 import { fetchPeople } from '../../api/people'
 import type { ProjectProfilePayload, ProjectWorkProgressTaskDraft } from '../../api/projects'
@@ -142,25 +143,56 @@ function AssigneePicker({
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null)
+  const anchorRef = useRef<HTMLButtonElement | null>(null)
   const selected = people.find((person) => person.id === value)
   const filtered = people.filter((person) => {
     const haystack = `${person.name} ${person.department ?? ''}`.toLowerCase()
     return haystack.includes(query.trim().toLowerCase())
   })
 
+  useEffect(() => {
+    if (!open) return undefined
+    const closeMenu = () => setOpen(false)
+    window.addEventListener('scroll', closeMenu, true)
+    window.addEventListener('resize', closeMenu)
+    return () => {
+      window.removeEventListener('scroll', closeMenu, true)
+      window.removeEventListener('resize', closeMenu)
+    }
+  }, [open])
+
+  function toggleOpen() {
+    if (open) {
+      setOpen(false)
+      return
+    }
+    const rect = anchorRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setMenuPosition({ top: rect.bottom + 6, left: rect.left, width: Math.max(rect.width, 240) })
+    setOpen(true)
+  }
+
   return (
     <div className="relative">
       <button
         type="button"
+        ref={anchorRef}
         disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
+        onClick={toggleOpen}
+        aria-expanded={open}
+        aria-haspopup="listbox"
         className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-left text-xs font-semibold text-slate-700 outline-none transition-colors hover:border-blue-300 hover:bg-white focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
       >
         <span className="truncate">{selected?.name ?? '请选择负责人'}</span>
         <span className={`text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}>⌄</span>
       </button>
-      {open && (
-        <div className="absolute left-0 top-[calc(100%+6px)] z-30 w-[240px] overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]">
+      {open && menuPosition && createPortal(
+        <div
+          className="fixed z-[100] overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]"
+          style={{ top: menuPosition.top, left: menuPosition.left, width: menuPosition.width }}
+          role="listbox"
+        >
           <input
             autoFocus
             value={query}
@@ -189,7 +221,8 @@ function AssigneePicker({
             ))}
             {filtered.length === 0 && <p className="px-2.5 py-3 text-xs text-slate-400">未找到匹配人员</p>}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
@@ -429,7 +462,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
           </button>
         </header>
 
-        <main className="owner-submit-workbench-main min-h-0 flex-1 overflow-y-auto bg-[#f7f9fc] pb-6">
+        <main className="owner-submit-workbench-main min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-[#f7f9fc] pb-6">
           <div className="owner-submit-workbench-columns mx-auto flex max-w-[1440px] flex-col items-stretch gap-5 px-5 py-5 lg:flex-row lg:items-start lg:px-7">
             <aside className="owner-submit-left-pane w-full shrink-0 space-y-4 lg:sticky lg:top-5 lg:w-[300px] xl:w-[330px]">
               <section className="owner-submit-core-card overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
@@ -523,11 +556,13 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
 
             <section className="owner-submit-right-pane flex-1 min-w-0">
               <div className="owner-submit-workplan-heading mb-5 flex flex-wrap items-start justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <h3 className="text-lg font-semibold text-slate-900">工作推进方案</h3>
-                  <span className="mt-1 block max-w-3xl text-xs leading-5 text-slate-500">
-                    规划重点工作方向，并细化关键任务执行计划。重点工作用于归类工作方向；关键任务才需要明确责任人、协助人和时间段。
-                  </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-3">
+                    <h3 className="shrink-0 text-lg font-semibold text-slate-900">工作推进方案</h3>
+                    <span className="mt-1 block max-w-3xl text-xs leading-5 text-slate-500">
+                      规划重点工作方向，并细化关键任务执行计划。重点工作用于归类工作方向；关键任务才需要明确责任人、协助人和时间段。
+                    </span>
+                  </div>
                 </div>
                 <button
                   type="button"

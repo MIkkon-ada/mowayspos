@@ -710,25 +710,25 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                       </div>
                       <div className="grid flex-1 grid-cols-1 gap-4 md:grid-cols-2">
                         <div>
-                          <label className="block text-[10px] font-semibold uppercase text-slate-500/80">
+                          <label className="mb-1 block text-xs font-semibold tracking-wide text-slate-500">
                             重点工作名称
                           </label>
                           <input
                             value={task.title}
                             onChange={(e) => updateTaskDraft(taskIndex, 'title', e.target.value)}
                             placeholder="请输入重点工作"
-                            className="w-full border-none bg-transparent p-0 text-base font-bold text-slate-900 placeholder:text-slate-400 focus:ring-0"
+                            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xl font-bold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-4 focus:ring-blue-100"
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] font-semibold uppercase text-slate-500/80">
+                          <label className="mb-1 block text-xs font-semibold tracking-wide text-slate-500">
                             目标成果 / 验收标准
                           </label>
                           <input
                             value={task.description}
                             onChange={(e) => updateTaskDraft(taskIndex, 'description', e.target.value)}
                             placeholder="请输入完成准则"
-                            className="w-full border-none bg-transparent p-0 text-sm font-medium text-slate-700 placeholder:text-slate-400 focus:ring-0"
+                            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-base font-medium text-slate-700 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-4 focus:ring-blue-100"
                           />
                         </div>
                       </div>

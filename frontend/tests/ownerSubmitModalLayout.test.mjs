@@ -30,3 +30,9 @@ test('notes column has a bounded share of the task table', () => {
   assert.match(source, /table-fixed/)
   assert.match(source, /w-\[180px\][^\n]*备注 \/ 标准/)
 })
+
+test('task header inputs use readable card styling instead of browser default focus chrome', () => {
+  assert.match(source, /text-xs font-semibold tracking-wide text-slate-500/)
+  assert.match(source, /placeholder="请输入重点工作"[\s\S]{0,320}text-xl font-bold[\s\S]{0,220}focus:outline-none focus:ring-4/)
+  assert.match(source, /placeholder="请输入完成准则"[\s\S]{0,320}text-base font-medium[\s\S]{0,220}focus:outline-none focus:ring-4/)
+})

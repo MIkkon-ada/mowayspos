@@ -347,6 +347,7 @@ class ProjectInitAnalysisRun(Base, TimestampMixin):
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
     attachment_ids_json = Column(Text, nullable=False, default="[]")
+    snapshot_json = Column(Text, nullable=False, default="{}")
     current_draft_json = Column(Text, nullable=False, default="[]")
     status = Column(String(24), nullable=False, default="queued", index=True)
     stage = Column(String(24), nullable=False, default="reading")
@@ -358,6 +359,8 @@ class ProjectInitAnalysisRun(Base, TimestampMixin):
     model_name = Column(String(100), nullable=False, default="")
     created_by = Column(String(50), nullable=False, index=True)
     created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
     applied_at = Column(DateTime, nullable=True)
 
 

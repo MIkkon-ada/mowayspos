@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -7,7 +8,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from starlette.datastructures import UploadFile
 from starlette.formparsers import FormData, MultiPartException, MultiPartParser, parse_options_header
@@ -15,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models
 from ..database import get_db
+from .. import schemas
 from ..permissions import (
     get_current_user_name,
     get_user_context_from_db,
@@ -23,9 +25,17 @@ from ..permissions import (
     require_project_owner_or_admin,
 )
 from ..time_utils import utc_now
+from ..services.project_init_analysis import (
+    build_project_init_snapshot,
+    process_analysis_run,
+    recover_stale_run,
+    recover_stale_runs,
+    validate_analysis_attachment_selection,
+)
 
 
 router = APIRouter(prefix="/api/projects/{project_id}/init-attachments", tags=["project-init-ai"])
+analysis_router = APIRouter(prefix="/api/projects/{project_id}/init-analysis-runs", tags=["project-init-ai"])
 logger = logging.getLogger(__name__)
 
 _ROOT = Path(os.getenv("PROJECT_INIT_ATTACHMENT_ROOT", "/app/data/project-init-attachments"))
@@ -250,6 +260,93 @@ def _safe_extension(original_name: str) -> str:
     return extension
 
 
+def _analysis_run_response(run: models.ProjectInitAnalysisRun) -> dict:
+    attachment_ids = _json_list(run.attachment_ids_json)
+    draft = _json_value(run.current_draft_json, {})
+    metadata = _json_value(run.result_json, {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+    file_results = _json_value(run.file_results_json, [])
+    if isinstance(file_results, list):
+        metadata = {**metadata, "file_results": file_results}
+    return {
+        "id": run.id,
+        "project_id": run.project_id,
+        "attachment_ids": attachment_ids,
+        "status": run.status,
+        "stage": run.stage,
+        "progress": run.progress,
+        "error_message": run.error_summary or "",
+        "draft": draft,
+        "result_metadata": metadata,
+        "created_at": run.created_at,
+        "started_at": getattr(run, "started_at", None),
+        "finished_at": getattr(run, "finished_at", None),
+    }
+
+
+def _json_value(value: str | None, fallback):
+    try:
+        return json.loads(value or "")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return fallback
+
+
+def _json_list(value: str | None) -> list[int]:
+    parsed = _json_value(value, [])
+    return parsed if isinstance(parsed, list) else []
+
+
+def _get_analysis_run(project_id: int, run_id: int, db: Session) -> models.ProjectInitAnalysisRun:
+    run = db.get(models.ProjectInitAnalysisRun, run_id)
+    if run is None or run.project_id != project_id:
+        raise HTTPException(status_code=404, detail="analysis run not found")
+    return run
+
+
+def _create_analysis_run(
+    project_id: int,
+    attachment_ids: list[int],
+    current_draft,
+    current_user: str,
+    db: Session,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    _authorize_edit(project_id, current_user, db)
+    project = _lock_editable_project(project_id, current_user, db)
+    current_draft_json = [
+        item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+        for item in (current_draft or [])
+    ]
+    rows = (
+        db.query(models.ProjectInitAttachment)
+        .filter(models.ProjectInitAttachment.id.in_(attachment_ids))
+        .all()
+    )
+    selected = validate_analysis_attachment_selection(attachment_ids, rows, project)
+    snapshot = build_project_init_snapshot(db, project, selected, current_draft_json)
+    context = get_user_context_from_db(current_user, db)
+    run = models.ProjectInitAnalysisRun(
+        project_id=project_id,
+        attachment_ids_json=json.dumps(attachment_ids, ensure_ascii=False),
+        snapshot_json=json.dumps(snapshot, ensure_ascii=False),
+        current_draft_json=json.dumps(current_draft_json, ensure_ascii=False),
+        status="queued",
+        stage="reading",
+        progress=0,
+        result_json="{}",
+        file_results_json="[]",
+        error_summary="",
+        created_by=current_user,
+        created_by_person_id=context.get("person_id"),
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    background_tasks.add_task(process_analysis_run, run.id)
+    return _analysis_run_response(run)
+
+
 @router.post("", status_code=201)
 async def upload_init_attachment(
     project_id: int,
@@ -415,3 +512,82 @@ def delete_init_attachment(
     except (HTTPException, OSError):
         logger.warning("project init attachment cleanup failed for attachment_id=%s", row.id, exc_info=True)
     return {"ok": True}
+
+
+@analysis_router.post("", response_model=schemas.ProjectInitAnalysisRunResponse, status_code=201)
+def create_project_init_analysis_run(
+    project_id: int,
+    payload: schemas.ProjectInitAnalysisCreate,
+    background_tasks: BackgroundTasks,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    _authorize_edit(project_id, current_user, db)
+    recover_stale_runs(db, project_id)
+    return _create_analysis_run(
+        project_id,
+        payload.attachment_ids,
+        getattr(payload, "current_draft", []),
+        current_user,
+        db,
+        background_tasks,
+    )
+
+
+@analysis_router.get("/latest", response_model=schemas.ProjectInitAnalysisRunResponse)
+def latest_project_init_analysis_run(
+    project_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    _authorize_access(project_id, current_user, db)
+    recover_stale_runs(db, project_id)
+    run = (
+        db.query(models.ProjectInitAnalysisRun)
+        .filter(models.ProjectInitAnalysisRun.project_id == project_id)
+        .order_by(models.ProjectInitAnalysisRun.created_at.desc(), models.ProjectInitAnalysisRun.id.desc())
+        .first()
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="analysis run not found")
+    return _analysis_run_response(run)
+
+
+@analysis_router.post("/{run_id}/retry", response_model=schemas.ProjectInitAnalysisRunResponse, status_code=201)
+def retry_project_init_analysis_run(
+    project_id: int,
+    run_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    _authorize_edit(project_id, current_user, db)
+    old_run = _get_analysis_run(project_id, run_id, db)
+    stale = recover_stale_run(old_run)
+    if stale:
+        db.commit()
+    if old_run.status not in {"failed", "partial_failed"}:
+        raise HTTPException(status_code=409, detail="analysis run is not retryable")
+    attachment_ids = _json_list(old_run.attachment_ids_json)
+    snapshot = _json_value(old_run.snapshot_json, {})
+    current_draft = snapshot.get("current_draft", []) if isinstance(snapshot, dict) else []
+    return _create_analysis_run(
+        project_id,
+        attachment_ids,
+        current_draft,
+        current_user,
+        db,
+        background_tasks,
+    )
+
+
+@analysis_router.post("/{run_id}/apply", response_model=schemas.ProjectInitAnalysisRunResponse)
+def apply_project_init_analysis_run(
+    project_id: int,
+    run_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    _authorize_edit(project_id, current_user, db)
+    _get_analysis_run(project_id, run_id, db)
+    raise HTTPException(status_code=409, detail="analysis draft apply is deferred until the safe merge review")

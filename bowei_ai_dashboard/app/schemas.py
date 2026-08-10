@@ -401,6 +401,23 @@ class ProjectInitAnalysisAction(BaseModel):
     action: Literal["retry", "applied"]
 
 
+class ProjectInitAnalysisRunResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: Annotated[int, Field(strict=True, gt=0)]
+    project_id: Annotated[int, Field(strict=True, gt=0)]
+    attachment_ids: list[Annotated[int, Field(strict=True, gt=0)]] = Field(default_factory=list)
+    status: Literal["queued", "processing", "completed", "partial_failed", "failed"]
+    stage: Literal["reading", "parsing", "extracting", "matching", "merging", "completed", "failed", "stale"]
+    progress: Annotated[int, Field(strict=True, ge=0, le=100)]
+    error_message: str = Field(default="", max_length=500)
+    draft: dict[str, Any] | list[Any] = Field(default_factory=dict)
+    result_metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
 class ProjectProfilePayload(BaseModel):
     """负责人填报立项信息（不含名称/状态等管理字段）。"""
     project_type: str | None = None

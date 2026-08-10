@@ -223,26 +223,96 @@ def _decode_antiword_output(output: bytes, original_name: str) -> str:
             ) from exc
 
 
-def _parse_docx(path: Path, original_name: str) -> list[SourceChunk]:
+class _IncrementalChunkLimits:
+    def __init__(self, original_name: str) -> None:
+        self.original_name = original_name
+        self.extracted_chars = 0
+        self.chunk_count = 0
+
+    def builder(self) -> "_IncrementalChunkBuilder":
+        return _IncrementalChunkBuilder(self)
+
+    def validate_non_empty_fragment(self, text: str, worksheet_chars: int) -> int:
+        if self.chunk_count >= MAX_CHUNKS:
+            raise ProjectInitFileParseError(
+                f"文本块数量超过限制：{self.original_name}"
+            )
+        rendered_length = len(text)
+        if rendered_length > MAX_CHUNK_CHARS:
+            raise ProjectInitFileParseError(
+                f"单个文本块超过限制：{self.original_name}"
+            )
+        worksheet_chars += rendered_length
+        if self.extracted_chars + worksheet_chars > MAX_EXTRACTED_CHARS:
+            raise ProjectInitFileParseError(
+                f"提取文本超过限制：{self.original_name}"
+            )
+        return worksheet_chars
+
+
+class _IncrementalChunkBuilder:
+    def __init__(self, limits: _IncrementalChunkLimits) -> None:
+        self.limits = limits
+        self.buffer = io.StringIO()
+        self.length = 0
+        self.has_content = False
+
+    def append(self, text: str) -> None:
+        has_content = self.has_content or bool(text.strip())
+        next_length = self.length + len(text)
+        if has_content and next_length > MAX_CHUNK_CHARS:
+            raise ProjectInitFileParseError(
+                f"单个文本块超过限制：{self.limits.original_name}"
+            )
+        if (
+            has_content
+            and self.limits.extracted_chars + next_length > MAX_EXTRACTED_CHARS
+        ):
+            raise ProjectInitFileParseError(
+                f"提取文本超过限制：{self.limits.original_name}"
+            )
+        if text.strip() and self.limits.chunk_count >= MAX_CHUNKS:
+            raise ProjectInitFileParseError(
+                f"文本块数量超过限制：{self.limits.original_name}"
+            )
+        self.buffer.write(text)
+        self.length = next_length
+        self.has_content = has_content
+
+    def finish(self, location: str) -> SourceChunk | None:
+        if not self.has_content:
+            return None
+        if self.limits.chunk_count >= MAX_CHUNKS:
+            raise ProjectInitFileParseError(
+                f"文本块数量超过限制：{self.limits.original_name}"
+            )
+        self.limits.extracted_chars += self.length
+        self.limits.chunk_count += 1
+        return SourceChunk(
+            self.limits.original_name,
+            location,
+            self.buffer.getvalue(),
+        )
+
+
+def _parse_docx(path: Path, original_name: str) -> Iterable[SourceChunk]:
     document = Document(path)
-    chunks = []
-    paragraph_batch = []
+    limits = _IncrementalChunkLimits(original_name)
+    paragraph_batch_count = 0
     paragraph_count = 0
     table_count = 0
     block_count = 0
+    paragraph_builder = limits.builder()
 
-    def flush_paragraphs() -> None:
-        if not paragraph_batch:
-            return
-        start = paragraph_count - len(paragraph_batch) + 1
-        chunks.append(
-            SourceChunk(
-                original_name,
-                f"第 {start}-{paragraph_count} 段",
-                "\n".join(paragraph_batch),
-            )
-        )
-        paragraph_batch.clear()
+    def flush_paragraphs() -> SourceChunk | None:
+        nonlocal paragraph_batch_count, paragraph_builder
+        if not paragraph_batch_count:
+            return None
+        start = paragraph_count - paragraph_batch_count + 1
+        chunk = paragraph_builder.finish(f"第 {start}-{paragraph_count} 段")
+        paragraph_batch_count = 0
+        paragraph_builder = limits.builder()
+        return chunk
 
     for block in document.iter_inner_content():
         block_count += 1
@@ -250,22 +320,33 @@ def _parse_docx(path: Path, original_name: str) -> list[SourceChunk]:
             raise ProjectInitFileParseError(f"DOCX 内容块超过限制：{original_name}")
         if isinstance(block, Paragraph):
             paragraph_count += 1
-            paragraph_batch.append(block.text)
-            if len(paragraph_batch) == 20:
-                flush_paragraphs()
+            if paragraph_batch_count:
+                paragraph_builder.append("\n")
+            paragraph_builder.append(block.text)
+            paragraph_batch_count += 1
+            if paragraph_batch_count == 20:
+                chunk = flush_paragraphs()
+                if chunk is not None:
+                    yield chunk
         elif isinstance(block, Table):
-            flush_paragraphs()
+            chunk = flush_paragraphs()
+            if chunk is not None:
+                yield chunk
             table_count += 1
-            chunks.append(_docx_table_chunk(block, table_count, original_name))
-    flush_paragraphs()
-    return chunks
+            chunk = _docx_table_chunk(block, table_count, original_name, limits)
+            if chunk is not None:
+                yield chunk
+    chunk = flush_paragraphs()
+    if chunk is not None:
+        yield chunk
 
 
 def _docx_table_chunk(
     table: Table,
     table_number: int,
     original_name: str,
-) -> SourceChunk:
+    limits: _IncrementalChunkLimits,
+) -> SourceChunk | None:
     row_count = len(table.rows)
     column_count = max((len(row.cells) for row in table.rows), default=0)
     cell_count = sum(len(row.cells) for row in table.rows)
@@ -276,22 +357,25 @@ def _docx_table_chunk(
     if cell_count > MAX_DOCX_TABLE_CELLS:
         raise ProjectInitFileParseError(f"DOCX 表格单元格超过限制：{original_name}")
 
-    rows = ["\t".join(cell.text for cell in row.cells) for row in table.rows]
     end_cell = f"{get_column_letter(max(column_count, 1))}{max(row_count, 1)}"
-    return SourceChunk(
-        original_name,
-        f"第 {table_number} 个表格 A1:{end_cell}",
-        "\n".join(rows),
-    )
+    builder = limits.builder()
+    for row_index, row in enumerate(table.rows):
+        if row_index:
+            builder.append("\n")
+        for column_index, cell in enumerate(row.cells):
+            if column_index:
+                builder.append("\t")
+            builder.append(cell.text)
+    return builder.finish(f"第 {table_number} 个表格 A1:{end_cell}")
 
 
-def _parse_xls(path: Path, original_name: str) -> list[SourceChunk]:
+def _parse_xls(path: Path, original_name: str) -> Iterable[SourceChunk]:
     workbook = xlrd.open_workbook(str(path))
     try:
         sheets = workbook.sheets()
         if len(sheets) > MAX_WORKSHEETS:
             raise ProjectInitFileParseError(f"工作表数量超过限制：{original_name}")
-        chunks = []
+        limits = _IncrementalChunkLimits(original_name)
         workbook_cells = 0
         for sheet in sheets:
             workbook_cells += _validate_worksheet_dimensions(
@@ -301,27 +385,26 @@ def _parse_xls(path: Path, original_name: str) -> list[SourceChunk]:
             )
             if workbook_cells > MAX_WORKBOOK_CELLS:
                 raise ProjectInitFileParseError(f"工作簿单元格超过限制：{original_name}")
-            rows = [
-                [
-                    _xls_cell_value(
-                        sheet.cell(row_index, column_index),
-                        workbook.datemode,
-                    )
-                    for column_index in range(sheet.ncols)
-                ]
-                for row_index in range(sheet.nrows)
-            ]
-            chunk = _worksheet_chunk(sheet.name, rows, original_name)
+            def rows() -> Iterable[Sequence[Any]]:
+                for row_index in range(sheet.nrows):
+                    yield [
+                        _xls_cell_value(
+                            sheet.cell(row_index, column_index),
+                            workbook.datemode,
+                        )
+                        for column_index in range(sheet.ncols)
+                    ]
+
+            chunk = _worksheet_chunk(sheet.name, rows, original_name, limits)
             if chunk is not None:
-                chunks.append(chunk)
-        return chunks
+                yield chunk
     finally:
         release_resources = getattr(workbook, "release_resources", None)
         if callable(release_resources):
             release_resources()
 
 
-def _parse_xlsx(path: Path, original_name: str) -> list[SourceChunk]:
+def _parse_xlsx(path: Path, original_name: str) -> Iterable[SourceChunk]:
     cached_workbook = load_workbook(path, read_only=True, data_only=True)
     formula_workbook = load_workbook(path, read_only=True, data_only=False)
     try:
@@ -329,7 +412,7 @@ def _parse_xlsx(path: Path, original_name: str) -> list[SourceChunk]:
             raise ProjectInitFileParseError(f"工作表数量超过限制：{original_name}")
         if len(cached_workbook.worksheets) != len(formula_workbook.worksheets):
             raise ProjectInitFileParseError(f"工作簿结构不一致：{original_name}")
-        chunks = []
+        limits = _IncrementalChunkLimits(original_name)
         workbook_cells = 0
         for cached_sheet, formula_sheet in zip(
             cached_workbook.worksheets,
@@ -344,33 +427,32 @@ def _parse_xlsx(path: Path, original_name: str) -> list[SourceChunk]:
             )
             if workbook_cells > MAX_WORKBOOK_CELLS:
                 raise ProjectInitFileParseError(f"工作簿单元格超过限制：{original_name}")
-            cached_rows = cached_sheet.iter_rows(
-                min_row=1,
-                max_row=max_row,
-                min_col=1,
-                max_col=max_column,
-            )
-            formula_rows = formula_sheet.iter_rows(
-                min_row=1,
-                max_row=max_row,
-                min_col=1,
-                max_col=max_column,
-            )
-            rows = [
-                [
-                    formula_cell.value
-                    if formula_cell.data_type == "f"
-                    else cached_cell.value
-                    if cached_cell.value is not None
-                    else formula_cell.value
-                    for cached_cell, formula_cell in zip(cached_row, formula_row)
-                ]
-                for cached_row, formula_row in zip(cached_rows, formula_rows)
-            ]
-            chunk = _worksheet_chunk(formula_sheet.title, rows, original_name)
+            def rows() -> Iterable[Sequence[Any]]:
+                cached_rows = cached_sheet.iter_rows(
+                    min_row=1,
+                    max_row=max_row,
+                    min_col=1,
+                    max_col=max_column,
+                )
+                formula_rows = formula_sheet.iter_rows(
+                    min_row=1,
+                    max_row=max_row,
+                    min_col=1,
+                    max_col=max_column,
+                )
+                for cached_row, formula_row in zip(cached_rows, formula_rows):
+                    yield [
+                        formula_cell.value
+                        if formula_cell.data_type == "f"
+                        else cached_cell.value
+                        if cached_cell.value is not None
+                        else formula_cell.value
+                        for cached_cell, formula_cell in zip(cached_row, formula_row)
+                    ]
+
+            chunk = _worksheet_chunk(formula_sheet.title, rows, original_name, limits)
             if chunk is not None:
-                chunks.append(chunk)
-        return chunks
+                yield chunk
     finally:
         cached_workbook.close()
         formula_workbook.close()
@@ -494,35 +576,56 @@ def _chunk_numbered_text(
 
 def _worksheet_chunk(
     sheet_name: str,
-    rows: Sequence[Sequence[Any]],
+    rows: Callable[[], Iterable[Sequence[Any]]] | Iterable[Sequence[Any]],
     original_name: str,
+    limits: _IncrementalChunkLimits | None = None,
 ) -> SourceChunk | None:
-    populated = [
-        (row_index, column_index)
-        for row_index, row in enumerate(rows)
-        for column_index, value in enumerate(row)
-        if _is_non_empty_cell(value)
-    ]
-    if not populated:
+    row_factory = rows if callable(rows) else lambda: rows
+    limits = limits or _IncrementalChunkLimits(original_name)
+    min_row = max_row = min_column = max_column = None
+    worksheet_chars = 0
+    for row_index, row in enumerate(row_factory()):
+        for column_index, value in enumerate(row):
+            if not _is_non_empty_cell(value):
+                continue
+            worksheet_chars = limits.validate_non_empty_fragment(
+                _render_cell(value),
+                worksheet_chars,
+            )
+            min_row = row_index if min_row is None else min(min_row, row_index)
+            max_row = row_index if max_row is None else max(max_row, row_index)
+            min_column = (
+                column_index
+                if min_column is None
+                else min(min_column, column_index)
+            )
+            max_column = (
+                column_index
+                if max_column is None
+                else max(max_column, column_index)
+            )
+    if min_row is None or max_row is None or min_column is None or max_column is None:
         return None
 
-    min_row = min(row for row, _column in populated)
-    max_row = max(row for row, _column in populated)
-    min_column = min(column for _row, column in populated)
-    max_column = max(column for _row, column in populated)
-    rendered_rows = [
-        "\t".join(
-            _render_cell(rows[row_index][column_index])
-            for column_index in range(min_column, max_column + 1)
-        )
-        for row_index in range(min_row, max_row + 1)
-    ]
+    builder = limits.builder()
+    rendered_row_count = 0
+    for row_index, row in enumerate(row_factory()):
+        if row_index < min_row or row_index > max_row:
+            continue
+        if rendered_row_count:
+            builder.append("\n")
+        for column_index in range(min_column, max_column + 1):
+            if column_index > min_column:
+                builder.append("\t")
+            value = row[column_index] if column_index < len(row) else None
+            builder.append(_render_cell(value))
+        rendered_row_count += 1
     location = (
         f"{quote_sheetname(sheet_name)}!"
         f"{get_column_letter(min_column + 1)}{min_row + 1}:"
         f"{get_column_letter(max_column + 1)}{max_row + 1}"
     )
-    return SourceChunk(original_name, location, "\n".join(rendered_rows))
+    return builder.finish(location)
 
 
 def _is_non_empty_cell(value: Any) -> bool:

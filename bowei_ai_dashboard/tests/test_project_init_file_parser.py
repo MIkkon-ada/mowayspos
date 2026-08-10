@@ -114,6 +114,45 @@ def test_ooxml_zip_metadata_limits_are_enforced(
         parse_project_init_file(path, "unsafe.docx")
 
 
+def test_oversized_xls_stops_reading_before_all_cells_are_materialized(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "oversized.xls"
+    path.write_bytes(b"xls-placeholder")
+    monkeypatch.setattr(parser, "MAX_EXTRACTED_CHARS", 1)
+    seen_cells = []
+
+    class FakeSheet:
+        name = "Oversized"
+        nrows = 100
+        ncols = 2
+
+        def cell(self, row, column):
+            seen_cells.append((row, column))
+            value = "x" if (row, column) in {(0, 0), (0, 1)} else ""
+            cell_type = (
+                parser.xlrd.XL_CELL_TEXT if value else parser.xlrd.XL_CELL_EMPTY
+            )
+            return SimpleNamespace(value=value, ctype=cell_type)
+
+    class FakeBook:
+        datemode = 0
+
+        def sheets(self):
+            return [FakeSheet()]
+
+        def release_resources(self):
+            pass
+
+    monkeypatch.setattr(parser.xlrd, "open_workbook", lambda _filename: FakeBook())
+
+    with pytest.raises(ProjectInitFileParseError, match="oversized\\.xls"):
+        parse_project_init_file(path, "oversized.xls")
+
+    assert len(seen_cells) < 200
+
+
 def test_pdf_page_limit_is_enforced(tmp_path, monkeypatch):
     path = tmp_path / "opaque-pdf"
     path.write_bytes(b"pdf")
@@ -269,6 +308,36 @@ def test_docx_table_cell_limit_is_enforced(tmp_path, monkeypatch):
         parse_project_init_file(path, "wide-table.docx")
 
 
+def test_oversized_docx_stops_iterating_before_all_blocks_are_materialized(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "oversized.docx"
+    document = Document()
+    for index in range(100):
+        document.add_paragraph(f"paragraph {index}")
+    document.save(path)
+    monkeypatch.setattr(parser, "MAX_EXTRACTED_CHARS", 30)
+    seen_blocks = []
+    real_document_factory = Document
+
+    class TrackingDocument:
+        def __init__(self, source_path):
+            self._document = real_document_factory(source_path)
+
+        def iter_inner_content(self):
+            for block in self._document.iter_inner_content():
+                seen_blocks.append(block)
+                yield block
+
+    monkeypatch.setattr(parser, "Document", TrackingDocument)
+
+    with pytest.raises(ProjectInitFileParseError, match="oversized\\.docx"):
+        parse_project_init_file(path, "oversized.docx")
+
+    assert len(seen_blocks) < 100
+
+
 def test_xlsx_uses_actual_non_empty_range_and_skips_empty_worksheets(tmp_path):
     path = tmp_path / "plan.xlsx"
     workbook = Workbook()
@@ -351,6 +420,46 @@ def test_xlsx_dimension_limits_are_enforced(
 
     with pytest.raises(ProjectInitFileParseError, match=f"{limit_name}\\.xlsx"):
         parse_project_init_file(path, f"{limit_name}.xlsx")
+
+
+def test_oversized_xlsx_stops_iterating_before_all_rows_are_materialized(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "oversized.xlsx"
+    workbook = Workbook()
+    workbook.active["A1"] = "x"
+    workbook.save(path)
+    monkeypatch.setattr(parser, "MAX_EXTRACTED_CHARS", 1)
+    seen_rows = []
+
+    class FakeCell:
+        def __init__(self, value):
+            self.value = value
+            self.data_type = "s"
+
+    class FakeSheet:
+        title = "Oversized"
+        max_row = 100
+        max_column = 2
+
+        def iter_rows(self, **_kwargs):
+            for row_index in range(self.max_row):
+                seen_rows.append(row_index)
+                yield (FakeCell("x" if row_index in {0, 1} else None), FakeCell(None))
+
+    class FakeWorkbook:
+        worksheets = [FakeSheet()]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(parser, "load_workbook", lambda *_args, **_kwargs: FakeWorkbook())
+
+    with pytest.raises(ProjectInitFileParseError, match="oversized\\.xlsx"):
+        parse_project_init_file(path, "oversized.xlsx")
+
+    assert len(seen_rows) < 200
 
 
 def test_xls_uses_sheet_name_and_actual_non_empty_range(tmp_path, monkeypatch):

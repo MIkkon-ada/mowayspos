@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 
 from .database import Base
 from .time_utils import utc_now
@@ -544,6 +544,39 @@ class Notification(Base):
     is_read = Column(Boolean, default=False, index=True)
     created_at = Column(DateTime, default=now, index=True)
     project_id = Column(Integer, nullable=True)
+
+
+class ExecutionSchedule(Base, TimestampMixin):
+    __tablename__ = "execution_schedules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    subtask_id = Column(Integer, ForeignKey("subtasks.id"), nullable=False, index=True)
+    plan_type = Column(String(10), nullable=False, index=True)
+    title = Column(String(200), nullable=False)
+    start_date = Column(Date, nullable=False, index=True)
+    due_date = Column(Date, nullable=False, index=True)
+    assignee = Column(String(50), nullable=False, default="")
+    assignee_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    status = Column(String(20), nullable=False, default="待开始", index=True)
+    reminder_policy = Column(JSON, nullable=False, default=dict)
+    created_by = Column(String(50), nullable=False, default="")
+    updated_by = Column(String(50), nullable=False, default="")
+    is_deleted = Column(Boolean, nullable=False, default=False, index=True)
+
+
+class ExecutionScheduleReminder(Base, TimestampMixin):
+    __tablename__ = "execution_schedule_reminders"
+    __table_args__ = (
+        UniqueConstraint("schedule_id", "reminder_kind", "due_on", "recipient_id", name="uq_execution_schedule_reminder"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    schedule_id = Column(Integer, ForeignKey("execution_schedules.id"), nullable=False, index=True)
+    reminder_kind = Column(String(20), nullable=False)
+    due_on = Column(Date, nullable=False)
+    recipient_id = Column(Integer, ForeignKey("people.id"), nullable=False, index=True)
+    notification_id = Column(Integer, ForeignKey("notifications.id"), nullable=True)
+    wecom_error = Column(Text, nullable=False, default="")
 
 
 class SubTaskDraft(Base, TimestampMixin):

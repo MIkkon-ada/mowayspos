@@ -228,6 +228,121 @@ function AssigneePicker({
   )
 }
 
+function HelperPicker({
+  people,
+  value,
+  excludedId,
+  disabled,
+  onChange,
+}: {
+  people: Person[]
+  value: number[]
+  excludedId: number | ''
+  disabled?: boolean
+  onChange: (personId: number) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null)
+  const anchorRef = useRef<HTMLButtonElement | null>(null)
+  const selectedPeople = people.filter((person) => value.includes(person.id))
+  const filtered = people.filter((person) => {
+    if (person.id === excludedId) return false
+    const haystack = `${person.name} ${person.department ?? ''}`.toLowerCase()
+    return haystack.includes(query.trim().toLowerCase())
+  })
+
+  useEffect(() => {
+    if (!open) return undefined
+    const closeMenu = () => setOpen(false)
+    window.addEventListener('scroll', closeMenu, true)
+    window.addEventListener('resize', closeMenu)
+    return () => {
+      window.removeEventListener('scroll', closeMenu, true)
+      window.removeEventListener('resize', closeMenu)
+    }
+  }, [open])
+
+  function toggleOpen() {
+    if (open) {
+      setOpen(false)
+      return
+    }
+    const rect = anchorRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setMenuPosition({ top: rect.bottom + 6, left: rect.left, width: Math.max(rect.width, 260) })
+    setOpen(true)
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        ref={anchorRef}
+        disabled={disabled}
+        onClick={toggleOpen}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        className="flex min-h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 outline-none transition-colors hover:border-blue-300 hover:bg-white focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <span className="min-w-0 truncate">
+          {selectedPeople.length > 0 ? selectedPeople.map((person) => person.name).join('、') : '请选择协助人'}
+        </span>
+        <span className={`shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}>⌄</span>
+      </button>
+      {open && menuPosition && createPortal(
+        <div
+          className="fixed z-[100] overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]"
+          style={{ top: menuPosition.top, left: menuPosition.left, width: menuPosition.width }}
+          role="listbox"
+          aria-multiselectable="true"
+        >
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索姓名或部门"
+            className="mb-2 h-8 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs text-slate-700 outline-none focus:border-blue-400 focus:bg-white"
+          />
+          <div className="mb-1 flex items-center justify-between px-2.5 text-[11px] text-slate-400">
+            <span>{value.length > 0 ? `已选 ${value.length} 人` : '可多选协助人'}</span>
+            {value.length > 0 && (
+              <button
+                type="button"
+                onClick={() => value.forEach((personId) => onChange(personId))}
+                className="font-semibold text-blue-600 hover:text-blue-700"
+              >
+                清空
+              </button>
+            )}
+          </div>
+          <div className="max-h-52 space-y-0.5 overflow-y-auto">
+            {filtered.map((person) => {
+              const checked = value.includes(person.id)
+              return (
+                <button
+                  key={person.id}
+                  type="button"
+                  role="option"
+                  aria-selected={checked}
+                  onClick={() => onChange(person.id)}
+                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors hover:bg-blue-50 ${checked ? 'bg-blue-50 text-blue-700' : 'text-slate-700'}`}
+                >
+                  <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] ${checked ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-transparent'}`}>✓</span>
+                  <span className="min-w-0 truncate font-semibold">{person.name}</span>
+                  <span className="ml-auto shrink-0 text-[10px] text-slate-400">{person.department || '未填写部门'}</span>
+                </button>
+              )
+            })}
+            {filtered.length === 0 && <p className="px-2.5 py-3 text-xs text-slate-400">未找到匹配人员</p>}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  )
+}
+
 export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
   const [people, setPeople] = useState<Person[]>([])
   const [peopleLoading, setPeopleLoading] = useState(true)
@@ -649,25 +764,14 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                                   onChange={(value) => updateSubTaskAssignee(taskIndex, subIndex, value)}
                                 />
                               </td>
-                              <td className="relative px-3 py-2.5 align-top">
-                                <div data-multiple="true" className="max-h-20 space-y-1 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50/70 p-2 text-xs text-slate-600">
-                                  {people.length === 0 ? (
-                                    <span className="text-slate-400">{peopleLoading ? '人员加载中…' : peopleError || '暂无可选人员'}</span>
-                                  ) : (
-                                    people
-                                      .filter((person) => person.id !== subtask.assigneeId)
-                                      .map((person) => (
-                                        <label key={person.id} className="flex items-center gap-1.5">
-                                          <input
-                                            type="checkbox"
-                                            checked={subtask.helperIds.includes(person.id)}
-                                            onChange={() => toggleSubTaskHelper(taskIndex, subIndex, person.id)}
-                                          />
-                                          <span>{person.name}</span>
-                                        </label>
-                                      ))
-                                  )}
-                                </div>
+                              <td className="px-3 py-2.5 align-top">
+                                <HelperPicker
+                                  people={people}
+                                  value={subtask.helperIds}
+                                  excludedId={subtask.assigneeId}
+                                  disabled={peopleLoading || Boolean(peopleError)}
+                                  onChange={(personId) => toggleSubTaskHelper(taskIndex, subIndex, personId)}
+                                />
                               </td>
                               <td className="px-3 py-3">
                                 <input

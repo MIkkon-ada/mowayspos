@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from starlette.datastructures import UploadFile
 from starlette.formparsers import FormData, MultiPartException, MultiPartParser, parse_options_header
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from .. import crud, models
 from ..database import get_db
@@ -282,6 +283,7 @@ def _analysis_run_response(run: models.ProjectInitAnalysisRun) -> dict:
         "created_at": run.created_at,
         "started_at": getattr(run, "started_at", None),
         "finished_at": getattr(run, "finished_at", None),
+        "applied_at": getattr(run, "applied_at", None),
     }
 
 
@@ -342,6 +344,62 @@ def _create_analysis_run(
     )
     db.add(run)
     db.commit()
+    db.refresh(run)
+    background_tasks.add_task(process_analysis_run, run.id)
+    return _analysis_run_response(run)
+
+
+def _create_retry_from_frozen_snapshot(
+    project_id: int,
+    old_run: models.ProjectInitAnalysisRun,
+    current_user: str,
+    db: Session,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    """Create one retry from the old run's immutable snapshot only.
+
+    The unique retry link makes the insert itself the cross-session
+    de-duplication point.  No live attachment rows are consulted here.
+    """
+    _authorize_edit(project_id, current_user, db)
+    snapshot = _json_value(old_run.snapshot_json, {})
+    if not isinstance(snapshot, dict) or not snapshot.get("attachments"):
+        raise HTTPException(status_code=409, detail="analysis run has no frozen attachment snapshot")
+    attachment_ids = _json_list(old_run.attachment_ids_json)
+    current_draft = snapshot.get("current_draft", [])
+    context = get_user_context_from_db(current_user, db)
+    run = models.ProjectInitAnalysisRun(
+        project_id=project_id,
+        attachment_ids_json=json.dumps(attachment_ids, ensure_ascii=False),
+        snapshot_json=json.dumps(snapshot, ensure_ascii=False),
+        current_draft_json=json.dumps(current_draft, ensure_ascii=False),
+        status="queued",
+        stage="reading",
+        progress=0,
+        result_json="{}",
+        file_results_json="[]",
+        error_summary="",
+        created_by=current_user,
+        created_by_person_id=context.get("person_id"),
+        retry_of_run_id=old_run.id,
+    )
+    db.add(run)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = (
+            db.query(models.ProjectInitAnalysisRun)
+            .filter(
+                models.ProjectInitAnalysisRun.project_id == project_id,
+                models.ProjectInitAnalysisRun.retry_of_run_id == old_run.id,
+            )
+            .order_by(models.ProjectInitAnalysisRun.id.asc())
+            .first()
+        )
+        if existing is None:
+            raise HTTPException(status_code=409, detail="analysis retry is already being created")
+        return _analysis_run_response(existing)
     db.refresh(run)
     background_tasks.add_task(process_analysis_run, run.id)
     return _analysis_run_response(run)
@@ -553,6 +611,18 @@ def latest_project_init_analysis_run(
     return _analysis_run_response(run)
 
 
+@analysis_router.get("/{run_id}", response_model=schemas.ProjectInitAnalysisRunResponse)
+def get_project_init_analysis_run(
+    project_id: int,
+    run_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    _authorize_access(project_id, current_user, db)
+    recover_stale_runs(db, project_id)
+    return _analysis_run_response(_get_analysis_run(project_id, run_id, db))
+
+
 @analysis_router.post("/{run_id}/retry", response_model=schemas.ProjectInitAnalysisRunResponse, status_code=201)
 def retry_project_init_analysis_run(
     project_id: int,
@@ -563,22 +633,10 @@ def retry_project_init_analysis_run(
 ):
     _authorize_edit(project_id, current_user, db)
     old_run = _get_analysis_run(project_id, run_id, db)
-    stale = recover_stale_run(old_run)
-    if stale:
-        db.commit()
+    stale = recover_stale_run(old_run, db=db)
     if old_run.status not in {"failed", "partial_failed"}:
         raise HTTPException(status_code=409, detail="analysis run is not retryable")
-    attachment_ids = _json_list(old_run.attachment_ids_json)
-    snapshot = _json_value(old_run.snapshot_json, {})
-    current_draft = snapshot.get("current_draft", []) if isinstance(snapshot, dict) else []
-    return _create_analysis_run(
-        project_id,
-        attachment_ids,
-        current_draft,
-        current_user,
-        db,
-        background_tasks,
-    )
+    return _create_retry_from_frozen_snapshot(project_id, old_run, current_user, db, background_tasks)
 
 
 @analysis_router.post("/{run_id}/apply", response_model=schemas.ProjectInitAnalysisRunResponse)
@@ -589,5 +647,24 @@ def apply_project_init_analysis_run(
     db: Session = Depends(get_db),
 ):
     _authorize_edit(project_id, current_user, db)
-    _get_analysis_run(project_id, run_id, db)
-    raise HTTPException(status_code=409, detail="analysis draft apply is deferred until the safe merge review")
+    run = _get_analysis_run(project_id, run_id, db)
+    if run.status not in {"completed", "partial_failed"}:
+        raise HTTPException(status_code=409, detail=f"analysis run status {run.status} cannot be applied")
+    if run.applied_at is None:
+        applied_at = utc_now()
+        result = (
+            db.query(models.ProjectInitAnalysisRun)
+            .filter(
+                models.ProjectInitAnalysisRun.id == run_id,
+                models.ProjectInitAnalysisRun.project_id == project_id,
+                models.ProjectInitAnalysisRun.status.in_(["completed", "partial_failed"]),
+                models.ProjectInitAnalysisRun.applied_at.is_(None),
+            )
+            .update({models.ProjectInitAnalysisRun.applied_at: applied_at}, synchronize_session=False)
+        )
+        db.commit()
+        if result != 1:
+            run = _get_analysis_run(project_id, run_id, db)
+        else:
+            run.applied_at = applied_at
+    return _analysis_run_response(run)

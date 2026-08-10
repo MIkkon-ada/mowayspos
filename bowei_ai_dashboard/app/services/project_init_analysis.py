@@ -1,4 +1,9 @@
-"""Persistent, review-only project-init analysis runs."""
+"""Persistent, review-only project-init analysis runs.
+
+The worker deliberately treats a run as a leased state machine.  Every
+mutation after the initial claim is conditional on ``status == processing``;
+this prevents stale-run recovery from being undone by an old worker.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +15,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy import case, or_, update
+from sqlalchemy.orm import Session, object_session
 
 from .. import crud, models
 from ..database import SessionLocal
@@ -24,6 +30,10 @@ MAX_ANALYSIS_ATTACHMENTS = 10
 MAX_ANALYSIS_BYTES = 100 * 1024 * 1024
 STALE_AFTER = timedelta(minutes=30)
 _ROOT = Path(os.getenv("PROJECT_INIT_ATTACHMENT_ROOT", "/app/data/project-init-attachments"))
+
+
+class RunLeaseLost(RuntimeError):
+    """The worker no longer owns the processing lease."""
 
 
 def _json_load(value: str | None, fallback: Any) -> Any:
@@ -43,7 +53,6 @@ def validate_analysis_attachment_selection(
     attachments: Iterable[models.ProjectInitAttachment | Any],
     project: models.Project | dict[str, Any],
 ) -> list[models.ProjectInitAttachment | Any]:
-    """Validate the frozen attachment set before a run is created."""
     ids = list(attachment_ids)
     if not 1 <= len(ids) <= MAX_ANALYSIS_ATTACHMENTS or len(ids) != len(set(ids)):
         raise HTTPException(status_code=422, detail="analysis requires 1 to 10 unique attachments")
@@ -128,47 +137,150 @@ def _attachment_path(storage_key: str) -> Path:
 
 
 def _safe_error(kind: str) -> str:
-    messages = {
-        "parse": "附件解析失败，请检查文件内容后重试",
-        "ai": "AI 分析失败，请稍后重试",
-        "empty": "未提取到可用任务，请检查附件内容",
-        "stale": "analysis run stale; please retry",
-        "generic": "分析任务失败，请重试",
-    }
-    return messages.get(kind, messages["generic"])
+    return {
+        "parse": "attachment parsing failed; please check the source and retry",
+        "ai": "AI analysis failed; please retry later",
+        "empty": "no usable tasks were extracted",
+        "stale": "analysis run became stale; please retry",
+        "generic": "analysis failed; please retry",
+    }.get(kind, "analysis failed; please retry")
 
 
-def _set_progress(db: Session, run: models.ProjectInitAnalysisRun, *, stage: str, progress: int) -> None:
-    run.stage = stage
-    run.progress = max(int(run.progress or 0), min(100, progress))
+def _progress_value(progress: int):
+    bounded = min(100, max(0, int(progress)))
+    return case(
+        (models.ProjectInitAnalysisRun.progress < bounded, bounded),
+        else_=models.ProjectInitAnalysisRun.progress,
+    )
+
+
+def _update_processing(
+    db: Session,
+    run_id: int,
+    *,
+    stage: str | None = None,
+    progress: int | None = None,
+    values: dict[str, Any] | None = None,
+) -> bool:
+    """Update a leased run only while it is still processing."""
+    update_values: dict[str, Any] = {"updated_at": utc_now()}
+    if stage is not None:
+        update_values["stage"] = stage
+    if progress is not None:
+        update_values["progress"] = _progress_value(progress)
+    if values:
+        update_values.update(values)
+    result = db.execute(
+        update(models.ProjectInitAnalysisRun)
+        .where(
+            models.ProjectInitAnalysisRun.id == run_id,
+            models.ProjectInitAnalysisRun.status == "processing",
+        )
+        .values(**update_values)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        return False
     db.commit()
+    return True
 
 
-def recover_stale_run(run: models.ProjectInitAnalysisRun, *, now=None) -> bool:
-    if run.status != "processing":
+def _set_progress(db: Session, run: models.ProjectInitAnalysisRun, *, stage: str, progress: int) -> bool:
+    changed = _update_processing(db, run.id, stage=stage, progress=progress)
+    if changed:
+        db.refresh(run)
+    return changed
+
+
+def _claim_run(db: Session, run_id: int) -> bool:
+    now = utc_now()
+    result = db.execute(
+        update(models.ProjectInitAnalysisRun)
+        .where(
+            models.ProjectInitAnalysisRun.id == run_id,
+            models.ProjectInitAnalysisRun.status == "queued",
+        )
+        .values(
+            status="processing",
+            stage="parsing",
+            progress=_progress_value(5),
+            started_at=now,
+            updated_at=now,
+            error_summary="",
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.rollback()
         return False
-    started_at = run.started_at or run.updated_at
-    if started_at is None or (now or utc_now()) - started_at <= STALE_AFTER:
+    db.commit()
+    return True
+
+
+def recover_stale_run(run: models.ProjectInitAnalysisRun, *, now=None, db: Session | None = None) -> bool:
+    session = db or object_session(run)
+    if session is None:
         return False
-    run.status = "failed"
-    run.stage = "stale"
-    run.finished_at = now or utc_now()
-    run.error_summary = _safe_error("stale")
+    current = now or utc_now()
+    heartbeat = run.updated_at or run.started_at
+    if run.status != "processing" or heartbeat is None or current - heartbeat <= STALE_AFTER:
+        return False
+    result = session.execute(
+        update(models.ProjectInitAnalysisRun)
+        .where(
+            models.ProjectInitAnalysisRun.id == run.id,
+            models.ProjectInitAnalysisRun.status == "processing",
+            or_(
+                models.ProjectInitAnalysisRun.updated_at <= heartbeat,
+                models.ProjectInitAnalysisRun.updated_at.is_(None),
+            ),
+        )
+        .values(
+            status="failed",
+            stage="stale",
+            progress=_progress_value(100),
+            finished_at=current,
+            updated_at=current,
+            error_summary=_safe_error("stale"),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        session.rollback()
+        return False
+    session.commit()
     return True
 
 
 def recover_stale_runs(db: Session, project_id: int) -> int:
-    rows = (
-        db.query(models.ProjectInitAnalysisRun)
-        .filter(
+    cutoff = utc_now() - STALE_AFTER
+    now = utc_now()
+    result = db.execute(
+        update(models.ProjectInitAnalysisRun)
+        .where(
             models.ProjectInitAnalysisRun.project_id == project_id,
             models.ProjectInitAnalysisRun.status == "processing",
+            or_(
+                models.ProjectInitAnalysisRun.updated_at < cutoff,
+                (
+                    models.ProjectInitAnalysisRun.updated_at.is_(None)
+                    & (models.ProjectInitAnalysisRun.started_at < cutoff)
+                ),
+            ),
         )
-        .all()
+        .values(
+            status="failed",
+            stage="stale",
+            progress=_progress_value(100),
+            finished_at=now,
+            updated_at=now,
+            error_summary=_safe_error("stale"),
+        )
+        .execution_options(synchronize_session=False)
     )
-    changed = sum(1 for row in rows if recover_stale_run(row))
-    if changed:
-        db.commit()
+    changed = int(result.rowcount or 0)
+    db.commit()
     return changed
 
 
@@ -197,51 +309,45 @@ def _result_metadata(draft: dict[str, Any], *, provider: str = "", model_name: s
     }
 
 
+def _mark_failed(db: Session, run_id: int, kind: str) -> bool:
+    return _update_processing(
+        db,
+        run_id,
+        stage="failed",
+        progress=100,
+        values={
+            "status": "failed",
+            "finished_at": utc_now(),
+            "error_summary": _safe_error(kind),
+        },
+    )
+
+
 def process_analysis_run(run_id: int) -> None:
-    """Process one run using a fresh SessionLocal connection."""
+    """Process one run using a fresh connection and an atomic lease claim."""
     db = SessionLocal()
     try:
-        run = db.get(models.ProjectInitAnalysisRun, run_id)
-        if run is None or run.status != "queued":
+        if not _claim_run(db, run_id):
             return
-        now = utc_now()
-        run.status = "processing"
-        run.stage = "parsing"
-        run.progress = max(run.progress or 0, 5)
-        run.started_at = now
-        run.error_summary = ""
-        db.commit()
-
+        run = db.get(models.ProjectInitAnalysisRun, run_id)
+        if run is None:
+            return
         snapshot = _json_load(run.snapshot_json, {})
         attachment_snapshot = snapshot.get("attachments", []) if isinstance(snapshot, dict) else []
+        # Compatibility for pre-snapshot rows only; new and retried runs always
+        # carry complete frozen metadata and never query live attachments.
         if not attachment_snapshot:
-            # Runs created before the runtime snapshot migration can still be
-            # completed safely; new runs always use the immutable snapshot.
-            attachment_ids = _json_load(run.attachment_ids_json, [])
-            legacy_rows = (
-                db.query(models.ProjectInitAttachment)
-                .filter(models.ProjectInitAttachment.id.in_(attachment_ids))
-                .all()
-                if attachment_ids
-                else []
-            )
-            attachment_snapshot = [
-                {
-                    "id": item.id,
-                    "storage_key": item.storage_key,
-                    "original_name": item.original_name,
-                    "mime_type": item.mime_type,
-                    "size_bytes": item.size_bytes,
-                }
-                for item in legacy_rows
-            ]
+            attachment_snapshot = []
+            for attachment_id in _json_load(run.attachment_ids_json, []):
+                attachment_snapshot.append({"id": attachment_id, "storage_key": "", "original_name": ""})
+
         file_results: list[dict[str, Any]] = []
         chunks: list[dict[str, Any]] = []
         for index, item in enumerate(attachment_snapshot):
             attachment_id = item.get("id")
             try:
                 path = _attachment_path(str(item["storage_key"]))
-                parsed = parse_project_init_file(path, str(item["original_name"]))
+                parsed = list(parse_project_init_file(path, str(item["original_name"])))
                 for chunk in parsed:
                     file_name = chunk.get("file_name", "") if isinstance(chunk, dict) else chunk.file_name
                     location = chunk.get("location", "") if isinstance(chunk, dict) else chunk.location
@@ -255,76 +361,96 @@ def process_analysis_run(run_id: int) -> None:
                         }
                     )
                 file_results.append({"attachment_id": attachment_id, "status": "completed", "chunk_count": len(parsed)})
-            except Exception:
-                logger.exception("project init analysis parse failed run_id=%s attachment_id=%s", run_id, attachment_id)
+            except Exception as exc:
+                logger.warning(
+                    "project_init_parse_failure run_id=%s error_type=%s code=parse_failure",
+                    run_id,
+                    type(exc).__name__,
+                )
                 file_results.append({"attachment_id": attachment_id, "status": "failed", "error": _safe_error("parse")})
-            _set_progress(db, run, stage="parsing", progress=10 + int(35 * (index + 1) / max(1, len(attachment_snapshot))))
+            if not _update_processing(
+                db,
+                run_id,
+                stage="parsing",
+                progress=10 + int(35 * (index + 1) / max(1, len(attachment_snapshot))),
+                values={"file_results_json": _json_dump(file_results)},
+            ):
+                return
 
-        run.file_results_json = _json_dump(file_results)
-        db.commit()
         if not chunks:
-            run.status = "failed"
-            run.stage = "failed"
-            run.progress = 100
-            run.finished_at = utc_now()
-            run.error_summary = _safe_error("parse")
-            db.commit()
+            _mark_failed(db, run_id, "parse")
+            return
+        if not _update_processing(db, run_id, stage="extracting", progress=55):
             return
 
-        _set_progress(db, run, stage="extracting", progress=max(run.progress, 55))
         people = snapshot.get("people", []) if isinstance(snapshot, dict) else []
         existing_tasks = snapshot.get("tasks", []) if isinstance(snapshot, dict) else []
         try:
             result = generate_project_init_draft(chunks, people, existing_tasks)
             draft = _draft_payload(result)
-        except Exception:
-            logger.exception("project init analysis AI failed run_id=%s", run_id)
-            draft = {"tasks": [], "warnings": [{"code": "analysis_failed", "message": _safe_error("ai")}]}
-            run.current_draft_json = _json_dump(draft)
-            run.result_json = _json_dump(_result_metadata(draft, file_results=file_results))
-            run.file_results_json = _json_dump(file_results)
-            run.status = "failed"
-            run.stage = "failed"
-            run.progress = 100
-            run.finished_at = utc_now()
-            run.error_summary = _safe_error("ai")
-            db.commit()
+        except Exception as exc:
+            logger.warning(
+                "project_init_provider_failure run_id=%s error_type=%s code=provider_failure",
+                run_id,
+                type(exc).__name__,
+            )
+            _update_processing(
+                db,
+                run_id,
+                stage="failed",
+                progress=100,
+                values={
+                    "current_draft_json": _json_dump({"tasks": [], "warnings": []}),
+                    "result_json": _json_dump({"tasks": 0, "warnings": 0}),
+                    "file_results_json": _json_dump(file_results),
+                    "status": "failed",
+                    "finished_at": utc_now(),
+                    "error_summary": _safe_error("ai"),
+                },
+            )
             return
 
-        _set_progress(db, run, stage="matching", progress=max(run.progress, 75))
-        _set_progress(db, run, stage="merging", progress=max(run.progress, 90))
-        run.current_draft_json = _json_dump(draft)
-        run.provider = str(getattr(result, "provider", "") or "")[:30]
-        run.model_name = str(getattr(result, "model_name", "") or "")[:100]
-        run.result_json = _json_dump(
-            _result_metadata(
-                draft,
-                provider=run.provider,
-                model_name=run.model_name,
-                file_results=file_results,
-            )
-        )
-        run.file_results_json = _json_dump(file_results)
+        if not _set_progress(db, run, stage="matching", progress=75):
+            return
+        if not _set_progress(db, run, stage="merging", progress=90):
+            return
+        provider = str(getattr(result, "provider", "") or "")[:30]
+        model_name = str(getattr(result, "model_name", "") or "")[:100]
         failed_files = sum(1 for item in file_results if item.get("status") == "failed")
-        run.status = "partial_failed" if failed_files else "completed"
-        run.stage = "completed"
-        run.progress = 100
-        run.finished_at = utc_now()
-        run.error_summary = "部分附件处理失败，请检查来源后重试" if failed_files else ""
-        db.commit()
-    except Exception:
-        logger.exception("project init analysis worker failed run_id=%s", run_id)
+        _update_processing(
+            db,
+            run_id,
+            stage="completed",
+            progress=100,
+            values={
+                "current_draft_json": _json_dump(draft),
+                "provider": provider,
+                "model_name": model_name,
+                "result_json": _json_dump(
+                    _result_metadata(draft, provider=provider, model_name=model_name, file_results=file_results)
+                ),
+                "file_results_json": _json_dump(file_results),
+                "status": "partial_failed" if failed_files else "completed",
+                "finished_at": utc_now(),
+                "error_summary": _safe_error("parse") if failed_files else "",
+            },
+        )
+    except RunLeaseLost:
+        logger.warning("project_init_worker_stopped run_id=%s code=lease_lost", run_id)
+    except Exception as exc:
+        logger.error(
+            "project_init_worker_failure run_id=%s error_type=%s code=worker_failure",
+            run_id,
+            type(exc).__name__,
+        )
         try:
             db.rollback()
-            run = db.get(models.ProjectInitAnalysisRun, run_id)
-            if run is not None:
-                run.status = "failed"
-                run.stage = "failed"
-                run.progress = max(int(run.progress or 0), 100)
-                run.finished_at = utc_now()
-                run.error_summary = _safe_error("generic")
-                db.commit()
-        except Exception:
-            logger.exception("project init analysis failure state could not be persisted run_id=%s", run_id)
+            _mark_failed(db, run_id, "generic")
+        except Exception as persist_exc:
+            logger.error(
+                "project_init_failure_persist_failed run_id=%s error_type=%s code=persist_failure",
+                run_id,
+                type(persist_exc).__name__,
+            )
     finally:
         db.close()

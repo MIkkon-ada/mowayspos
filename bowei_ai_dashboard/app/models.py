@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 
 from .database import Base
 from .time_utils import utc_now
@@ -343,6 +343,9 @@ class ProjectInitAttachment(Base, TimestampMixin):
 
 class ProjectInitAnalysisRun(Base, TimestampMixin):
     __tablename__ = "project_init_analysis_runs"
+    __table_args__ = (
+        Index("uq_project_init_analysis_runs_retry_of", "retry_of_run_id", unique=True),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
@@ -362,6 +365,11 @@ class ProjectInitAnalysisRun(Base, TimestampMixin):
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)
     applied_at = Column(DateTime, nullable=True)
+    retry_of_run_id = Column(
+        Integer,
+        ForeignKey("project_init_analysis_runs.id", name="fk_project_init_analysis_retry_of"),
+        nullable=True,
+    )
 
 
 class Issue(Base, TimestampMixin):

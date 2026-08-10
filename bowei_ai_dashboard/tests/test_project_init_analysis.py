@@ -236,7 +236,7 @@ def test_progress_never_moves_backwards():
 
     db = make_session()
     project, _owner = add_project_graph(db)
-    run = models.ProjectInitAnalysisRun(project_id=project.id, created_by="owner", progress=70)
+    run = models.ProjectInitAnalysisRun(project_id=project.id, created_by="owner", status="processing", progress=70)
     db.add(run)
     db.commit()
     service._set_progress(db, run, stage="parsing", progress=20)
@@ -288,6 +288,7 @@ def test_stale_processing_is_marked_failed_and_retry_only_allows_failed(monkeypa
     db.commit()
     run_id = run.id
     run.started_at = utc_now() - timedelta(minutes=31)
+    run.updated_at = utc_now() - timedelta(minutes=31)
     db.commit()
 
     assert service.recover_stale_run(run) is True
@@ -295,7 +296,7 @@ def test_stale_processing_is_marked_failed_and_retry_only_allows_failed(monkeypa
     assert "stale" in run.error_summary.lower()
 
 
-def test_apply_is_explicitly_rejected_without_business_mutation():
+def test_apply_only_records_audit_without_business_mutation():
     from app.routers import project_init_ai
 
     db = make_session()
@@ -310,10 +311,87 @@ def test_apply_is_explicitly_rejected_without_business_mutation():
     db.commit()
     run_id = run.id
 
-    with pytest.raises(HTTPException) as error:
-        project_init_ai.apply_project_init_analysis_run(project.id, run.id, current_user="owner", db=db)
-    assert error.value.status_code == 409
+    response = project_init_ai.apply_project_init_analysis_run(project.id, run.id, current_user="owner", db=db)
+    assert response["applied_at"] is not None
+    response_again = project_init_ai.apply_project_init_analysis_run(project.id, run.id, current_user="owner", db=db)
+    assert response_again["applied_at"] == response["applied_at"]
+    fetched = project_init_ai.get_project_init_analysis_run(project.id, run.id, current_user="owner", db=db)
+    latest = project_init_ai.latest_project_init_analysis_run(project.id, current_user="owner", db=db)
+    assert fetched["applied_at"] == response["applied_at"]
+    assert latest["applied_at"] == response["applied_at"]
     db.expire_all()
     task_id = task.id
     assert db.get(models.Task, task_id).key_task == "Original"
-    assert db.get(models.ProjectInitAnalysisRun, run_id).applied_at is None
+    assert db.get(models.ProjectInitAnalysisRun, run_id).applied_at is not None
+
+
+def test_atomic_worker_claim_and_stale_lease_cannot_be_revived(tmp_path):
+    from app.services import project_init_analysis as service
+
+    database_url = f"sqlite:///{tmp_path / 'analysis-race.db'}"
+    engine = create_engine(database_url, connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine)
+    first, second = sessions(), sessions()
+    project = models.Project(id=1, name="Race", status="dispatched")
+    first.add(project)
+    first.add(models.ProjectInitAnalysisRun(project_id=1, created_by="owner", status="queued"))
+    first.commit()
+    run_id = first.query(models.ProjectInitAnalysisRun).one().id
+
+    assert service._claim_run(first, run_id) is True
+    assert service._claim_run(second, run_id) is False
+
+    stale = utc_now() - timedelta(minutes=31)
+    second.query(models.ProjectInitAnalysisRun).filter_by(id=run_id).update(
+        {models.ProjectInitAnalysisRun.updated_at: stale}, synchronize_session=False
+    )
+    second.commit()
+    assert service.recover_stale_runs(second, 1) == 1
+    assert service._update_processing(first, run_id, stage="matching", progress=80) is False
+    assert first.get(models.ProjectInitAnalysisRun, run_id).status == "failed"
+    first.close()
+    second.close()
+
+
+def test_retry_unique_link_deduplicates_across_sessions_and_uses_frozen_snapshot(tmp_path, monkeypatch):
+    from app.routers import project_init_ai
+
+    database_url = f"sqlite:///{tmp_path / 'retry-race.db'}"
+    engine = create_engine(database_url, connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine)
+    seed = sessions()
+    project = models.Project(id=1, name="Retry", status="dispatched")
+    snapshot = {
+        "project": {"id": 1, "status": "dispatched"},
+        "attachments": [{"id": 99, "storage_key": "1/frozen", "original_name": "frozen.txt", "size_bytes": 1}],
+        "current_draft": [],
+    }
+    old = models.ProjectInitAnalysisRun(
+        project_id=1,
+        attachment_ids_json="[99]",
+        snapshot_json=json.dumps(snapshot),
+        status="failed",
+        created_by="owner",
+    )
+    seed.add_all([project, old])
+    seed.commit()
+    old_id = old.id
+    seed.close()
+    monkeypatch.setattr(project_init_ai, "_authorize_edit", lambda *args: None)
+    monkeypatch.setattr(project_init_ai, "get_user_context_from_db", lambda *args: {"person_id": None})
+    first, second = sessions(), sessions()
+    first_old = first.get(models.ProjectInitAnalysisRun, old_id)
+    second_old = second.get(models.ProjectInitAnalysisRun, old_id)
+    background_one = SimpleNamespace(tasks=[], add_task=lambda fn, run_id: background_one.tasks.append(run_id))
+    background_two = SimpleNamespace(tasks=[], add_task=lambda fn, run_id: background_two.tasks.append(run_id))
+    result_one = project_init_ai._create_retry_from_frozen_snapshot(1, first_old, "owner", first, background_one)
+    result_two = project_init_ai._create_retry_from_frozen_snapshot(1, second_old, "owner", second, background_two)
+    assert result_one["id"] == result_two["id"]
+    retry = first.get(models.ProjectInitAnalysisRun, result_one["id"])
+    assert json.loads(retry.snapshot_json) == snapshot
+    assert background_one.tasks == [retry.id]
+    assert background_two.tasks == []
+    first.close()
+    second.close()

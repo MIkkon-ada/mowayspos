@@ -407,8 +407,8 @@ class ProjectInitAnalysisRunResponse(BaseModel):
     id: Annotated[int, Field(strict=True, gt=0)]
     project_id: Annotated[int, Field(strict=True, gt=0)]
     attachment_ids: list[Annotated[int, Field(strict=True, gt=0)]] = Field(default_factory=list)
-    status: Literal["queued", "processing", "completed", "partial_failed", "failed"]
-    stage: Literal["reading", "parsing", "extracting", "matching", "merging", "completed", "failed", "stale"]
+    status: Literal["queued", "processing", "retrying", "completed", "partial_failed", "failed"]
+    stage: Literal["reading", "parsing", "extracting", "matching", "merging", "retrying", "completed", "failed", "stale"]
     progress: Annotated[int, Field(strict=True, ge=0, le=100)]
     error_message: str = Field(default="", max_length=500)
     draft: dict[str, Any] | list[Any] = Field(default_factory=dict)
@@ -416,6 +416,7 @@ class ProjectInitAnalysisRunResponse(BaseModel):
     created_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    applied_at: datetime | None = None
 
 
 class ProjectProfilePayload(BaseModel):

@@ -101,6 +101,7 @@ def test_project_init_analysis_run_has_snapshot_result_audit_fields_and_defaults
             "ix_project_init_analysis_runs_created_by_person_id",
             ("created_by_person_id",),
         ),
+        ("uq_project_init_analysis_runs_retry_of", ("retry_of_run_id",)),
     }
 
 

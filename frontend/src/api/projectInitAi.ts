@@ -76,8 +76,9 @@ export type AgentTask = {
 
 export type ProjectInitAiDraft = {
   tasks: AgentTask[]
-  provider: string
-  model_name: string
+  warnings?: AgentWarning[]
+  provider?: string
+  model_name?: string
 }
 
 export type ProjectWorkProgressSubTaskDraft = {
@@ -350,11 +351,21 @@ function decodeCurrentDraft(value: unknown, body: unknown): ProjectInitCurrentDr
 function decodeDraft(value: unknown, body: unknown): ProjectInitDraft {
   if (Array.isArray(value)) return decodeCurrentDraft(value, body)
   const record = recordValue(value, 'draft', body)
-  return {
-    tasks: arrayValue(required(record, 'tasks', body), 'draft.tasks', body, 1, 100).map((item) => task(item, body)),
-    provider: stringValue(required(record, 'provider', body), 'draft.provider', body),
-    model_name: stringValue(required(record, 'model_name', body), 'draft.model_name', body),
+  const decoded: ProjectInitAiDraft = {
+    // Failed provider runs legitimately persist an empty task list. Non-empty
+    // tasks still pass through the full task/subtask/evidence validators below.
+    tasks: arrayValue(required(record, 'tasks', body), 'draft.tasks', body, 0, 100).map((item) => task(item, body)),
   }
+  if (Object.prototype.hasOwnProperty.call(record, 'warnings')) {
+    decoded.warnings = arrayValue(record.warnings, 'draft.warnings', body, 0, 20).map((item) => warning(item, body))
+  }
+  if (Object.prototype.hasOwnProperty.call(record, 'provider')) {
+    decoded.provider = stringValue(record.provider, 'draft.provider', body)
+  }
+  if (Object.prototype.hasOwnProperty.call(record, 'model_name')) {
+    decoded.model_name = stringValue(record.model_name, 'draft.model_name', body)
+  }
+  return decoded
 }
 
 function attachment(value: unknown, body: unknown): ProjectInitAttachment {

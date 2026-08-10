@@ -153,6 +153,65 @@ test('analysis responses reject invalid status and non-positive IDs at runtime',
   await assert.rejects(api.getLatestInitAnalysisRun(7), (error) => error?.name === 'ProjectInitApiError' && error.code === 'RESPONSE_VALIDATION_ERROR')
 })
 
+test('failed analysis runs accept an empty draft and preserve status and error message', async () => {
+  globalThis.__projectInitFakeClient = {
+    get: async () => ({
+      id: 9,
+      project_id: 7,
+      attachment_ids: [8],
+      status: 'failed',
+      stage: 'failed',
+      progress: 100,
+      error_message: 'AI provider unavailable',
+      draft: { tasks: [], warnings: [] },
+      result_metadata: {},
+      created_at: null,
+      started_at: null,
+      finished_at: '2026-08-10T00:00:00Z',
+      applied_at: null,
+    }),
+    post: async () => ({}),
+    delete: async () => ({}),
+  }
+  const api = await loadApi()
+  const run = await api.getInitAnalysisRun(7, 9)
+  assert.equal(run.status, 'failed')
+  assert.equal(run.error_message, 'AI provider unavailable')
+  assert.deepEqual(run.draft, { tasks: [], warnings: [] })
+})
+
+test('analysis draft validators still reject invalid task elements and IDs', async () => {
+  const baseRun = {
+    id: 9,
+    project_id: 7,
+    attachment_ids: [8],
+    status: 'completed',
+    stage: 'completed',
+    progress: 100,
+    error_message: '',
+    result_metadata: {},
+    created_at: null,
+    started_at: null,
+    finished_at: '2026-08-10T00:00:00Z',
+    applied_at: null,
+  }
+  const invalidResponses = [
+    { ...baseRun, draft: { tasks: [null], warnings: [] } },
+    { ...baseRun, attachment_ids: [0], draft: { tasks: [], warnings: [] } },
+    { ...baseRun, draft: { tasks: [], warnings: [], provider: 42 } },
+  ]
+
+  for (const response of invalidResponses) {
+    globalThis.__projectInitFakeClient = {
+      get: async () => response,
+      post: async () => ({}),
+      delete: async () => ({}),
+    }
+    const api = await loadApi()
+    await assert.rejects(api.getInitAnalysisRun(7, 9), (error) => error?.name === 'ProjectInitApiError' && error.code === 'RESPONSE_VALIDATION_ERROR')
+  }
+})
+
 test('analysis creation sends the typed current_draft snapshot and deduplicated attachment IDs', async () => {
   let requestBody
   globalThis.__projectInitFakeClient = {

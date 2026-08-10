@@ -27,7 +27,7 @@ const ACCEPTED_EXTENSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt'] a
 
 type PanelState = 'idle' | 'uploading' | 'analyzing' | 'preview' | 'failed'
 type UploadStatus = 'queued' | 'uploading' | 'success' | 'failed' | 'cancelled'
-export type ProjectInitAiDecisionAction = 'merge' | 'keep' | 'skip' | 'confirm'
+export type ProjectInitAiDecisionAction = 'new' | 'ignore' | 'supplement'
 
 export type ProjectInitAiDecision = {
   key: string
@@ -44,6 +44,7 @@ type UploadItem = {
   status: UploadStatus
   progress: number
   error: string
+  retryable?: boolean
   attachment?: ProjectInitAttachment
 }
 
@@ -112,9 +113,33 @@ function duplicateLabel(status: AgentTask['merge_status']): string {
 }
 
 function warningText(task: AgentTask | AgentSubTask): string[] {
-  return task.warnings
-    .filter((warning) => /ambiguous|inactive|unmatched|person_not_found/i.test(`${warning.code} ${warning.message}`))
-    .map((warning) => warning.message)
+  return task.warnings.map((warning) => `${warning.code}: ${warning.message}`)
+}
+
+type FileResult = {
+  attachment_id?: number
+  status?: string
+  error?: string
+}
+
+function fileResults(run: ProjectInitAnalysisRun): FileResult[] {
+  const value = run.result_metadata.file_results
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is FileResult => {
+    if (!item || typeof item !== 'object') return false
+    return typeof (item as Record<string, unknown>).status === 'string'
+  })
+}
+
+function requiredDecisionKeys(draft: ProjectInitAiDraft): string[] {
+  const keys: string[] = []
+  draft.tasks.forEach((task, taskIndex) => {
+    if (task.merge_status !== 'new') keys.push(`task-${taskIndex}`)
+    task.subtasks.forEach((subtask, subtaskIndex) => {
+      if (subtask.merge_status !== 'new') keys.push(`task-${taskIndex}-subtask-${subtaskIndex}`)
+    })
+  })
+  return keys
 }
 
 function sourceLabel(task: AgentTask | AgentSubTask): string {
@@ -167,7 +192,7 @@ function DecisionButtons({
 }) {
   return (
     <div className="flex flex-wrap gap-1.5" role="group" aria-label="候选项处理决定">
-      {(['merge', 'keep', 'skip', 'confirm'] as const).map((action) => (
+      {(['new', 'ignore', 'supplement'] as const).map((action) => (
         <button
           key={action}
           type="button"
@@ -176,7 +201,7 @@ function DecisionButtons({
           onClick={() => onChange(action)}
           className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${value === action ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:bg-blue-50'}`}
         >
-          {{ merge: '合并', keep: '保留', skip: '跳过', confirm: '确认' }[action]}
+          {{ new: '新增', ignore: '忽略', supplement: '补充' }[action]}
         </button>
       ))}
     </div>
@@ -199,34 +224,60 @@ export function OwnerSubmitAiPanel({
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [decisions, setDecisions] = useState<Record<string, ProjectInitAiDecisionAction>>({})
+  const [applying, setApplying] = useState(false)
+  const [applySuccess, setApplySuccess] = useState(false)
   const mountedRef = useRef(true)
   const pollInFlightRef = useRef(false)
+  const activeRunIdRef = useRef<number | undefined>(undefined)
+  const pollTimerRef = useRef<number | undefined>(undefined)
+  const pollControllerRef = useRef<AbortController | undefined>(undefined)
+  const pollTokenRef = useRef(0)
   const uploadControllerRef = useRef<AbortController | undefined>(undefined)
+  const analysisControllerRef = useRef<AbortController | undefined>(undefined)
 
   const successfulAttachmentIds = useMemo(
-    () => queue.flatMap((item) => item.attachment ? [item.attachment.id] : []),
-    [queue],
+    () => [...new Set([
+      ...attachments.map((attachment) => attachment.id),
+      ...queue.flatMap((item) => item.attachment ? [item.attachment.id] : []),
+    ])],
+    [attachments, queue],
   )
+
+  const clearPolling = useCallback(() => {
+    if (pollTimerRef.current !== undefined) window.clearInterval(pollTimerRef.current)
+    pollTimerRef.current = undefined
+    pollControllerRef.current?.abort()
+    pollControllerRef.current = undefined
+    pollTokenRef.current += 1
+    pollInFlightRef.current = false
+  }, [])
 
   const updateRun = useCallback((nextRun: ProjectInitAnalysisRun) => {
     if (!mountedRef.current) return
+    if (activeRunIdRef.current !== nextRun.id) {
+      clearPolling()
+      activeRunIdRef.current = nextRun.id
+    }
     setRun(nextRun)
     if (isAiDraft(nextRun.draft)) setDraft(nextRun.draft)
     setPanelState(nextRun.status === 'failed' ? 'failed' : isTerminal(nextRun.status) ? 'preview' : 'analyzing')
     setError(nextRun.status === 'failed' ? nextRun.error_message : '')
-  }, [])
+    if (isTerminal(nextRun.status)) clearPolling()
+  }, [clearPolling])
 
-  const pollRun = useCallback(async () => {
-    if (!run || isTerminal(run.status) || pollInFlightRef.current) return
+  const pollRun = useCallback(async (runId: number, token: number, controller: AbortController) => {
+    if (controller.signal.aborted || activeRunIdRef.current !== runId || pollInFlightRef.current) return
     pollInFlightRef.current = true
     try {
-      updateRun(await getInitAnalysisRun(projectId, run.id))
+      const nextRun = await getInitAnalysisRun(projectId, runId)
+      if (controller.signal.aborted || !mountedRef.current || activeRunIdRef.current !== runId || nextRun.id !== runId || pollTokenRef.current !== token) return
+      updateRun(nextRun)
     } catch (nextError) {
-      if (mountedRef.current) setError(errorMessage(nextError))
+      if (mountedRef.current && !controller.signal.aborted && activeRunIdRef.current === runId && pollTokenRef.current === token) setError(errorMessage(nextError))
     } finally {
       pollInFlightRef.current = false
     }
-  }, [projectId, run, updateRun])
+  }, [projectId, updateRun])
 
   useEffect(() => {
     mountedRef.current = true
@@ -258,14 +309,23 @@ export function OwnerSubmitAiPanel({
       cancelled = true
       mountedRef.current = false
       uploadControllerRef.current?.abort()
+      analysisControllerRef.current?.abort()
+      clearPolling()
     }
-  }, [existingAttachments, projectId, updateRun])
+  }, [clearPolling, existingAttachments, projectId, updateRun])
 
   useEffect(() => {
+    clearPolling()
     if (!run || isTerminal(run.status)) return undefined
-    const timer = window.setInterval(() => { void pollRun() }, POLL_INTERVAL_MS)
-    return () => window.clearInterval(timer)
-  }, [pollRun, run])
+    const controller = new AbortController()
+    const token = ++pollTokenRef.current
+    const runId = run.id
+    pollControllerRef.current = controller
+    const poll = () => { void pollRun(runId, token, controller) }
+    poll()
+    pollTimerRef.current = window.setInterval(poll, POLL_INTERVAL_MS)
+    return clearPolling
+  }, [clearPolling, pollRun, run?.id, run?.status])
 
   function addFiles(event: ChangeEvent<HTMLInputElement>) {
     const selected = Array.from(event.target.files ?? [])
@@ -282,7 +342,7 @@ export function OwnerSubmitAiPanel({
       else if (nextQueue.length >= MAX_FILES) itemError = '最多选择 10 个文件'
       else if (total + file.size > MAX_TOTAL_BYTES) itemError = '文件总大小不能超过 100 MiB'
       if (!itemError) total += file.size
-      nextQueue.push({ id: `${file.name}-${file.lastModified}-${Math.random()}`, file, status: itemError ? 'failed' : 'queued', progress: 0, error: itemError })
+      nextQueue.push({ id: `${file.name}-${file.lastModified}-${Math.random()}`, file, status: itemError ? 'failed' : 'queued', progress: 0, error: itemError, retryable: false })
     }
     setQueue(nextQueue.slice(0, MAX_FILES))
     setError('')
@@ -306,8 +366,47 @@ export function OwnerSubmitAiPanel({
     setQueue((items) => items.filter((current) => current.id !== item.id))
   }
 
+  function isAbortError(nextError: unknown): boolean {
+    return nextError instanceof DOMException && nextError.name === 'AbortError'
+  }
+
+  async function uploadQueueItem(item: UploadItem, controller: AbortController): Promise<ProjectInitAttachment> {
+    updateQueueItem(item.id, { status: 'uploading', progress: 0, error: '' })
+    try {
+      const uploaded = await uploadInitAttachments(projectId, [item.file], (progress) => updateQueueItem(item.id, { progress }), controller.signal)
+      const attachment = uploaded[0]
+      if (!attachment) throw new Error('upload response did not contain an attachment')
+      setAttachments((items) => [...items.filter((current) => current.id !== attachment.id), attachment])
+      updateQueueItem(item.id, { status: 'success', progress: 100, error: '', retryable: false, attachment })
+      return attachment
+    } catch (nextError) {
+      if (isAbortError(nextError)) updateQueueItem(item.id, { status: 'cancelled', error: 'cancelled; retry is available', retryable: true })
+      else updateQueueItem(item.id, { status: 'failed', error: errorMessage(nextError), retryable: true })
+      throw nextError
+    }
+  }
+
+  async function retryUpload(item: UploadItem) {
+    if (!item.retryable || item.status === 'uploading') return
+    setError('')
+    setPanelState('uploading')
+    const controller = new AbortController()
+    uploadControllerRef.current = controller
+    try {
+      await uploadQueueItem(item, controller)
+      if (mountedRef.current) setPanelState('idle')
+    } catch (nextError) {
+      if (mountedRef.current) {
+        setPanelState('idle')
+        if (!isAbortError(nextError)) setError(errorMessage(nextError))
+      }
+    } finally {
+      if (uploadControllerRef.current === controller) uploadControllerRef.current = undefined
+    }
+  }
+
   async function startAnalysis() {
-    const pending = queue.filter((item) => item.status === 'queued' || item.status === 'failed' && !item.attachment)
+    const pending = queue.filter((item) => item.status === 'queued' || ((item.status === 'failed' || item.status === 'cancelled') && item.retryable === true))
     if (pending.length === 0 && successfulAttachmentIds.length === 0) {
       setError('请先选择至少一个有效文件')
       return
@@ -315,25 +414,19 @@ export function OwnerSubmitAiPanel({
     setError('')
     setPanelState('uploading')
     const controller = new AbortController()
+    const analysisController = new AbortController()
     uploadControllerRef.current = controller
+    analysisControllerRef.current = analysisController
     const uploadedIds = [...successfulAttachmentIds]
     try {
       for (const item of pending) {
-        if (controller.signal.aborted) return
-        updateQueueItem(item.id, { status: 'uploading', progress: 0, error: '' })
+        if (controller.signal.aborted) throw new DOMException('upload aborted', 'AbortError')
         try {
-          const uploaded = await uploadInitAttachments(projectId, [item.file], (progress) => updateQueueItem(item.id, { progress }), controller.signal)
-          const attachment = uploaded[0]
-          if (!attachment) throw new Error('上传响应缺少附件')
+          const attachment = await uploadQueueItem(item, controller)
           uploadedIds.push(attachment.id)
-          setAttachments((items) => [...items.filter((current) => current.id !== attachment.id), attachment])
-          updateQueueItem(item.id, { status: 'success', progress: 100, attachment })
         } catch (nextError) {
-          if (nextError instanceof DOMException && nextError.name === 'AbortError') {
-            updateQueueItem(item.id, { status: 'cancelled', error: '已取消' })
-            return
-          }
-          updateQueueItem(item.id, { status: 'failed', error: errorMessage(nextError) })
+          if (isAbortError(nextError)) throw nextError
+          // uploadQueueItem already records retryable failures; continue with the next file.
         }
       }
       if (uploadedIds.length === 0) {
@@ -342,13 +435,22 @@ export function OwnerSubmitAiPanel({
         return
       }
       const nextRun = await createInitAnalysisRun(projectId, uploadedIds, currentDraft)
+      if (analysisController.signal.aborted || !mountedRef.current) return
       updateRun(nextRun)
     } catch (nextError) {
-      if (nextError instanceof DOMException && nextError.name === 'AbortError') return
-      setError(errorMessage(nextError))
-      setPanelState('failed')
+      if (isAbortError(nextError)) {
+        if (mountedRef.current) {
+          setPanelState('idle')
+          setError('operation cancelled; you can try again')
+        }
+        clearPolling()
+      } else if (mountedRef.current) {
+        setError(errorMessage(nextError))
+        setPanelState('failed')
+      }
     } finally {
-      uploadControllerRef.current = undefined
+      if (uploadControllerRef.current === controller) uploadControllerRef.current = undefined
+      if (analysisControllerRef.current === analysisController) analysisControllerRef.current = undefined
     }
   }
 
@@ -356,11 +458,18 @@ export function OwnerSubmitAiPanel({
     if (!run || run.status !== 'failed') return
     setError('')
     setPanelState('analyzing')
+    const controller = new AbortController()
+    analysisControllerRef.current = controller
     try {
-      updateRun(await retryInitAnalysisRun(projectId, run.id))
+      const nextRun = await retryInitAnalysisRun(projectId, run.id)
+      if (!controller.signal.aborted && mountedRef.current) updateRun(nextRun)
     } catch (nextError) {
-      setError(errorMessage(nextError))
-      setPanelState('failed')
+      if (mountedRef.current && !isAbortError(nextError)) {
+        setError(errorMessage(nextError))
+        setPanelState('failed')
+      }
+    } finally {
+      if (analysisControllerRef.current === controller) analysisControllerRef.current = undefined
     }
   }
 
@@ -368,22 +477,52 @@ export function OwnerSubmitAiPanel({
     setDecisions((current) => ({ ...current, [key]: action }))
   }
 
-  function applyDraft() {
+  async function applyDraft() {
     if (!draft) return
+    const missingKeys = requiredDecisionKeys(draft).filter((key) => !decisions[key])
+    if (missingKeys.length > 0) {
+      setError(`请先为所有重复候选项选择处理方式（还缺少 ${missingKeys.length} 项）`)
+      return
+    }
+    setError('')
+    setApplySuccess(false)
+    setApplying(true)
     const selected: ProjectInitAiDecision[] = []
     draft.tasks.forEach((task, taskIndex) => {
       const taskKey = `task-${taskIndex}`
-      if (decisions[taskKey]) selected.push({ key: taskKey, action: decisions[taskKey], itemType: 'task', taskIndex, title: task.title })
+      selected.push({ key: taskKey, action: decisions[taskKey] ?? 'new', itemType: 'task', taskIndex, title: task.title })
       task.subtasks.forEach((subtask, subtaskIndex) => {
         const key = `${taskKey}-subtask-${subtaskIndex}`
-        if (decisions[key]) selected.push({ key, action: decisions[key], itemType: 'subtask', taskIndex, subtaskIndex, title: subtask.title })
+        selected.push({ key, action: decisions[key] ?? 'new', itemType: 'subtask', taskIndex, subtaskIndex, title: subtask.title })
       })
     })
-    if (selected.length === 0) {
-      setError('请至少为一个候选项选择处理方式')
-      return
+    try {
+      await onApplyDraft(draft, selected)
+      if (mountedRef.current) setApplySuccess(true)
+    } catch (nextError) {
+      if (mountedRef.current) setError(`应用失败：${errorMessage(nextError)}`)
+    } finally {
+      if (mountedRef.current) setApplying(false)
     }
-    void onApplyDraft(draft, selected)
+  }
+
+  const renderWarningMessages = (warnings: string[]) => {
+    if (warnings.length === 0) return null
+    return <div role="alert" className="mt-2 space-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{warnings.map((warning, index) => <p key={`${warning}-${index}`}>{warning}</p>)}</div>
+  }
+
+  const renderFileResults = (currentRun: ProjectInitAnalysisRun) => {
+    const results = fileResults(currentRun)
+    if (results.length === 0) return null
+    const failedFiles = results.filter((item) => item.status === 'failed')
+    const successfulFiles = results.filter((item) => item.status !== 'failed')
+    return <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs" aria-label="文件分析结果">
+      <p className="font-semibold text-slate-700">文件分析摘要：成功 {successfulFiles.length} 个，失败 {failedFiles.length} 个</p>
+      {failedFiles.length > 0 && <ul className="space-y-1 text-red-700">{failedFiles.map((item, index) => {
+        const name = attachments.find((attachment) => attachment.id === item.attachment_id)?.original_name || `附件 #${item.attachment_id ?? '未知'}`
+        return <li key={`${item.attachment_id ?? 'file'}-${index}`}>失败文件 {name}：{item.error || '未知错误'}</li>
+      })}</ul>}
+    </div>
   }
 
   const renderWarnings = (item: AgentTask | AgentSubTask) => {
@@ -391,6 +530,16 @@ export function OwnerSubmitAiPanel({
     if (warnings.length === 0) return null
     return <div role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{warnings.join('；')}（未自动绑定）</div>
   }
+
+  function handleClose() {
+    uploadControllerRef.current?.abort()
+    analysisControllerRef.current?.abort()
+    clearPolling()
+    if (mountedRef.current) setPanelState('idle')
+    onClose?.()
+  }
+
+  const canStartAnalysis = successfulAttachmentIds.length > 0 || queue.some((item) => item.status === 'queued' || ((item.status === 'failed' || item.status === 'cancelled') && item.retryable === true))
 
   if (loading) return <section aria-busy="true" className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">正在加载 AI 分析状态…</section>
 
@@ -401,7 +550,7 @@ export function OwnerSubmitAiPanel({
           <h2 id="owner-submit-ai-title" className="text-base font-bold text-slate-900">AI 从文件生成</h2>
           <p className="mt-1 text-xs leading-5 text-slate-500">上传项目资料，读取文件、提取结构、匹配人员并生成草稿。AI 只提供预览，不会直接修改项目。</p>
         </div>
-        {onClose && <button type="button" onClick={onClose} disabled={disabled || panelState === 'uploading'} className="rounded-lg px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 disabled:opacity-50" aria-label="关闭 AI 文件面板">关闭</button>}
+        {onClose && <button type="button" onClick={handleClose} disabled={disabled} className="rounded-lg px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 disabled:opacity-50" aria-label="关闭 AI 文件面板">关闭</button>}
       </header>
 
       {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
@@ -422,6 +571,8 @@ export function OwnerSubmitAiPanel({
                 <span className={`shrink-0 text-xs ${item.status === 'failed' ? 'text-red-600' : item.status === 'success' ? 'text-emerald-600' : 'text-slate-500'}`}>{item.status === 'uploading' ? `${item.progress}%` : item.status === 'success' ? '已上传' : item.status === 'failed' ? '失败' : item.status === 'cancelled' ? '已取消' : '待上传'}</span>
                 {item.status === 'uploading' ? (
                   <button type="button" onClick={() => uploadControllerRef.current?.abort()} className="rounded px-2 py-1 text-xs text-red-600 hover:bg-red-50" aria-label={`取消上传 ${item.file.name}`}>取消</button>
+                ) : item.retryable && (item.status === 'failed' || item.status === 'cancelled') ? (
+                  <button type="button" onClick={() => void retryUpload(item)} disabled={panelState === 'uploading'} className="rounded px-2 py-1 text-xs text-blue-600 hover:bg-blue-50" aria-label={`重试上传 ${item.file.name}`}>重试</button>
                 ) : (
                   <button type="button" onClick={() => void removeItem(item)} className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100" aria-label={`移除 ${item.file.name}`}>移除</button>
                 )}
@@ -430,8 +581,15 @@ export function OwnerSubmitAiPanel({
               {item.error && <p className="mt-1 text-xs text-red-600">{item.error}</p>}
             </li>
           ))}</ul>}
-          {attachments.length > 0 && <p className="text-xs text-slate-500">已有附件：{attachments.map((attachment) => attachment.original_name).join('、')}</p>}
-          <button type="button" onClick={() => void startAnalysis()} disabled={disabled || panelState === 'uploading' || queue.every((item) => item.status === 'failed')} className="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{panelState === 'uploading' ? '上传中…' : '开始分析'}</button>
+          {attachments.length > 0 && <ul className="space-y-2" aria-label="已有附件">{attachments.map((attachment) => {
+            const queueItem = queue.find((item) => item.attachment?.id === attachment.id)
+            return <li key={attachment.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-100 px-3 py-2 text-xs">
+              <span className="min-w-0 flex-1 truncate text-slate-700">{attachment.original_name}</span>
+              <a href={downloadInitAttachmentUrl(projectId, attachment.id)} target="_blank" rel="noreferrer" className="text-blue-700 underline underline-offset-2">下载</a>
+              <button type="button" onClick={() => void removeItem(queueItem ?? { id: `attachment-${attachment.id}`, file: new File([], attachment.original_name), status: 'success', progress: 100, error: '', attachment })} disabled={disabled || panelState === 'uploading'} className="rounded px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-50">删除</button>
+            </li>
+          })}</ul>}
+          <button type="button" onClick={() => void startAnalysis()} disabled={disabled || panelState === 'uploading' || !canStartAnalysis} className="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{panelState === 'uploading' ? '上传中…' : '开始分析'}</button>
         </div>
       )}
 
@@ -450,7 +608,9 @@ export function OwnerSubmitAiPanel({
       {panelState === 'preview' && run && draft && (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 p-3"><div><span className="text-sm font-semibold text-slate-800">{stageLabel(run.stage)}</span><span className="ml-2 text-xs text-slate-500">{statusLabel(run.status)} · {run.progress}%</span></div><span className="text-xs text-slate-500">{draft.tasks.length} 项重点工作待确认</span></div>
+          {draft.warnings && renderWarningMessages(draft.warnings.map((warning) => `${warning.code}: ${warning.message}`))}
           {run.status === 'partial_failed' && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">部分文件分析失败，下面仅展示已成功生成的结果。</div>}
+          {renderFileResults(run)}
           {draft.tasks.length === 0 && <p className="rounded-xl border border-slate-200 p-4 text-sm text-slate-500">暂无可预览草稿。</p>}
           <div className="space-y-3">{draft.tasks.map((task, taskIndex) => {
             const taskKey = `task-${taskIndex}`
@@ -461,7 +621,8 @@ export function OwnerSubmitAiPanel({
               <div className="mt-4 space-y-2 border-l-2 border-slate-100 pl-3"><p className="text-xs font-semibold text-slate-500">关键任务 / 子任务</p>{task.subtasks.map((subtask, subtaskIndex) => { const key = `${taskKey}-subtask-${subtaskIndex}`; return <div key={key} className="rounded-lg border border-slate-100 p-3"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs font-semibold text-slate-800">{subtask.title}</p><p className="mt-1 text-[11px] text-slate-500">负责人：{subtask.assignee_name || '未匹配'} · 协助人：{subtask.helper_names.join('、') || '—'} · 时间：{subtask.plan_start || '—'} 至 {subtask.plan_end || '—'}</p><p className="mt-1 text-[11px] text-slate-500">状态：{subtask.status || '—'} · 优先级：{subtask.priority || '—'}</p></div><div className="space-y-1 text-right"><span className="block rounded-full bg-slate-50 px-2 py-1 text-[10px] text-slate-600">{duplicateLabel(subtask.merge_status)}</span><DecisionButtons value={decisions[key]} disabled={disabled} onChange={(action) => setDecision(key, action)} /></div></div>{renderWarnings(subtask)}<div className="mt-2"><EvidenceList projectId={projectId} evidence={subtask.evidence} sourceLabel={sourceLabel(subtask)} /></div></div> })}</div>
             </article>
           })}</div>
-          <button type="button" onClick={applyDraft} disabled={disabled || Object.keys(decisions).length === 0} className="w-full rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">应用到推进表</button>
+          {applySuccess && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">草稿已提交给推进表页面处理。</p>}
+          <button type="button" onClick={() => void applyDraft()} disabled={disabled || applying || requiredDecisionKeys(draft).some((key) => !decisions[key])} className="w-full rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">{applying ? '应用中…' : '应用到推进表'}</button>
         </div>
       )}
     </section>

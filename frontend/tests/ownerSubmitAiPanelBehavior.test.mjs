@@ -1,0 +1,34 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+const source = fs.readFileSync(path.resolve(here, '../src/features/settings/OwnerSubmitAiPanel.tsx'), 'utf8')
+
+test('panel uses the public new/ignore/supplement decision contract and blocks missing duplicate choices', () => {
+  assert.match(source, /ProjectInitAiDecisionAction = 'new' \| 'ignore' \| 'supplement'/)
+  assert.match(source, /requiredDecisionKeys\(draft\)\.filter\(/)
+  assert.match(source, /requiredDecisionKeys\(draft\)\.some\(/)
+  assert.match(source, /decisions\[taskKey\] \?\? 'new'/)
+  assert.match(source, /decisions\[key\] \?\? 'new'/)
+})
+
+test('panel protects asynchronous work and supports per-file recovery', () => {
+  assert.match(source, /nextRun\.id !== runId/)
+  assert.match(source, /clearPolling\(\)/)
+  assert.match(source, /uploadQueueItem\(item, controller\)/)
+  assert.match(source, /retryUpload\(item\)/)
+  assert.match(source, /retryable === true/)
+  assert.match(source, /setPanelState\('idle'\)/)
+})
+
+test('panel exposes attachment actions, complete warnings, partial file results, and awaited apply errors', () => {
+  assert.match(source, /downloadInitAttachmentUrl\(projectId, attachment\.id\)/)
+  assert.match(source, /deleteInitAttachment\(projectId, item\.attachment\.id\)/)
+  assert.match(source, /draft\.warnings\.map\(/)
+  assert.match(source, /result_metadata\.file_results/)
+  assert.match(source, /await onApplyDraft\(draft, selected\)/)
+  assert.match(source, /应用失败：/)
+})

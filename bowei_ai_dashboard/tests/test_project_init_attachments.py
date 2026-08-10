@@ -300,15 +300,18 @@ outsider = models.Person(id=3, name="Outsider", is_active=True)
 admin = models.Person(id=4, name="Admin", is_active=True)
 db.add_all([
     owner, member, outsider, admin,
+    models.Person(id=5, name="Project CEO", is_active=True),
     models.Project(id=1, name="Editable", status="dispatched"),
     models.Project(id=2, name="Frozen", status="active"),
     models.Account(username="owner", password_hash="x", person_id=1, status="active"),
     models.Account(username="member", password_hash="x", person_id=2, status="active"),
     models.Account(username="outsider", password_hash="x", person_id=3, status="active"),
     models.Account(username="admin", password_hash="x", person_id=4, status="active", is_tech_admin=True),
+    models.Account(username="project-ceo", password_hash="x", person_id=5, status="active"),
     models.ProjectMember(project_id=1, person_id=1, role="owner"),
     models.ProjectMember(project_id=2, person_id=1, role="owner"),
     models.ProjectMember(project_id=1, person_id=2, role="member"),
+    models.ProjectMember(project_id=1, person_id=5, role="project_ceo"),
 ])
 db.commit(); db.close()
 
@@ -323,6 +326,7 @@ def cookies(username):
 member = cookies("member")
 owner = cookies("owner")
 admin = cookies("admin")
+project_ceo = cookies("project-ceo")
 assert client.post(
     "/api/projects/1/init-attachments",
     files={"file": ("report.pdf", b"not-pdf", "application/pdf")},
@@ -351,6 +355,8 @@ assert download.status_code == 200 and download.content == b"line one\nline two"
 assert download.headers["x-content-type-options"] == "nosniff"
 member_download = client.get(f"/api/projects/1/init-attachments/{attachment_id}/download", cookies=member)
 assert member_download.status_code == 403
+manager_download = client.get(f"/api/projects/1/init-attachments/{attachment_id}/download", cookies=project_ceo)
+assert manager_download.status_code == 200 and manager_download.content == b"line one\nline two"
 db = SessionLocal(); row = db.get(models.ProjectInitAttachment, attachment_id); row.mime_type = "text/html"; db.commit(); db.close()
 canonical_download = client.get(f"/api/projects/1/init-attachments/{attachment_id}/download", cookies=owner)
 assert canonical_download.status_code == 200 and canonical_download.headers["content-type"].startswith("text/plain")
@@ -538,3 +544,45 @@ else:
     env["ATTACHMENT_TEST_ROOT"] = str((tmp_path / "attachment-storage").resolve())
     result = subprocess.run([sys.executable, "-c", script], cwd=BACKEND_ROOT, env=env, capture_output=True, text=True)
     assert result.returncode == 0, f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+
+
+def test_project_init_attachment_lifecycle_lock_does_not_depend_on_noop_update_rowcount(monkeypatch):
+    from app import models
+    from app.routers import project_init_ai
+
+    project = models.Project(id=1, name="Editable", status="dispatched")
+
+    class Query:
+        def __init__(self):
+            self.lock_requested = False
+
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def with_for_update(self):
+            self.lock_requested = True
+            return self
+
+        def one_or_none(self):
+            return project
+
+    query = Query()
+
+    class FakeDB:
+        bind = SimpleNamespace(dialect=SimpleNamespace(name="mysql"))
+
+        def get_bind(self):
+            return self.bind
+
+        def query(self, model):
+            assert model is models.Project
+            return query
+
+        def execute(self, *_args, **_kwargs):
+            raise AssertionError("lifecycle lock must not use a no-op UPDATE rowcount")
+
+    monkeypatch.setattr(project_init_ai, "require_project_owner_or_admin", lambda *_args, **_kwargs: None)
+    locked = project_init_ai._lock_editable_project(1, "owner", FakeDB())
+
+    assert locked is project
+    assert query.lock_requested is True

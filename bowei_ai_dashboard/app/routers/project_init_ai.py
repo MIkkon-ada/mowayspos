@@ -11,7 +11,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from starlette.datastructures import UploadFile
 from starlette.formparsers import FormData, MultiPartException, MultiPartParser, parse_options_header
-from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
 from .. import crud, models
@@ -20,6 +19,7 @@ from ..permissions import (
     get_current_user_name,
     get_user_context_from_db,
     require_project_access,
+    require_project_manager,
     require_project_owner_or_admin,
 )
 from ..time_utils import utc_now
@@ -81,19 +81,27 @@ def _authorize_edit(project_id: int, current_user: str, db: Session) -> models.P
 
 
 def _lock_editable_project(project_id: int, current_user: str, db: Session) -> models.Project:
-    result = db.execute(
-        update(models.Project)
-        .where(
-            models.Project.id == project_id,
-            func.lower(models.Project.status).in_(tuple(_EDITABLE_LIFECYCLES)),
-        )
-        .values(id=models.Project.id)
+    project = (
+        db.query(models.Project)
+        .filter(models.Project.id == project_id)
+        .with_for_update()
+        .one_or_none()
     )
-    project = db.get(models.Project, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="project not found")
-    if result.rowcount != 1 or str(project.status or "").strip().lower() not in _EDITABLE_LIFECYCLES:
+    if str(project.status or "").strip().lower() not in _EDITABLE_LIFECYCLES:
         raise HTTPException(status_code=409, detail="project lifecycle is not editable")
+
+    # SQLite parses FOR UPDATE but does not acquire a row lock.  A real,
+    # rollback-safe timestamp write upgrades the transaction to a writer
+    # before the attachment row is changed, preventing a lifecycle update
+    # from committing between the final status check and that write.
+    if db.get_bind().dialect.name.lower() == "sqlite":
+        project.updated_at = utc_now()
+        db.flush()
+        db.refresh(project)
+        if str(project.status or "").strip().lower() not in _EDITABLE_LIFECYCLES:
+            raise HTTPException(status_code=409, detail="project lifecycle is not editable")
     require_project_owner_or_admin(current_user, project_id, db)
     return project
 
@@ -348,7 +356,7 @@ def download_init_attachment(
 ):
     _retry_deleted_payload_cleanup(db)
     _get_project(project_id, db)
-    require_project_owner_or_admin(current_user, project_id, db)
+    require_project_manager(current_user, project_id, db)
     row = db.get(models.ProjectInitAttachment, attachment_id)
     if row is None or row.deleted_at is not None or row.project_id != project_id:
         raise HTTPException(status_code=404, detail="attachment not found")
@@ -374,30 +382,23 @@ def delete_init_attachment(
 ):
     _retry_deleted_payload_cleanup(db)
     _authorize_edit(project_id, current_user, db)
-    row = db.get(models.ProjectInitAttachment, attachment_id)
-    if row is None or row.deleted_at is not None or row.project_id != project_id:
-        raise HTTPException(status_code=404, detail="attachment not found")
     _lock_editable_project(project_id, current_user, db)
-    before = _serialize(row)
-    deleted_at = utc_now()
-    result = db.execute(
-        update(models.ProjectInitAttachment)
-        .where(
-            models.ProjectInitAttachment.id == attachment_id,
-            models.ProjectInitAttachment.project_id == project_id,
-            models.ProjectInitAttachment.deleted_at.is_(None),
-        )
-        .values(deleted_at=deleted_at, deleted_by=current_user)
-    )
-    if result.rowcount != 1:
-        db.rollback()
-        raise HTTPException(status_code=404, detail="attachment not found")
     row = (
         db.query(models.ProjectInitAttachment)
-        .populate_existing()
-        .filter(models.ProjectInitAttachment.id == attachment_id)
-        .one()
+        .filter(
+            models.ProjectInitAttachment.id == attachment_id,
+            models.ProjectInitAttachment.project_id == project_id,
+        )
+        .with_for_update()
+        .one_or_none()
     )
+    if row is None or row.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    before = _serialize(row)
+    deleted_at = utc_now()
+    row.deleted_at = deleted_at
+    row.deleted_by = current_user
+    db.flush()
     crud.log(
         db,
         current_user,

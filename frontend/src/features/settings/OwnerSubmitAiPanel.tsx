@@ -234,6 +234,11 @@ export function OwnerSubmitAiPanel({
   const pollTokenRef = useRef(0)
   const uploadControllerRef = useRef<AbortController | undefined>(undefined)
   const analysisControllerRef = useRef<AbortController | undefined>(undefined)
+  const analysisRequestIdRef = useRef(0)
+
+  const isCurrentAnalysisRequest = useCallback((requestId: number, controller: AbortController) => (
+    mountedRef.current && !controller.signal.aborted && analysisRequestIdRef.current === requestId
+  ), [])
 
   const successfulAttachmentIds = useMemo(
     () => [...new Set([
@@ -308,6 +313,7 @@ export function OwnerSubmitAiPanel({
     return () => {
       cancelled = true
       mountedRef.current = false
+      analysisRequestIdRef.current += 1
       uploadControllerRef.current?.abort()
       analysisControllerRef.current?.abort()
       clearPolling()
@@ -415,6 +421,7 @@ export function OwnerSubmitAiPanel({
     setPanelState('uploading')
     const controller = new AbortController()
     const analysisController = new AbortController()
+    const requestId = ++analysisRequestIdRef.current
     uploadControllerRef.current = controller
     analysisControllerRef.current = analysisController
     const uploadedIds = [...successfulAttachmentIds]
@@ -430,21 +437,22 @@ export function OwnerSubmitAiPanel({
         }
       }
       if (uploadedIds.length === 0) {
+        if (!isCurrentAnalysisRequest(requestId, analysisController)) return
         setPanelState('failed')
         setError('没有可用于分析的已上传文件')
         return
       }
-      const nextRun = await createInitAnalysisRun(projectId, uploadedIds, currentDraft)
-      if (analysisController.signal.aborted || !mountedRef.current) return
+      if (!isCurrentAnalysisRequest(requestId, analysisController)) return
+      const nextRun = await createInitAnalysisRun(projectId, uploadedIds, currentDraft, analysisController.signal)
+      if (!isCurrentAnalysisRequest(requestId, analysisController)) return
       updateRun(nextRun)
     } catch (nextError) {
-      if (isAbortError(nextError)) {
-        if (mountedRef.current) {
-          setPanelState('idle')
-          setError('operation cancelled; you can try again')
-        }
+      if (isAbortError(nextError) || !isCurrentAnalysisRequest(requestId, analysisController)) {
+        if (!isCurrentAnalysisRequest(requestId, analysisController)) return
+        setPanelState('idle')
+        setError('operation cancelled; you can try again')
         clearPolling()
-      } else if (mountedRef.current) {
+      } else {
         setError(errorMessage(nextError))
         setPanelState('failed')
       }
@@ -459,12 +467,13 @@ export function OwnerSubmitAiPanel({
     setError('')
     setPanelState('analyzing')
     const controller = new AbortController()
+    const requestId = ++analysisRequestIdRef.current
     analysisControllerRef.current = controller
     try {
-      const nextRun = await retryInitAnalysisRun(projectId, run.id)
-      if (!controller.signal.aborted && mountedRef.current) updateRun(nextRun)
+      const nextRun = await retryInitAnalysisRun(projectId, run.id, controller.signal)
+      if (isCurrentAnalysisRequest(requestId, controller)) updateRun(nextRun)
     } catch (nextError) {
-      if (mountedRef.current && !isAbortError(nextError)) {
+      if (isCurrentAnalysisRequest(requestId, controller) && !isAbortError(nextError)) {
         setError(errorMessage(nextError))
         setPanelState('failed')
       }
@@ -532,6 +541,7 @@ export function OwnerSubmitAiPanel({
   }
 
   function handleClose() {
+    analysisRequestIdRef.current += 1
     uploadControllerRef.current?.abort()
     analysisControllerRef.current?.abort()
     clearPolling()

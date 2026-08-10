@@ -24,6 +24,18 @@ test('panel protects asynchronous work and supports per-file recovery', () => {
   assert.match(source, /setPanelState\('idle'\)/)
 })
 
+test('panel aborts analysis requests on close and ignores late results', () => {
+  assert.match(source, /analysisRequestIdRef/)
+  assert.match(source, /createInitAnalysisRun\(projectId, uploadedIds, currentDraft, analysisController\.signal\)/)
+  assert.match(source, /retryInitAnalysisRun\(projectId, run\.id, controller\.signal\)/)
+  assert.match(source, /analysisRequestIdRef\.current === requestId/)
+  assert.match(source, /!controller\.signal\.aborted && analysisRequestIdRef\.current === requestId/)
+  assert.match(source, /analysisRequestIdRef\.current \+= 1/)
+  assert.match(source, /function handleClose\(\)[\s\S]*analysisControllerRef\.current\?\.abort\(\)/)
+  assert.match(source, /isAbortError\(nextError\) \|\| !isCurrentAnalysisRequest\(requestId, analysisController\)/)
+  assert.match(source, /isCurrentAnalysisRequest\(requestId, controller\) && !isAbortError\(nextError\)/)
+})
+
 test('panel exposes attachment actions, complete warnings, partial file results, and awaited apply errors', () => {
   assert.match(source, /downloadInitAttachmentUrl\(projectId, attachment\.id\)/)
   assert.match(source, /deleteInitAttachment\(projectId, item\.attachment\.id\)/)

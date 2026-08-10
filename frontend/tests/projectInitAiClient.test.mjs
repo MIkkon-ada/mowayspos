@@ -71,10 +71,12 @@ class FakeXHR {
 
 const originalXHR = globalThis.XMLHttpRequest
 const originalClient = globalThis.__projectInitFakeClient
+const originalFetch = globalThis.fetch
 
 test.after(() => {
   globalThis.XMLHttpRequest = originalXHR
   globalThis.__projectInitFakeClient = originalClient
+  globalThis.fetch = originalFetch
 })
 
 test('upload client reports progress and decodes a valid attachment through fake XHR', async () => {
@@ -257,4 +259,43 @@ test('analysis creation sends the typed current_draft snapshot and deduplicated 
   }]
   await api.createInitAnalysisRun(7, [8, 8], currentDraft)
   assert.deepEqual(requestBody, { attachment_ids: [8], current_draft: currentDraft })
+})
+
+test('analysis creation and retry forward AbortSignal to fetch', async () => {
+  const calls = []
+  const responseRun = {
+    id: 9,
+    project_id: 7,
+    attachment_ids: [8],
+    status: 'queued',
+    stage: 'reading',
+    progress: 0,
+    error_message: '',
+    draft: [],
+    result_metadata: {},
+    created_at: null,
+    started_at: null,
+    finished_at: null,
+    applied_at: null,
+  }
+  globalThis.fetch = async (path, options) => {
+    calls.push({ path, options })
+    return {
+      ok: true,
+      status: 201,
+      text: async () => JSON.stringify(responseRun),
+    }
+  }
+  globalThis.__projectInitFakeClient = {
+    get: async () => ({}),
+    post: async () => responseRun,
+    delete: async () => ({}),
+  }
+  const api = await loadApi()
+  const controller = new AbortController()
+  await api.createInitAnalysisRun(7, [8], [], controller.signal)
+  await api.retryInitAnalysisRun(7, 9, controller.signal)
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0].options.signal, controller.signal)
+  assert.equal(calls[1].options.signal, controller.signal)
 })

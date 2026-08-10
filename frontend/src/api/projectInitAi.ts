@@ -452,8 +452,32 @@ async function projectJson<T>(request: () => Promise<unknown>, decode: (value: u
   try {
     return decode(await request())
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error
     throw toProjectInitError(error)
   }
+}
+
+async function apiPostWithSignal(path: string, body: unknown, signal: AbortSignal): Promise<unknown> {
+  const response = await fetch(path, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  })
+  const text = await response.text()
+  let parsed: unknown = null
+  if (text) {
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      parsed = text
+    }
+  }
+  if (!response.ok) {
+    throw new ProjectInitApiError(response.status, errorDetail(parsed, `request failed: ${response.status}`), parsed, 'HTTP_ERROR')
+  }
+  return parsed
 }
 
 export function listInitAttachments(projectId: number): Promise<ProjectInitAttachment[]> {
@@ -575,11 +599,17 @@ export function createInitAnalysisRun(
   projectId: number,
   attachmentIds: number[],
   currentDraft: ProjectInitCurrentDraft = [],
+  signal?: AbortSignal,
 ): Promise<ProjectInitAnalysisRun> {
   positiveId(projectId, 'projectId')
   const uniqueAttachmentIds = [...new Set(attachmentIds.map((id) => positiveId(id, 'attachmentId')))]
   return projectJson(
-    () => apiPost<unknown>(projectPath(projectId, '/init-analysis-runs'), {
+    () => signal
+      ? apiPostWithSignal(projectPath(projectId, '/init-analysis-runs'), {
+        attachment_ids: uniqueAttachmentIds,
+        current_draft: currentDraft,
+      }, signal)
+      : apiPost<unknown>(projectPath(projectId, '/init-analysis-runs'), {
       attachment_ids: uniqueAttachmentIds,
       current_draft: currentDraft,
     }),
@@ -598,10 +628,11 @@ export function getInitAnalysisRun(projectId: number, runId: number): Promise<Pr
   return projectJson(() => apiGet<unknown>(projectPath(projectId, `/init-analysis-runs/${positiveId(runId, 'runId')}`)), decodeRun)
 }
 
-export function retryInitAnalysisRun(projectId: number, runId: number): Promise<ProjectInitAnalysisRun> {
+export function retryInitAnalysisRun(projectId: number, runId: number, signal?: AbortSignal): Promise<ProjectInitAnalysisRun> {
   positiveId(projectId, 'projectId')
   positiveId(runId, 'runId')
-  return projectJson(() => apiPost<unknown>(projectPath(projectId, `/init-analysis-runs/${positiveId(runId, 'runId')}/retry`), {}), decodeRun)
+  const path = projectPath(projectId, `/init-analysis-runs/${positiveId(runId, 'runId')}/retry`)
+  return projectJson(() => signal ? apiPostWithSignal(path, {}, signal) : apiPost<unknown>(path, {}), decodeRun)
 }
 
 export function applyInitAnalysisRun(projectId: number, runId: number): Promise<ProjectInitAnalysisRun> {

@@ -9,6 +9,7 @@ import zipfile
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time
+from itertools import tee
 from pathlib import Path
 from typing import Any
 
@@ -370,7 +371,7 @@ def _docx_table_chunk(
 
 
 def _parse_xls(path: Path, original_name: str) -> Iterable[SourceChunk]:
-    workbook = xlrd.open_workbook(str(path))
+    workbook = xlrd.open_workbook(str(path), on_demand=True)
     try:
         sheets = workbook.sheets()
         if len(sheets) > MAX_WORKSHEETS:
@@ -406,7 +407,13 @@ def _parse_xls(path: Path, original_name: str) -> Iterable[SourceChunk]:
 
 def _parse_xlsx(path: Path, original_name: str) -> Iterable[SourceChunk]:
     cached_workbook = load_workbook(path, read_only=True, data_only=True)
-    formula_workbook = load_workbook(path, read_only=True, data_only=False)
+    try:
+        formula_workbook = load_workbook(path, read_only=True, data_only=False)
+    except BaseException:
+        try:
+            cached_workbook.close()
+        finally:
+            raise
     try:
         if len(formula_workbook.worksheets) > MAX_WORKSHEETS:
             raise ProjectInitFileParseError(f"工作表数量超过限制：{original_name}")
@@ -454,8 +461,10 @@ def _parse_xlsx(path: Path, original_name: str) -> Iterable[SourceChunk]:
             if chunk is not None:
                 yield chunk
     finally:
-        cached_workbook.close()
-        formula_workbook.close()
+        try:
+            formula_workbook.close()
+        finally:
+            cached_workbook.close()
 
 
 def _validate_worksheet_dimensions(
@@ -580,7 +589,12 @@ def _worksheet_chunk(
     original_name: str,
     limits: _IncrementalChunkLimits | None = None,
 ) -> SourceChunk | None:
-    row_factory = rows if callable(rows) else lambda: rows
+    if callable(rows):
+        row_factory = rows
+    else:
+        first_pass, second_pass = tee(rows)
+        passes = iter((first_pass, second_pass))
+        row_factory = lambda: next(passes)
     limits = limits or _IncrementalChunkLimits(original_name)
     min_row = max_row = min_column = max_column = None
     worksheet_chars = 0

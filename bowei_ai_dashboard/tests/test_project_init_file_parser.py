@@ -114,7 +114,7 @@ def test_ooxml_zip_metadata_limits_are_enforced(
         parse_project_init_file(path, "unsafe.docx")
 
 
-def test_oversized_xls_stops_reading_before_all_cells_are_materialized(
+def test_oversized_xls_opens_on_demand_and_releases_resources(
     tmp_path,
     monkeypatch,
 ):
@@ -122,6 +122,8 @@ def test_oversized_xls_stops_reading_before_all_cells_are_materialized(
     path.write_bytes(b"xls-placeholder")
     monkeypatch.setattr(parser, "MAX_EXTRACTED_CHARS", 1)
     seen_cells = []
+    open_calls = []
+    released = []
 
     class FakeSheet:
         name = "Oversized"
@@ -143,14 +145,20 @@ def test_oversized_xls_stops_reading_before_all_cells_are_materialized(
             return [FakeSheet()]
 
         def release_resources(self):
-            pass
+            released.append(True)
 
-    monkeypatch.setattr(parser.xlrd, "open_workbook", lambda _filename: FakeBook())
+    def fake_open_workbook(_filename, **kwargs):
+        open_calls.append(kwargs)
+        return FakeBook()
+
+    monkeypatch.setattr(parser.xlrd, "open_workbook", fake_open_workbook)
 
     with pytest.raises(ProjectInitFileParseError, match="oversized\\.xls"):
         parse_project_init_file(path, "oversized.xls")
 
     assert len(seen_cells) < 200
+    assert open_calls == [{"on_demand": True}]
+    assert released == [True]
 
 
 def test_pdf_page_limit_is_enforced(tmp_path, monkeypatch):
@@ -462,6 +470,84 @@ def test_oversized_xlsx_stops_iterating_before_all_rows_are_materialized(
     assert len(seen_rows) < 200
 
 
+def test_xlsx_closes_cached_workbook_when_formula_load_fails(tmp_path, monkeypatch):
+    path = tmp_path / "broken-second-load.xlsx"
+    workbook = Workbook()
+    workbook.save(path)
+    close_calls = []
+    load_calls = 0
+
+    class FakeWorkbook:
+        worksheets = []
+
+        def close(self):
+            close_calls.append("cached")
+
+    def fake_load_workbook(*_args, **_kwargs):
+        nonlocal load_calls
+        load_calls += 1
+        if load_calls == 1:
+            return FakeWorkbook()
+        raise RuntimeError("formula workbook load failed")
+
+    monkeypatch.setattr(parser, "load_workbook", fake_load_workbook)
+
+    with pytest.raises(ProjectInitFileParseError, match="broken-second-load\\.xlsx"):
+        parse_project_init_file(path, "broken-second-load.xlsx")
+
+    assert close_calls == ["cached"]
+
+
+@pytest.mark.parametrize("failing_workbook", ["cached", "formula"])
+def test_xlsx_closes_both_workbooks_when_one_close_fails(
+    tmp_path,
+    monkeypatch,
+    failing_workbook,
+):
+    path = tmp_path / "close-failure.xlsx"
+    workbook = Workbook()
+    workbook.save(path)
+    close_calls = []
+
+    class FakeWorkbook:
+        worksheets = []
+
+        def __init__(self, name):
+            self.name = name
+
+        def close(self):
+            close_calls.append(self.name)
+            if self.name == failing_workbook:
+                raise RuntimeError(f"{self.name} close failed")
+
+    workbooks = iter([FakeWorkbook("cached"), FakeWorkbook("formula")])
+    monkeypatch.setattr(
+        parser,
+        "load_workbook",
+        lambda *_args, **_kwargs: next(workbooks),
+    )
+
+    with pytest.raises(ProjectInitFileParseError, match="close-failure\\.xlsx"):
+        parse_project_init_file(path, "close-failure.xlsx")
+
+    assert set(close_calls) == {"formula", "cached"}
+
+
+def test_worksheet_chunk_supports_one_shot_rows_iterables():
+    rows = iter(
+        [
+            [None, "value", "other"],
+            [None, None, "last"],
+        ]
+    )
+
+    assert parser._worksheet_chunk("Sheet", rows, "plan.xlsx") == SourceChunk(
+        "plan.xlsx",
+        "'Sheet'!B1:C2",
+        "value\tother\n\tlast",
+    )
+
+
 def test_xls_uses_sheet_name_and_actual_non_empty_range(tmp_path, monkeypatch):
     path = tmp_path / "legacy.xls"
     path.write_bytes(b"xls-placeholder")
@@ -494,7 +580,11 @@ def test_xls_uses_sheet_name_and_actual_non_empty_range(tmp_path, monkeypatch):
         def release_resources(self):
             pass
 
-    monkeypatch.setattr(parser.xlrd, "open_workbook", lambda filename: FakeBook())
+    monkeypatch.setattr(
+        parser.xlrd,
+        "open_workbook",
+        lambda filename, **kwargs: FakeBook(),
+    )
 
     assert parse_project_init_file(path, "历史计划.xls") == [
         SourceChunk("历史计划.xls", "'旧版计划'!B2:C3", "事项\t\n\t3")

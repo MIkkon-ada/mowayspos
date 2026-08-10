@@ -115,6 +115,30 @@ describe('mergeAiDraft', () => {
     expect(() => mergeAiDraft([], { tasks: [aiTask({ owner_id: 99 as any })] }, [], { knownMemberIds: [7, 8, 9] })).toThrow(/unknown member/)
   })
 
+  it('preserves validated AI owner and helper IDs when adding a new task', () => {
+    const task = aiTask({
+      owner_id: 7 as any,
+      helper_ids: [7 as any, 9 as any, 9 as any],
+      subtasks: [{
+        ...aiTask().subtasks[0],
+        assignee_id: 8 as any,
+        helper_ids: [8 as any, 9 as any, 9 as any],
+      }],
+    } as any)
+
+    const result = mergeAiDraft([], { tasks: [task] }, [], { knownMemberIds: [7, 8, 9] })
+
+    expect((result[0] as any).owner_id).toBe(7)
+    expect((result[0] as any).helper_ids).toEqual([9])
+    expect((result[0].subtasks[0] as any).assignee_id).toBe(8)
+    expect((result[0].subtasks[0] as any).helper_ids).toEqual([9])
+  })
+
+  it('rejects unknown AI owner and helper IDs before adding a new task', () => {
+    expect(() => mergeAiDraft([], { tasks: [aiTask({ owner_id: 99 as any })] }, [], { knownMemberIds: [7, 8, 9] })).toThrow(/unknown member/i)
+    expect(() => mergeAiDraft([], { tasks: [aiTask({ helper_ids: [99] as any } as any)] }, [], { knownMemberIds: [7, 8, 9] })).toThrow(/unknown member/i)
+  })
+
   it('requires an explicit decision for duplicate candidates and reports preview changes', () => {
     const draft = { tasks: [aiTask({ merge_status: 'possible_duplicate' })] }
     expect(buildAiMergePreview(currentDraft(), draft, [])).toMatchObject({ changeCount: 0 })

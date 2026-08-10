@@ -68,7 +68,9 @@ def test_owner_submit_modal_builds_work_progress_draft_submit_payload():
         "helper: subtask.helper.trim()",
         "plan_start: subtask.plan_start",
         "plan_end: subtask.plan_end",
-        "const workProgressDraft = toPayloadDraft(draftTasks)",
+        "const workProgressDraft = toSubmitDraft(currentAiDraft())",
+        "currentAiDraft",
+        "toCurrentDraft",
         "const result = await ownerSubmitProfile(project.id, {",
         "...fillForm",
         "work_progress_draft: workProgressDraft",
@@ -79,7 +81,7 @@ def test_owner_submit_modal_builds_work_progress_draft_submit_payload():
 def test_owner_submit_modal_uses_people_picker_for_key_tasks():
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
-    for expected in ["fetchPeople", "assigneeId", "helperIds", "multiple", 'type="checkbox"']:
+    for expected in ["fetchPeople", "AssigneePicker", "HelperPicker", "assigneeId", "helperIds", "helperIds.includes"]:
         assert expected in source
     assert 'placeholder="责任人"' not in source
 
@@ -102,7 +104,8 @@ def test_owner_submit_modal_requires_at_least_one_subtask_before_submit():
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
     for expected in [
-        "const workProgressDraft = toPayloadDraft(draftTasks)",
+        "const workProgressDraft = toSubmitDraft(currentAiDraft())",
+        "currentAiDraft",
         "workProgressDraft.reduce",
         "task.subtasks?.length",
         "请至少添加一个关键任务",

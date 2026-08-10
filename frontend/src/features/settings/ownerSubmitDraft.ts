@@ -201,7 +201,7 @@ function validateAiIds(task: DraftRecord, context: { taskIds: ReadonlySet<number
   }
 }
 
-function prepareTask(task: AgentTask, isNew: boolean): DraftRecord {
+function prepareTask(task: AgentTask, _isNew: boolean, memberIds?: ReadonlySet<number>): DraftRecord {
   const source = task as DraftRecord
   const result: DraftRecord = {
     title: source.title ?? '',
@@ -213,19 +213,18 @@ function prepareTask(task: AgentTask, isNew: boolean): DraftRecord {
     subtasks: [],
     evidence: mergeEvidence([], source.evidence, source.source ?? ''),
   }
-  // A newly created task never trusts model-selected member IDs. Names remain
-  // visible so the owner can choose a person in the existing picker.
-  if (!isNew && !hasBlockingPersonWarning(source)) {
-    const ownerId = readOptionalId(source, ['owner_id', 'ownerId'], 'task member')
+  if (!hasBlockingPersonWarning(source)) {
+    const ownerId = readOptionalId(source, ['owner_id', 'ownerId'], 'task member', memberIds)
     if (ownerId !== null) result.owner_id = ownerId
     if (Object.prototype.hasOwnProperty.call(source, 'helper_ids') || Object.prototype.hasOwnProperty.call(source, 'helperIds')) {
-      result.helper_ids = readHelperIds(source, 'task helper').filter((id) => id !== ownerId)
+      result.helper_ids = readHelperIds(source, 'task helper', memberIds).filter((id) => id !== ownerId)
     }
+    normaliseOwnerHelpers(result, ownerId, 'task helper', memberIds)
   }
   return result
 }
 
-function prepareSubtask(subtask: AgentSubTask, isNew: boolean): DraftRecord {
+function prepareSubtask(subtask: AgentSubTask, _isNew: boolean, memberIds?: ReadonlySet<number>, allowPersonBinding = true): DraftRecord {
   const source = subtask as DraftRecord
   const result: DraftRecord = {
     title: source.title ?? '',
@@ -238,10 +237,11 @@ function prepareSubtask(subtask: AgentSubTask, isNew: boolean): DraftRecord {
     plan_end: source.plan_end ?? '',
     evidence: mergeEvidence([], source.evidence, source.source ?? ''),
   }
-  if (!isNew && !hasBlockingPersonWarning(source)) {
-    const assigneeId = readOptionalId(source, ['assignee_id', 'assigneeId', 'owner_id', 'ownerId'], 'subtask member')
+  if (allowPersonBinding && !hasBlockingPersonWarning(source)) {
+    const assigneeId = readOptionalId(source, ['assignee_id', 'assigneeId', 'owner_id', 'ownerId'], 'subtask member', memberIds)
     if (assigneeId !== null) result.assignee_id = assigneeId
-    result.helper_ids = readHelperIds(source, 'subtask helper').filter((id) => id !== assigneeId)
+    result.helper_ids = readHelperIds(source, 'subtask helper', memberIds).filter((id) => id !== assigneeId)
+    normaliseOwnerHelpers(result, assigneeId, 'subtask helper', memberIds)
   }
   return result
 }
@@ -268,11 +268,11 @@ function findSubtaskIndex(current: DraftRecord[], subtask: DraftRecord, duplicat
   return current.findIndex((item) => normaliseTitle(item.title) === title && title !== '')
 }
 
-function applyTaskSupplement(target: DraftRecord, source: DraftRecord): void {
+function applyTaskSupplement(target: DraftRecord, source: DraftRecord, memberIds?: ReadonlySet<number>): void {
   mergeEmptyFields(target, source, ['description', 'owner', 'helper', 'plan_start', 'plan_end', 'status', 'priority'])
-  const ownerId = readOptionalId(target, ['owner_id', 'ownerId'], 'task member') ?? readOptionalId(source, ['owner_id', 'ownerId'], 'task member')
+  const ownerId = readOptionalId(target, ['owner_id', 'ownerId'], 'task member', memberIds) ?? readOptionalId(source, ['owner_id', 'ownerId'], 'task member', memberIds)
   if (ownerId !== null && isBlank(readFirst(target, ['owner_id', 'ownerId']))) target.owner_id = ownerId
-  const mergedHelpers = [...readHelperIds(target, 'task helper'), ...readHelperIds(source, 'task helper')]
+  const mergedHelpers = [...readHelperIds(target, 'task helper', memberIds), ...readHelperIds(source, 'task helper', memberIds)]
   if (mergedHelpers.length > 0 || Object.prototype.hasOwnProperty.call(target, 'helper_ids') || Object.prototype.hasOwnProperty.call(source, 'helper_ids')) {
     target.helper_ids = [...new Set(mergedHelpers)].filter((id) => id !== ownerId)
   }
@@ -280,12 +280,12 @@ function applyTaskSupplement(target: DraftRecord, source: DraftRecord): void {
   target.evidence = mergeEvidence(target.evidence, source.evidence, source.source ?? '')
 }
 
-function applySubtaskSupplement(target: DraftRecord, source: DraftRecord): void {
+function applySubtaskSupplement(target: DraftRecord, source: DraftRecord, memberIds?: ReadonlySet<number>): void {
   mergeEmptyFields(target, source, ['evaluation_standard', 'assignee', 'helper', 'plan_start', 'plan_end', 'status', 'priority'])
-  const ownerId = readOptionalId(target, ['assignee_id', 'assigneeId', 'owner_id', 'ownerId'], 'subtask member') ?? readOptionalId(source, ['assignee_id', 'assigneeId', 'owner_id', 'ownerId'], 'subtask member')
+  const ownerId = readOptionalId(target, ['assignee_id', 'assigneeId', 'owner_id', 'ownerId'], 'subtask member', memberIds) ?? readOptionalId(source, ['assignee_id', 'assigneeId', 'owner_id', 'ownerId'], 'subtask member', memberIds)
   if (ownerId !== null && isBlank(readFirst(target, ['assignee_id', 'assigneeId', 'owner_id', 'ownerId']))) target.assignee_id = ownerId
-  const currentHelpers = readHelperIds(target, 'subtask helper')
-  const incomingHelpers = readHelperIds(source, 'subtask helper')
+  const currentHelpers = readHelperIds(target, 'subtask helper', memberIds)
+  const incomingHelpers = readHelperIds(source, 'subtask helper', memberIds)
   if (currentHelpers.length > 0 || incomingHelpers.length > 0 || Object.prototype.hasOwnProperty.call(target, 'helper_ids')) {
     target.helper_ids = [...new Set([...currentHelpers, ...incomingHelpers])].filter((id) => id !== ownerId)
   }
@@ -293,9 +293,10 @@ function applySubtaskSupplement(target: DraftRecord, source: DraftRecord): void 
   target.evidence = mergeEvidence(target.evidence, source.evidence, source.source ?? '')
 }
 
-function addSubtasks(target: DraftRecord, task: AgentTask, actionMap: Map<string, OwnerSubmitAiDecisionAction>, taskIndex: number, isNewTask: boolean): void {
+function addSubtasks(target: DraftRecord, task: AgentTask, actionMap: Map<string, OwnerSubmitAiDecisionAction>, taskIndex: number, isNewTask: boolean, memberIds?: ReadonlySet<number>): void {
   const existing = Array.isArray(target.subtasks) ? target.subtasks : []
   const next = [...existing]
+  const allowPersonBinding = !hasBlockingPersonWarning(task as DraftRecord)
   task.subtasks.forEach((subtask, subtaskIndex) => {
     const source = subtask as DraftRecord
     const key = `task-${taskIndex}-subtask-${subtaskIndex}`
@@ -307,11 +308,11 @@ function addSubtasks(target: DraftRecord, task: AgentTask, actionMap: Map<string
       const duplicateOf = readOptionalId(source, ['duplicate_of', 'duplicateOf'], `${key} duplicate_of`)
       const existingIndex = findSubtaskIndex(next, source, duplicateOf)
       if (existingIndex < 0) throw new Error(`${key}: supplement target subtask was not found`)
-      applySubtaskSupplement(next[existingIndex], prepareSubtask(subtask, false))
+      applySubtaskSupplement(next[existingIndex], prepareSubtask(subtask, false, memberIds, allowPersonBinding), memberIds)
       return
     }
     if (duplicate && action !== 'new') throw new Error(`${key}: invalid subtask decision`)
-    next.push(prepareSubtask(subtask, isNewTask))
+    next.push(prepareSubtask(subtask, isNewTask, memberIds, allowPersonBinding))
   })
   target.subtasks = next
 }
@@ -350,13 +351,13 @@ export function mergeAiDraft(
     if (action === 'supplement') {
       if (existingIndex < 0) throw new Error(`task ${taskIndex}: supplement target task was not found`)
       const target = result[existingIndex]
-      applyTaskSupplement(target, prepareTask(task, false))
-      addSubtasks(target, task, actionMap, taskIndex, false)
+      applyTaskSupplement(target, prepareTask(task, false, ids.memberIds), ids.memberIds)
+      addSubtasks(target, task, actionMap, taskIndex, false, ids.memberIds)
       return
     }
     if (!duplicate || action === 'new') {
-      const prepared = prepareTask(task, true)
-      addSubtasks(prepared, task, actionMap, taskIndex, true)
+      const prepared = prepareTask(task, true, ids.memberIds)
+      addSubtasks(prepared, task, actionMap, taskIndex, true, ids.memberIds)
       result.push(prepared)
     }
   })

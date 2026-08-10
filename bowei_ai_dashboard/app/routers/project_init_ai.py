@@ -90,6 +90,20 @@ def _authorize_edit(project_id: int, current_user: str, db: Session) -> models.P
     return project
 
 
+def _authorize_analysis_audit(project_id: int, current_user: str, db: Session) -> models.Project:
+    """Authorize analysis reads/audit without requiring an editable lifecycle.
+
+    Applying an analysis result only records ``applied_at`` on the analysis
+    run.  It deliberately does not mutate the project, task, or member tables,
+    so a successful owner submission in ``pending_review`` must remain
+    auditable while upload/create/retry/delete operations continue using
+    ``_authorize_edit``.
+    """
+    project = _get_project(project_id, db)
+    require_project_manager(current_user, project_id, db)
+    return project
+
+
 def _lock_editable_project(project_id: int, current_user: str, db: Session) -> models.Project:
     project = (
         db.query(models.Project)
@@ -597,8 +611,7 @@ def latest_project_init_analysis_run(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    require_project_manager(current_user, project_id, db)
-    _get_project(project_id, db)
+    _authorize_analysis_audit(project_id, current_user, db)
     recover_stale_runs(db, project_id)
     run = (
         db.query(models.ProjectInitAnalysisRun)
@@ -618,8 +631,7 @@ def get_project_init_analysis_run(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    require_project_manager(current_user, project_id, db)
-    _get_project(project_id, db)
+    _authorize_analysis_audit(project_id, current_user, db)
     recover_stale_runs(db, project_id)
     return _analysis_run_response(_get_analysis_run(project_id, run_id, db))
 
@@ -647,7 +659,7 @@ def apply_project_init_analysis_run(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    _authorize_edit(project_id, current_user, db)
+    _authorize_analysis_audit(project_id, current_user, db)
     run = _get_analysis_run(project_id, run_id, db)
     if run.status not in {"completed", "partial_failed"}:
         raise HTTPException(status_code=409, detail=f"analysis run status {run.status} cannot be applied")

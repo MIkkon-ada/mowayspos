@@ -325,6 +325,145 @@ def test_apply_only_records_audit_without_business_mutation():
     assert db.get(models.ProjectInitAnalysisRun, run_id).applied_at is not None
 
 
+def test_apply_after_owner_submit_pending_review_records_audit_without_business_mutation():
+    from app.routers import project_init_ai, projects
+
+    db = make_session()
+    project, owner = add_project_graph(db)
+    db.add(models.Account(username="owner", password_hash="x", person_id=owner.id, status="active"))
+    db.commit()
+
+    submit_payload = schemas.ProjectProfilePayload(
+        background="Submitted background",
+        work_progress_draft=[
+            schemas.ProjectWorkProgressTaskDraft(
+                title="Submitted task",
+                subtasks=[
+                    schemas.ProjectWorkProgressSubTaskDraft(
+                        title="Submitted subtask",
+                        assignee_id=owner.id,
+                    )
+                ],
+            )
+        ],
+    )
+    submitted = projects.owner_submit_project_profile(
+        project.id,
+        submit_payload,
+        current_user="owner",
+        db=db,
+    )
+    assert submitted["submitted_for_review"] is True
+    assert db.get(models.Project, project.id).status == "pending_review"
+
+    task_rows_before = [
+        (row.id, row.key_task, row.completion_standard, row.owner, row.edit_count)
+        for row in db.query(models.Task).filter(models.Task.project_id == project.id).all()
+    ]
+    subtask_rows_before = [
+        (row.id, row.task_id, row.title, row.assignee_id)
+        for row in db.query(models.SubTask)
+        .join(models.Task, models.SubTask.task_id == models.Task.id)
+        .filter(models.Task.project_id == project.id)
+        .all()
+    ]
+    run = models.ProjectInitAnalysisRun(
+        project_id=project.id,
+        created_by="owner",
+        status="completed",
+        result_json='{"tasks": [{"title": "AI suggestion"}]}',
+    )
+    db.add(run)
+    db.commit()
+
+    response = project_init_ai.apply_project_init_analysis_run(
+        project.id,
+        run.id,
+        current_user="owner",
+        db=db,
+    )
+
+    assert response["applied_at"] is not None
+    assert db.get(models.Project, project.id).status == "pending_review"
+    assert [
+        (row.id, row.key_task, row.completion_standard, row.owner, row.edit_count)
+        for row in db.query(models.Task).filter(models.Task.project_id == project.id).all()
+    ] == task_rows_before
+    assert [
+        (row.id, row.task_id, row.title, row.assignee_id)
+        for row in db.query(models.SubTask)
+        .join(models.Task, models.SubTask.task_id == models.Task.id)
+        .filter(models.Task.project_id == project.id)
+        .all()
+    ] == subtask_rows_before
+
+    latest = project_init_ai.latest_project_init_analysis_run(
+        project.id,
+        current_user="owner",
+        db=db,
+    )
+    fetched = project_init_ai.get_project_init_analysis_run(
+        project.id,
+        run.id,
+        current_user="owner",
+        db=db,
+    )
+    assert latest["id"] == run.id
+    assert fetched["applied_at"] == response["applied_at"]
+
+
+def test_apply_pending_review_denies_ordinary_member_with_403():
+    from app.routers import project_init_ai
+
+    db = make_session()
+    project, owner = add_project_graph(db)
+    member = models.Person(id=20, name="Ordinary Member", is_active=True)
+    db.add_all(
+        [
+            member,
+            models.ProjectMember(project_id=project.id, person_id=member.id, role="member"),
+            models.Account(username="owner", password_hash="x", person_id=owner.id, status="active"),
+            models.Account(username="member", password_hash="x", person_id=member.id, status="active"),
+        ]
+    )
+    project.status = "pending_review"
+    run = models.ProjectInitAnalysisRun(project_id=project.id, created_by="owner", status="completed")
+    db.add(run)
+    db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        project_init_ai.apply_project_init_analysis_run(
+            project.id,
+            run.id,
+            current_user="member",
+            db=db,
+        )
+    assert error.value.status_code == 403
+
+
+@pytest.mark.parametrize("status", ["queued", "processing", "failed"])
+def test_apply_pending_review_rejects_non_terminal_runs(status):
+    from app.routers import project_init_ai
+
+    db = make_session()
+    project, owner = add_project_graph(db)
+    db.add(models.Account(username="owner", password_hash="x", person_id=owner.id, status="active"))
+    project.status = "pending_review"
+    run = models.ProjectInitAnalysisRun(project_id=project.id, created_by="owner", status=status)
+    db.add(run)
+    db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        project_init_ai.apply_project_init_analysis_run(
+            project.id,
+            run.id,
+            current_user="owner",
+            db=db,
+        )
+    assert error.value.status_code == 409
+    assert error.value.detail == f"analysis run status {status} cannot be applied"
+
+
 def test_atomic_worker_claim_and_stale_lease_cannot_be_revived(tmp_path):
     from app.services import project_init_analysis as service
 

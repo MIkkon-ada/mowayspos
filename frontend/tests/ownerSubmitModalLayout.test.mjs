@@ -20,3 +20,13 @@ test('helper picker keeps multi-select behavior while using the assignee picker 
   assert.match(source, /helperIds\.includes\(/)
   assert.match(source, /onChange=\{\(personId\) => toggleSubTaskHelper\(/)
 })
+
+test('picker scrolling does not close the option list', () => {
+  assert.match(source, /menuRef/)
+  assert.match(source, /menuRef\.current\?\.contains\(event\.target as Node\)/)
+})
+
+test('notes column has a bounded share of the task table', () => {
+  assert.match(source, /table-fixed/)
+  assert.match(source, /w-\[180px\][^\n]*备注 \/ 标准/)
+})

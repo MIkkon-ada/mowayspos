@@ -145,6 +145,7 @@ function AssigneePicker({
   const [query, setQuery] = useState('')
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null)
   const anchorRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
   const selected = people.find((person) => person.id === value)
   const filtered = people.filter((person) => {
     const haystack = `${person.name} ${person.department ?? ''}`.toLowerCase()
@@ -153,7 +154,10 @@ function AssigneePicker({
 
   useEffect(() => {
     if (!open) return undefined
-    const closeMenu = () => setOpen(false)
+    const closeMenu = (event: Event) => {
+      if (menuRef.current?.contains(event.target as Node)) return
+      setOpen(false)
+    }
     window.addEventListener('scroll', closeMenu, true)
     window.addEventListener('resize', closeMenu)
     return () => {
@@ -189,6 +193,7 @@ function AssigneePicker({
       </button>
       {open && menuPosition && createPortal(
         <div
+          ref={menuRef}
           className="fixed z-[100] overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]"
           style={{ top: menuPosition.top, left: menuPosition.left, width: menuPosition.width }}
           role="listbox"
@@ -245,6 +250,7 @@ function HelperPicker({
   const [query, setQuery] = useState('')
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null)
   const anchorRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
   const selectedPeople = people.filter((person) => value.includes(person.id))
   const filtered = people.filter((person) => {
     if (person.id === excludedId) return false
@@ -254,7 +260,10 @@ function HelperPicker({
 
   useEffect(() => {
     if (!open) return undefined
-    const closeMenu = () => setOpen(false)
+    const closeMenu = (event: Event) => {
+      if (menuRef.current?.contains(event.target as Node)) return
+      setOpen(false)
+    }
     window.addEventListener('scroll', closeMenu, true)
     window.addEventListener('resize', closeMenu)
     return () => {
@@ -292,6 +301,7 @@ function HelperPicker({
       </button>
       {open && menuPosition && createPortal(
         <div
+          ref={menuRef}
           className="fixed z-[100] overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]"
           style={{ top: menuPosition.top, left: menuPosition.left, width: menuPosition.width }}
           role="listbox"
@@ -734,14 +744,14 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                     </div>
 
                     <div className="overflow-x-auto px-3 pb-1">
-                      <table className="owner-submit-subtask-table min-w-[920px] w-full border-separate border-spacing-0 text-left text-sm">
+                          <table className="owner-submit-subtask-table table-fixed min-w-[860px] w-full border-separate border-spacing-0 text-left text-sm">
                         <thead>
                           <tr className="border-b border-slate-200 bg-white text-[11px] font-bold tracking-wide text-slate-500">
-                            <th className="w-[250px] py-2 pl-6 pr-3">关键任务</th>
-                            <th className="w-[100px] px-3 py-2">责任人</th>
-                            <th className="w-[100px] px-3 py-2">协助人</th>
-                            <th className="w-[160px] px-3 py-2">时间段</th>
-                            <th className="px-3 py-2">备注 / 标准</th>
+                            <th className="w-[220px] py-2 pl-6 pr-3">关键任务</th>
+                            <th className="w-[120px] px-3 py-2">责任人</th>
+                            <th className="w-[120px] px-3 py-2">协助人</th>
+                            <th className="w-[140px] px-3 py-2">时间段</th>
+                            <th className="w-[180px] px-3 py-2">备注 / 标准</th>
                             <th className="w-[60px] px-3 py-2">操作</th>
                           </tr>
                         </thead>
@@ -781,12 +791,12 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                                   className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
                                 />
                               </td>
-                              <td className="px-3 py-3">
-                                <input
-                                  value={subtask.evaluation_standard}
-                                  onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'evaluation_standard', e.target.value)}
-                                  placeholder="补充说明，可选"
-                                  className="w-full border-none p-0 bg-transparent text-sm text-slate-600 placeholder:text-slate-300 focus:ring-0"
+                                  <td className="w-[180px] max-w-[180px] px-3 py-3">
+                                    <input
+                                      value={subtask.evaluation_standard}
+                                      onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'evaluation_standard', e.target.value)}
+                                      placeholder="补充说明，可选"
+                                      className="w-full max-w-[180px] truncate border-none bg-transparent p-0 text-sm text-slate-600 placeholder:text-slate-300 focus:ring-0"
                                 />
                               </td>
                               <td className="px-3 py-3 text-right">

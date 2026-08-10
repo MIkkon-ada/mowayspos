@@ -1,7 +1,7 @@
 """add execution schedules
 
 Revision ID: b8d1e4c6a739
-Revises: a7d9c3e5f102
+Revises: d2e3f4a5b6c7
 Create Date: 2026-08-10
 """
 
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "b8d1e4c6a739"
-down_revision = "a7d9c3e5f102"
+down_revision = "d2e3f4a5b6c7"
 branch_labels = None
 depends_on = None
 

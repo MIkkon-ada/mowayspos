@@ -56,7 +56,7 @@ __table_args__ = (
     UniqueConstraint("schedule_id", "reminder_kind", "due_on", "recipient_id", name="uq_execution_schedule_reminder"),
 )
 ```
-Alembic migration 使用 `revision = "b8d1e4c6a739"`、`down_revision = "a7d9c3e5f102"`，并用 `op.create_table` 创建两表和全部外键/索引，`downgrade` 反向删除。不要修改 `subtasks` 的既有字段。
+Alembic migration 使用 `revision = "b8d1e4c6a739"`、`down_revision = "d2e3f4a5b6c7"`，接在当前唯一主链 head 后，并用 `op.create_table` 创建两表和全部外键/索引，`downgrade` 反向删除。不要修改 `subtasks` 的既有字段。
 
 - [ ] **Step 4: 验证并提交**
 

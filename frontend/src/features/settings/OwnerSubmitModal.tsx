@@ -5,6 +5,9 @@ import { fetchPeople } from '../../api/people'
 import type { ProjectProfilePayload, ProjectWorkProgressTaskDraft } from '../../api/projects'
 import { toast } from '../../utils/toast'
 import type { Person, Project } from '../../types'
+import { OwnerSubmitAiPanel, type ProjectInitAiDecision } from './OwnerSubmitAiPanel'
+import type { ProjectInitAiDraft, ProjectInitCurrentDraft } from '../../api/projectInitAi'
+import { buildAiMergePreview, toCurrentDraft, toSubmitDraft, type OwnerSubmitAiDecision as DraftDecision, type OwnerSubmitMergePreview } from './ownerSubmitDraft'
 
 type Props = {
   project: Project
@@ -21,6 +24,7 @@ type LocalSubTaskDraft = {
   helperIds: number[]
   plan_start: string
   plan_end: string
+  evidence?: Array<{ attachment_id: number | null; file_name: string; location: string; excerpt: string; source_label?: string }>
 }
 
 type LocalTaskDraft = {
@@ -31,6 +35,7 @@ type LocalTaskDraft = {
   plan_start: string
   plan_end: string
   subtasks: LocalSubTaskDraft[]
+  evidence?: Array<{ attachment_id: number | null; file_name: string; location: string; excerpt: string; source_label?: string }>
 }
 
 type ParsedPeriod = {
@@ -369,6 +374,9 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
   const [projectPeriod, setProjectPeriod] = useState(() => composeProjectPeriod(project.start_date, project.end_date))
   const [draftTasks, setDraftTasks] = useState<LocalTaskDraft[]>([cloneEmptyTask()])
   const [fillLoading, setFillLoading] = useState(false)
+  const [showAiPanel, setShowAiPanel] = useState(false)
+  const [aiPreview, setAiPreview] = useState<OwnerSubmitMergePreview | null>(null)
+  const [aiError, setAiError] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -507,6 +515,60 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
     )
   }
 
+  function currentAiDraft(): ProjectInitCurrentDraft {
+    return toCurrentDraft(toPayloadDraft(draftTasks))
+  }
+
+  function applyMergedDraftToForm(nextDraft: ProjectInitCurrentDraft) {
+    const nextTasks = nextDraft.map((task) => {
+      const taskRecord = task as ProjectWorkProgressTaskDraft & { evidence?: unknown[] }
+      return {
+        title: taskRecord.title ?? '',
+        description: taskRecord.description ?? '',
+        owner: taskRecord.owner ?? '',
+        helper: taskRecord.helper ?? '',
+        plan_start: taskRecord.plan_start ?? '',
+        plan_end: taskRecord.plan_end ?? '',
+        evidence: Array.isArray(taskRecord.evidence) ? taskRecord.evidence as LocalTaskDraft['evidence'] : [],
+        subtasks: (taskRecord.subtasks ?? []).map((subtask) => ({
+          title: subtask.title ?? '',
+          evaluation_standard: subtask.evaluation_standard ?? '',
+          assignee: subtask.assignee ?? '',
+          assigneeId: typeof subtask.assignee_id === 'number' ? subtask.assignee_id : '',
+          helper: subtask.helper ?? '',
+          helperIds: Array.isArray(subtask.helper_ids) ? [...subtask.helper_ids] : [],
+          plan_start: subtask.plan_start ?? '',
+          plan_end: subtask.plan_end ?? '',
+          evidence: Array.isArray((subtask as typeof subtask & { evidence?: unknown[] }).evidence)
+            ? (subtask as typeof subtask & { evidence?: LocalSubTaskDraft['evidence'] }).evidence
+            : [],
+        })),
+      }
+    }).filter((task) => task.title.trim()) as LocalTaskDraft[]
+    setDraftTasks(nextTasks.length > 0 ? nextTasks : [cloneEmptyTask()])
+  }
+
+  function handleAiDraft(draft: ProjectInitAiDraft, decisions: ProjectInitAiDecision[]) {
+    try {
+      const preview = buildAiMergePreview(currentAiDraft(), draft, decisions as DraftDecision[], {
+        knownMemberIds: people.map((person) => person.id),
+      })
+      setAiPreview(preview)
+      setAiError('')
+    } catch (error: any) {
+      setAiError(error?.message || 'AI 草稿无法安全合并，请检查人员和任务 ID')
+    }
+  }
+
+  function confirmAiPreview() {
+    if (!aiPreview) return
+    applyMergedDraftToForm(aiPreview.draft)
+    setAiPreview(null)
+    setShowAiPanel(false)
+    setAiError('')
+    toast.success('AI 草稿已合并到当前表单，请继续检查后提交')
+  }
+
   async function handleSubmit() {
     if (!project?.id) return
     if (peopleLoading) {
@@ -517,7 +579,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
       toast.error(peopleError)
       return
     }
-    const workProgressDraft = toPayloadDraft(draftTasks)
+    const workProgressDraft = toSubmitDraft(currentAiDraft())
     if (workProgressDraft.length === 0) {
       toast.error('请至少新增一条重点工作')
       return
@@ -689,14 +751,54 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                     </span>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={addTaskDraft}
-                  className="flex shrink-0 items-center gap-1.5 rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-xs font-bold text-blue-700 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
-                >
-                  + 新增重点工作
-                </button>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setShowAiPanel((current) => !current); setAiError('') }}
+                    disabled={fillLoading}
+                    className="flex items-center gap-1.5 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-xs font-bold text-violet-700 shadow-sm transition-colors hover:border-violet-300 hover:bg-violet-100 disabled:opacity-50"
+                  >
+                    {showAiPanel ? '收起 AI 草稿' : 'AI 分析文件 / AI 草稿'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={addTaskDraft}
+                    className="flex items-center gap-1.5 rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-xs font-bold text-blue-700 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
+                  >
+                    + 新增重点工作
+                  </button>
+                </div>
               </div>
+
+              {showAiPanel && (
+                <div className="mb-4" data-testid="owner-submit-ai-panel">
+                  <OwnerSubmitAiPanel
+                    projectId={project.id}
+                    currentDraft={currentAiDraft()}
+                    onApplyDraft={handleAiDraft}
+                    onClose={() => setShowAiPanel(false)}
+                    disabled={fillLoading}
+                  />
+                </div>
+              )}
+
+              {aiError && <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{aiError}</div>}
+
+              {aiPreview && (
+                <section className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4" aria-label="AI 草稿合并预览" data-testid="owner-submit-ai-preview">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h4 className="text-sm font-bold text-emerald-900">请确认 AI 草稿合并</h4>
+                      <p className="mt-1 text-xs text-emerald-800">将新增 {aiPreview.addedTaskCount} 项重点工作，检测到 {aiPreview.changeCount} 项字段或结构变化；现有非空内容不会被覆盖。</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => setAiPreview(null)} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100">取消</button>
+                      <button type="button" onClick={confirmAiPreview} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700">确认合并到表单</button>
+                    </div>
+                  </div>
+                  {aiPreview.warnings.length > 0 && <div role="alert" className="mt-3 space-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><p className="font-semibold">仍有 {aiPreview.warningCount} 条待确认提示：</p>{aiPreview.warnings.slice(0, 8).map((warning) => <p key={warning}>{warning}</p>)}</div>}
+                </section>
+              )}
 
               <div>
                 {draftTasks.map((task, taskIndex) => (

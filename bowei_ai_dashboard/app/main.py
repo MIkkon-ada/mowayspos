@@ -45,6 +45,7 @@ from .routers import (
     logs,
     meetings,
     notifications,
+    execution_schedules,
     people,
     platform_settings,
     projects,
@@ -492,5 +493,6 @@ app.include_router(transcribe.router)
 app.include_router(subtasks.router)
 app.include_router(subtask_drafts.router)
 app.include_router(notifications.router)
+app.include_router(execution_schedules.router)
 app.include_router(admin.router)
 app.include_router(wecom_auth.router)

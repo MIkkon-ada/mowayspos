@@ -6,6 +6,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from app import models
+from app import schemas
+from app.routers import execution_schedules
 from app.database import Base
 
 
@@ -32,3 +34,20 @@ def test_execution_schedule_reminder_is_unique():
     ])
     with pytest.raises(IntegrityError):
         db.commit()
+
+
+def test_execution_schedule_payload_rejects_inverted_dates():
+    with pytest.raises(ValueError, match="截止日期"):
+        schemas.ExecutionSchedulePayload(
+            plan_type="week", title="访谈", start_date=date(2026, 8, 16), due_date=date(2026, 8, 12)
+        )
+
+
+def test_schedule_projection_marks_overdue_and_due_soon():
+    row = models.ExecutionSchedule(
+        id=1, subtask_id=1, plan_type="month", title="初稿",
+        start_date=date(2026, 8, 1), due_date=date(2026, 8, 11), assignee="李娜",
+    )
+    projected = execution_schedules.to_schedule_dict(row, today=date(2026, 8, 12))
+    assert projected["is_overdue"] is True
+    assert projected["is_due_soon"] is False

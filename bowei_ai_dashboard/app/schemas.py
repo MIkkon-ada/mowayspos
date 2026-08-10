@@ -1,8 +1,8 @@
 import json
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def _safe_json_object(value: Any) -> dict[str, Any]:
@@ -580,6 +580,23 @@ class KickoffProposalReviewPayload(BaseModel):
 
 class KickoffStartConfirmPayload(BaseModel):
     review_comment: str = ""
+
+
+class ExecutionSchedulePayload(BaseModel):
+    plan_type: Literal["week", "month"]
+    title: str = Field(..., min_length=1, max_length=200)
+    start_date: date
+    due_date: date
+    assignee_id: int | None = None
+    assignee: str = Field(default="", max_length=50)
+    status: Literal["待开始", "进行中", "已完成", "已取消"] = "待开始"
+    reminder_policy: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_date_range(self):
+        if self.due_date < self.start_date:
+            raise ValueError("截止日期不得早于开始日期")
+        return self
 
 
 class SubTaskPayload(BaseModel):

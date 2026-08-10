@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from starlette.datastructures import UploadFile
 from starlette.formparsers import FormData, MultiPartException, MultiPartParser, parse_options_header
+from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
 from .. import crud, models
@@ -80,15 +81,18 @@ def _authorize_edit(project_id: int, current_user: str, db: Session) -> models.P
 
 
 def _lock_editable_project(project_id: int, current_user: str, db: Session) -> models.Project:
-    project = (
-        db.query(models.Project)
-        .filter(models.Project.id == project_id)
-        .with_for_update()
-        .first()
+    result = db.execute(
+        update(models.Project)
+        .where(
+            models.Project.id == project_id,
+            func.lower(models.Project.status).in_(tuple(_EDITABLE_LIFECYCLES)),
+        )
+        .values(id=models.Project.id)
     )
+    project = db.get(models.Project, project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="project not found")
-    if str(project.status or "").strip().lower() not in _EDITABLE_LIFECYCLES:
+    if result.rowcount != 1 or str(project.status or "").strip().lower() not in _EDITABLE_LIFECYCLES:
         raise HTTPException(status_code=409, detail="project lifecycle is not editable")
     require_project_owner_or_admin(current_user, project_id, db)
     return project
@@ -343,7 +347,8 @@ def download_init_attachment(
     db: Session = Depends(get_db),
 ):
     _retry_deleted_payload_cleanup(db)
-    _authorize_access(project_id, current_user, db)
+    _get_project(project_id, db)
+    require_project_owner_or_admin(current_user, project_id, db)
     row = db.get(models.ProjectInitAttachment, attachment_id)
     if row is None or row.deleted_at is not None or row.project_id != project_id:
         raise HTTPException(status_code=404, detail="attachment not found")
@@ -374,8 +379,25 @@ def delete_init_attachment(
         raise HTTPException(status_code=404, detail="attachment not found")
     _lock_editable_project(project_id, current_user, db)
     before = _serialize(row)
-    row.deleted_at = utc_now()
-    row.deleted_by = current_user
+    deleted_at = utc_now()
+    result = db.execute(
+        update(models.ProjectInitAttachment)
+        .where(
+            models.ProjectInitAttachment.id == attachment_id,
+            models.ProjectInitAttachment.project_id == project_id,
+            models.ProjectInitAttachment.deleted_at.is_(None),
+        )
+        .values(deleted_at=deleted_at, deleted_by=current_user)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="attachment not found")
+    row = (
+        db.query(models.ProjectInitAttachment)
+        .populate_existing()
+        .filter(models.ProjectInitAttachment.id == attachment_id)
+        .one()
+    )
     crud.log(
         db,
         current_user,

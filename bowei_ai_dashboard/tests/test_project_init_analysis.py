@@ -302,6 +302,7 @@ def test_apply_only_records_audit_without_business_mutation():
     db = make_session()
     project, _owner = add_project_graph(db)
     db.add(models.Account(username="owner", password_hash="x", person_id=project.id, status="active"))
+    project.status = "pending_review"
     db.commit()
     task = models.Task(project_id=project.id, key_task="Original", owner="Owner 1")
     db.add(task)
@@ -412,6 +413,52 @@ def test_apply_after_owner_submit_pending_review_records_audit_without_business_
     assert fetched["applied_at"] == response["applied_at"]
 
 
+@pytest.mark.parametrize("lifecycle", ["dispatched", "returned"])
+@pytest.mark.parametrize("actor", ["owner", "project-ceo"])
+def test_apply_completed_run_requires_pending_review_after_submit(lifecycle, actor):
+    from app.routers import project_init_ai
+
+    db = make_session()
+    project, owner = add_project_graph(db)
+    manager = models.Person(id=20, name="Project CEO", is_active=True)
+    db.add_all(
+        [
+            manager,
+            models.ProjectMember(project_id=project.id, person_id=manager.id, role="project_ceo"),
+            models.Account(username="owner", password_hash="x", person_id=owner.id, status="active"),
+            models.Account(username="project-ceo", password_hash="x", person_id=manager.id, status="active"),
+        ]
+    )
+    project.status = lifecycle
+    run = models.ProjectInitAnalysisRun(project_id=project.id, created_by="owner", status="completed")
+    db.add(run)
+    db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        project_init_ai.apply_project_init_analysis_run(
+            project.id,
+            run.id,
+            current_user=actor,
+            db=db,
+        )
+    assert error.value.status_code == 409
+    assert db.get(models.ProjectInitAnalysisRun, run.id).applied_at is None
+
+    latest = project_init_ai.latest_project_init_analysis_run(
+        project.id,
+        current_user=actor,
+        db=db,
+    )
+    fetched = project_init_ai.get_project_init_analysis_run(
+        project.id,
+        run.id,
+        current_user=actor,
+        db=db,
+    )
+    assert latest["id"] == run.id
+    assert fetched["id"] == run.id
+
+
 def test_apply_pending_review_denies_ordinary_member_with_403():
     from app.routers import project_init_ai
 
@@ -439,6 +486,35 @@ def test_apply_pending_review_denies_ordinary_member_with_403():
             db=db,
         )
     assert error.value.status_code == 403
+
+
+@pytest.mark.parametrize("run_status", ["completed", "partial_failed"])
+def test_apply_pending_review_accepts_terminal_runs_idempotently(run_status):
+    from app.routers import project_init_ai
+
+    db = make_session()
+    project, owner = add_project_graph(db)
+    db.add(models.Account(username="owner", password_hash="x", person_id=owner.id, status="active"))
+    project.status = "pending_review"
+    run = models.ProjectInitAnalysisRun(project_id=project.id, created_by="owner", status=run_status)
+    db.add(run)
+    db.commit()
+
+    response = project_init_ai.apply_project_init_analysis_run(
+        project.id,
+        run.id,
+        current_user="owner",
+        db=db,
+    )
+    repeated = project_init_ai.apply_project_init_analysis_run(
+        project.id,
+        run.id,
+        current_user="owner",
+        db=db,
+    )
+    assert response["applied_at"] is not None
+    assert repeated["applied_at"] == response["applied_at"]
+    assert db.get(models.Project, project.id).status == "pending_review"
 
 
 @pytest.mark.parametrize("status", ["queued", "processing", "failed"])
@@ -584,6 +660,8 @@ def test_project_manager_can_create_retry_apply_and_ordinary_member_is_denied():
         db=db,
     )
     assert retry["status"] == "queued"
+    project.status = "pending_review"
+    db.commit()
     applied = project_init_ai.apply_project_init_analysis_run(
         project.id,
         completed.id,
@@ -591,6 +669,8 @@ def test_project_manager_can_create_retry_apply_and_ordinary_member_is_denied():
         db=db,
     )
     assert applied["applied_at"] is not None
+    project.status = "dispatched"
+    db.commit()
     project_init_ai.delete_init_attachment(project.id, attachment.id, current_user="project-ceo", db=db)
     assert db.get(models.ProjectInitAttachment, attachment.id).deleted_at is not None
 

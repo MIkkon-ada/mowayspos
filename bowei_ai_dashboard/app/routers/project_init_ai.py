@@ -104,6 +104,22 @@ def _authorize_analysis_audit(project_id: int, current_user: str, db: Session) -
     return project
 
 
+def _authorize_analysis_apply(project_id: int, current_user: str, db: Session) -> models.Project:
+    """Authorize the post-submit audit write without changing business data."""
+    project = (
+        db.query(models.Project)
+        .filter(models.Project.id == project_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    require_project_manager(current_user, project_id, db)
+    if str(project.status or "").strip().lower() != "pending_review":
+        raise HTTPException(status_code=409, detail="project must be pending_review before applying analysis audit")
+    return project
+
+
 def _lock_editable_project(project_id: int, current_user: str, db: Session) -> models.Project:
     project = (
         db.query(models.Project)
@@ -659,7 +675,7 @@ def apply_project_init_analysis_run(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    _authorize_analysis_audit(project_id, current_user, db)
+    _authorize_analysis_apply(project_id, current_user, db)
     run = _get_analysis_run(project_id, run_id, db)
     if run.status not in {"completed", "partial_failed"}:
         raise HTTPException(status_code=409, detail=f"analysis run status {run.status} cannot be applied")

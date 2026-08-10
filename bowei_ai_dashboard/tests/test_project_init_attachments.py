@@ -1,14 +1,234 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_project_init_attachment_rejects_oversized_content_length_before_multipart_parse():
+    from starlette.datastructures import Headers
+
+    from app.routers import project_init_ai
+
+    request = SimpleNamespace(
+        headers=Headers({
+            "content-length": str(project_init_ai._MAX_FILE_BYTES + project_init_ai._MAX_MULTIPART_OVERHEAD + 1),
+        })
+    )
+    with pytest.raises(HTTPException) as error:
+        project_init_ai._check_request_size(request)
+    assert error.value.status_code == 413
+
+
+def test_project_init_attachment_stream_limit_stops_without_consuming_tail():
+    from starlette.datastructures import Headers
+
+    from app.routers import project_init_ai
+
+    boundary = b"project-init-boundary"
+    prefix = (
+        b"--" + boundary + b"\r\n"
+        b'Content-Disposition: form-data; name="file"; filename="large.txt"\r\n'
+        b"Content-Type: text/plain\r\n\r\n"
+    )
+    consumed = []
+
+    async def stream():
+        consumed.append("prefix")
+        yield prefix
+        consumed.append("oversized-part")
+        yield b"a" * (project_init_ai._MAX_FILE_BYTES + 1)
+        raise AssertionError("the parser consumed the request tail after exceeding the limit")
+
+    request = SimpleNamespace(
+        headers=Headers({
+            "content-type": f"multipart/form-data; boundary={boundary.decode()}"
+        }),
+        stream=stream,
+    )
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(project_init_ai._parse_upload_from_request(request))
+    assert error.value.status_code == 413
+    assert consumed == ["prefix", "oversized-part"]
+
+
+def test_project_init_attachment_upload_rechecks_locked_project_before_commit(tmp_path):
+    script = r'''
+import os
+from pathlib import Path
+from fastapi.testclient import TestClient
+from app.database import Base, engine, SessionLocal
+from app import models
+from app.auth import create_session
+
+Base.metadata.create_all(bind=engine)
+db = SessionLocal()
+db.add_all([
+    models.Person(id=1, name="Owner", is_active=True),
+    models.Account(username="owner", password_hash="x", person_id=1, status="active"),
+    models.Project(id=1, name="Project", status="dispatched"),
+    models.ProjectMember(project_id=1, person_id=1, role="owner"),
+])
+db.commit(); db.close()
+
+from app.main import app
+from app.routers import project_init_ai
+storage = Path(os.environ["ATTACHMENT_TEST_ROOT"])
+project_init_ai._ROOT = storage
+original_authorize_edit = project_init_ai._authorize_edit
+def race_after_initial_check(project_id, current_user, db):
+    project = original_authorize_edit(project_id, current_user, db)
+    project.status = "active"
+    db.flush()
+    return project
+project_init_ai._authorize_edit = race_after_initial_check
+client = TestClient(app)
+cookies = {os.environ.get("SESSION_COOKIE_NAME", "bowei_session"): create_session("owner")}
+response = client.post(
+    "/api/projects/1/init-attachments",
+    files={"file": ("race.txt", b"race", "text/plain")},
+    cookies=cookies,
+)
+assert response.status_code == 409, response.text
+db = SessionLocal()
+assert db.query(models.ProjectInitAttachment).count() == 0
+db.close()
+assert not any(path.is_file() for path in storage.rglob("*"))
+'''
+    database_path = (tmp_path / "upload-race.db").resolve()
+    env = os.environ.copy()
+    env.update({
+        "APP_ENV": "test",
+        "DATABASE_URL": f"sqlite:///{database_path.as_posix()}",
+        "FRONTEND_ORIGIN": "",
+        "ATTACHMENT_TEST_ROOT": str((tmp_path / "attachment-storage").resolve()),
+    })
+    result = subprocess.run([sys.executable, "-c", script], cwd=BACKEND_ROOT, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+
+
+def test_project_init_attachment_delete_rechecks_locked_project_before_soft_delete(tmp_path):
+    script = r'''
+import os
+from pathlib import Path
+from fastapi.testclient import TestClient
+from app.database import Base, engine, SessionLocal
+from app import models
+from app.auth import create_session
+
+Base.metadata.create_all(bind=engine)
+db = SessionLocal()
+db.add_all([
+    models.Person(id=1, name="Owner", is_active=True),
+    models.Account(username="owner", password_hash="x", person_id=1, status="active"),
+    models.Project(id=1, name="Project", status="dispatched"),
+    models.ProjectMember(project_id=1, person_id=1, role="owner"),
+])
+db.commit(); db.close()
+
+from app.main import app
+from app.routers import project_init_ai
+storage = Path(os.environ["ATTACHMENT_TEST_ROOT"])
+project_init_ai._ROOT = storage
+client = TestClient(app)
+cookies = {os.environ.get("SESSION_COOKIE_NAME", "bowei_session"): create_session("owner")}
+uploaded = client.post(
+    "/api/projects/1/init-attachments",
+    files={"file": ("delete-race.txt", b"delete-race", "text/plain")},
+    cookies=cookies,
+)
+assert uploaded.status_code == 201, uploaded.text
+attachment_id = uploaded.json()["id"]
+original_authorize_edit = project_init_ai._authorize_edit
+def race_after_initial_check(project_id, current_user, db):
+    project = original_authorize_edit(project_id, current_user, db)
+    project.status = "active"
+    db.flush()
+    return project
+project_init_ai._authorize_edit = race_after_initial_check
+response = client.delete(f"/api/projects/1/init-attachments/{attachment_id}", cookies=cookies)
+assert response.status_code == 409, response.text
+db = SessionLocal()
+row = db.get(models.ProjectInitAttachment, attachment_id)
+assert row.deleted_at is None
+db.close()
+assert (storage / row.storage_key).is_file()
+'''
+    database_path = (tmp_path / "delete-race.db").resolve()
+    env = os.environ.copy()
+    env.update({
+        "APP_ENV": "test",
+        "DATABASE_URL": f"sqlite:///{database_path.as_posix()}",
+        "FRONTEND_ORIGIN": "",
+        "ATTACHMENT_TEST_ROOT": str((tmp_path / "attachment-storage").resolve()),
+    })
+    result = subprocess.run([sys.executable, "-c", script], cwd=BACKEND_ROOT, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+
+
+def test_project_init_attachment_keeps_committed_file_when_refresh_fails(tmp_path):
+    script = r'''
+import os
+from pathlib import Path
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+from app.database import Base, engine, SessionLocal
+from app import models
+from app.auth import create_session
+
+Base.metadata.create_all(bind=engine)
+db = SessionLocal()
+db.add_all([
+    models.Person(id=1, name="Owner", is_active=True),
+    models.Account(username="owner", password_hash="x", person_id=1, status="active"),
+    models.Project(id=1, name="Project", status="dispatched"),
+    models.ProjectMember(project_id=1, person_id=1, role="owner"),
+])
+db.commit(); db.close()
+
+from app.main import app
+from app.routers import project_init_ai
+storage = Path(os.environ["ATTACHMENT_TEST_ROOT"])
+project_init_ai._ROOT = storage
+original_refresh = Session.refresh
+def fail_attachment_refresh(self, instance, *args, **kwargs):
+    if isinstance(instance, models.ProjectInitAttachment):
+        raise RuntimeError("refresh failed after commit")
+    return original_refresh(self, instance, *args, **kwargs)
+Session.refresh = fail_attachment_refresh
+client = TestClient(app, raise_server_exceptions=False)
+cookies = {os.environ.get("SESSION_COOKIE_NAME", "bowei_session"): create_session("owner")}
+response = client.post(
+    "/api/projects/1/init-attachments",
+    files={"file": ("refresh.txt", b"refresh", "text/plain")},
+    cookies=cookies,
+)
+assert response.status_code == 201, response.text
+db = SessionLocal()
+row = db.query(models.ProjectInitAttachment).filter_by(original_name="refresh.txt").one()
+path = storage / row.storage_key
+assert path.is_file()
+db.close()
+'''
+    database_path = (tmp_path / "refresh-failure.db").resolve()
+    env = os.environ.copy()
+    env.update({
+        "APP_ENV": "test",
+        "DATABASE_URL": f"sqlite:///{database_path.as_posix()}",
+        "FRONTEND_ORIGIN": "",
+        "ATTACHMENT_TEST_ROOT": str((tmp_path / "attachment-storage").resolve()),
+    })
+    result = subprocess.run([sys.executable, "-c", script], cwd=BACKEND_ROOT, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
 
 
 def test_project_init_attachment_signatures_are_checked(tmp_path):

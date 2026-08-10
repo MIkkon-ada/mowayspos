@@ -7,8 +7,10 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
+from starlette.datastructures import UploadFile
+from starlette.formparsers import FormData, MultiPartException, MultiPartParser, parse_options_header
 from sqlalchemy.orm import Session
 
 from .. import crud, models
@@ -27,8 +29,11 @@ logger = logging.getLogger(__name__)
 
 _ROOT = Path(os.getenv("PROJECT_INIT_ATTACHMENT_ROOT", "/app/data/project-init-attachments"))
 _MAX_FILE_BYTES = 25 * 1024 * 1024
+_MAX_MULTIPART_OVERHEAD = 128 * 1024
 _EDITABLE_LIFECYCLES = {"dispatched", "returned"}
 _CHUNK_BYTES = 1024 * 1024
+_MAX_FORM_FIELDS = 4
+_MAX_FORM_FIELD_BYTES = 64 * 1024
 _OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 _MIME_BY_EXTENSION = {
     ".pdf": "application/pdf",
@@ -72,6 +77,93 @@ def _authorize_edit(project_id: int, current_user: str, db: Session) -> models.P
     project = _require_editable_project(project_id, db)
     require_project_owner_or_admin(current_user, project_id, db)
     return project
+
+
+def _lock_editable_project(project_id: int, current_user: str, db: Session) -> models.Project:
+    project = (
+        db.query(models.Project)
+        .filter(models.Project.id == project_id)
+        .with_for_update()
+        .first()
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    if str(project.status or "").strip().lower() not in _EDITABLE_LIFECYCLES:
+        raise HTTPException(status_code=409, detail="project lifecycle is not editable")
+    require_project_owner_or_admin(current_user, project_id, db)
+    return project
+
+
+class _AttachmentRequestTooLarge(MultiPartException):
+    pass
+
+
+class _LimitedMultiPartParser(MultiPartParser):
+    def __init__(self, *args, max_file_size: int, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.max_file_size = max_file_size
+        self._current_file_size = 0
+
+    def on_part_begin(self) -> None:
+        super().on_part_begin()
+        self._current_file_size = 0
+
+    def on_part_data(self, data: bytes, start: int, end: int) -> None:
+        if self._current_part.file is not None:
+            self._current_file_size += end - start
+            if self._current_file_size > self.max_file_size:
+                raise _AttachmentRequestTooLarge("attachment exceeds maximum size")
+        super().on_part_data(data, start, end)
+
+
+def _check_request_size(request: Request) -> None:
+    content_length = request.headers.get("content-length")
+    if content_length is None:
+        return
+    try:
+        request_bytes = int(content_length)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="invalid content length") from exc
+    if request_bytes < 0:
+        raise HTTPException(status_code=400, detail="invalid content length")
+    if request_bytes > _MAX_FILE_BYTES + _MAX_MULTIPART_OVERHEAD:
+        raise HTTPException(status_code=413, detail="request exceeds 25 MiB file limit")
+
+
+async def _bounded_request_stream(request: Request):
+    total_bytes = 0
+    async for chunk in request.stream():
+        total_bytes += len(chunk)
+        if total_bytes > _MAX_FILE_BYTES + _MAX_MULTIPART_OVERHEAD:
+            raise _AttachmentRequestTooLarge("request exceeds maximum size")
+        yield chunk
+
+
+async def _parse_upload_from_request(request: Request) -> UploadFile:
+    _check_request_size(request)
+    content_type = request.headers.get("content-type", "")
+    media_type, _ = parse_options_header(content_type.encode("latin-1"))
+    if media_type != b"multipart/form-data":
+        raise HTTPException(status_code=400, detail="multipart form data is required")
+    parser = _LimitedMultiPartParser(
+        request.headers,
+        _bounded_request_stream(request),
+        max_files=1,
+        max_fields=_MAX_FORM_FIELDS,
+        max_part_size=_MAX_FORM_FIELD_BYTES,
+        max_file_size=_MAX_FILE_BYTES,
+    )
+    try:
+        form: FormData = await parser.parse()
+    except _AttachmentRequestTooLarge as exc:
+        raise HTTPException(status_code=413, detail="file exceeds 25 MiB limit") from exc
+    except MultiPartException as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    file = form.get("file")
+    if not isinstance(file, UploadFile):
+        raise HTTPException(status_code=422, detail="file is required")
+    await file.seek(0)
+    return file
 
 
 def _root_path() -> Path:
@@ -147,33 +239,27 @@ def _safe_extension(original_name: str) -> str:
 
 
 @router.post("", status_code=201)
-def upload_init_attachment(
+async def upload_init_attachment(
     project_id: int,
     request: Request,
-    file: UploadFile = File(...),
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
+    _check_request_size(request)
     _retry_deleted_payload_cleanup(db)
     _authorize_edit(project_id, current_user, db)
-    original_name = _safe_original_name(file.filename)
-    extension = _safe_extension(original_name)
-    content_length = request.headers.get("content-length")
-    if content_length:
-        try:
-            if int(content_length) > _MAX_FILE_BYTES + 64 * 1024:
-                raise HTTPException(status_code=413, detail="request exceeds 25 MiB file limit")
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail="invalid content length") from exc
-
+    file = await _parse_upload_from_request(request)
     root = _root_path()
-    root.mkdir(parents=True, exist_ok=True)
     temp_path = root / f".upload-{uuid.uuid4().hex}"
     destination: Path | None = None
     size_bytes = 0
+    committed = False
     try:
+        original_name = _safe_original_name(file.filename)
+        extension = _safe_extension(original_name)
+        root.mkdir(parents=True, exist_ok=True)
         with temp_path.open("wb") as output:
-            while chunk := file.file.read(_CHUNK_BYTES):
+            while chunk := await file.read(_CHUNK_BYTES):
                 size_bytes += len(chunk)
                 if size_bytes > _MAX_FILE_BYTES:
                     raise HTTPException(status_code=413, detail="file exceeds 25 MiB limit")
@@ -186,7 +272,7 @@ def upload_init_attachment(
             raise HTTPException(status_code=500, detail="invalid attachment storage path")
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(temp_path), str(destination))
-        require_project_owner_or_admin(current_user, project_id, db)
+        _lock_editable_project(project_id, current_user, db)
         user_context = get_user_context_from_db(current_user, db)
         row = models.ProjectInitAttachment(
             project_id=project_id,
@@ -210,16 +296,23 @@ def upload_init_attachment(
             project_id=project_id,
         )
         db.commit()
-        db.refresh(row)
+        committed = True
         return _serialize(row)
     except Exception:
-        temp_path.unlink(missing_ok=True)
-        if destination is not None:
-            destination.unlink(missing_ok=True)
-        db.rollback()
+        if not committed:
+            temp_path.unlink(missing_ok=True)
+            if destination is not None:
+                destination.unlink(missing_ok=True)
+            db.rollback()
+        else:
+            logger.error(
+                "project init attachment response failed after commit; retaining payload for recovery attachment_id=%s",
+                getattr(row, "id", None),
+                exc_info=True,
+            )
         raise
     finally:
-        file.file.close()
+        await file.close()
 
 
 @router.get("")
@@ -279,6 +372,7 @@ def delete_init_attachment(
     row = db.get(models.ProjectInitAttachment, attachment_id)
     if row is None or row.deleted_at is not None or row.project_id != project_id:
         raise HTTPException(status_code=404, detail="attachment not found")
+    _lock_editable_project(project_id, current_user, db)
     before = _serialize(row)
     row.deleted_at = utc_now()
     row.deleted_by = current_user

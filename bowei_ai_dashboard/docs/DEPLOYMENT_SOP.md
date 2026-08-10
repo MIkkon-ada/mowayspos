@@ -129,3 +129,8 @@ GET /admin/projects
 - 不建议多机多实例同时写同一个 SQLite 文件
 - 生产环境必须确保 HTTPS 与 `SESSION_COOKIE_SECURE=true` 配套
 - 如果未来切跨域部署，需要重新评估 CORS、Cookie 和 credentials 策略
+# 关键任务执行安排提醒
+
+后端服务启动后会立即扫描一次执行安排，并在中国时区每天 09:00 再扫描一次。生产环境只允许一个 API/worker 副本运行该定时循环；若部署多个副本，应只在专用 worker 启动该循环。提醒记录有数据库唯一约束，可防止意外重复通知。
+
+站内通知始终先写入。企业微信推送需要配置 `WECOM_CORPID`、`WECOM_SECRET`、`WECOM_AGENT_ID`，并为人员填写 `wecom_userid`；企业微信失败只记录到提醒记录，不会中断站内通知或后续扫描。

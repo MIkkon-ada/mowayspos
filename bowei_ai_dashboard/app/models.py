@@ -185,6 +185,44 @@ class MeetingAnalysisCandidate(Base, TimestampMixin):
     review_comment = Column(Text, default="")
 
 
+class MeetingProgressReview(Base, TimestampMixin):
+    """Evidence-bound member progress result awaiting human confirmation."""
+
+    __tablename__ = "meeting_progress_reviews"
+    __table_args__ = (
+        UniqueConstraint(
+            "meeting_id",
+            "analysis_version",
+            "member_name",
+            "baseline_subtask_id",
+            name="uq_meeting_progress_review_version_member_subtask",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=False, index=True)
+    baseline_run_id = Column(
+        Integer, ForeignKey("kickoff_agent_runs.id"), nullable=False, index=True
+    )
+    baseline_task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True, index=True)
+    baseline_subtask_id = Column(
+        Integer, ForeignKey("subtasks.id"), nullable=True, index=True
+    )
+    member_name = Column(String(100), nullable=False)
+    baseline_snapshot_json = Column(Text, nullable=False, default="{}")
+    report_text = Column(Text, nullable=False, default="")
+    status = Column(String(24), nullable=False, default="not_mentioned", index=True)
+    evidence_quote = Column(Text, nullable=False, default="")
+    suggested_task_status = Column(String(40), default="")
+    review_status = Column(String(24), nullable=False, default="pending", index=True)
+    reviewer_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    review_comment = Column(Text, default="")
+    validation_json = Column(Text, nullable=False, default="[]")
+    analysis_version = Column(Integer, nullable=False, default=1, index=True)
+
+
 class MeetingRevision(Base):
     """Immutable full snapshot of one saved meeting-minutes version."""
 
@@ -237,6 +275,7 @@ class KickoffAgentRun(Base, TimestampMixin):
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
     meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=True, index=True)
     snapshot_json = Column(Text, nullable=False, default="{}")
+    approved_snapshot_json = Column(Text, nullable=False, default="{}")
     result_json = Column(Text, nullable=False, default="{}")
     status = Column(String(20), nullable=False, default="draft", index=True)
     created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)

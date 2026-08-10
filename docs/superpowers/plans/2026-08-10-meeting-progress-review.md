@@ -249,7 +249,7 @@ git commit -m "feat: add meeting progress review APIs"
 - Create: `frontend/src/features/meeting/MeetingProgressReviewSection.tsx`
 - Modify: `frontend/src/pages/MeetingPage.tsx`
 - Modify: `frontend/src/features/meeting/NewMeetingModal.tsx`
-- Create: `frontend/tests/meetingProgressReviewStructure.test.mjs`
+- Create: `frontend/src/features/meeting/meetingProgressReviewStructure.test.ts`
 
 - [ ] **Step 1: Write the failing frontend structure test**
 
@@ -272,7 +272,7 @@ describe('meeting progress review UI', () => {
 Run from `frontend`:
 
 ```powershell
-npm run test:unit -- tests/meetingProgressReviewStructure.test.mjs
+npm run test:unit -- src/features/meeting/meetingProgressReviewStructure.test.ts
 ```
 
 Expected: FAIL because the component does not exist.
@@ -292,7 +292,7 @@ In `MeetingPage`, mount `MeetingProgressReviewSection` under the selected meetin
 - [ ] **Step 5: Run frontend tests and build**
 
 ```powershell
-npm run test:unit -- tests/meetingProgressReviewStructure.test.mjs tests/meetingDraftReviewStructure.test.mjs tests/kickoffAgentStructure.test.mjs
+npm run test:unit -- src/features/meeting/meetingProgressReviewStructure.test.ts src/features/settings/ownerSubmitDraft.test.ts
 npm run build
 ```
 
@@ -301,7 +301,7 @@ Expected: PASS with a successful TypeScript/Vite build.
 - [ ] **Step 6: Commit the frontend slice**
 
 ```powershell
-git add frontend/src/api/meetings.ts frontend/src/features/meeting/MeetingProgressReviewSection.tsx frontend/src/pages/MeetingPage.tsx frontend/src/features/meeting/NewMeetingModal.tsx frontend/tests/meetingProgressReviewStructure.test.mjs
+git add frontend/src/api/meetings.ts frontend/src/features/meeting/MeetingProgressReviewSection.tsx frontend/src/pages/MeetingPage.tsx frontend/src/features/meeting/NewMeetingModal.tsx frontend/src/features/meeting/meetingProgressReviewStructure.test.ts
 git commit -m "feat: add member progress review UI"
 ```
 
@@ -311,7 +311,7 @@ git commit -m "feat: add member progress review UI"
 - Test: `bowei_ai_dashboard/tests/test_meeting_progress_review_model.py`
 - Test: `bowei_ai_dashboard/tests/test_meeting_progress_review_service.py`
 - Test: `bowei_ai_dashboard/tests/test_meeting_progress_review_api.py`
-- Test: `frontend/tests/meetingProgressReviewStructure.test.mjs`
+- Test: `frontend/src/features/meeting/meetingProgressReviewStructure.test.ts`
 
 - [ ] **Step 1: Run backend migration and focused suite**
 

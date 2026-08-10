@@ -2,7 +2,7 @@ import type { Project, TaskItem } from '../../types'
 import type { SubTaskDetail } from '../../api/subtasks'
 import { ExecutionScheduleTimeline } from './ExecutionScheduleTimeline'
 
-type Props = { project: Project | null; task: TaskItem | null; subTask: SubTaskDetail; onBack: () => void }
+type Props = { project: Project | null; task: TaskItem | null; subTask: SubTaskDetail; onBack: () => void; canManageSchedules?: boolean; onSchedulesChanged?: () => void }
 type ReportItem = NonNullable<SubTaskDetail['work_reports']>[number]
 
 const toLines = (value?: string[] | string) => Array.isArray(value) ? value.filter(Boolean) : value ? [value] : []
@@ -31,7 +31,7 @@ function AchievementList({ subTask }: { subTask: SubTaskDetail }) {
   </section>
 }
 
-export function KeyTaskExecutionDetailView({ project, task, subTask, onBack }: Props) {
+export function KeyTaskExecutionDetailView({ project, task, subTask, onBack, canManageSchedules = false, onSchedulesChanged }: Props) {
   const reports: ReportItem[] = subTask.work_reports ?? []
   const hasReports = reports.length > 0
   const hasAchievements = (subTask.related_achievements?.length ?? 0) > 0
@@ -69,7 +69,7 @@ export function KeyTaskExecutionDetailView({ project, task, subTask, onBack }: P
             <div className="mt-3 space-y-1.5 text-sm leading-6 text-slate-700">{criteria.map((item, index) => <p key={`${item}-${index}`}>• {item}</p>)}</div>
           </section>}
 
-          <ExecutionScheduleTimeline subtaskId={subTask.id} schedules={subTask.execution_schedules ?? []} canManage />
+          <ExecutionScheduleTimeline subtaskId={subTask.id} schedules={subTask.execution_schedules ?? []} canManage={canManageSchedules} onChanged={onSchedulesChanged} />
 
           <section className="rounded-xl border border-slate-200 bg-white p-5">
             <div className="flex items-center justify-between gap-3"><h2 className="text-base font-semibold text-slate-800">工作汇报记录</h2><span className="text-xs text-slate-400">共 {reports.length} 条</span></div>

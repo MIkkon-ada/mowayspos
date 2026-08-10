@@ -1047,6 +1047,8 @@ function handleFormSave(payload: TaskPayload) {
           project={focusedProject}
           task={tasks.find((task) => task.id === selectedSubTask.task_id) ?? null}
           subTask={selectedSubTask}
+          canManageSchedules={Boolean(currentUser?.is_tech_admin || currentUser?.name === selectedSubTask.assignee || canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: focusedProject?.user_roles ?? currentProjectRoles }))}
+          onSchedulesChanged={() => { fetchSubtaskDetail(selectedSubTask.id).then(setSelectedSubTask).catch(() => {}) }}
           onBack={() => clearSelection()}
         />
       ) : (

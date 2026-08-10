@@ -103,6 +103,7 @@ jobs:
             "$MOWAYS_DATA_ROOT/postgres" \
             "$MOWAYS_DATA_ROOT/env" \
             "$MOWAYS_DATA_ROOT/achievement-attachments" \
+            "$MOWAYS_DATA_ROOT/project-init-attachments" \
             "$MOWAYS_DATA_ROOT/uploads" \
             "$MOWAYS_DATA_ROOT/backups" \
             "$MOWAYS_DATA_ROOT/logs"
@@ -469,10 +470,13 @@ jobs:
           test "$(docker inspect --format '{{.State.ExitCode}}' mowayspos-backend-permissions-init)" = "0"
           config_owner=$(stat -c '%u:%g' "$MOWAYS_DATA_ROOT/env/llm_configs.json")
           attachments_owner=$(stat -c '%u:%g' "$MOWAYS_DATA_ROOT/achievement-attachments")
+          project_init_attachments_owner=$(stat -c '%u:%g' "$MOWAYS_DATA_ROOT/project-init-attachments")
           test "$config_owner" = "10001:10001"
           test "$attachments_owner" = "10001:10001"
+          test "$project_init_attachments_owner" = "10001:10001"
           test "$(stat -c '%a' "$MOWAYS_DATA_ROOT/env/llm_configs.json")" = "600"
           test "$(stat -c '%a' "$MOWAYS_DATA_ROOT/achievement-attachments")" = "700"
+          test "$(stat -c '%a' "$MOWAYS_DATA_ROOT/project-init-attachments")" = "700"
 
           "${dc[@]}" exec -T backend python - <<'PY'
           import os
@@ -482,6 +486,9 @@ jobs:
           assert os.getgid() == 10001
           Path("/app/llm_configs.json").open("a").close()
           probe = Path("/app/data/achievement-attachments/.permission-probe")
+          probe.write_text("ok", encoding="utf-8")
+          probe.unlink()
+          probe = Path("/app/data/project-init-attachments/.permission-probe")
           probe.write_text("ok", encoding="utf-8")
           probe.unlink()
           PY

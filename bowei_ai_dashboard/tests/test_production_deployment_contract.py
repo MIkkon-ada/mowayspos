@@ -120,6 +120,7 @@ def test_backend_permissions_init_repairs_exact_bind_mounts_before_backend():
     expected_mounts = {
         "${MOWAYS_DATA_ROOT:-/data/mowayspos}/env/llm_configs.json:/app/llm_configs.json",
         "${MOWAYS_DATA_ROOT:-/data/mowayspos}/achievement-attachments:/app/data/achievement-attachments",
+        "${MOWAYS_DATA_ROOT:-/data/mowayspos}/project-init-attachments:/app/data/project-init-attachments",
     }
 
     assert _host_bind_mounts(permissions_init) == expected_mounts
@@ -129,6 +130,8 @@ def test_backend_permissions_init_repairs_exact_bind_mounts_before_backend():
     assert "chmod 600 /app/llm_configs.json" in permissions_init
     assert "chown -R 10001:10001 /app/data/achievement-attachments" in permissions_init
     assert "chmod -R u+rwX,go-rwx /app/data/achievement-attachments" in permissions_init
+    assert "chown -R 10001:10001 /app/data/project-init-attachments" in permissions_init
+    assert "chmod -R u+rwX,go-rwx /app/data/project-init-attachments" in permissions_init
     assert "rm " not in permissions_init
     assert "backend-permissions-init:" in backend
     assert "condition: service_completed_successfully" in backend

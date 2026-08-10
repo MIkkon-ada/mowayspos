@@ -174,6 +174,7 @@ def test_cloud_gate_provisions_and_exercises_backend_bind_mount_permissions():
 
     for expected in (
         '"$MOWAYS_DATA_ROOT/achievement-attachments"',
+        '"$MOWAYS_DATA_ROOT/project-init-attachments"',
         "mowayspos-backend-permissions-init",
         "stat -c '%u:%g'",
         'test "$config_owner" = "10001:10001"',
@@ -182,5 +183,6 @@ def test_cloud_gate_provisions_and_exercises_backend_bind_mount_permissions():
         "assert os.getgid() == 10001",
         'Path("/app/llm_configs.json").open("a").close()',
         'Path("/app/data/achievement-attachments/.permission-probe")',
+        'Path("/app/data/project-init-attachments/.permission-probe")',
     ):
         assert expected in workflow

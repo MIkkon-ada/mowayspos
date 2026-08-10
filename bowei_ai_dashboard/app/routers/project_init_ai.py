@@ -1,0 +1,300 @@
+from __future__ import annotations
+
+import logging
+import os
+import shutil
+import uuid
+import zipfile
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
+
+from .. import crud, models
+from ..database import get_db
+from ..permissions import (
+    get_current_user_name,
+    get_user_context_from_db,
+    require_project_access,
+    require_project_owner_or_admin,
+)
+from ..time_utils import utc_now
+
+
+router = APIRouter(prefix="/api/projects/{project_id}/init-attachments", tags=["project-init-ai"])
+logger = logging.getLogger(__name__)
+
+_ROOT = Path(os.getenv("PROJECT_INIT_ATTACHMENT_ROOT", "/app/data/project-init-attachments"))
+_MAX_FILE_BYTES = 25 * 1024 * 1024
+_EDITABLE_LIFECYCLES = {"dispatched", "returned"}
+_CHUNK_BYTES = 1024 * 1024
+_OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+_MIME_BY_EXTENSION = {
+    ".pdf": "application/pdf",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".txt": "text/plain",
+}
+_OOXML_REQUIRED_MEMBERS = {
+    ".docx": "word/document.xml",
+    ".xlsx": "xl/workbook.xml",
+}
+
+
+def _serialize(row: models.ProjectInitAttachment) -> dict:
+    return crud.to_dict(row)
+
+
+def _get_project(project_id: int, db: Session) -> models.Project:
+    project = db.get(models.Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    return project
+
+
+def _require_editable_project(project_id: int, db: Session) -> models.Project:
+    project = _get_project(project_id, db)
+    if str(project.status or "").strip().lower() not in _EDITABLE_LIFECYCLES:
+        raise HTTPException(status_code=409, detail="project lifecycle is not editable")
+    return project
+
+
+def _authorize_access(project_id: int, current_user: str, db: Session) -> models.Project:
+    project = _get_project(project_id, db)
+    require_project_access(current_user, project_id, db)
+    return project
+
+
+def _authorize_edit(project_id: int, current_user: str, db: Session) -> models.Project:
+    project = _require_editable_project(project_id, db)
+    require_project_owner_or_admin(current_user, project_id, db)
+    return project
+
+
+def _root_path() -> Path:
+    return _ROOT.resolve()
+
+
+def _attachment_path(row: models.ProjectInitAttachment) -> Path:
+    root = _root_path()
+    path = (root / row.storage_key).resolve()
+    if path == root or root not in path.parents:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    return path
+
+
+def _retry_deleted_payload_cleanup(db: Session) -> None:
+    rows = (
+        db.query(models.ProjectInitAttachment)
+        .filter(models.ProjectInitAttachment.deleted_at.is_not(None))
+        .limit(100)
+        .all()
+    )
+    for row in rows:
+        try:
+            _attachment_path(row).unlink(missing_ok=True)
+        except (HTTPException, OSError):
+            logger.warning(
+                "project init attachment cleanup retry failed for attachment_id=%s",
+                row.id,
+                exc_info=True,
+            )
+
+
+def _validate_payload(path: Path, original_name: str, extension: str) -> None:
+    try:
+        with path.open("rb") as source:
+            header = source.read(8)
+        if extension == ".pdf" and not header.startswith(b"%PDF-"):
+            raise HTTPException(status_code=422, detail="file signature does not match extension")
+        if extension in {".doc", ".xls"} and header != _OLE_SIGNATURE:
+            raise HTTPException(status_code=422, detail="file signature does not match extension")
+        if extension in _OOXML_REQUIRED_MEMBERS:
+            if not zipfile.is_zipfile(path):
+                raise HTTPException(status_code=422, detail="file signature does not match extension")
+            with zipfile.ZipFile(path) as archive:
+                if _OOXML_REQUIRED_MEMBERS[extension] not in archive.namelist():
+                    raise HTTPException(status_code=422, detail="file structure does not match extension")
+        if extension == ".txt":
+            with path.open("rb") as source:
+                while chunk := source.read(_CHUNK_BYTES):
+                    if b"\x00" in chunk:
+                        raise HTTPException(status_code=422, detail="text file contains binary data")
+    except HTTPException:
+        raise
+    except (OSError, zipfile.BadZipFile, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"invalid file: {original_name}") from exc
+
+
+def _safe_original_name(raw_name: str | None) -> str:
+    name = Path(raw_name or "").name
+    name = "".join("_" if ord(char) < 32 or ord(char) == 127 else char for char in name)
+    if not name or name in {".", ".."}:
+        raise HTTPException(status_code=422, detail="filename is required")
+    if len(name) > 255:
+        raise HTTPException(status_code=422, detail="filename is too long")
+    return name
+
+
+def _safe_extension(original_name: str) -> str:
+    extension = Path(original_name).suffix.lower()
+    if extension not in _MIME_BY_EXTENSION:
+        raise HTTPException(status_code=422, detail="file type not allowed")
+    return extension
+
+
+@router.post("", status_code=201)
+def upload_init_attachment(
+    project_id: int,
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    _retry_deleted_payload_cleanup(db)
+    _authorize_edit(project_id, current_user, db)
+    original_name = _safe_original_name(file.filename)
+    extension = _safe_extension(original_name)
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > _MAX_FILE_BYTES + 64 * 1024:
+                raise HTTPException(status_code=413, detail="request exceeds 25 MiB file limit")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="invalid content length") from exc
+
+    root = _root_path()
+    root.mkdir(parents=True, exist_ok=True)
+    temp_path = root / f".upload-{uuid.uuid4().hex}"
+    destination: Path | None = None
+    size_bytes = 0
+    try:
+        with temp_path.open("wb") as output:
+            while chunk := file.file.read(_CHUNK_BYTES):
+                size_bytes += len(chunk)
+                if size_bytes > _MAX_FILE_BYTES:
+                    raise HTTPException(status_code=413, detail="file exceeds 25 MiB limit")
+                output.write(chunk)
+        _validate_payload(temp_path, original_name, extension)
+
+        storage_key = f"{project_id}/{uuid.uuid4().hex}"
+        destination = (root / storage_key).resolve()
+        if root not in destination.parents:
+            raise HTTPException(status_code=500, detail="invalid attachment storage path")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(temp_path), str(destination))
+        require_project_owner_or_admin(current_user, project_id, db)
+        user_context = get_user_context_from_db(current_user, db)
+        row = models.ProjectInitAttachment(
+            project_id=project_id,
+            storage_key=storage_key,
+            original_name=original_name,
+            mime_type=_MIME_BY_EXTENSION[extension],
+            size_bytes=size_bytes,
+            uploaded_by=current_user,
+            uploaded_by_person_id=user_context.get("person_id"),
+        )
+        db.add(row)
+        db.flush()
+        crud.log(
+            db,
+            current_user,
+            "project_init_attachment_upload",
+            "project_init_attachment",
+            row.id,
+            {},
+            _serialize(row),
+            project_id=project_id,
+        )
+        db.commit()
+        db.refresh(row)
+        return _serialize(row)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        if destination is not None:
+            destination.unlink(missing_ok=True)
+        db.rollback()
+        raise
+    finally:
+        file.file.close()
+
+
+@router.get("")
+def list_init_attachments(
+    project_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    _retry_deleted_payload_cleanup(db)
+    _authorize_access(project_id, current_user, db)
+    rows = (
+        db.query(models.ProjectInitAttachment)
+        .filter(
+            models.ProjectInitAttachment.project_id == project_id,
+            models.ProjectInitAttachment.deleted_at.is_(None),
+        )
+        .order_by(models.ProjectInitAttachment.created_at.desc())
+        .all()
+    )
+    return [_serialize(row) for row in rows]
+
+
+@router.get("/{attachment_id}/download")
+def download_init_attachment(
+    project_id: int,
+    attachment_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    _retry_deleted_payload_cleanup(db)
+    _authorize_access(project_id, current_user, db)
+    row = db.get(models.ProjectInitAttachment, attachment_id)
+    if row is None or row.deleted_at is not None or row.project_id != project_id:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    path = _attachment_path(row)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="attachment not found")
+    extension = _safe_extension(row.original_name)
+    return FileResponse(
+        path,
+        media_type=_MIME_BY_EXTENSION[extension],
+        filename=row.original_name,
+        content_disposition_type="attachment",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.delete("/{attachment_id}")
+def delete_init_attachment(
+    project_id: int,
+    attachment_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    _retry_deleted_payload_cleanup(db)
+    _authorize_edit(project_id, current_user, db)
+    row = db.get(models.ProjectInitAttachment, attachment_id)
+    if row is None or row.deleted_at is not None or row.project_id != project_id:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    before = _serialize(row)
+    row.deleted_at = utc_now()
+    row.deleted_by = current_user
+    crud.log(
+        db,
+        current_user,
+        "project_init_attachment_delete",
+        "project_init_attachment",
+        row.id,
+        before,
+        _serialize(row),
+        project_id=project_id,
+    )
+    db.commit()
+    try:
+        _attachment_path(row).unlink(missing_ok=True)
+    except (HTTPException, OSError):
+        logger.warning("project init attachment cleanup failed for attachment_id=%s", row.id, exc_info=True)
+    return {"ok": True}

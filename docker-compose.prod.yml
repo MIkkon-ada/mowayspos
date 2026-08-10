@@ -13,13 +13,17 @@ services:
         set -eu
         test -f /app/llm_configs.json
         test -d /app/data/achievement-attachments
+        test -d /app/data/project-init-attachments
         chown 10001:10001 /app/llm_configs.json
         chmod 600 /app/llm_configs.json
         chown -R 10001:10001 /app/data/achievement-attachments
         chmod -R u+rwX,go-rwx /app/data/achievement-attachments
+        chown -R 10001:10001 /app/data/project-init-attachments
+        chmod -R u+rwX,go-rwx /app/data/project-init-attachments
     volumes:
       - "${MOWAYS_DATA_ROOT:-/data/mowayspos}/env/llm_configs.json:/app/llm_configs.json"
       - "${MOWAYS_DATA_ROOT:-/data/mowayspos}/achievement-attachments:/app/data/achievement-attachments"
+      - "${MOWAYS_DATA_ROOT:-/data/mowayspos}/project-init-attachments:/app/data/project-init-attachments"
 
   postgres:
     image: ${MOWAYS_POSTGRES_IMAGE:-postgres:16-alpine}
@@ -73,6 +77,7 @@ services:
     volumes:
       - "${MOWAYS_DATA_ROOT:-/data/mowayspos}/env/llm_configs.json:/app/llm_configs.json"
       - "${MOWAYS_DATA_ROOT:-/data/mowayspos}/achievement-attachments:/app/data/achievement-attachments"
+      - "${MOWAYS_DATA_ROOT:-/data/mowayspos}/project-init-attachments:/app/data/project-init-attachments"
     depends_on:
       backend-permissions-init:
         condition: service_completed_successfully

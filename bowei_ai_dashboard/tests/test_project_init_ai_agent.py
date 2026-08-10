@@ -8,6 +8,8 @@ from app.services.project_init_ai_agent import (
     Evidence,
     ProjectInitAiEmptyResult,
     ProjectInitAiError,
+    _merge_tasks,
+    _parse_json_response,
     generate_project_init_draft,
 )
 from app.services.project_init_file_parser import SourceChunk
@@ -35,7 +37,8 @@ def raw_task(
         "owner_name": owner_name,
         "priority": "high",
         "status": "not_started",
-        "deadline": "2026-09-30",
+        "plan_start": "2026-09-01",
+        "plan_end": "2026-09-30",
         "evidence": evidence or [{"attachment_id": 7, "file_name": "plan.txt", "location": "lines 1-2", "excerpt": "实施交付"}],
         "subtasks": [
             {
@@ -99,7 +102,7 @@ def test_unmatched_person_name_is_preserved_without_an_id():
     assert task.owner_id is None
     assert task.subtasks[0].assignee_name == "外部顾问"
     assert task.subtasks[0].assignee_id is None
-    assert any(warning.code == "unmatched_person" for warning in task.subtasks[0].warnings)
+    assert any(warning.code == "person_not_found" for warning in task.subtasks[0].warnings)
 
 
 def test_duplicate_classification_is_deterministic_and_never_merges():
@@ -220,7 +223,7 @@ def test_person_matching_keeps_punctuation_and_internal_spaces_significant():
     task = result.tasks[0]
     assert task.owner_id is None
     assert task.subtasks[0].assignee_id is None
-    assert any(warning.code == "unmatched_person" for warning in task.warnings)
+    assert any(warning.code == "person_not_found" for warning in task.warnings)
 
 
 def test_owner_or_assignee_is_removed_from_helpers_with_conflict_warning():
@@ -340,3 +343,88 @@ def test_all_task_and_subtask_ids_are_positive_strict_ints_or_none():
             "assignee_id": -1,
             "helper_ids": ["2"],
         }]})
+
+
+def test_agent_contract_uses_plan_dates_and_forbids_legacy_deadline():
+    task = AgentTask.model_validate(raw_task())
+    assert task.plan_start == "2026-09-01"
+    assert task.plan_end == "2026-09-30"
+    with pytest.raises(ValidationError):
+        AgentTask.model_validate({**raw_task(), "deadline": "2026-09-30"})
+
+
+def test_existing_task_and_every_existing_subtask_id_is_strict_positive_int():
+    with pytest.raises(ProjectInitAiError):
+        generate_project_init_draft(
+            [chunk("x")],
+            [],
+            [{"id": 10, "title": "old", "subtasks": [{"id": "11", "title": "old sub"}]}],
+            llm_call=fake_llm({"tasks": [raw_task(owner_name="", assignee_name="")]}),
+        )
+    with pytest.raises(ProjectInitAiError):
+        generate_project_init_draft(
+            [chunk("x")],
+            [],
+            [{"id": 10, "title": "old", "subtasks": [{"id": 0, "title": "old sub"}]}],
+            llm_call=fake_llm({"tasks": [raw_task(owner_name="", assignee_name="")]}),
+        )
+
+
+def test_batch_prompt_lists_real_attachment_ids_and_source_labels():
+    prompts: list[str] = []
+
+    def llm(prompt: str, provider: str) -> str:
+        prompts.append(prompt)
+        return json.dumps({"tasks": [raw_task(
+            owner_name="",
+            assignee_name="",
+            evidence=[{"attachment_id": None, "file_name": "plan.txt", "location": "lines 1", "excerpt": "原文"}],
+        )]}, ensure_ascii=False)
+
+    generate_project_init_draft(
+        [source_chunk("原文", name="plan.txt", location="lines 1")],
+        [],
+        [],
+        llm_call=llm,
+    )
+    assert '"attachment_id": null' in prompts[0]
+    source_label = Evidence(file_name="plan.txt", location="lines 1", excerpt="source").source_label
+    assert f'"source_label": {json.dumps(source_label, ensure_ascii=False)}' in prompts[0]
+    assert '"location": "lines 1"' in prompts[0]
+
+
+def test_json_parser_extracts_one_balanced_object_with_nested_strings():
+    value = _parse_json_response('说明文字 {"tasks": [], "note": "escaped \\"}\\""} 结束')
+    assert value == {"tasks": [], "note": 'escaped "}"'}
+
+
+def test_json_parser_rejects_ambiguous_multiple_json_values_but_extracts_array():
+    with pytest.raises(ProjectInitAiError):
+        _parse_json_response('前置 {"tasks": []} 后置 {"tasks": []}')
+    assert _parse_json_response('前置 [{"tasks": []}] 后置') == [{"tasks": []}]
+
+
+def test_array_json_is_rejected_by_the_strict_agent_envelope():
+    def array_llm(prompt: str, provider: str) -> str:
+        return '前置 [{"tasks": []}] 后置'
+
+    with pytest.raises(ProjectInitAiError):
+        generate_project_init_draft([chunk("x")], [], [], llm_call=array_llm)
+
+
+def test_merge_revalidates_and_caps_deduped_evidence():
+    evidence_a = [
+        {"attachment_id": 7, "file_name": "a.txt", "location": f"line {i}", "excerpt": "A"}
+        for i in range(10)
+    ]
+    evidence_b = [
+        {"attachment_id": 8, "file_name": "b.txt", "location": f"line {i}", "excerpt": "B"}
+        for i in range(10)
+    ]
+    first = AgentTask.model_validate(raw_task(owner_name="", assignee_name="", evidence=evidence_a))
+    second = AgentTask.model_validate(raw_task(owner_name="", assignee_name="", evidence=evidence_b))
+    merged = _merge_tasks([first, second])
+    assert len(merged) == 1
+    assert len(merged[0].evidence) <= 10
+    assert isinstance(merged[0], AgentTask)
+    AgentTask.model_validate(merged[0].model_dump())

@@ -51,6 +51,15 @@ def _http_get_json(url: str, params: dict | None = None, timeout: float = 10.0) 
         raise WecomError(f"wecom response not json: {body[:200]}") from e
 
 
+def _http_post_json(url: str, payload: dict, timeout: float = 10.0) -> dict:
+    req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        raise WecomError(f"wecom request failed: {e}") from e
+
+
 def get_access_token() -> str:
     """获取企业微信 access_token，带内存缓存。
 
@@ -72,6 +81,20 @@ def get_access_token() -> str:
     _access_token = data["access_token"]
     _access_token_expires_at = time.time() + data.get("expires_in", 7200)
     return _access_token
+
+
+def send_text_message(userids: list[str], content: str) -> bool:
+    recipients = [userid.strip() for userid in userids if userid and userid.strip()]
+    if not recipients:
+        return False
+    settings = get_settings()
+    result = _http_post_json(
+        f"{_WECOM_API_BASE}/message/send?access_token={get_access_token()}",
+        {"touser": "|".join(recipients), "msgtype": "text", "agentid": int(settings.wecom_agent_id), "text": {"content": content}},
+    )
+    if result.get("errcode") != 0:
+        raise WecomError(f"wecom send message failed: {result}")
+    return True
 
 
 def build_qrcode_url(state: str = "") -> str:

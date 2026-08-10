@@ -25,3 +25,9 @@ test('execution project overview splits base information and evaluation criteria
   assert.match(overview, /expected_outcomes/)
   assert.doesNotMatch(overview, /整体进度/)
 })
+
+test('key task detail embeds the execution schedule timeline', () => {
+  const detail = read('src/components/task-management/KeyTaskExecutionDetailView.tsx')
+  assert.match(detail, /ExecutionScheduleTimeline/)
+  assert.match(detail, /execution_schedules/)
+})

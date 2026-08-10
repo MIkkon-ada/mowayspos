@@ -1,5 +1,6 @@
 import { apiGet, apiPost, apiPatch, apiDelete } from './client'
 import type { SubTaskItem, KeyTaskItem } from '../types'
+import type { ExecutionSchedule } from './executionSchedules'
 
 /**
  * SubTaskPayload 业务语义：关键任务创建/更新参数
@@ -78,6 +79,7 @@ export function restoreSubTask(id: number): Promise<SubTaskItem> {
 }
 
 export type SubTaskDetail = SubTaskItem & {
+  execution_schedules?: ExecutionSchedule[]
   work_reports?: {
     id: number
     submitter: string

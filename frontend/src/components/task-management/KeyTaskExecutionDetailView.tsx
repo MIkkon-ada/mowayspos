@@ -1,5 +1,6 @@
 import type { Project, TaskItem } from '../../types'
 import type { SubTaskDetail } from '../../api/subtasks'
+import { ExecutionScheduleTimeline } from './ExecutionScheduleTimeline'
 
 type Props = { project: Project | null; task: TaskItem | null; subTask: SubTaskDetail; onBack: () => void }
 type ReportItem = NonNullable<SubTaskDetail['work_reports']>[number]
@@ -67,6 +68,8 @@ export function KeyTaskExecutionDetailView({ project, task, subTask, onBack }: P
             <div className="flex items-center justify-between gap-3"><h2 className="text-sm font-semibold text-slate-800">任务评价标准</h2><span className="text-xs text-slate-400">按实际内容填写</span></div>
             <div className="mt-3 space-y-1.5 text-sm leading-6 text-slate-700">{criteria.map((item, index) => <p key={`${item}-${index}`}>• {item}</p>)}</div>
           </section>}
+
+          <ExecutionScheduleTimeline schedules={subTask.execution_schedules ?? []} />
 
           <section className="rounded-xl border border-slate-200 bg-white p-5">
             <div className="flex items-center justify-between gap-3"><h2 className="text-base font-semibold text-slate-800">工作汇报记录</h2><span className="text-xs text-slate-400">共 {reports.length} 条</span></div>

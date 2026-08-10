@@ -45,3 +45,15 @@ def test_recipient_ids_include_assignee_subtask_owner_and_project_owner():
     db.commit()
     schedule = make_schedule(date(2026, 8, 12), date(2026, 8, 16)); schedule.assignee_id = 1
     assert reminders.recipient_ids_for(db, schedule, "due_soon") == {1, 2, 4}
+
+
+def test_scan_creates_one_start_notification_per_recipient():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    db.add_all([models.Project(id=1, name="项目", status="active", is_active=True), models.Task(id=1, project_id=1, key_task="工作", plan_time=""), models.SubTask(id=1, task_id=1, title="关键任务", assignee="李娜")])
+    schedule = make_schedule(date(2026, 8, 12), date(2026, 8, 16)); schedule.assignee_id = 1
+    db.add(schedule); db.commit()
+    assert reminders.scan_execution_schedule_reminders(db, today=date(2026, 8, 12)) == 1
+    assert db.query(models.Notification).count() == 1
+    assert reminders.scan_execution_schedule_reminders(db, today=date(2026, 8, 12)) == 0

@@ -59,3 +59,23 @@ def create_reminder_notification(db: Session, *, schedule: models.ExecutionSched
     )
     db.flush()
     return True
+
+
+def scan_execution_schedule_reminders(db: Session, *, today: date) -> int:
+    created = 0
+    rows = db.query(models.ExecutionSchedule, models.SubTask, models.Task, models.Project).join(
+        models.SubTask, models.ExecutionSchedule.subtask_id == models.SubTask.id
+    ).join(models.Task, models.SubTask.task_id == models.Task.id).join(
+        models.Project, models.Task.project_id == models.Project.id
+    ).filter(
+        models.ExecutionSchedule.is_deleted.is_(False), models.SubTask.is_deleted.is_(False),
+        models.Task.is_deleted.is_(False), models.Project.is_active.is_(True),
+    ).all()
+    for schedule, _subtask, task, project in rows:
+        for kind in reminder_kinds_for(schedule, today):
+            link = f"/project/{project.id}/tasks?subtaskId={schedule.subtask_id}&scheduleId={schedule.id}"
+            for recipient_id in recipient_ids_for(db, schedule, kind):
+                if create_reminder_notification(db, schedule=schedule, recipient_id=recipient_id, kind=kind, due_on=today, project_id=project.id, link=link):
+                    created += 1
+    db.commit()
+    return created

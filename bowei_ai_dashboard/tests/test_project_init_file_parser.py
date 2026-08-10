@@ -682,6 +682,32 @@ def test_doc_invokes_antiword_without_shell_and_with_bounded_timeout(tmp_path, m
     assert process.wait_calls == [30]
 
 
+def test_doc_captures_process_tree_identifier_at_startup(tmp_path, monkeypatch):
+    path = tmp_path / "legacy-storage"
+    path.write_bytes(b"legacy-doc")
+    process = FakeAntiwordProcess(stdout=b"content")
+    process.pid = 12345
+    captured = []
+
+    if os.name == "nt":
+        expected_identifier = process.pid
+    else:
+        expected_identifier = 23456
+        monkeypatch.setattr(parser.os, "getpgid", lambda _pid: expected_identifier)
+
+    def fake_cleanup(received, readers, *, process_group_id=None):
+        captured.append((received, process_group_id))
+        for reader in readers:
+            reader.join(timeout=parser.ANTIWORD_READER_JOIN_SECONDS)
+
+    monkeypatch.setattr(parser.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(parser, "_cleanup_antiword_process", fake_cleanup)
+
+    parse_project_init_file(path, "legacy.doc")
+
+    assert captured == [(process, expected_identifier)]
+
+
 def test_doc_decodes_gb18030_when_strict_utf8_fails(tmp_path, monkeypatch):
     path = tmp_path / "legacy-storage"
     path.write_bytes(b"legacy-doc")
@@ -824,7 +850,9 @@ def test_antiword_cleanup_terminates_residual_process_tree_when_reader_is_alive(
     monkeypatch.setattr(
         parser,
         "_terminate_process_tree",
-        lambda received: terminated.append(received),
+        lambda received, process_group_id=None: terminated.append(
+            (received, process_group_id)
+        ),
     )
     joins = []
     reader = SimpleNamespace(
@@ -834,7 +862,7 @@ def test_antiword_cleanup_terminates_residual_process_tree_when_reader_is_alive(
 
     parser._cleanup_antiword_process(process, [reader])
 
-    assert terminated == [process]
+    assert terminated == [(process, None)]
     assert joins == [
         parser.ANTIWORD_READER_JOIN_SECONDS,
         parser.ANTIWORD_READER_JOIN_SECONDS,
@@ -858,18 +886,41 @@ def test_antiword_cleanup_bounds_wait_and_reader_join_when_termination_fails():
     assert joins == [parser.ANTIWORD_READER_JOIN_SECONDS]
 
 
+def test_antiword_cleanup_uses_saved_process_group_after_parent_exit(monkeypatch):
+    process = FakeAntiwordProcess()
+    process.pid = 12345
+    saved_pgid = 23456
+    process.poll = lambda: 0
+    monkeypatch.setattr(
+        parser,
+        "_terminate_process_tree",
+        lambda received, process_group_id=None: terminated.append(
+            (received, process_group_id)
+        ),
+    )
+    terminated = []
+    reader = SimpleNamespace(is_alive=lambda: True, join=lambda timeout=None: None)
+
+    parser._cleanup_antiword_process(
+        process,
+        [reader],
+        process_group_id=saved_pgid,
+    )
+
+    assert terminated == [(process, saved_pgid)]
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups are not available")
 def test_antiword_termination_targets_the_process_group(monkeypatch):
     calls = []
     process = SimpleNamespace(pid=12345, kill=lambda: calls.append("direct"))
-    monkeypatch.setattr(parser.os, "getpgid", lambda pid: pid + 1)
     monkeypatch.setattr(
         parser.os,
         "killpg",
         lambda pgid, sig: calls.append((pgid, sig)),
     )
 
-    parser._terminate_process_tree(process)
+    parser._terminate_process_tree(process, process_group_id=12346)
 
     assert calls == [(12346, signal.SIGKILL), "direct"]
 

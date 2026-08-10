@@ -145,6 +145,7 @@ def _parse_doc(path: Path, original_name: str) -> Iterable[SourceChunk]:
         ["antiword", "-w", "0", str(resolved_path)],
         **popen_kwargs,
     )
+    process_group_id = _capture_process_group_id(process)
     stdout = bytearray()
     stderr = bytearray()
     output_exceeded = threading.Event()
@@ -157,6 +158,7 @@ def _parse_doc(path: Path, original_name: str) -> Iterable[SourceChunk]:
                 stdout,
                 output_exceeded,
                 process,
+                process_group_id,
             ),
             daemon=True,
         ),
@@ -168,6 +170,7 @@ def _parse_doc(path: Path, original_name: str) -> Iterable[SourceChunk]:
                 stderr,
                 output_exceeded,
                 process,
+                process_group_id,
             ),
             daemon=True,
         ),
@@ -178,12 +181,16 @@ def _parse_doc(path: Path, original_name: str) -> Iterable[SourceChunk]:
         try:
             returncode = process.wait(timeout=ANTIWORD_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired as exc:
-            _terminate_process_tree(process)
+            _terminate_process_tree(process, process_group_id)
             raise ProjectInitFileParseError(
                 f"antiword 执行超时：{original_name}"
             ) from exc
     finally:
-        _cleanup_antiword_process(process, readers)
+        _cleanup_antiword_process(
+            process,
+            readers,
+            process_group_id=process_group_id,
+        )
 
     if output_exceeded.is_set():
         raise ProjectInitFileParseError(f"antiword 输出超过限制：{original_name}")
@@ -200,6 +207,7 @@ def _read_subprocess_stream(
     output: bytearray,
     output_exceeded: threading.Event,
     process: Any,
+    process_group_id: int | None,
 ) -> None:
     bytes_read = 0
     try:
@@ -210,14 +218,19 @@ def _read_subprocess_stream(
             bytes_read += len(chunk)
             if bytes_read > byte_limit:
                 output_exceeded.set()
-                _terminate_process_tree(process)
+                _terminate_process_tree(process, process_group_id)
                 return
             output.extend(chunk)
     except (OSError, ValueError):
         return
 
 
-def _cleanup_antiword_process(process: Any, readers: Sequence[threading.Thread]) -> None:
+def _cleanup_antiword_process(
+    process: Any,
+    readers: Sequence[threading.Thread],
+    *,
+    process_group_id: int | None = None,
+) -> None:
     for reader in readers:
         try:
             reader.join(timeout=ANTIWORD_READER_JOIN_SECONDS)
@@ -227,7 +240,7 @@ def _cleanup_antiword_process(process: Any, readers: Sequence[threading.Thread])
     readers_alive = _readers_are_alive(readers)
     process_running = _process_is_running(process)
     if process_running or readers_alive:
-        _terminate_process_tree(process)
+        _terminate_process_tree(process, process_group_id)
         if process_running:
             try:
                 process.wait(timeout=ANTIWORD_CLEANUP_WAIT_SECONDS)
@@ -278,12 +291,26 @@ def _process_is_running(process: Any) -> bool:
         return True
 
 
-def _terminate_process_tree(process: Any) -> None:
+def _capture_process_group_id(process: Any) -> int | None:
     pid = getattr(process, "pid", None)
-    if pid is not None and os.name == "nt":
+    if pid is None:
+        return None
+    if os.name == "nt":
+        return pid
+    try:
+        return os.getpgid(pid)
+    except (OSError, ProcessLookupError):
+        return None
+
+
+def _terminate_process_tree(
+    process: Any,
+    process_group_id: int | None = None,
+) -> None:
+    if process_group_id is not None and os.name == "nt":
         try:
             subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                ["taskkill", "/PID", str(process_group_id), "/T", "/F"],
                 check=False,
                 shell=False,
                 stdout=subprocess.DEVNULL,
@@ -293,9 +320,9 @@ def _terminate_process_tree(process: Any) -> None:
             )
         except (OSError, subprocess.TimeoutExpired):
             pass
-    elif pid is not None:
+    elif process_group_id is not None:
         try:
-            os.killpg(os.getpgid(pid), signal.SIGKILL)
+            os.killpg(process_group_id, signal.SIGKILL)
         except (OSError, ProcessLookupError):
             pass
     try:

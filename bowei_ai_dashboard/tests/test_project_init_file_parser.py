@@ -5,6 +5,7 @@ import io
 import os
 import signal
 import subprocess
+import threading
 import zipfile
 import zlib
 from dataclasses import FrozenInstanceError
@@ -774,6 +775,70 @@ def test_doc_timeout_kills_antiword_process(tmp_path, monkeypatch):
         parse_project_init_file(path, "slow.doc")
 
     assert process.killed
+
+
+def test_doc_drains_tail_output_before_closing_antiword_pipes(tmp_path, monkeypatch):
+    path = tmp_path / "tail.doc"
+    path.write_bytes(b"legacy-doc")
+
+    class TailStream:
+        def __init__(self):
+            self.read_count = 0
+            self.closed = False
+            self.tail_ready = threading.Event()
+
+        def read(self, _size):
+            if self.closed:
+                raise ValueError("stream closed")
+            self.read_count += 1
+            if self.read_count == 1:
+                return b"head\n"
+            if self.read_count == 2:
+                self.tail_ready.wait(timeout=0.2)
+                if self.closed:
+                    raise ValueError("stream closed")
+                return b"tail\n"
+            return b""
+
+        def close(self):
+            self.closed = True
+
+    process = FakeAntiwordProcess()
+    process.stdout = TailStream()
+    threading.Timer(0.01, process.stdout.tail_ready.set).start()
+    monkeypatch.setattr(parser.subprocess, "Popen", lambda *_args, **_kwargs: process)
+
+    chunks = parse_project_init_file(path, "tail.doc")
+
+    assert len(chunks) == 1
+    assert chunks[0].file_name == "tail.doc"
+    assert chunks[0].text == "head\ntail"
+
+
+def test_antiword_cleanup_terminates_residual_process_tree_when_reader_is_alive(
+    monkeypatch,
+):
+    process = FakeAntiwordProcess()
+    process.pid = 12345
+    terminated = []
+    monkeypatch.setattr(
+        parser,
+        "_terminate_process_tree",
+        lambda received: terminated.append(received),
+    )
+    joins = []
+    reader = SimpleNamespace(
+        is_alive=lambda: True,
+        join=lambda timeout=None: joins.append(timeout),
+    )
+
+    parser._cleanup_antiword_process(process, [reader])
+
+    assert terminated == [process]
+    assert joins == [
+        parser.ANTIWORD_READER_JOIN_SECONDS,
+        parser.ANTIWORD_READER_JOIN_SECONDS,
+    ]
 
 
 def test_antiword_cleanup_bounds_wait_and_reader_join_when_termination_fails():

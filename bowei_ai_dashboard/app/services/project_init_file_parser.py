@@ -218,24 +218,57 @@ def _read_subprocess_stream(
 
 
 def _cleanup_antiword_process(process: Any, readers: Sequence[threading.Thread]) -> None:
-    if _process_is_running(process):
-        _terminate_process_tree(process)
-        try:
-            process.wait(timeout=ANTIWORD_CLEANUP_WAIT_SECONDS)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-    for stream in (getattr(process, "stdout", None), getattr(process, "stderr", None)):
-        if stream is None:
-            continue
-        try:
-            stream.close()
-        except (OSError, ValueError):
-            pass
     for reader in readers:
         try:
             reader.join(timeout=ANTIWORD_READER_JOIN_SECONDS)
         except RuntimeError:
             pass
+
+    readers_alive = _readers_are_alive(readers)
+    process_running = _process_is_running(process)
+    if process_running or readers_alive:
+        _terminate_process_tree(process)
+        if process_running:
+            try:
+                process.wait(timeout=ANTIWORD_CLEANUP_WAIT_SECONDS)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+    for stream in (getattr(process, "stdout", None), getattr(process, "stderr", None)):
+        if stream is None:
+            continue
+        _close_stream_bounded(stream)
+    if readers_alive:
+        for reader in readers:
+            try:
+                reader.join(timeout=ANTIWORD_READER_JOIN_SECONDS)
+            except RuntimeError:
+                pass
+
+
+def _readers_are_alive(readers: Sequence[threading.Thread]) -> bool:
+    for reader in readers:
+        try:
+            is_alive = getattr(reader, "is_alive", None)
+            if is_alive is not None and is_alive():
+                return True
+        except RuntimeError:
+            return True
+    return False
+
+
+def _close_stream_bounded(stream: Any) -> None:
+    def close_stream() -> None:
+        try:
+            stream.close()
+        except (OSError, ValueError):
+            pass
+
+    closer = threading.Thread(target=close_stream, daemon=True)
+    try:
+        closer.start()
+        closer.join(timeout=ANTIWORD_CLEANUP_WAIT_SECONDS)
+    except RuntimeError:
+        pass
 
 
 def _process_is_running(process: Any) -> bool:

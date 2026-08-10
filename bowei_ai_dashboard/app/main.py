@@ -1,7 +1,10 @@
 from contextlib import asynccontextmanager
+import asyncio
+from datetime import datetime, time, timedelta
 import logging
 import os
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -67,6 +70,26 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("bowei")
+_reminder_task: asyncio.Task | None = None
+
+
+def run_execution_schedule_reminder_scan() -> None:
+    from .services.execution_schedule_reminders import scan_execution_schedule_reminders
+    with SessionLocal() as db:
+        scan_execution_schedule_reminders(db)
+
+
+async def _execution_schedule_reminder_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(run_execution_schedule_reminder_scan)
+        except Exception:
+            logger.exception("execution schedule reminder scan failed")
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        next_run = datetime.combine(now.date(), time(9), tzinfo=now.tzinfo)
+        if next_run <= now:
+            next_run += timedelta(days=1)
+        await asyncio.sleep((next_run - now).total_seconds())
 
 
 def _startup():
@@ -105,7 +128,18 @@ def _startup():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _startup()
-    yield
+    global _reminder_task
+    _reminder_task = asyncio.create_task(_execution_schedule_reminder_loop())
+    try:
+        yield
+    finally:
+        if _reminder_task:
+            _reminder_task.cancel()
+            try:
+                await _reminder_task
+            except asyncio.CancelledError:
+                pass
+            _reminder_task = None
 
 
 app = FastAPI(title="Moways-SOP project collaboration platform", version="0.3", lifespan=lifespan)

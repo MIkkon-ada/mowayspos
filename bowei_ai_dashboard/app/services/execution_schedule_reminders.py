@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
@@ -61,7 +61,8 @@ def create_reminder_notification(db: Session, *, schedule: models.ExecutionSched
     return True
 
 
-def scan_execution_schedule_reminders(db: Session, *, today: date) -> int:
+def scan_execution_schedule_reminders(db: Session, *, today: date | None = None) -> int:
+    today = today or datetime.now(CHINA).date()
     created = 0
     rows = db.query(models.ExecutionSchedule, models.SubTask, models.Task, models.Project).join(
         models.SubTask, models.ExecutionSchedule.subtask_id == models.SubTask.id

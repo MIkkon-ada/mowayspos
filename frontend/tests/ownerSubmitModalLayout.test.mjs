@@ -36,3 +36,10 @@ test('task header inputs use readable card styling instead of browser default fo
   assert.match(source, /placeholder="请输入重点工作"[\s\S]{0,320}text-xl font-bold[\s\S]{0,220}focus:outline-none focus:ring-4/)
   assert.match(source, /placeholder="请输入完成准则"[\s\S]{0,320}text-base font-medium[\s\S]{0,220}focus:outline-none focus:ring-4/)
 })
+
+test('workbench uses a compact balanced two-column layout', () => {
+  assert.match(source, /max-w-\[1560px\]/)
+  assert.match(source, /min-h-\[68px\]/)
+  assert.match(source, /gap-6 px-6 py-6/)
+  assert.match(source, /lg:w-\[280px\] xl:w-\[300px\]/)
+})

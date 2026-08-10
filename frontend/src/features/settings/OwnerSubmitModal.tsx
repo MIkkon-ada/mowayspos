@@ -558,10 +558,10 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
       onClick={() => !fillLoading && onClose()}
     >
       <div
-        className="owner-submit-workbench-shell flex h-[92vh] w-[96vw] max-w-[1440px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-[#f7f9fc] text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.24)]"
+        className="owner-submit-workbench-shell flex h-[92vh] w-[96vw] max-w-[1560px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-[#f7f9fc] text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.24)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="owner-submit-workbench-header flex min-h-[76px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-7 py-4">
+        <header className="owner-submit-workbench-header flex min-h-[68px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
           <div className="flex min-w-0 items-center gap-3.5">
             <div className="h-11 w-1.5 rounded-full bg-orange-500" aria-hidden="true" />
             <div className="min-w-0">
@@ -588,8 +588,8 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
         </header>
 
         <main className="owner-submit-workbench-main min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-[#f7f9fc] pb-6">
-          <div className="owner-submit-workbench-columns mx-auto flex max-w-[1440px] flex-col items-stretch gap-5 px-5 py-5 lg:flex-row lg:items-start lg:px-7">
-            <aside className="owner-submit-left-pane w-full shrink-0 space-y-4 lg:sticky lg:top-5 lg:w-[300px] xl:w-[330px]">
+          <div className="owner-submit-workbench-columns mx-auto flex max-w-[1560px] flex-col items-stretch gap-6 px-6 py-6 lg:flex-row lg:items-start">
+            <aside className="owner-submit-left-pane w-full shrink-0 space-y-4 lg:sticky lg:top-6 lg:w-[280px] xl:w-[300px]">
               <section className="owner-submit-core-card overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
                 <h3 className="sr-only">项目核心信息</h3>
                 <div className="p-5">
@@ -680,10 +680,10 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
             </aside>
 
             <section className="owner-submit-right-pane flex-1 min-w-0">
-              <div className="owner-submit-workplan-heading mb-5 flex flex-wrap items-start justify-between gap-4">
+              <div className="owner-submit-workplan-heading mb-4 flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 flex-wrap items-center gap-3">
-                    <h3 className="shrink-0 text-lg font-semibold text-slate-900">工作推进方案</h3>
+                    <h3 className="shrink-0 text-xl font-semibold text-slate-900">工作推进方案</h3>
                     <span className="mt-1 block max-w-3xl text-xs leading-5 text-slate-500">
                       规划重点工作方向，并细化关键任务执行计划。重点工作用于归类工作方向；关键任务才需要明确责任人、协助人和时间段。
                     </span>
@@ -704,11 +704,11 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                     key={taskIndex}
                     className="owner-submit-task-group mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.05)]"
                   >
-                    <div className="owner-submit-task-group-header flex items-start gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white shadow-sm">
+                    <div className="owner-submit-task-group-header flex items-start gap-4 border-b border-slate-200 bg-slate-50 px-6 py-5">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-base font-bold text-white shadow-sm">
                         {taskIndex + 1}
                       </div>
-                      <div className="grid flex-1 grid-cols-1 gap-4 md:grid-cols-2">
+                      <div className="grid min-w-0 flex-1 grid-cols-1 gap-5 md:grid-cols-2">
                         <div>
                           <label className="mb-1 block text-xs font-semibold tracking-wide text-slate-500">
                             重点工作名称
@@ -746,7 +746,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                     <div className="overflow-x-auto px-3 pb-1">
                           <table className="owner-submit-subtask-table table-fixed min-w-[860px] w-full border-separate border-spacing-0 text-left text-sm">
                         <thead>
-                          <tr className="border-b border-slate-200 bg-white text-[11px] font-bold tracking-wide text-slate-500">
+                            <tr className="border-b border-slate-200 bg-white text-xs font-bold tracking-wide text-slate-500">
                             <th className="w-[220px] py-2 pl-6 pr-3">关键任务</th>
                             <th className="w-[120px] px-3 py-2">责任人</th>
                             <th className="w-[120px] px-3 py-2">协助人</th>

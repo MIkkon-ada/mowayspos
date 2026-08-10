@@ -44,6 +44,14 @@ test('panel aborts polling requests and prevents stale polling overlap', () => {
   assert.match(source, /pollInFlightTokenRef\.current === token/)
 })
 
+test('panel cancels initialization attachment and latest-run requests during cleanup', () => {
+  assert.match(source, /const initializationControllerRef = useRef<AbortController \| undefined>\(undefined\)/)
+  assert.match(source, /const controller = new AbortController\(\)[\s\S]*listAttachmentsSafely\(projectId, existingAttachments \?\? \[\], controller\.signal\)/)
+  assert.match(source, /getLatestInitAnalysisRun\(projectId, controller\.signal\)/)
+  assert.match(source, /controller\.abort\(\)[\s\S]*initializationControllerRef\.current === controller/)
+  assert.match(source, /initializationControllerRef\.current\?\.abort\(\)/)
+})
+
 test('panel exposes attachment actions, complete warnings, partial file results, and awaited apply errors', () => {
   assert.match(source, /downloadInitAttachmentUrl\(projectId, attachment\.id\)/)
   assert.match(source, /deleteInitAttachment\(projectId, item\.attachment\.id\)/)

@@ -1,4 +1,4 @@
-import { ApiError, apiDelete, apiGet, apiPost } from './client'
+import { ApiError, apiDelete, apiPost } from './client'
 
 export type PositiveId = number & { readonly __positiveId: unique symbol }
 
@@ -535,9 +535,9 @@ async function apiGetWithSignal(path: string, signal?: AbortSignal): Promise<unk
   return apiRequestWithSignal('GET', path, undefined, signal)
 }
 
-export function listInitAttachments(projectId: number): Promise<ProjectInitAttachment[]> {
+export function listInitAttachments(projectId: number, signal?: AbortSignal): Promise<ProjectInitAttachment[]> {
   positiveId(projectId, 'projectId')
-  return projectJson(() => apiGet<unknown>(projectPath(projectId, '/init-attachments')), decodeAttachmentList)
+  return projectJson(() => apiGetWithSignal(projectPath(projectId, '/init-attachments'), signal), decodeAttachmentList)
 }
 
 export function downloadInitAttachmentUrl(projectId: number, attachmentId: number): string {
@@ -667,9 +667,9 @@ export function createInitAnalysisRun(
   )
 }
 
-export function getLatestInitAnalysisRun(projectId: number): Promise<ProjectInitAnalysisRun> {
+export function getLatestInitAnalysisRun(projectId: number, signal?: AbortSignal): Promise<ProjectInitAnalysisRun> {
   positiveId(projectId, 'projectId')
-  return projectJson(() => apiGetWithSignal(projectPath(projectId, '/init-analysis-runs/latest')), decodeRun)
+  return projectJson(() => apiGetWithSignal(projectPath(projectId, '/init-analysis-runs/latest'), signal), decodeRun)
 }
 
 export function getInitAnalysisRun(projectId: number, runId: number, signal?: AbortSignal): Promise<ProjectInitAnalysisRun> {

@@ -227,6 +227,7 @@ export function OwnerSubmitAiPanel({
   const [applying, setApplying] = useState(false)
   const [applySuccess, setApplySuccess] = useState(false)
   const mountedRef = useRef(true)
+  const initializationControllerRef = useRef<AbortController | undefined>(undefined)
   const pollInFlightTokenRef = useRef<number | undefined>(undefined)
   const activeRunIdRef = useRef<number | undefined>(undefined)
   const pollTimerRef = useRef<number | undefined>(undefined)
@@ -286,10 +287,12 @@ export function OwnerSubmitAiPanel({
   useEffect(() => {
     mountedRef.current = true
     let cancelled = false
+    const controller = new AbortController()
+    initializationControllerRef.current = controller
     setLoading(true)
     Promise.all([
-      listAttachmentsSafely(projectId, existingAttachments ?? []),
-      getLatestInitAnalysisRun(projectId).catch((nextError) => {
+      listAttachmentsSafely(projectId, existingAttachments ?? [], controller.signal),
+      getLatestInitAnalysisRun(projectId, controller.signal).catch((nextError) => {
         if (nextError instanceof ProjectInitApiError && nextError.status === 404) return undefined
         throw nextError
       }),
@@ -301,7 +304,7 @@ export function OwnerSubmitAiPanel({
         else setPanelState('idle')
       })
       .catch((nextError) => {
-        if (!cancelled && mountedRef.current) {
+        if (!cancelled && mountedRef.current && !controller.signal.aborted) {
           setError(errorMessage(nextError))
           setPanelState('failed')
         }
@@ -311,6 +314,8 @@ export function OwnerSubmitAiPanel({
       })
     return () => {
       cancelled = true
+      controller.abort()
+      if (initializationControllerRef.current === controller) initializationControllerRef.current = undefined
       mountedRef.current = false
       analysisRequestIdRef.current += 1
       uploadControllerRef.current?.abort()
@@ -542,6 +547,7 @@ export function OwnerSubmitAiPanel({
 
   function handleClose() {
     analysisRequestIdRef.current += 1
+    initializationControllerRef.current?.abort()
     uploadControllerRef.current?.abort()
     analysisControllerRef.current?.abort()
     clearPolling()
@@ -639,9 +645,9 @@ export function OwnerSubmitAiPanel({
   )
 }
 
-async function listAttachmentsSafely(projectId: number, fallback: ProjectInitAttachment[]): Promise<ProjectInitAttachment[]> {
+async function listAttachmentsSafely(projectId: number, fallback: ProjectInitAttachment[], signal?: AbortSignal): Promise<ProjectInitAttachment[]> {
   try {
-    return await listInitAttachments(projectId)
+    return await listInitAttachments(projectId, signal)
   } catch (nextError) {
     if (nextError instanceof ProjectInitApiError && nextError.status === 404) return fallback
     throw nextError

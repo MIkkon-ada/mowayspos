@@ -340,6 +340,70 @@ test('analysis run GET forwards cancellation and rejects with a stable abort err
   }
 })
 
+test('initial attachment list forwards cancellation through the bounded GET helper', async () => {
+  let observedSignal
+  let abortObserved = false
+  globalThis.fetch = async (_path, options) => {
+    observedSignal = options.signal
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        abortObserved = true
+        reject(new DOMException('aborted', 'AbortError'))
+      }, { once: true })
+    })
+  }
+  globalThis.__projectInitFakeClient = {
+    get: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      throw new Error('request did not receive an AbortSignal')
+    },
+    post: async () => ({}),
+    delete: async () => ({}),
+  }
+  const api = await loadApi()
+  const controller = new AbortController()
+  const request = api.listInitAttachments(7, controller.signal)
+  controller.abort()
+  await assert.rejects(request, (error) => error?.name === 'ProjectInitApiError' && error.code === 'ABORT_ERROR')
+  assert.ok(observedSignal)
+  assert.equal(observedSignal.aborted, true)
+  assert.equal(abortObserved, true)
+})
+
+test('latest analysis run uses the bounded GET helper and times out', async () => {
+  const originalSetTimeout = globalThis.setTimeout
+  const originalClearTimeout = globalThis.clearTimeout
+  let clearCalls = 0
+  globalThis.setTimeout = (callback, delay) => {
+    assert.equal(delay, 90_000)
+    callback()
+    return 456
+  }
+  globalThis.clearTimeout = (handle) => {
+    assert.equal(handle, 456)
+    clearCalls += 1
+  }
+  globalThis.fetch = async (_path, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+  })
+  globalThis.__projectInitFakeClient = {
+    get: async () => ({}),
+    post: async () => ({}),
+    delete: async () => ({}),
+  }
+  try {
+    const api = await loadApi()
+    await assert.rejects(
+      api.getLatestInitAnalysisRun(7),
+      (error) => error?.name === 'ProjectInitApiError' && error.code === 'TIMEOUT_ERROR',
+    )
+    assert.equal(clearCalls, 1)
+  } finally {
+    globalThis.setTimeout = originalSetTimeout
+    globalThis.clearTimeout = originalClearTimeout
+  }
+})
+
 test('stalled analysis POST times out and clears its timer', async () => {
   const originalSetTimeout = globalThis.setTimeout
   const originalClearTimeout = globalThis.clearTimeout

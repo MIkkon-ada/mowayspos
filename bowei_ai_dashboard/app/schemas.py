@@ -583,6 +583,31 @@ class MeetingStatusPatch(BaseModel):
     reject_reason: str = ""
 
 
+class MeetingProgressReviewPatch(BaseModel):
+    status: Literal[
+        "completed",
+        "in_progress",
+        "blocked",
+        "not_started",
+        "not_mentioned",
+    ] | None = None
+    suggested_task_status: str = ""
+    review_status: Literal["pending", "ignored"] | None = None
+    review_comment: str = ""
+
+
+class MeetingProgressReviewConfirm(BaseModel):
+    status: Literal[
+        "completed",
+        "in_progress",
+        "blocked",
+        "not_started",
+        "not_mentioned",
+    ] | None = None
+    suggested_task_status: str = ""
+    review_comment: str = ""
+
+
 class KickoffRunCreatePayload(BaseModel):
     transcript_text: str = Field(..., min_length=1)
 

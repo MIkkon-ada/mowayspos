@@ -32,6 +32,16 @@ from ..services.kickoff_agent import build_kickoff_snapshot, run_kickoff_agent
 from ..services.kickoff_writeback import confirm_kickoff_start
 from ..services.meeting_revisions import append_meeting_revision
 from ..services.meeting_traceability import normalize_action_items
+from ..services.meeting_progress_review import (
+    PROGRESS_STATUSES,
+    build_progress_prompt,
+    latest_approved_baseline_run,
+    load_approved_baseline,
+    next_analysis_version,
+    normalize_review_candidates,
+    parse_named_reports,
+)
+from ..time_utils import utc_now
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
 
@@ -463,6 +473,260 @@ HARD TRACEABILITY RULES:
         "transcript_text": payload.text,
         "has_speakers": has_speakers,
     }
+
+
+def _progress_baseline_index(baseline: dict) -> dict[int, tuple[int | None, dict, dict]]:
+    index: dict[int, tuple[int | None, dict, dict]] = {}
+    for task in baseline.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        for subtask in task.get("subtasks") or []:
+            if not isinstance(subtask, dict) or not isinstance(subtask.get("id"), int):
+                continue
+            index[subtask["id"]] = (task_id, task, subtask)
+    return index
+
+
+def _progress_status_to_task_status(status: str) -> str | None:
+    return {
+        "completed": TS.S_COMPLETED,
+        "in_progress": TS.S_IN_PROGRESS,
+        "not_started": TS.S_NOT_STARTED,
+    }.get(status)
+
+
+@router.post("/{row_id}/progress-review/analyze")
+async def analyze_progress_review(
+    row_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    context = get_user_context_from_db(current_user, db)
+    meeting = db.get(models.Meeting, row_id)
+    if not meeting:
+        raise HTTPException(404, "meeting not found")
+    project_id = _meeting_project_id_or_raise(meeting, context, db)
+    if project_id is None:
+        raise HTTPException(409, "progress review requires a project")
+    require_project_access(current_user, project_id, db)
+
+    baseline_run = latest_approved_baseline_run(project_id, db)
+    if not baseline_run or not baseline_run.approved_snapshot_json:
+        raise HTTPException(409, "approved kickoff baseline not found")
+    try:
+        baseline = load_approved_baseline(project_id, db)
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    member_names = _project_member_names(project_id, db)
+    reports = parse_named_reports(meeting.transcript_text or "", member_names)
+    if not reports:
+        raise HTTPException(422, "transcript must contain named reports in 姓名：内容 format")
+
+    prompt = build_progress_prompt(baseline, reports)
+    provider = _pick_provider()
+    try:
+        result = await asyncio.to_thread(
+            _do_analyze,
+            meeting.transcript_text or "",
+            prompt,
+            provider,
+        )
+    except Exception as exc:
+        logger.warning("meeting progress review failed: %s", exc)
+        raise HTTPException(502, f"progress review analysis failed: {exc}") from exc
+
+    candidates = result if isinstance(result, list) else result.get("reviews") or []
+    normalized = normalize_review_candidates(candidates, meeting.transcript_text or "", member_names)
+    baseline_index = _progress_baseline_index(baseline)
+    analysis_version = next_analysis_version(row_id, db)
+
+    for previous in (
+        db.query(models.MeetingProgressReview)
+        .filter(
+            models.MeetingProgressReview.meeting_id == row_id,
+            models.MeetingProgressReview.review_status == "pending",
+        )
+        .all()
+    ):
+        previous.review_status = "ignored"
+        previous.review_comment = f"superseded by analysis version {analysis_version}"
+
+    saved: list[models.MeetingProgressReview] = []
+    for candidate in normalized:
+        subtask_id = candidate.get("baseline_subtask_id")
+        task_id, task_snapshot, subtask_snapshot = (
+            baseline_index.get(subtask_id, (None, {}, {}))
+            if isinstance(subtask_id, int)
+            else (None, {}, {})
+        )
+        validation = json.loads(candidate.get("validation_json") or "[]")
+        if not isinstance(subtask_id, int) or subtask_id not in baseline_index:
+            validation.append("baseline_subtask_id is not in the approved kickoff baseline")
+        row = models.MeetingProgressReview(
+            project_id=project_id,
+            meeting_id=row_id,
+            baseline_run_id=baseline_run.id,
+            baseline_task_id=task_id,
+            baseline_subtask_id=subtask_id if isinstance(subtask_id, int) else None,
+            member_name=str(candidate.get("member_name") or ""),
+            baseline_snapshot_json=json.dumps(
+                {"task": task_snapshot, "subtask": subtask_snapshot},
+                ensure_ascii=False,
+            ),
+            report_text=str(candidate.get("report_text") or ""),
+            status=str(candidate.get("status") or "not_mentioned"),
+            evidence_quote=str(candidate.get("evidence_quote") or ""),
+            suggested_task_status=str(candidate.get("suggested_task_status") or ""),
+            review_status="pending",
+            validation_json=json.dumps(validation, ensure_ascii=False),
+            analysis_version=analysis_version,
+        )
+        db.add(row)
+        saved.append(row)
+
+    db.commit()
+    return {
+        "meeting_id": row_id,
+        "analysis_version": analysis_version,
+        "reviews": [crud.to_dict(row) for row in saved],
+    }
+
+
+@router.get("/{row_id}/progress-review")
+def list_progress_reviews(
+    row_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    context = get_user_context_from_db(current_user, db)
+    meeting = db.get(models.Meeting, row_id)
+    if not meeting:
+        raise HTTPException(404, "meeting not found")
+    project_id = _meeting_project_id_or_raise(meeting, context, db)
+    if project_id is not None:
+        require_project_access(current_user, project_id, db)
+    rows = (
+        db.query(models.MeetingProgressReview)
+        .filter(models.MeetingProgressReview.meeting_id == row_id)
+        .order_by(
+            models.MeetingProgressReview.analysis_version.desc(),
+            models.MeetingProgressReview.id.asc(),
+        )
+        .all()
+    )
+    return [crud.to_dict(row) for row in rows]
+
+
+@router.patch("/{row_id}/progress-review/{review_id}")
+def patch_progress_review(
+    row_id: int,
+    review_id: int,
+    payload: schemas.MeetingProgressReviewPatch,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    context = get_user_context_from_db(current_user, db)
+    meeting = db.get(models.Meeting, row_id)
+    review = db.get(models.MeetingProgressReview, review_id)
+    if not meeting or not review or review.meeting_id != row_id:
+        raise HTTPException(404, "progress review not found")
+    project_id = _meeting_project_id_or_raise(meeting, context, db)
+    if project_id is not None:
+        require_project_role(
+            current_user,
+            project_id,
+            [PROJECT_ROLE_OWNER_KEY, PROJECT_ROLE_COORD_KEY],
+            db,
+        )
+    if review.review_status == "accepted":
+        raise HTTPException(409, "accepted progress review cannot be edited")
+    if payload.status is not None:
+        review.status = payload.status
+    if payload.suggested_task_status:
+        review.suggested_task_status = payload.suggested_task_status.strip()
+    if payload.review_status is not None:
+        review.review_status = payload.review_status
+    review.review_comment = payload.review_comment.strip()
+    db.commit()
+    db.refresh(review)
+    return crud.to_dict(review)
+
+
+@router.post("/{row_id}/progress-review/{review_id}/confirm")
+def confirm_progress_review(
+    row_id: int,
+    review_id: int,
+    payload: schemas.MeetingProgressReviewConfirm,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    context = get_user_context_from_db(current_user, db)
+    meeting = db.get(models.Meeting, row_id)
+    review = db.get(models.MeetingProgressReview, review_id)
+    if not meeting or not review or review.meeting_id != row_id:
+        raise HTTPException(404, "progress review not found")
+    project_id = _meeting_project_id_or_raise(meeting, context, db)
+    if project_id is not None:
+        require_project_role(
+            current_user,
+            project_id,
+            [PROJECT_ROLE_OWNER_KEY, PROJECT_ROLE_COORD_KEY],
+            db,
+        )
+    if review.review_status != "pending":
+        raise HTTPException(409, "progress review is not pending")
+
+    if payload.status is not None:
+        review.status = payload.status
+    if payload.suggested_task_status:
+        review.suggested_task_status = payload.suggested_task_status.strip()
+    review.review_comment = payload.review_comment.strip()
+
+    task_updated = False
+    subtask = db.get(models.SubTask, review.baseline_subtask_id) if review.baseline_subtask_id else None
+    parent = db.get(models.Task, subtask.task_id) if subtask else None
+    if review.baseline_subtask_id and (not subtask or not parent or parent.project_id != project_id):
+        raise HTTPException(409, "review target subtask is not part of this project")
+
+    if subtask:
+        before = crud.to_dict(subtask)
+        target_status = _progress_status_to_task_status(review.status)
+        if target_status and target_status != subtask.status:
+            subtask.status = target_status
+            task_updated = True
+        if review.status == "blocked" and review.evidence_quote:
+            note = f"【会议进度阻塞】{review.evidence_quote}"
+            subtask.notes = f"{subtask.notes}\n{note}".strip() if subtask.notes else note
+            task_updated = True
+        after = crud.to_dict(subtask)
+        if task_updated:
+            crud.log(
+                db,
+                current_user,
+                "meeting_progress_review_confirm",
+                "subtask",
+                subtask.id,
+                before,
+                after,
+                project_id=project_id,
+                note=review.evidence_quote,
+            )
+
+    account = db.query(models.Account).filter(models.Account.username == current_user).first()
+    review.review_status = "accepted"
+    review.reviewer_person_id = account.person_id if account else None
+    review.reviewed_at = utc_now()
+    db.commit()
+    db.refresh(review)
+    result = crud.to_dict(review)
+    result["task_updated"] = task_updated
+    return result
 
 
 @router.get("/{row_id}/revisions")

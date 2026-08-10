@@ -30,3 +30,18 @@ def test_reminder_notification_is_idempotent():
     db.add(schedule); db.commit()
     assert reminders.create_reminder_notification(db, schedule=schedule, recipient_id=1, kind="start", due_on=date(2026, 8, 12), project_id=1, link="/x") is True
     assert reminders.create_reminder_notification(db, schedule=schedule, recipient_id=1, kind="start", due_on=date(2026, 8, 12), project_id=1, link="/x") is False
+
+
+def test_recipient_ids_include_assignee_subtask_owner_and_project_owner():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    db.add_all([
+        models.Project(id=1, name="项目", status="active", is_active=True),
+        models.Task(id=1, project_id=1, key_task="工作", plan_time="", owner_id=2),
+        models.SubTask(id=1, task_id=1, title="关键任务", assignee="李娜", assignee_id=3),
+        models.ProjectMember(project_id=1, person_id=4, role="owner"),
+    ])
+    db.commit()
+    schedule = make_schedule(date(2026, 8, 12), date(2026, 8, 16)); schedule.assignee_id = 1
+    assert reminders.recipient_ids_for(db, schedule, "due_soon") == {1, 2, 4}

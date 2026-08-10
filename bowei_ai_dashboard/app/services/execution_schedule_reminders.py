@@ -30,6 +30,18 @@ def notification_type(kind: str) -> str:
     return f"execution_schedule_{kind}"
 
 
+def recipient_ids_for(db: Session, schedule: models.ExecutionSchedule, kind: str) -> set[int]:
+    if kind == "start":
+        return {schedule.assignee_id} if schedule.assignee_id else set()
+    subtask = db.get(models.SubTask, schedule.subtask_id)
+    task = db.get(models.Task, subtask.task_id) if subtask else None
+    if not task or not task.project_id:
+        return {schedule.assignee_id} if schedule.assignee_id else set()
+    result = {person_id for person_id in (schedule.assignee_id, task.owner_id) if person_id}
+    result.update(member.person_id for member in db.query(models.ProjectMember).filter_by(project_id=task.project_id, role="owner").all() if member.person_id)
+    return result
+
+
 def create_reminder_notification(db: Session, *, schedule: models.ExecutionSchedule, recipient_id: int, kind: str, due_on: date, project_id: int, link: str) -> bool:
     existing = db.query(models.ExecutionScheduleReminder).filter_by(
         schedule_id=schedule.id, reminder_kind=kind, due_on=due_on, recipient_id=recipient_id,

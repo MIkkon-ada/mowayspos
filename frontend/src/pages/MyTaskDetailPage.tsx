@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { ApiError } from '../api/client'
 import { fetchSubtaskDetail, type SubTaskDetail } from '../api/subtasks'
 import { getMyTaskProgressText, getMyTaskStatusTone, normalizeMyTaskStatus, parseMyTaskPlanTime } from '../features/my-tasks/myTasksViewModel'
 import '../features/my-tasks/myTasks.css'
@@ -14,9 +15,29 @@ type LoopItem = {
   issues: string[]
 }
 
+type MyTaskDetailRouteState = {
+  projectId?: number | null
+  projectName?: string
+  workstreamName?: string
+}
+
 function fallback(value: unknown, empty = '暂无记录'): string {
   const text = String(value ?? '').trim()
   return text || empty
+}
+
+function parseProjectId(value: unknown): number | null {
+  const projectId = typeof value === 'number' ? value : Number(value)
+  return Number.isInteger(projectId) && projectId > 0 ? projectId : null
+}
+
+function getDetailErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 403) return '你没有查看该任务详情的权限，请返回列表后刷新任务。'
+    if (error.status === 404) return '该任务不存在、已删除，或不属于当前项目。'
+    return error.message || '任务详情加载失败，请稍后重试。'
+  }
+  return '任务详情加载失败，请检查网络后重试。'
 }
 
 function formatDateTime(value?: string | null): string {
@@ -76,13 +97,17 @@ function buildLoopItems(detail: SubTaskDetail): LoopItem[] {
 
 export function MyTaskDetailPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { taskId: taskIdParam } = useParams()
   const [searchParams] = useSearchParams()
   const taskId = Number(taskIdParam)
   const projectId = searchParams.get('projectId') || ''
+  const routeState = location.state as MyTaskDetailRouteState | null
+  const scopedProjectId = parseProjectId(projectId) ?? parseProjectId(routeState?.projectId)
   const [detail, setDetail] = useState<SubTaskDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [reloadToken, setReloadToken] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -93,20 +118,28 @@ export function MyTaskDetailPage() {
     }
     setLoading(true)
     setError('')
-    fetchSubtaskDetail(taskId)
+    fetchSubtaskDetail(taskId, scopedProjectId)
       .then((data) => { if (!cancelled) setDetail(data) })
-      .catch(() => { if (!cancelled) setError('任务详情加载失败，请稍后重试') })
+      .catch((requestError) => { if (!cancelled) setError(getDetailErrorMessage(requestError)) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [taskId])
+  }, [taskId, scopedProjectId, reloadToken])
+
+  const reload = () => setReloadToken((value) => value + 1)
 
   const plan = useMemo(() => parseMyTaskPlanTime(detail?.plan_time), [detail?.plan_time])
   const loops = useMemo(() => (detail ? buildLoopItems(detail) : []), [detail])
   const progress = getProgress(detail?.status)
   const status = normalizeMyTaskStatus(detail?.status)
   const statusTone = getMyTaskStatusTone(detail?.status)
-  const projectName = fallback(detail?.parent_task?.special_project, '未关联项目')
-  const workstreamName = fallback(detail?.parent_task?.key_task, '未关联重点工作')
+  const projectName = fallback(
+    detail?.parent_task?.special_project,
+    routeState?.projectName || (loading ? '正在读取项目归属' : '项目归属暂不可用'),
+  )
+  const workstreamName = fallback(
+    detail?.parent_task?.key_task,
+    routeState?.workstreamName || (loading ? '正在读取重点工作' : '重点工作暂不可用'),
+  )
   const deadline = plan.end || plan.display || '未设置'
   const submitUrl = `/work/submit?${new URLSearchParams({ ...(projectId ? { projectId } : {}), subtaskId: String(taskId) }).toString()}`
 
@@ -131,7 +164,7 @@ export function MyTaskDetailPage() {
 
       <main className="my-task-detail-content">
         {loading && <div className="my-task-state"><span className="my-task-state-icon is-spinning" aria-hidden="true">↻</span><h2>正在加载任务详情</h2><p>正在读取关键任务、闭环记录和关联成果问题。</p></div>}
-        {!loading && error && <div className="my-task-state is-error"><span className="my-task-state-icon" aria-hidden="true">!</span><h2>加载失败</h2><p>{error}</p><button type="button" onClick={() => navigate('/member/tasks')}>返回列表</button></div>}
+        {!loading && error && <div className="my-task-state is-error"><span className="my-task-state-icon" aria-hidden="true">!</span><h2>加载失败</h2><p>{error}</p><button type="button" onClick={reload}>重新加载</button><button type="button" onClick={() => navigate('/member/tasks')}>返回列表</button></div>}
         {!loading && detail && (
           <div className="my-task-detail-layout">
             <section className="my-task-detail-main">

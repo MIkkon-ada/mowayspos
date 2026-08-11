@@ -184,7 +184,7 @@ test('task detail opens as a full page instead of the old right drawer', () => {
   assert.doesNotMatch(page, /fetchSubtaskDetail/)
   assert.doesNotMatch(page, /MyTaskDetailDrawer|selectedRow|setSelectedRow/)
   assert.match(page, /navigate\(`\/member\/tasks\/\$\{row\.id\}/)
-  assert.match(detail, /fetchSubtaskDetail\(taskId\)/)
+  assert.match(detail, /fetchSubtaskDetail\(taskId, scopedProjectId\)/)
   assert.doesNotMatch(detail, /patchSubTaskStatus|updateSubTask|deleteSubTask|createUpdate/)
 })
 
@@ -195,6 +195,17 @@ test('my task detail requests retain the selected project scope and display cont
   assert.match(subtasks, /fetchSubtaskDetail\(id: number, projectId\?: number \| null\)/)
   assert.match(subtasks, /params\.set\('project_id', String\(projectId\)\)/)
   assert.match(page, /state:\s*\{[\s\S]*projectId: row\.projectId[\s\S]*projectName: row\.projectName[\s\S]*workstreamName: row\.workstreamName/)
+})
+
+test('my task detail reports API failures accurately and lets the user retry', () => {
+  const detail = read('src/pages/MyTaskDetailPage.tsx')
+
+  assert.match(detail, /useLocation/)
+  assert.match(detail, /fetchSubtaskDetail\(taskId, scopedProjectId\)/)
+  assert.match(detail, /error instanceof ApiError/)
+  assert.match(detail, /重新加载/)
+  assert.doesNotMatch(detail, /'未关联项目'/)
+  assert.doesNotMatch(detail, /'未关联重点工作'/)
 })
 
 test('table keeps the exact personal-task columns and no unsupported metrics', () => {

@@ -120,8 +120,11 @@ export type SubTaskDetail = SubTaskItem & {
   }[]
 }
 
-export function fetchSubtaskDetail(id: number): Promise<SubTaskDetail> {
-  return apiGet<SubTaskDetail>(`/api/subtasks/${id}/detail`)
+export function fetchSubtaskDetail(id: number, projectId?: number | null): Promise<SubTaskDetail> {
+  const params = new URLSearchParams()
+  if (projectId != null) params.set('project_id', String(projectId))
+  const query = params.size ? `?${params.toString()}` : ''
+  return apiGet<SubTaskDetail>(`/api/subtasks/${id}/detail${query}`)
 }
 
 export function fetchSubtasksByAssignee(assignee: string, projectId: number | null): Promise<SubTaskWithParent[]> {

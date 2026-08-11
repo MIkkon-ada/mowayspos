@@ -59,7 +59,13 @@ export function MyTasksPage() {
   const openDetail = (row: MyTaskRow) => {
     const params = new URLSearchParams()
     if (row.projectId !== null) params.set('projectId', String(row.projectId))
-    navigate(`/member/tasks/${row.id}${params.size ? `?${params.toString()}` : ''}`)
+    navigate(`/member/tasks/${row.id}${params.size ? `?${params.toString()}` : ''}`, {
+      state: {
+        projectId: row.projectId,
+        projectName: row.projectName,
+        workstreamName: row.workstreamName,
+      },
+    })
   }
   const clearFilters = () => {
     setStatus('全部')

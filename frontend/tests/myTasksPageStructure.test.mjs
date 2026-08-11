@@ -188,6 +188,15 @@ test('task detail opens as a full page instead of the old right drawer', () => {
   assert.doesNotMatch(detail, /patchSubTaskStatus|updateSubTask|deleteSubTask|createUpdate/)
 })
 
+test('my task detail requests retain the selected project scope and display context', () => {
+  const subtasks = read('src/api/subtasks.ts')
+  const page = read('src/pages/MyTasksPage.tsx')
+
+  assert.match(subtasks, /fetchSubtaskDetail\(id: number, projectId\?: number \| null\)/)
+  assert.match(subtasks, /params\.set\('project_id', String\(projectId\)\)/)
+  assert.match(page, /state:\s*\{[\s\S]*projectId: row\.projectId[\s\S]*projectName: row\.projectName[\s\S]*workstreamName: row\.workstreamName/)
+})
+
 test('table keeps the exact personal-task columns and no unsupported metrics', () => {
   const table = read('src/features/my-tasks/MyTasksTable.tsx')
   for (const column of ['#', '关键任务', '所属项目 / 重点工作', '计划时间', '状态', '当前进展', '操作']) {

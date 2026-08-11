@@ -277,7 +277,7 @@ test('my tasks page keeps the compact report-style header and filters', () => {
   const css = read('src/features/my-tasks/myTasks.css')
   assert.doesNotMatch(page, /my-task-stats-row|my-task-stat-card|my-task-fab/)
   assert.doesNotMatch(css, /\.my-task-stats-row|\.my-task-stat-card|\.my-task-fab/)
-  assert.match(css, /\.my-tasks-header\s*\{[^}]*height:\s*64px/s)
+  assert.match(css, /\.my-tasks-header\s*\{[^}]*height:\s*56px/s)
   assert.match(css, /\.my-tasks-header h1\s*\{[^}]*font-size:\s*16px/s)
   assert.match(css, /\.my-task-toolbar\s*\{[^}]*grid-template-columns:\s*minmax\(112px,\s*150px\) minmax\(112px,\s*150px\) minmax\(240px,\s*1fr\)/s)
   assert.match(css, /\.my-task-project-filter,\s*\.my-task-status-filter,\s*\.my-task-search\s*\{[^}]*height:\s*32px/s)
@@ -286,4 +286,14 @@ test('my tasks page keeps the compact report-style header and filters', () => {
   assert.match(css, /\.my-task-state h2\s*\{[^}]*font-size:\s*18px/s)
   assert.match(css, /\.my-task-state p\s*\{[^}]*font-size:\s*13px/s)
   assert.doesNotMatch(css, /\.my-task-state\s*\{[^}]*height:\s*clamp/)
+})
+
+test('my tasks list uses content-driven height and compact chrome', () => {
+  const css = read('src/features/my-tasks/myTasks.css')
+  assert.match(css, /\.my-tasks-header\s*\{[^}]*height:\s*56px/s)
+  assert.match(css, /\.my-task-toolbar\s*\{[^}]*min-height:\s*48px/s)
+  assert.match(css, /\.my-task-table-card\s*\{[^}]*height:\s*auto/s)
+  assert.match(css, /\.my-task-table-card\s*\{[^}]*overflow:\s*visible/s)
+  assert.match(css, /\.my-task-table td\s*\{[^}]*height:\s*76px/s)
+  assert.match(css, /\.my-task-actions-menu--top\s*\{[^}]*bottom:\s*38px/s)
 })

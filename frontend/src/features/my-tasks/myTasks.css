@@ -1,12 +1,12 @@
 .my-tasks-page { display: flex; min-height: 100%; height: 100%; flex-direction: column; overflow-x: hidden; background: #f8fafc; color: #0f172a; }
-.my-tasks-header { display: flex; height: 64px; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 16px; padding: 0 24px; border-bottom: 1px solid #e2e8f0; background: #fff; }
+.my-tasks-header { display: flex; height: 56px; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 16px; padding: 0 24px; border-bottom: 1px solid #e2e8f0; background: #fff; }
 .my-tasks-header h1 { margin: 0; color: #1e293b; font-size: 16px; font-weight: 700; line-height: 1.25; letter-spacing: 0; }
 .my-tasks-header p, .my-task-status-summary p, .my-task-quick-actions p { margin: 0; color: #64748b; font-size: 13px; }
 .my-task-eyebrow { color: #0284c7 !important; font-size: 10px !important; font-weight: 800; letter-spacing: .16em; }
 .my-task-refresh { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border: 1px solid #dbe4ef; border-radius: 8px; background: #fff; color: #64748b; font-size: 12px; cursor: pointer; }
 .my-tasks-content { display: flex; width: 100%; min-height: 0; flex: 1 1 auto; flex-direction: column; gap: 14px; margin: 0 auto; padding: 14px 20px 20px; }
 .my-task-toolbar, .my-task-table-card, .my-task-status-summary, .my-task-quick-actions, .my-tasks-help-panel { border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; box-shadow: 0 7px 24px rgba(15, 23, 42, .045); }
-.my-task-toolbar { display: grid; grid-template-columns: minmax(112px, 150px) minmax(112px, 150px) minmax(240px, 1fr); gap: 10px; align-items: center; flex: 0 0 auto; padding: 10px 12px; border-color: #e2e8f0; border-radius: 10px; box-shadow: 0 1px 3px rgba(15, 23, 42, .04); }
+.my-task-toolbar { display: grid; min-height: 48px; grid-template-columns: minmax(112px, 150px) minmax(112px, 150px) minmax(240px, 1fr); gap: 10px; align-items: center; flex: 0 0 auto; padding: 7px 12px; border-color: #e2e8f0; border-radius: 10px; box-shadow: 0 1px 3px rgba(15, 23, 42, .04); }
 .my-task-status-tabs { display: flex; align-items: center; gap: 4px; overflow-x: auto; border-bottom: 1px solid #eef2f7; }
 .my-task-status-tabs button { display: flex; align-items: center; gap: 7px; min-width: max-content; padding: 8px 12px 11px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #64748b; font-size: 13px; cursor: pointer; }
 .my-task-status-tabs button span { min-width: 22px; padding: 1px 6px; border-radius: 10px; background: #f1f5f9; color: #64748b; font-size: 10px; }
@@ -23,8 +23,8 @@
 .my-task-warning { display: flex; align-items: center; gap: 9px; padding: 10px 13px; border: 1px solid #fde68a; border-radius: 11px; background: #fffbeb; color: #92400e; font-size: 12px; }
 .my-task-warning span { flex: 1; }
 .my-task-warning button { border: 0; background: transparent; color: #b45309; font-weight: 700; cursor: pointer; }
-.my-task-table-card { min-width: 0; overflow: hidden; }
-.my-task-table-scroll { overflow-x: auto; }
+.my-task-table-card { min-width: 0; height: auto; overflow: visible; }
+.my-task-table-scroll { overflow-x: auto; overflow-y: visible; }
 .my-task-table { width: 100%; min-width: 1080px; border-collapse: collapse; table-layout: fixed; }
 .my-task-table th { padding: 11px 12px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; color: #64748b; text-align: left; font-size: 11px; font-weight: 700; }
 .my-task-table th:nth-child(1) { width: 48px; text-align: center; }
@@ -34,7 +34,7 @@
 .my-task-table th:nth-child(5) { width: 9%; }
 .my-task-table th:nth-child(6) { width: 25%; }
 .my-task-table th:nth-child(7) { width: 132px; text-align: center; }
-.my-task-table td { height: 70px; padding: 10px 12px; border-bottom: 1px solid #edf2f7; vertical-align: middle; font-size: 12px; }
+.my-task-table td { height: 76px; padding: 10px 12px; border-bottom: 1px solid #edf2f7; vertical-align: middle; font-size: 12px; }
 .my-task-table tbody tr { outline: 0; transition: background .15s; cursor: pointer; }
 .my-task-table tbody tr:hover, .my-task-table tbody tr:focus { background: #f8fbff; }
 .my-task-index { color: #94a3b8; text-align: center; font-variant-numeric: tabular-nums; }
@@ -54,10 +54,10 @@
 .my-task-detail-button { height: 32px; padding: 0 10px; border: 1px solid #bae6fd; border-radius: 8px; background: #fff; color: #0369a1; font-size: 11px; font-weight: 700; white-space: nowrap; cursor: pointer; }
 .my-task-detail-button:hover { border-color: #7dd3fc; background: #f0f9ff; }
 .my-task-actions { position: relative; flex: 0 0 auto; }
-.my-task-actions summary { display: grid; width: 30px; height: 30px; margin: 0 auto; border-radius: 8px; color: #64748b; cursor: pointer; list-style: none; place-items: center; }
-.my-task-actions summary::-webkit-details-marker { display: none; }
-.my-task-actions[open] summary, .my-task-actions summary:hover { background: #e0f2fe; color: #0369a1; }
-.my-task-actions-menu { position: absolute; z-index: 20; top: 34px; right: 0; width: 164px; padding: 6px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; box-shadow: 0 12px 30px rgba(15,23,42,.16); }
+.my-task-actions-trigger { display: grid; width: 32px; height: 32px; margin: 0 auto; border: 0; border-radius: 8px; background: transparent; color: #64748b; cursor: pointer; place-items: center; }
+.my-task-actions-trigger[aria-expanded="true"], .my-task-actions-trigger:hover { background: #e0f2fe; color: #0369a1; }
+.my-task-actions-menu { position: absolute; z-index: 20; top: 38px; right: 0; width: 164px; padding: 6px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; box-shadow: 0 12px 30px rgba(15,23,42,.16); }
+.my-task-actions-menu--top { top: auto; bottom: 38px; }
 .my-task-actions-menu button { display: flex; align-items: center; gap: 7px; width: 100%; padding: 8px 9px; border: 0; border-radius: 7px; background: transparent; color: #334155; font-size: 12px; text-align: left; cursor: pointer; }
 .my-task-actions-menu button:hover { background: #f1f5f9; }
 .my-task-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 12px; color: #64748b; font-size: 10px; }

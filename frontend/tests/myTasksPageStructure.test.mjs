@@ -9,13 +9,17 @@ const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 const exists = (file) => fs.existsSync(path.join(root, file))
 const MODEL = 'src/features/my-tasks/myTasksViewModel.ts'
 
-async function loadModel() {
-  assert.ok(exists(MODEL), `${MODEL} must exist`)
-  const source = read(MODEL)
+async function loadSourceModule(file) {
+  assert.ok(exists(file), `${file} must exist`)
+  const source = read(file)
   const js = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
   }).outputText
   return import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)
+}
+
+async function loadModel() {
+  return loadSourceModule(MODEL)
 }
 
 const projects = [
@@ -232,6 +236,13 @@ test('task detail page shows structure, deadline, closed-loop timeline, outcomes
   assert.match(css, /\.my-task-structure-chain\s*\{[\s\S]*?font-size:\s*13px/s)
   assert.match(css, /\.my-task-structure-node::before\s*\{[\s\S]*?content:\s*''/s)
   assert.match(css, /\.my-task-structure-index\s*\{[\s\S]*?border-radius:\s*50%/s)
+})
+
+test('overflow menu opens upward only when the viewport lacks lower space', async () => {
+  const { getMyTaskMenuPlacement } = await loadSourceModule('src/features/my-tasks/menuPlacement.ts')
+  assert.equal(getMyTaskMenuPlacement({ bottom: 400 }, 700, 120, 8), 'bottom')
+  assert.equal(getMyTaskMenuPlacement({ bottom: 620 }, 700, 120, 8), 'top')
+  assert.equal(getMyTaskMenuPlacement({ bottom: 580 }, 700, 112, 8), 'bottom')
 })
 
 test('my tasks page removes bottom metric/support cards and keeps compact labels', () => {

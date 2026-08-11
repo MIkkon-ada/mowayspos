@@ -222,6 +222,17 @@ test('each task row exposes a dedicated detail action beside the overflow menu',
   assert.doesNotMatch(menu, /查看详情/)
 })
 
+test('task overflow menu is controlled and closes outside its trigger', () => {
+  const table = read('src/features/my-tasks/MyTasksTable.tsx')
+  assert.match(table, /useEffect, useRef, useState/)
+  assert.match(table, /getMyTaskMenuPlacement/)
+  assert.match(table, /openMenuId/)
+  assert.match(table, /aria-expanded=\{isMenuOpen\}/)
+  assert.match(table, /my-task-actions-menu--top/)
+  assert.match(table, /event\.key === 'Escape'/)
+  assert.match(table, /!menuRoot\.contains\(event\.target as Node\)/)
+})
+
 test('task detail page shows structure, deadline, closed-loop timeline, outcomes and issues', () => {
   const detail = read('src/pages/MyTaskDetailPage.tsx')
   const css = read('src/features/my-tasks/myTasks.css')

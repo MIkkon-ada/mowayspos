@@ -366,6 +366,7 @@ def list_subtasks_batch(
 @router.get("/api/subtasks/{row_id}/detail")
 def get_subtask_detail(
     row_id: int,
+    project_id: int | None = None,
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
@@ -378,9 +379,11 @@ def get_subtask_detail(
 
     parent = db.get(models.Task, row.task_id)
     if parent:
-        project_id = _get_task_project_id(parent, db)
-        if project_id is not None:
-            require_project_access(current_user, project_id, db)
+        resolved_project_id = _get_task_project_id(parent, db)
+        if project_id is not None and resolved_project_id != project_id:
+            raise HTTPException(404, "subtask not found")
+        if resolved_project_id is not None:
+            require_project_access(current_user, resolved_project_id, db)
         elif not (context.get("is_tech_admin") or context.get("is_ceo")):
             raise HTTPException(403, "permission denied")
 

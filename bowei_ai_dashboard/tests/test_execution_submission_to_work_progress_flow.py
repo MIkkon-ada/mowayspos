@@ -10,6 +10,7 @@ import asyncio
 import json
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -469,6 +470,37 @@ def test_flow3_subtask_detail_shows_source_submission_and_related_data():
     # 断言 related_issues
     assert len(detail.get("related_issues", [])) >= 1
     assert any("兼容性" in (i.get("description") or "") for i in detail["related_issues"])
+
+
+def test_flow3_subtask_detail_accepts_its_parent_project_scope():
+    db = _make_session()
+    team = _seed_execution_team(db)
+
+    detail = get_subtask_detail(
+        team["subtask"].id,
+        project_id=team["project"].id,
+        current_user="owner",
+        db=db,
+    )
+
+    assert detail["id"] == team["subtask"].id
+    assert detail["parent_task"]["special_project"] == team["project"].name
+
+
+def test_flow3_subtask_detail_rejects_a_conflicting_project_scope():
+    db = _make_session()
+    team = _seed_execution_team(db)
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_subtask_detail(
+            team["subtask"].id,
+            project_id=team["project"].id + 1,
+            current_user="owner",
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "subtask not found"
 
 
 def test_flow3_full_roundtrip_closed_loop():

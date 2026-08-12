@@ -41,3 +41,19 @@ test('page wires document upload state into the shared editor', () => {
   assert.match(page, /onDocumentFile/)
   assert.match(page, /documentUploading/)
 })
+
+test('starting a new report clears parsed document text and document metadata together', () => {
+  const page = read('src/pages/VoiceUpdatePage.tsx')
+  assert.match(
+    page,
+    /onResetExtractionState=\{\(options\) => \{\s*resetExtractionState\(options\);\s*removeDocument\(\)\s*\}\}/,
+  )
+})
+
+test('restarting from history clears stale document metadata before restoring report text', () => {
+  const page = read('src/pages/VoiceUpdatePage.tsx')
+  assert.match(
+    page,
+    /onRestartFromSubmission=\{\(detailItem\) => \{\s*resetExtractionState\(\)\s*removeDocument\(\)/,
+  )
+})

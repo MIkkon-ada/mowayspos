@@ -20,6 +20,7 @@ MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 MAX_EXTRACTED_CHARS = 5_000
 MAX_ARCHIVE_MEMBERS = 2_000
 MAX_ARCHIVE_UNCOMPRESSED_BYTES = 40 * 1024 * 1024
+MAX_PDF_PAGES = 100
 ALLOWED_SUFFIXES = {".docx", ".pdf", ".xlsx", ".pptx"}
 
 
@@ -92,7 +93,28 @@ def _extract_pdf(content: bytes) -> str:
     reader = PdfReader(BytesIO(content))
     if reader.is_encrypted:
         raise WorkReportDocumentTextError("文档无法解析，请确认文件未损坏且未加密")
-    return "\n".join(page.extract_text() or "" for page in reader.pages)
+    return _extract_bounded_pdf_text(reader)
+
+
+def _extract_bounded_pdf_text(reader: PdfReader) -> str:
+    if len(reader.pages) > MAX_PDF_PAGES:
+        raise WorkReportDocumentTextError("PDF 页数不能超过 100 页")
+
+    lines: list[str] = []
+    extracted_chars = 0
+    for page in reader.pages:
+        page_fragments: list[str] = []
+
+        def collect_text(fragment: str, *_: object) -> None:
+            nonlocal extracted_chars
+            extracted_chars += len(fragment)
+            if extracted_chars > MAX_EXTRACTED_CHARS:
+                raise WorkReportDocumentTextError("文档解析内容不能超过 5000 字，请上传相关章节")
+            page_fragments.append(fragment)
+
+        page.extract_text(visitor_text=collect_text)
+        lines.append("".join(page_fragments))
+    return "\n".join(lines)
 
 
 def _extract_xlsx(content: bytes) -> str:

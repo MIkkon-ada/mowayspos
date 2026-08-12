@@ -391,7 +391,7 @@ export function VoiceUpdatePage() {
               submittedAt={submittedAt}
               draftSaved={draftSaved}
               onSaveDraft={handleSaveDraft}
-              onResetExtractionState={() => { resetExtractionState(); removeDocument() }}
+              onResetExtractionState={(options) => { resetExtractionState(options); removeDocument() }}
               onClear={() => { resetExtractionState({ clearText: true }); removeDocument() }}
               onSubmitFinal={handleSubmitFinal}
               onViewSubmissionHistory={() => setHistoryOpen(true)}
@@ -425,9 +425,10 @@ export function VoiceUpdatePage() {
         onToggleTranscript={() => historyState.setShowTranscript((value) => !value)}
         currentUserName={currentUser?.name}
         onResubmitted={async (id) => { await historyState.refreshHistory(); void historyState.handleSelectUpdate(id) }}
-        onRestartFromSubmission={(detailItem) => {
-          resetExtractionState()
-          const taskReports = Array.isArray(detailItem.human_result?.task_reports)
+            onRestartFromSubmission={(detailItem) => {
+              resetExtractionState()
+              removeDocument()
+              const taskReports = Array.isArray(detailItem.human_result?.task_reports)
             ? detailItem.human_result.task_reports as Array<Record<string, unknown>>
             : []
           const evidence = taskReports.flatMap((report) =>

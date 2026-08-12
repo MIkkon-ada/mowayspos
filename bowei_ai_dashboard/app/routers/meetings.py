@@ -9,9 +9,10 @@ from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
+from ..ai.contracts import AIInvocationContext, Capability
+from ..ai.service import AIService
 from ..domain import task_status as TS
 from ..database import get_db
-from ..llm_config import get_provider_config
 
 logger = logging.getLogger("bowei.meetings")
 from ..permissions import (
@@ -164,12 +165,11 @@ def create_kickoff_run(
         raise HTTPException(409, "项目不处于待启动会状态")
     account = db.query(models.Account).filter_by(username=current_user).first()
     snapshot = build_kickoff_snapshot(project_id, db)
-    provider = _pick_provider()
     try:
         package = run_kickoff_agent(
             payload.transcript_text,
             snapshot,
-            lambda prompt: _do_analyze(payload.transcript_text, prompt, provider),
+            lambda prompt: _do_analyze(db, payload.transcript_text, prompt),
         )
     except Exception as exc:
         logger.exception("kickoff Agent execution failed")
@@ -634,9 +634,8 @@ HARD TRACEABILITY RULES:
 - Never use project context as evidence for a meeting fact.
 """
 
-    provider = _pick_provider()
     try:
-        result = await asyncio.to_thread(_do_analyze, payload.text, prompt, provider)
+        result = await asyncio.to_thread(_do_analyze, db, payload.text, prompt)
     except Exception as exc:
         logger.warning("meeting analyze failed: %s", exc)
         raise HTTPException(500, f"AI analysis failed: {exc}")
@@ -719,13 +718,13 @@ async def analyze_progress_review(
         raise HTTPException(422, "transcript must contain named reports in 姓名：内容 format")
 
     prompt = build_progress_prompt(baseline, reports)
-    provider = _pick_provider()
     try:
         result = await asyncio.to_thread(
             _do_analyze,
+            db,
             meeting.transcript_text or "",
             prompt,
-            provider,
+            resource_id=row_id,
         )
     except Exception as exc:
         logger.warning("meeting progress review failed: %s", exc)
@@ -1235,9 +1234,8 @@ async def generate_task_cards(
         text=payload.transcript_text[:12000],
     )
 
-    provider = _pick_provider()
     try:
-        result = await asyncio.to_thread(_do_analyze, payload.transcript_text, prompt, provider)
+        result = await asyncio.to_thread(_do_analyze, db, payload.transcript_text, prompt)
     except Exception as exc:
         logger.warning("generate_task_cards failed: %s", exc)
         raise HTTPException(500, f"AI analysis failed: {exc}")
@@ -1499,7 +1497,7 @@ def _build_all_members_context(
     return "\n".join(lines)
 
 
-def _do_analyze(text: str, prompt: str, provider: str) -> dict:
+def _legacy_do_analyze(text: str, prompt: str, provider: str) -> dict:
     if provider == "anthropic":
         import anthropic
         cfg = get_provider_config("anthropic")
@@ -1544,5 +1542,29 @@ def _pick_provider() -> str:
         if cfg.get("api_key"):
             return p
     return "anthropic"
+
+
+def _do_analyze(
+    db: Session,
+    text: str,
+    prompt: str,
+    *,
+    resource_id: int | None = None,
+) -> dict:
+    """Invoke the meeting-analysis capability and retain the legacy JSON parser."""
+    _ = text
+    response = AIService(db).invoke_chat(
+        Capability.MEETING_ANALYSIS,
+        prompt,
+        AIInvocationContext(resource_type="meeting", resource_id=resource_id),
+    )
+    raw = response.text
+    start = raw.find("{")
+    if start < 0:
+        raise ValueError("LLM did not return a JSON object")
+    result, _ = json.JSONDecoder().raw_decode(raw[start:])
+    if not isinstance(result, dict):
+        raise ValueError("LLM did not return a JSON object")
+    return result
 
 

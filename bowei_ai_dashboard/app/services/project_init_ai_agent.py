@@ -16,6 +16,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
+from ..ai.contracts import AIInvocationContext, Capability
+from ..ai.service import AIService
 from ..llm_config import get_provider_config, resolve_provider
 from .project_init_file_parser import SourceChunk
 
@@ -717,6 +719,7 @@ def generate_project_init_draft(
     existing_people: Iterable[PersonCandidate | dict[str, Any]],
     existing_tasks: Iterable[dict[str, Any]],
     llm_call: Callable[..., Any] | None = None,
+    ai_service: AIService | None = None,
 ) -> ProjectInitAiResult:
     """Extract and reconcile a review-only project-init draft without DB writes."""
     source_values = _source_index(chunks)
@@ -724,8 +727,19 @@ def generate_project_init_draft(
         raise ProjectInitAiEmptyResult("没有可分析的来源片段")
     people = _person_candidates(existing_people)
     indexed_tasks, _ = _existing_task_index(existing_tasks)
-    provider = resolve_provider() if llm_call is None else "injected"
-    caller = llm_call or _default_llm_call
+    if llm_call is not None:
+        provider = "injected"
+        caller = llm_call
+    elif ai_service is not None:
+        provider = Capability.PROJECT_INIT_ANALYSIS
+        caller = lambda prompt: ai_service.invoke_chat(
+            Capability.PROJECT_INIT_ANALYSIS,
+            prompt,
+            AIInvocationContext(resource_type="project_init"),
+        ).text
+    else:
+        provider = resolve_provider()
+        caller = _default_llm_call
     batches = _split_batches(source_values)
     canonical_sources = [source for batch in batches for source in batch]
     all_tasks: list[AgentTask] = []
@@ -764,6 +778,10 @@ def generate_project_init_draft(
         existing_tasks=indexed_tasks,
         chunks=canonical_sources,
         provider=provider,
-        model_name=get_provider_config(provider).get("model", "") if provider != "injected" else "",
+        model_name=(
+            get_provider_config(provider).get("model", "")
+            if provider not in {"injected", Capability.PROJECT_INIT_ANALYSIS}
+            else ""
+        ),
     )
     return result

@@ -142,8 +142,9 @@ def test_worker_success_updates_monotonic_progress_and_keeps_snapshot(monkeypatc
     run_id = run.id
     (tmp_path / "source-1.txt").write_text("Frozen source", encoding="utf-8")
     monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(service, "AIService", lambda _db: object())
     monkeypatch.setattr(service, "parse_project_init_file", lambda path, original_name=None: [{"file_name": "source-1.txt", "location": "lines 1", "text": "Frozen source", "attachment_id": 1}])
-    monkeypatch.setattr(service, "generate_project_init_draft", lambda chunks, people, tasks: SimpleNamespace(model_dump=lambda: {"tasks": [{"title": "Draft task"}], "warnings": []}, tasks=[SimpleNamespace()]))
+    monkeypatch.setattr(service, "generate_project_init_draft", lambda chunks, people, tasks, **_kwargs: SimpleNamespace(model_dump=lambda: {"tasks": [{"title": "Draft task"}], "warnings": []}, tasks=[SimpleNamespace()]))
     monkeypatch.setattr(service, "_attachment_path", lambda row: tmp_path / "source-1.txt")
 
     service.process_analysis_run(run_id)
@@ -175,6 +176,7 @@ def test_worker_all_failure_is_failed_and_does_not_leak_provider_secret(monkeypa
     run_id = run.id
     (tmp_path / "source-1.txt").write_text("bad", encoding="utf-8")
     monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(service, "AIService", lambda _db: object())
     monkeypatch.setattr(service, "parse_project_init_file", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("secret-api-key prompt body")))
     monkeypatch.setattr(service, "_attachment_path", lambda row: tmp_path / "source-1.txt")
 
@@ -221,7 +223,8 @@ def test_worker_partial_attachment_failure_preserves_successful_draft(monkeypatc
         return [{"file_name": original_name, "location": "lines 1", "text": "ok"}]
 
     monkeypatch.setattr(service, "parse_project_init_file", parse)
-    monkeypatch.setattr(service, "generate_project_init_draft", lambda *args: {"tasks": [{"title": "Kept"}], "warnings": []})
+    monkeypatch.setattr(service, "AIService", lambda _db: object())
+    monkeypatch.setattr(service, "generate_project_init_draft", lambda *args, **_kwargs: {"tasks": [{"title": "Kept"}], "warnings": []})
     service.process_analysis_run(run_id)
 
     db.expire_all()

@@ -30,6 +30,8 @@ from ..time_utils import utc_now
 from ..services.policy import can_submit_to_project as _can_submit_to_project
 from ..services.extractor import extract_update
 from ..services.work_report_agent import extract_work_report_agent
+from ..ai.contracts import AIInvocationContext, Capability
+from ..ai.service import AIService
 from ..services.cross_project_submission import create_submission_batch, serialize_batch_result
 from ..services.notify import person_id_for_account as _pid_for_account, send as _notify
 from ..services.project_resolution import resolve_project_context
@@ -308,8 +310,19 @@ async def extract(
                 extract_work_report_agent,
                 payload.transcript_text,
                 candidates,
-                payload.llm_provider or "deepseek",
-                payload.submitter or current_user,
+                submitter=payload.submitter or current_user,
+                ai_call=lambda prompt: json.loads(
+                    AIService(db)
+                    .invoke_chat(
+                        Capability.TASK_EXTRACTION,
+                        prompt,
+                        AIInvocationContext(
+                            actor=current_user,
+                            resource_type="work_report",
+                        ),
+                    )
+                    .text
+                ),
             )
             return {"suggestion": result}
         result = await asyncio.to_thread(
@@ -321,6 +334,7 @@ async def extract(
             ceo_name,
             require_llm=True,
             user_subtasks=user_subtasks,
+            ai_service=AIService(db),
         )
     except RuntimeError as exc:
         raise HTTPException(502, str(exc))

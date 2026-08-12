@@ -19,6 +19,7 @@ from ..permissions import (
 )
 from ..time_utils import utc_now
 from ..services.extractor import extract_tasks as _extract_tasks
+from ..ai.service import AIService
 from ..services.notify import person_id_for_name as _pid_for_name, send as _notify, person_name_for_account
 from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
@@ -591,7 +592,12 @@ def extract_outline(
     if payload.project_id is not None:
         require_project_access(current_user, payload.project_id, db)
     try:
-        result = _extract_tasks(payload.text, payload.llm_provider, payload.project_names)
+        result = _extract_tasks(
+            payload.text,
+            payload.llm_provider,
+            payload.project_names,
+            ai_service=AIService(db),
+        )
     except RuntimeError as exc:
         raise HTTPException(502, str(exc))
     return result

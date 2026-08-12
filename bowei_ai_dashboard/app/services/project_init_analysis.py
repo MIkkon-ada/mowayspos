@@ -22,6 +22,7 @@ from .. import crud, models
 from ..database import SessionLocal
 from ..time_utils import utc_now
 from .project_init_ai_agent import generate_project_init_draft
+from ..ai.service import AIService
 from .project_init_file_parser import parse_project_init_file
 
 logger = logging.getLogger(__name__)
@@ -386,7 +387,12 @@ def process_analysis_run(run_id: int) -> None:
         people = snapshot.get("people", []) if isinstance(snapshot, dict) else []
         existing_tasks = snapshot.get("tasks", []) if isinstance(snapshot, dict) else []
         try:
-            result = generate_project_init_draft(chunks, people, existing_tasks)
+            result = generate_project_init_draft(
+                chunks,
+                people,
+                existing_tasks,
+                ai_service=AIService(db),
+            )
             draft = _draft_payload(result)
         except Exception as exc:
             logger.warning(

@@ -396,12 +396,20 @@ def _call_agent_llm(prompt: str, provider: str) -> dict:
     return _extract_json_blob(raw)
 
 
-def extract_work_report_agent(transcript_text: str, candidates: list[dict], provider: str, submitter: str | None = None,
-                              llm_call: Callable[[str, str], dict] = _call_agent_llm) -> dict:
+def extract_work_report_agent(
+    transcript_text: str,
+    candidates: list[dict],
+    provider: str | None = None,
+    submitter: str | None = None,
+    llm_call: Callable[[str, str], dict] = _call_agent_llm,
+    *,
+    ai_call: Callable[[str], dict] | None = None,
+) -> dict:
     """Run the full Agent pipeline with one LLM call and server-side ID validation."""
     if not transcript_text.strip():
         return build_ai_work_report_draft(transcript_text, candidates, [], submitter)
-    parsed = llm_call(_agent_prompt(transcript_text, candidates), provider)
+    prompt = _agent_prompt(transcript_text, candidates)
+    parsed = ai_call(prompt) if ai_call is not None else llm_call(prompt, provider or "")
     if isinstance(parsed.get("task_reports"), list):
         return build_ai_work_report_draft(transcript_text, candidates, parsed["task_reports"], submitter)
     fragments = parsed.get("fragments") or []

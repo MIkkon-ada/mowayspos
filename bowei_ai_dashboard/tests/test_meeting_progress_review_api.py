@@ -80,11 +80,10 @@ def test_analyze_requires_approved_baseline():
 
 def test_analyze_persists_pending_evidence_bound_rows(monkeypatch):
     db, meeting, _subtask = _seed()
-    monkeypatch.setattr(meetings, "_pick_provider", lambda: "deepseek")
     monkeypatch.setattr(
         meetings,
         "_do_analyze",
-        lambda *_args: {
+            lambda *_args, **_kwargs: {
             "reviews": [
                 {
                     "member_name": "Owner",

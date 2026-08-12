@@ -7,6 +7,8 @@ from datetime import date
 logger = logging.getLogger("bowei.extractor")
 
 from ..domain import issue_type as IT
+from ..ai.contracts import AIInvocationContext, Capability
+from ..ai.service import AIService
 
 USE_LLM = os.getenv("BOWEI_USE_LLM", "false").lower() == "true"
 # 单次 LLM 调用最长等待秒数，可通过环境变量覆盖
@@ -226,6 +228,23 @@ def _extract_with_llm(text: str, provider: str, user_subtasks: list[dict] | None
         return data
     except Exception as exc:
         logger.warning("LLM extract failed provider=%s: %s", provider, exc)
+        return None
+
+
+def _extract_with_capability(
+    text: str,
+    ai_service: AIService,
+    user_subtasks: list[dict] | None = None,
+) -> dict | None:
+    try:
+        result = ai_service.invoke_chat(
+            Capability.TASK_EXTRACTION,
+            _build_extract_prompt(text, user_subtasks),
+            AIInvocationContext(resource_type="work_report"),
+        )
+        return _extract_json_blob(result.text)
+    except Exception as exc:
+        logger.warning("AI capability task extraction failed: %s", type(exc).__name__)
         return None
 
 
@@ -1038,7 +1057,13 @@ def _match_project(guess: str, project_names: list[str]) -> tuple[str, float]:
     return ("", 0.0)
 
 
-def extract_tasks(text: str, provider: str | None = None, project_names: list[str] | None = None) -> dict:
+def extract_tasks(
+    text: str,
+    provider: str | None = None,
+    project_names: list[str] | None = None,
+    *,
+    ai_service: AIService | None = None,
+) -> dict:
     """从大纲文本提取关键任务列表（LLM only），失败抛 RuntimeError。
     返回 {tasks, project_guess, suggested_project, confidence}。
     """
@@ -1047,19 +1072,30 @@ def extract_tasks(text: str, provider: str | None = None, project_names: list[st
         return {"tasks": [], "project_guess": "", "suggested_project": "", "confidence": 0.0}
 
     effective_provider: str | None = None
-    if provider and provider != "rules":
+    if ai_service is not None:
+        effective_provider = Capability.TASK_EXTRACTION
+    elif provider and provider != "rules":
         from ..llm_config import resolve_provider
         effective_provider = resolve_provider(provider)
     elif USE_LLM:
         from ..llm_config import resolve_provider
         effective_provider = resolve_provider()
 
-    if not effective_provider:
+    if not effective_provider and ai_service is None:
         raise RuntimeError("未配置可用AI引擎，请在系统设置中配置API Key")
 
     prompt = _TASK_OUTLINE_PROMPT.format(text=clean, current_year=date.today().year)
     try:
-        if effective_provider == "anthropic":
+        if ai_service is not None:
+            data = _extract_json_blob(
+                ai_service.invoke_chat(
+                    Capability.TASK_EXTRACTION,
+                    prompt,
+                    AIInvocationContext(resource_type="task_outline"),
+                ).text
+            )
+            effective_provider = Capability.TASK_EXTRACTION
+        elif effective_provider == "anthropic":
             import anthropic
             cfg = _get_cfg("anthropic")
             if not cfg.get("api_key"):
@@ -1118,6 +1154,7 @@ def extract_update(
     *,
     require_llm: bool = False,
     user_subtasks: list[dict] | None = None,
+    ai_service: AIService | None = None,
 ) -> dict:
     text = _clean_text(transcript_text)
     if not text:
@@ -1151,15 +1188,23 @@ def extract_update(
         }, provider or "rules", False, "")
 
     effective_provider = None
-    if provider and provider != "rules":
+    if ai_service is not None:
+        effective_provider = Capability.TASK_EXTRACTION
+    elif provider and provider != "rules":
         from ..llm_config import resolve_provider
         effective_provider = resolve_provider(provider)
     elif USE_LLM:
         from ..llm_config import resolve_provider
         effective_provider = resolve_provider()
 
-    if effective_provider:
+    if ai_service is not None:
+        llm_data = _extract_with_capability(text, ai_service, user_subtasks)
+        effective_provider = Capability.TASK_EXTRACTION
+    elif effective_provider:
         llm_data = _extract_with_llm(text, effective_provider, user_subtasks)
+    else:
+        llm_data = None
+    if effective_provider:
         if llm_data is not None:
             return _with_meta(_normalize_llm_result(llm_data, source_type, text, submitter, ceo_name, user_subtasks), effective_provider, True, "")
         if require_llm:

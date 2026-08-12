@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { getLLMConfigs, saveLLMConfig, type LLMProviderConfig } from '../../api/llmConfig'
+import { getLLMConfigs, getLLMDefaultProvider, saveLLMConfig, saveLLMDefaultProvider, type LLMProviderConfig } from '../../api/llmConfig'
 import { Card, SectionTitle } from './settingsShared'
 
 export function LLMConfigSection() {
   const [configs, setConfigs] = useState<LLMProviderConfig[]>([])
+  const [defaultProvider, setDefaultProvider] = useState('')
   const [loading, setLoading] = useState(true)
   const [editingProvider, setEditingProvider] = useState<string | null>(null)
   const [editForm, setEditForm] = useState({ api_key: '', base_url: '', model: '' })
@@ -11,8 +12,22 @@ export function LLMConfigSection() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    getLLMConfigs().then(setConfigs).catch(() => setConfigs([])).finally(() => setLoading(false))
+    Promise.all([getLLMConfigs(), getLLMDefaultProvider()])
+      .then(([items, defaultConfig]) => { setConfigs(items); setDefaultProvider(defaultConfig.provider) })
+      .catch(() => setConfigs([]))
+      .finally(() => setLoading(false))
   }, [])
+
+  async function handleDefaultProvider(provider: string) {
+    setSaving('default-provider')
+    setError('')
+    try {
+      const saved = await saveLLMDefaultProvider(provider)
+      setDefaultProvider(saved.provider)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : '保存失败')
+    } finally { setSaving(null) }
+  }
 
   async function handleToggle(cfg: LLMProviderConfig) {
     setSaving(cfg.provider)
@@ -60,7 +75,16 @@ export function LLMConfigSection() {
       )}
       {loading
         ? <p className="text-sm text-slate-400 py-4 text-center">加载中…</p>
-        : configs.map(cfg => (
+        : <>
+          <label className="mb-4 block rounded-xl border border-sky-100 bg-sky-50 px-3 py-3">
+            <span className="mb-1 block text-xs font-semibold text-slate-700">默认 LLM</span>
+            <select value={defaultProvider} onChange={event => void handleDefaultProvider(event.target.value)} disabled={saving === 'default-provider'} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm disabled:opacity-50">
+              <option value="">自动选择首个可用模型</option>
+              {configs.filter(cfg => cfg.enabled && cfg.api_key_set).map(cfg => <option key={cfg.provider} value={cfg.provider}>{cfg.display_name} · {cfg.model}</option>)}
+            </select>
+            <span className="mt-1 block text-xs text-slate-500">页面显式选择优先于此项；环境变量仍可覆盖对应模型参数。</span>
+          </label>
+          {configs.map(cfg => (
           <div key={cfg.provider} style={{ borderBottom: '1px solid #F1F5F9', paddingBottom: 16, marginBottom: 16 }}>
             <div className="flex items-center gap-3">
               <div className="flex-1 min-w-0">
@@ -123,7 +147,8 @@ export function LLMConfigSection() {
               </div>
             )}
           </div>
-        ))
+          ))}
+        </>
       }
     </Card>
   )

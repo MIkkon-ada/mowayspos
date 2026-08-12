@@ -99,6 +99,21 @@ pw-qa2/
 pw-qa3/
 bowei_ai_dashboard/attachment-storage/
 
+# Local operator artifacts (never version)
+/tmp/
+/frontend/dist.zip
+/.superpowers/
+/_inspect_db.py
+/_tmp_query.py
+/bowei_ai_dashboard/*.db.backup-*
+/*_snap*.yml
+/login-*.yml
+/prod-login*.yaml
+/confirm_detail.yml
+/people_dialog.yml
+/project_form.yml
+/projects_snap.yml
+
 # Claude Code config
 .claude/
 

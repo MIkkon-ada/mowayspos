@@ -1031,7 +1031,7 @@ def add_member(
         _notify(
             db, recipient_id=payload.person_id, recipient=person.name,
             ntype="project_member_added",
-            title=f"你已被加入项目：{project.project_name}",
+            title=f"你已被加入项目：{project.name}",
             body=f"角色：{payload.role}；操作人：{caller_name}",
             link=f"/work/tasks?project_id={project_id}",
             project_id=project_id,
@@ -1124,7 +1124,7 @@ def remove_member(
         _notify(
             db, recipient_id=row.person_id, recipient=person_name,
             ntype="project_member_removed",
-            title=f"你已被移出项目：{project.project_name}",
+            title=f"你已被移出项目：{project.name}",
             body=f"操作人：{caller_name}",
             link=f"/work/tasks?project_id={project_id}",
             project_id=project_id,

@@ -1,4 +1,4 @@
-"""Runtime settings helpers for backend auth/session and secret sources."""
+"""Typed backend runtime settings and configuration-source helpers."""
 
 from __future__ import annotations
 
@@ -65,6 +65,24 @@ def _parse_ttl_days(raw: str | None) -> int:
     return ttl if ttl > 0 else _DEFAULT_SESSION_TTL_DAYS
 
 
+def _bounded_int(raw: str | None, *, minimum: int, maximum: int, default: int) -> int:
+    try:
+        value = int(raw) if raw is not None else default
+    except ValueError:
+        return default
+    return value if minimum <= value <= maximum else default
+
+
+def _bounded_float(
+    raw: str | None, *, minimum: float, maximum: float, default: float
+) -> float:
+    try:
+        value = float(raw) if raw is not None else default
+    except ValueError:
+        return default
+    return value if minimum <= value <= maximum else default
+
+
 def _read_json_file(path: Path) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -125,6 +143,36 @@ class RuntimeSettings:
             and self.wecom_secret
             and self.wecom_redirect_uri
         )
+
+
+@dataclass(frozen=True)
+class AsrSettings:
+    realtime_model: str
+    context_enabled: bool
+    packet_duration_ms: int
+    stop_timeout_seconds: float
+    heartbeat_enabled: bool
+
+
+def get_asr_settings() -> AsrSettings:
+    realtime_model = os.getenv("ASR_REALTIME_MODEL", "fun-asr-realtime").strip()
+    return AsrSettings(
+        realtime_model=realtime_model or "fun-asr-realtime",
+        context_enabled=parse_bool(os.getenv("ASR_CONTEXT_ENABLED"), default=True),
+        packet_duration_ms=_bounded_int(
+            os.getenv("ASR_PACKET_DURATION_MS"),
+            minimum=40,
+            maximum=250,
+            default=100,
+        ),
+        stop_timeout_seconds=_bounded_float(
+            os.getenv("ASR_STOP_TIMEOUT_SECONDS"),
+            minimum=2.0,
+            maximum=30.0,
+            default=8.0,
+        ),
+        heartbeat_enabled=parse_bool(os.getenv("ASR_HEARTBEAT_ENABLED"), default=True),
+    )
 
 
 def get_settings() -> RuntimeSettings:

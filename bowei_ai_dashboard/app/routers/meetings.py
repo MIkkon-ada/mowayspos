@@ -37,6 +37,8 @@ from ..services.meeting_change_set import (
     execute_meeting_change_set,
     validate_meeting_change_proposal,
 )
+from ..services.meeting_revisions import append_meeting_revision
+from ..services.meeting_traceability import normalize_action_items
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
 
@@ -363,6 +365,7 @@ def create_meeting(
             {"meeting_id": row.id, "status": "attached"},
             project_id=row.project_id,
         )
+    append_meeting_revision(db, row, saved_by=current_user)
     if row.publish_status == "draft" and row.project_id:
         from ..services.notify import company_ceo_person_ids, project_strict_owner_ids, send as _notify
         for recipient_id in set(project_strict_owner_ids(row.project_id, db) + company_ceo_person_ids(db)):
@@ -549,6 +552,11 @@ def _tag_action_item_members(action_items: list, project_id: int | None, db: Ses
         row = dict(item)
         candidate = str(row.get("member") or "").strip()
         row["member"] = candidate if candidate in member_names else "待确认"
+        row["deadline"] = str(row.get("deadline") or "待确认").strip()
+        row["acceptance_criteria"] = str(row.get("acceptance_criteria") or "待确认").strip()
+        row["evidence_quote"] = str(
+            row.get("evidence_quote") or row.get("evidence") or "待确认"
+        ).strip()
         tagged.append(row)
     return tagged
 
@@ -625,6 +633,14 @@ async def analyze_meeting(
 
     if snapshot is not None:
         prompt += _meeting_change_set_prompt(snapshot)
+    prompt += """
+HARD TRACEABILITY RULES:
+- Only extract work items, decisions, and risks explicitly supported by the transcript.
+- Every action_items entry must include member, task, deadline, acceptance_criteria, and evidence_quote.
+- evidence_quote must be a short verbatim quote from the transcript; if unavailable, return 待确认.
+- If member, deadline, or acceptance_criteria is not explicit, return 待确认 instead of inferring it.
+- Never use project context as evidence for a meeting fact.
+"""
 
     provider = _pick_provider()
     try:
@@ -641,6 +657,7 @@ async def analyze_meeting(
         payload.project_id,
         db,
     )
+    action_items = normalize_action_items(action_items, payload.text)
 
     response = {
         "title": result.get("title", ""),
@@ -679,6 +696,47 @@ async def analyze_meeting(
     response["analysis_id"] = change_set.id
     response["change_set"] = _meeting_change_set_payload(change_set, db)
     return response
+
+
+@router.get("/{row_id}/revisions")
+def list_meeting_revisions(
+    row_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    context = get_user_context_from_db(current_user, db)
+    row = db.get(models.Meeting, row_id)
+    if not row:
+        raise HTTPException(404, "meeting not found")
+    project_id = _row_project_id(row, db)
+    if row.publish_status != "published" and not _can_view_meeting_draft(row, current_user, context, db):
+        raise HTTPException(403, "permission denied")
+    if project_id is not None:
+        require_project_access(current_user, project_id, db)
+    elif not (context.get("is_tech_admin") or context.get("is_ceo")):
+        raise HTTPException(403, "permission denied")
+    rows = (
+        db.query(models.MeetingRevision)
+        .filter(models.MeetingRevision.meeting_id == row_id)
+        .order_by(models.MeetingRevision.version_no.desc(), models.MeetingRevision.id.desc())
+        .all()
+    )
+    return [crud.to_dict(item) for item in rows]
+
+
+@router.get("/{row_id}/revisions/{version_no}")
+def get_meeting_revision(
+    row_id: int,
+    version_no: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    rows = list_meeting_revisions(row_id, current_user, db)
+    for item in rows:
+        if item["version_no"] == version_no:
+            return item
+    raise HTTPException(404, "meeting revision not found")
 
 
 def _meeting_for_read(
@@ -846,11 +904,17 @@ def update_meeting(
         for k, v in payload.model_dump().items()
         if k not in {"project_id", "related_special_project"}
     }
-    crud.update_model(row, update_data)
     if context.get("is_tech_admin") and payload.project_id is not None:
         row.project_id = payload.project_id
     if context.get("is_tech_admin") and payload.related_special_project:
         row.related_special_project = payload.related_special_project
+    append_meeting_revision(
+        db,
+        row,
+        update_data,
+        saved_by=current_user,
+        preserve_legacy=True,
+    )
     crud.log(db, current_user, "meeting_update", "meeting", row.id, before, payload.model_dump())
     db.commit()
     return crud.to_dict(row)

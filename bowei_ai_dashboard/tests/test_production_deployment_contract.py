@@ -98,6 +98,13 @@ def test_backend_has_no_host_port_and_exposes_8008_internally():
     assert "8008:8008" not in compose
 
 
+def test_production_llm_configuration_uses_the_persistent_host_mount():
+    compose = _read(COMPOSE_PATH)
+    backend = _service_block(compose, "backend", "frontend")
+    assert "${MOWAYS_DATA_ROOT:-/data/mowayspos}/env/llm_configs.json:/app/llm_configs.json" in backend
+    assert 'ALLOW_FILE_SECRET_FALLBACK: "false"' in backend
+
+
 def test_postgres_has_no_host_port_and_exposes_5432_internally():
     compose = _read(COMPOSE_PATH)
     postgres = _service_block(compose, "postgres", "backend")

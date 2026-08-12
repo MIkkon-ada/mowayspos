@@ -1,24 +1,108 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  composeTranscript,
+  emptyTranscript,
+  mergeTranscript,
+  parseServerMessage,
+  type RecorderState,
+  type ServerMessage,
+  type TranscriptState,
+} from './voiceRecorderProtocol'
 
 type UseVoiceRecorderArgs = {
+  projectId: number | null
+  selectedTaskId: number | null
+  canRecord: boolean
+  initialText: string
   setText: (updater: string | ((prev: string) => string)) => void
   setError: (value: string | null) => void
 }
 
 type WorkletMessage =
   | { type: 'pcm'; buffer: ArrayBuffer }
-  | { type: 'silence'; duration: number }
+  | { type: 'flushed' }
 
-export function useVoiceRecorder({ setText, setError }: UseVoiceRecorderArgs) {
-  const [recording, setRecording] = useState(false)
+type Waiter = {
+  attempt: number
+  types: Set<ServerMessage['type']>
+  resolve: (message: ServerMessage | null) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
+type TrackEndListener = {
+  track: MediaStreamTrack
+  listener: () => void
+}
+
+type ServerTiming = {
+  attempt: number
+  stopTimeoutSeconds: number
+}
+
+const SOCKET_TIMEOUT_MS = 6000
+const FLUSH_TIMEOUT_MS = 1000
+
+async function releaseLocalMedia(
+  context: AudioContext | null,
+  stream: MediaStream | null,
+  source: MediaStreamAudioSourceNode | null,
+  node: AudioWorkletNode | null,
+) {
+  try {
+    source?.disconnect()
+  } catch {
+    // A partially-created graph may already be disconnected.
+  }
+  try {
+    node?.disconnect()
+  } catch {
+    // A partially-created graph may already be disconnected.
+  }
+  if (node) node.port.onmessage = null
+  stream?.getTracks().forEach((track) => track.stop())
+  if (context && context.state !== 'closed') {
+    try {
+      await context.close()
+    } catch {
+      // Cleanup is best-effort and idempotent.
+    }
+  }
+}
+
+export function useVoiceRecorder(args: UseVoiceRecorderArgs) {
+  const [recorderState, setRecorderState] = useState<RecorderState>('idle')
   const [timer, setTimer] = useState(0)
 
+  const argsRef = useRef(args)
+  argsRef.current = args
+  const stateRef = useRef<RecorderState>('idle')
+  const mountedRef = useRef(true)
+  const mediaActiveRef = useRef(false)
+  const startInFlightRef = useRef(false)
+  const startOwnerRef = useRef<number | null>(null)
+  const terminalRef = useRef(false)
+  const attemptGenerationRef = useRef(0)
   const stoppingRef = useRef(false)
-  const recordingRef = useRef(false)
+  const intentionalCloseSocketsRef = useRef(new WeakSet<WebSocket>())
+  const intentionalMediaStopRef = useRef(new WeakSet<MediaStream>())
+  const trackEndListenersRef = useRef(new WeakMap<MediaStream, TrackEndListener[]>())
+  const backpressureRef = useRef(false)
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const workletRef = useRef<AudioWorkletNode | null>(null)
+  const flushWaiterRef = useRef<(() => void) | null>(null)
+  const serverTimingRef = useRef<ServerTiming | null>(null)
+  const transcriptRef = useRef<TranscriptState>(emptyTranscript(''))
+  const waitersRef = useRef(new Set<Waiter>())
+
+  const updateState = useCallback((next: RecorderState) => {
+    stateRef.current = next
+    mediaActiveRef.current = ['connecting', 'starting', 'recording', 'stopping'].includes(next)
+    if (mountedRef.current) setRecorderState(next)
+  }, [])
 
   const clearTimer = useCallback(() => {
     if (timerIntervalRef.current) {
@@ -27,261 +111,535 @@ export function useVoiceRecorder({ setText, setError }: UseVoiceRecorderArgs) {
     }
   }, [])
 
-  /** 上次更新 DOM 的时间戳，用于平滑渲染 */
-  const lastRenderRef = useRef(0)
-  /** 已完成的句子（final=true 的结果累积） */
-  const finalizedTextRef = useRef('')
-  /** 当前正在识别的句子（final=false 的部分结果） */
-  const currentSentenceRef = useRef('')
-
-  /** 将识别结果平滑更新到 UI：每 ~50ms 刷新一次，避免高频 setState 造成的卡顿 */
-  const smoothSetText = useCallback(
-    (text: string, final: boolean) => {
-      if (final) {
-        // 句子识别完成，累积到已完成文本
-        finalizedTextRef.current = (finalizedTextRef.current + text).replace(/\s+/g, ' ').trim()
-        currentSentenceRef.current = ''
-      } else {
-        // 部分结果，更新当前句子
-        currentSentenceRef.current = text
-      }
-
-      const fullText = currentSentenceRef.current
-        ? finalizedTextRef.current + currentSentenceRef.current
-        : finalizedTextRef.current
-
-      const now = performance.now()
-      // final 结果立即刷新；非 final 结果节流到 50ms 一次
-      if (final || now - lastRenderRef.current >= 50) {
-        lastRenderRef.current = now
-        setText(() => fullText)
-      }
-    },
-    [setText],
-  )
-
-  /** 提交最后一次待渲染的文本 */
-  const flushPendingText = useCallback(() => {
-    const fullText = currentSentenceRef.current
-      ? finalizedTextRef.current + currentSentenceRef.current
-      : finalizedTextRef.current
-    if (fullText) {
-      setText(() => fullText)
+  const resolveWaiters = useCallback((message: ServerMessage | null, attempt: number) => {
+    for (const waiter of [...waitersRef.current]) {
+      if (waiter.attempt !== attempt) continue
+      if (message && !waiter.types.has(message.type) && message.type !== 'error') continue
+      clearTimeout(waiter.timer)
+      waitersRef.current.delete(waiter)
+      waiter.resolve(message)
     }
-  }, [setText])
+  }, [])
 
-  const cleanup = useCallback(() => {
-    stoppingRef.current = true
-    recordingRef.current = false
+  const waitForMessage = useCallback((
+    expected: ServerMessage['type'] | ServerMessage['type'][],
+    attempt: number,
+    timeoutMs = SOCKET_TIMEOUT_MS,
+  ) => {
+    const types = new Set(Array.isArray(expected) ? expected : [expected])
+    return new Promise<ServerMessage | null>((resolve) => {
+      const waiter: Waiter = {
+        attempt,
+        types,
+        resolve,
+        timer: setTimeout(() => {
+          waitersRef.current.delete(waiter)
+          resolve(null)
+        }, timeoutMs),
+      }
+      waitersRef.current.add(waiter)
+    })
+  }, [])
+
+  const releaseMedia = useCallback(async (
+    context: AudioContext | null,
+    stream: MediaStream | null,
+    source: MediaStreamAudioSourceNode | null,
+    node: AudioWorkletNode | null,
+  ) => {
+    if (stream) {
+      intentionalMediaStopRef.current.add(stream)
+      const listeners = trackEndListenersRef.current.get(stream) ?? []
+      for (const { track, listener } of listeners) {
+        track.removeEventListener('ended', listener)
+      }
+      trackEndListenersRef.current.delete(stream)
+    }
+    await releaseLocalMedia(context, stream, source, node)
+  }, [])
+
+  const releaseAttachedMedia = useCallback(async () => {
+    const context = audioCtxRef.current
+    const stream = streamRef.current
+    const source = sourceRef.current
+    const node = workletRef.current
+    const flushWaiter = flushWaiterRef.current
+    audioCtxRef.current = null
+    streamRef.current = null
+    sourceRef.current = null
+    workletRef.current = null
+    flushWaiterRef.current = null
+    flushWaiter?.()
+    await releaseMedia(context, stream, source, node)
+  }, [releaseMedia])
+
+  const cleanup = useCallback(async (options?: {
+    invalidateAttempt?: boolean
+    preserveAttempt?: number
+  }) => {
+    const invalidateAttempt = options?.invalidateAttempt ?? true
+    const preserveAttempt = options?.preserveAttempt
+
+    // Atomically detach every owned resource before the first await.
+    const socket = wsRef.current
+    const context = audioCtxRef.current
+    const stream = streamRef.current
+    const source = sourceRef.current
+    const node = workletRef.current
+    const flushWaiter = flushWaiterRef.current
+    wsRef.current = null
+    audioCtxRef.current = null
+    streamRef.current = null
+    sourceRef.current = null
+    workletRef.current = null
+    flushWaiterRef.current = null
+    if (serverTimingRef.current?.attempt !== preserveAttempt) {
+      serverTimingRef.current = null
+    }
+
+    if (invalidateAttempt) attemptGenerationRef.current += 1
+    if (socket) intentionalCloseSocketsRef.current.add(socket)
     clearTimer()
+    flushWaiter?.()
 
-    const ws = wsRef.current
-    if (ws) {
+    const capturedWaiters = [...waitersRef.current].filter(
+      (waiter) => waiter.attempt !== preserveAttempt,
+    )
+    for (const waiter of capturedWaiters) {
+      clearTimeout(waiter.timer)
+      waitersRef.current.delete(waiter)
+      waiter.resolve(null)
+    }
+
+    await releaseMedia(context, stream, source, node)
+    if (socket && socket.readyState < WebSocket.CLOSING) {
       try {
-        if (ws.readyState === WebSocket.OPEN) ws.send('stop')
-        ws.close(1000)
+        socket.close(1000)
       } catch {
-        /* ignore */
+        // Cleanup must stay idempotent.
       }
-      wsRef.current = null
     }
+  }, [clearTimer, releaseMedia])
 
-    const ctx = audioCtxRef.current
-    if (ctx && ctx.state !== 'closed') {
-      try {
-        ctx.close()
-      } catch {
-        /* ignore */
+  const finishTerminal = useCallback(async (
+    next: Extract<RecorderState, 'completed' | 'failed'>,
+    message?: string,
+    socket?: WebSocket,
+    attempt = attemptGenerationRef.current,
+  ) => {
+    if (!mountedRef.current) return
+    if (attemptGenerationRef.current !== attempt) return
+    if (socket && wsRef.current !== socket) return
+    if (terminalRef.current) return
+    if (next === 'completed' && stateRef.current === 'failed') return
+
+    terminalRef.current = true
+    clearTimer()
+    updateState(next)
+    if (message) argsRef.current.setError(message)
+    await cleanup({ invalidateAttempt: true })
+  }, [cleanup, clearTimer, updateState])
+
+  const ownsAttempt = useCallback((ws: WebSocket, attempt: number) => (
+    mountedRef.current
+    && wsRef.current === ws
+    && attemptGenerationRef.current === attempt
+  ), [])
+
+  const installSocketHandlers = useCallback((ws: WebSocket, attempt: number) => {
+    ws.onmessage = (event) => {
+      if (!ownsAttempt(ws, attempt)) return
+      if (typeof event.data !== 'string') return
+      const message = parseServerMessage(event.data)
+      if (!message) return
+
+      // Wake protocol waiters before applying terminal UI state.
+      resolveWaiters(message, attempt)
+
+      if (message.type === 'transcript' && !terminalRef.current) {
+        transcriptRef.current = mergeTranscript(transcriptRef.current, message)
+        argsRef.current.setText(() => composeTranscript(transcriptRef.current))
+        return
       }
-      audioCtxRef.current = null
+      if (message.type === 'error') {
+        void finishTerminal('failed', message.message, ws, attempt)
+        return
+      }
+      if (message.type === 'done' && stateRef.current !== 'failed') {
+        void finishTerminal('completed', undefined, ws, attempt)
+      }
     }
 
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop())
-      streamRef.current = null
+    const handleTransportFailure = () => {
+      if (!ownsAttempt(ws, attempt)) return
+      if (intentionalCloseSocketsRef.current.has(ws)) return
+      resolveWaiters(null, attempt)
+      if (
+        ['connecting', 'starting', 'recording', 'stopping'].includes(stateRef.current)
+      ) {
+        void finishTerminal(
+          'failed',
+          '语音服务连接中断，请检查已识别文字后重试',
+          ws,
+          attempt,
+        )
+      }
+    }
+    ws.onerror = handleTransportFailure
+    ws.onclose = handleTransportFailure
+  }, [finishTerminal, ownsAttempt, resolveWaiters])
+
+  const openSocket = useCallback((ws: WebSocket) => new Promise<boolean>((resolve) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      resolve(true)
+      return
+    }
+    let settled = false
+    const cleanupListeners = () => {
+      clearTimeout(timeout)
+      ws.removeEventListener('open', finishWithSuccess)
+      ws.removeEventListener('close', finishWithFailure)
+      ws.removeEventListener('error', finishWithFailure)
+    }
+    const finishWithSuccess = () => {
+      if (settled) return
+      settled = true
+      cleanupListeners()
+      resolve(true)
+    }
+    const finishWithFailure = () => {
+      if (settled) return
+      settled = true
+      cleanupListeners()
+      resolve(false)
+    }
+    const timeout = setTimeout(finishWithFailure, SOCKET_TIMEOUT_MS)
+    ws.addEventListener('open', finishWithSuccess)
+    ws.addEventListener('close', finishWithFailure)
+    ws.addEventListener('error', finishWithFailure)
+  }), [])
+
+  const isCurrentAttempt = useCallback((attempt: number, ws: WebSocket) => (
+    ownsAttempt(ws, attempt)
+    && ws.readyState === WebSocket.OPEN
+    && !terminalRef.current
+    && stateRef.current !== 'failed'
+    && stateRef.current !== 'completed'
+  ), [ownsAttempt])
+
+  const ownsStartAttempt = useCallback((attempt: number, ws?: WebSocket) => (
+    mountedRef.current
+    && startInFlightRef.current
+    && startOwnerRef.current === attempt
+    && attemptGenerationRef.current === attempt
+    && (!ws || isCurrentAttempt(attempt, ws))
+  ), [isCurrentAttempt])
+
+  const startMicrophone = useCallback(async (
+    ws: WebSocket,
+    attempt: number,
+    packetDurationMs: number,
+  ) => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('当前浏览器不支持录音，请使用最新版 Chrome 或 Edge')
     }
 
-    lastRenderRef.current = 0
-  }, [clearTimer])
+    let context: AudioContext | null = null
+    let stream: MediaStream | null = null
+    let node: AudioWorkletNode | null = null
+    let source: MediaStreamAudioSourceNode | null = null
+    try {
+      context = new AudioContext({ sampleRate: 16000 })
+      await context.audioWorklet.addModule('/worklets/pcm-audio-processor.js')
+      if (!ownsStartAttempt(attempt, ws)) {
+        await releaseMedia(context, stream, source, node)
+        return false
+      }
+
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      })
+      if (!ownsStartAttempt(attempt, ws)) {
+        await releaseMedia(context, stream, source, node)
+        return false
+      }
+
+      node = new AudioWorkletNode(context, 'pcm-audio-processor', {
+        processorOptions: {
+          packetSamples: Math.round(16000 * packetDurationMs / 1000),
+        },
+      })
+      source = context.createMediaStreamSource(stream)
+
+      node.port.onmessage = (event: MessageEvent<WorkletMessage>) => {
+        if (!isCurrentAttempt(attempt, ws)) return
+        const message = event.data
+        if (message.type === 'flushed') {
+          flushWaiterRef.current?.()
+          flushWaiterRef.current = null
+          return
+        }
+        if (message.type !== 'pcm' || ws.readyState !== WebSocket.OPEN) return
+        if (ws.bufferedAmount > 512 * 1024) {
+          if (!backpressureRef.current) {
+            backpressureRef.current = true
+            void finishTerminal(
+              'failed',
+              '网络发送积压过高，录音已停止，请检查已识别文字后重试',
+              ws,
+              attempt,
+            )
+          }
+          return
+        }
+        ws.send(message.buffer)
+      }
+      source.connect(node)
+      node.connect(context.destination)
+      if (!ownsStartAttempt(attempt, ws)) {
+        await releaseMedia(context, stream, source, node)
+        return false
+      }
+
+      audioCtxRef.current = context
+      streamRef.current = stream
+      workletRef.current = node
+      sourceRef.current = source
+      const listeners = stream.getTracks().map((track): TrackEndListener => {
+        const listener = () => {
+          if (intentionalMediaStopRef.current.has(stream!)) return
+          if (!mountedRef.current || attemptGenerationRef.current !== attempt) return
+          if (streamRef.current !== stream || terminalRef.current) return
+          void finishTerminal(
+            'failed',
+            '麦克风已断开或权限已撤回，请检查已识别文字后重试',
+            ws,
+            attempt,
+          )
+        }
+        track.addEventListener('ended', listener)
+        return { track, listener }
+      })
+      trackEndListenersRef.current.set(stream, listeners)
+
+      const settings = stream.getAudioTracks()[0]?.getSettings()
+      if (settings) {
+        console.info('[voice-recorder] microphone settings', {
+          sampleRate: settings.sampleRate,
+          channelCount: settings.channelCount,
+          echoCancellation: settings.echoCancellation,
+          noiseSuppression: settings.noiseSuppression,
+        })
+      }
+
+      for (const { track, listener } of listeners) {
+        if (track.readyState === 'ended') listener()
+      }
+      return true
+    } catch (error) {
+      await releaseMedia(context, stream, source, node)
+      if (error instanceof DOMException && error.name === 'NotAllowedError') {
+        throw new Error('麦克风权限被拒绝，请在浏览器设置中允许使用麦克风')
+      }
+      throw error instanceof Error ? error : new Error('启动录音失败，请重试')
+    }
+  }, [finishTerminal, isCurrentAttempt, ownsStartAttempt, releaseMedia])
 
   const stopRecording = useCallback(async () => {
-    if (stoppingRef.current) return
+    if (stoppingRef.current || stateRef.current !== 'recording') return
+    const attempt = attemptGenerationRef.current
+    const timing = serverTimingRef.current
+    const stopTimeoutSeconds = timing?.attempt === attempt
+      ? timing.stopTimeoutSeconds
+      : 30
+    const doneTimeoutMs = Math.min(
+      32000,
+      stopTimeoutSeconds * 1000 + 2000,
+    )
     stoppingRef.current = true
-    recordingRef.current = false
     clearTimer()
+    updateState('stopping')
 
+    const node = workletRef.current
+    let tailWasFlushed = true
+    if (node) {
+      const flushed = new Promise<void>((resolve) => {
+        flushWaiterRef.current = resolve
+      })
+      node.port.postMessage({ type: 'stop' })
+      tailWasFlushed = await Promise.race([
+        flushed.then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), FLUSH_TIMEOUT_MS)),
+      ])
+    }
+
+    if (terminalRef.current || attemptGenerationRef.current !== attempt) return
+    await releaseAttachedMedia()
+    if (terminalRef.current || attemptGenerationRef.current !== attempt) return
     const ws = wsRef.current
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send('stop')
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      await finishTerminal(
+        'failed',
+        '语音服务连接已断开，请检查已识别文字后重试',
+        undefined,
+        attempt,
+      )
+      return
     }
 
-    // 等待后端返回最后一批结果
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-
-    if (ws && ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
-      ws.close(1000)
+    // Register before sending because the server may answer immediately.
+    const terminal = waitForMessage(['done', 'error'], attempt, doneTimeoutMs)
+    ws.send(JSON.stringify({ type: 'stop' }))
+    const result = await terminal
+    if (!result) {
+      await finishTerminal('failed', '语音收尾超时，请检查最后一句是否完整', ws, attempt)
+      return
     }
-    wsRef.current = null
-
-    audioCtxRef.current?.close()
-    audioCtxRef.current = null
-
-    streamRef.current?.getTracks().forEach((t) => t.stop())
-    streamRef.current = null
-
-    flushPendingText()
-    setRecording(false)
-  }, [clearTimer, flushPendingText])
+    if (result.type === 'error') return
+    if (!tailWasFlushed) {
+      argsRef.current.setError('录音已完成，但尾帧确认超时，请检查最后一句是否完整')
+    }
+  }, [clearTimer, finishTerminal, releaseAttachedMedia, updateState, waitForMessage])
 
   const startRecording = useCallback(async () => {
-    setError(null)
-    setText('')
-    cleanup()
+    if (!mountedRef.current) return
+    if (startInFlightRef.current || mediaActiveRef.current) return
+    startInFlightRef.current = true
+    const attempt = attemptGenerationRef.current + 1
+    attemptGenerationRef.current = attempt
+    startOwnerRef.current = attempt
+    terminalRef.current = false
     stoppingRef.current = false
-    lastRenderRef.current = 0
-    finalizedTextRef.current = ''
-    currentSentenceRef.current = ''
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setError('当前浏览器不支持录音，请使用 Chrome 或 Edge 最新版')
-      return
-    }
-
-    // 16kHz AudioContext — 浏览器内置重采样器有专业抗混叠滤波
-    let audioCtx: AudioContext
-    try {
-      audioCtx = new AudioContext({ sampleRate: 16000 })
-    } catch {
-      setError('当前浏览器不支持 16kHz 录音，请升级 Chrome 或 Edge 到最新版')
-      return
-    }
-    audioCtxRef.current = audioCtx
-
-    // 加载 AudioWorklet
-    try {
-      await audioCtx.audioWorklet.addModule('/worklets/pcm-audio-processor.js')
-    } catch {
-      audioCtx.close()
-      audioCtxRef.current = null
-      setError('浏览器不支持语音处理，请使用 Chrome 或 Edge 最新版')
-      return
-    }
-
-    // 获取麦克风
-    let stream: MediaStream
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
-      })
-    } catch (err) {
-      audioCtx.close()
-      audioCtxRef.current = null
-      if (err instanceof DOMException && err.name === 'NotAllowedError') {
-        setError('麦克风权限被拒绝，请在浏览器设置中允许使用麦克风')
-      } else {
-        setError('启动录音失败，请重试')
-      }
-      return
-    }
-    streamRef.current = stream
-
-    // WebSocket 连接
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${proto}//${window.location.host}/api/transcribe/stream`)
-    ws.binaryType = 'arraybuffer'
-    wsRef.current = ws
-
-    // 等待握手完成
-    let preOpenServerError = ''
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('语音服务连接超时，请重试')), 6000)
-
-      ws.onopen = () => {
-        clearTimeout(timeout)
-        ws.onmessage = null
-        resolve()
-      }
-
-      ws.onclose = (e) => {
-        clearTimeout(timeout)
-        let msg = ''
-        if (preOpenServerError) {
-          msg = preOpenServerError
-        } else if (e.code === 4001) {
-          msg = '未登录，请重新登录后重试'
-        } else if (e.code === 4002) {
-          msg = '未配置语音识别服务，请联系管理员配置 Dashscope API Key'
-        } else if (e.code === 4003) {
-          msg = '语音识别服务启动失败，请检查 Dashscope API Key 是否有效'
-        } else if (e.code === 1006 || !e.wasClean) {
-          msg = '语音服务连接异常，请检查网络后重试'
-        }
-        reject(new Error(msg || '语音服务连接失败'))
-      }
-
-      ws.onerror = () => {
-        clearTimeout(timeout)
-        reject(new Error('语音服务连接失败，请重试'))
-      }
-
-      ws.onmessage = (e) => {
-        if (typeof e.data === 'string') {
-          try {
-            const msg = JSON.parse(e.data)
-            if (msg.error) preOpenServerError = msg.error
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-    })
-
-    // 处理识别结果 — 用节流避免高频 setState 导致 UI 卡顿
-    ws.onmessage = (e) => {
-      if (typeof e.data !== 'string') return
-      try {
-        const msg = JSON.parse(e.data)
-        if (!msg.text) return
-
-        smoothSetText(msg.text, Boolean(msg.final))
-      } catch {
-        /* ignore */
-      }
-    }
-
-    ws.onclose = () => {
-      if (!stoppingRef.current && recordingRef.current) {
-        setError('语音服务连接中断，请重新录音')
-      }
-    }
-
-    // 连接 AudioWorklet → PCM 帧立刻转发到 WebSocket（不积攒缓冲）
-    let frameCount = 0
-    try {
-      const workletNode = new AudioWorkletNode(audioCtx, 'pcm-audio-processor')
-      workletNode.port.onmessage = (e: MessageEvent<WorkletMessage>) => {
-        const msg = e.data
-        if (msg.type === 'pcm') {
-          frameCount++
-          const w = wsRef.current
-          if (w?.readyState === WebSocket.OPEN) {
-            w.send(msg.buffer)
-          }
-        }
-      }
-      const source = audioCtx.createMediaStreamSource(stream)
-      source.connect(workletNode)
-    } catch {
-      cleanup()
-      setError('音频处理模块加载失败，请重试')
-      return
-    }
-
-    recordingRef.current = true
-    setRecording(true)
+    backpressureRef.current = false
     setTimer(0)
-    timerIntervalRef.current = setInterval(() => setTimer((prev) => prev + 1), 1000)
-  }, [setText, setError, cleanup, smoothSetText, stopRecording])
+    updateState('connecting')
 
-  return { recording, transcribing: false, timer, startRecording, stopRecording }
+    try {
+      argsRef.current.setError(null)
+
+      // Dispose a previous terminal session without invalidating this claimed attempt.
+      await cleanup({ invalidateAttempt: false, preserveAttempt: attempt })
+      if (!ownsStartAttempt(attempt)) return
+
+      const { projectId, selectedTaskId, canRecord, initialText, setError } = argsRef.current
+      if (!canRecord || !projectId || !selectedTaskId) {
+        terminalRef.current = true
+        updateState('failed')
+        setError('请先选择执行中的项目和关键任务')
+        return
+      }
+
+      transcriptRef.current = emptyTranscript(initialText)
+      if (!ownsStartAttempt(attempt)) return
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const ws = new WebSocket(`${protocol}//${window.location.host}/api/transcribe/stream`)
+      if (!ownsStartAttempt(attempt)) {
+        intentionalCloseSocketsRef.current.add(ws)
+        ws.close(1000)
+        return
+      }
+      ws.binaryType = 'arraybuffer'
+      wsRef.current = ws
+      installSocketHandlers(ws, attempt)
+
+      // Waiters are installed before the socket can deliver the corresponding event.
+      const ready = waitForMessage('ready', attempt)
+      const opened = await openSocket(ws)
+      const readyResult = await ready
+      if (!opened || readyResult?.type !== 'ready' || !ownsStartAttempt(attempt, ws)) {
+        if (ownsAttempt(ws, attempt) && !terminalRef.current) {
+          await finishTerminal('failed', '语音服务连接超时，请重试', ws, attempt)
+        }
+        return
+      }
+
+      updateState('starting')
+      const started = waitForMessage('started', attempt)
+      ws.send(JSON.stringify({
+        type: 'start',
+        scene: 'work_report',
+        project_id: projectId,
+        selected_task_id: selectedTaskId,
+        sample_rate: 16000,
+        format: 'pcm',
+      }))
+      const startResult = await started
+      if (startResult?.type !== 'started' || !ownsStartAttempt(attempt, ws)) {
+        if (ownsAttempt(ws, attempt) && !terminalRef.current) {
+          await finishTerminal('failed', '语音识别启动超时，请重试', ws, attempt)
+        }
+        return
+      }
+
+      const packetDurationMs = startResult.packet_duration_ms
+      const stopTimeoutSeconds = startResult.stop_timeout_seconds
+      serverTimingRef.current = { attempt, stopTimeoutSeconds }
+      const attached = await startMicrophone(ws, attempt, packetDurationMs)
+      if (!attached || !ownsStartAttempt(attempt, ws)) return
+      updateState('recording')
+      if (!ownsStartAttempt(attempt, ws)) return
+      timerIntervalRef.current = setInterval(() => {
+        if (mountedRef.current && attemptGenerationRef.current === attempt) {
+          setTimer((value) => value + 1)
+        }
+      }, 1000)
+    } catch (error) {
+      const ws = wsRef.current
+      if (ownsStartAttempt(attempt) && (!ws || ownsAttempt(ws, attempt))) {
+        await finishTerminal(
+          'failed',
+          error instanceof Error ? error.message : '启动录音失败，请重试',
+          ws ?? undefined,
+          attempt,
+        )
+      }
+    } finally {
+      if (startOwnerRef.current === attempt) {
+        startOwnerRef.current = null
+        startInFlightRef.current = false
+      }
+    }
+  }, [
+    cleanup,
+    finishTerminal,
+    installSocketHandlers,
+    openSocket,
+    ownsAttempt,
+    ownsStartAttempt,
+    startMicrophone,
+    updateState,
+    waitForMessage,
+  ])
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      stoppingRef.current = true
+      terminalRef.current = true
+      startInFlightRef.current = false
+      startOwnerRef.current = null
+      attemptGenerationRef.current += 1
+      void cleanup({ invalidateAttempt: false })
+    }
+  }, [cleanup])
+
+  const recording = recorderState === 'recording'
+  const transcribing = recorderState === 'connecting'
+    || recorderState === 'starting'
+    || recorderState === 'stopping'
+
+  return {
+    recorderState,
+    recording,
+    transcribing,
+    timer,
+    startRecording,
+    stopRecording,
+  }
 }

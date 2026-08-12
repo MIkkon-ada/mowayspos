@@ -1,8 +1,30 @@
 import { apiGet, apiPatch, apiPost, apiPut, apiUpload } from './client'
 import type { MeetingItem } from '../types'
 
+export type MeetingRevisionItem = {
+  id: number
+  meeting_id: number
+  version_no: number
+  is_legacy_snapshot: boolean
+  saved_by: string
+  saved_at?: string
+  transcript_text: string
+  title?: string
+  meeting_date?: string
+  host?: string
+  summary?: string
+  task_list_json?: string
+  decision_items_json?: string
+  risk_items_json?: string
+  publish_status?: string
+}
+
 export function fetchMeetings(projectId: number): Promise<MeetingItem[]> {
   return apiGet<MeetingItem[]>(`/api/meetings?project_id=${projectId}`)
+}
+
+export function fetchMeetingRevisions(meetingId: number): Promise<MeetingRevisionItem[]> {
+  return apiGet<MeetingRevisionItem[]>(`/api/meetings/${meetingId}/revisions`)
 }
 
 export function patchMeetingStatus(

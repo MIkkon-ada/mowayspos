@@ -33,6 +33,15 @@ def test_submission_actions_respect_pending_card_locks_and_status_sets():
     assert "SS.ESCALATABLE_TO_CEO" in source
 
 
+def test_submission_lock_covers_active_archived_and_pending_card_states():
+    source = _page()
+    start = source.index("const hasPendingSubmissionCards")
+    lock_block = source[start:source.index("const activeCardIndex", start)]
+    assert "'transferred_to_coordinator'" in lock_block
+    assert "'pending_ceo_' + 'decision'" in lock_block
+    assert "acting || projectArchived || hasPendingSubmissionCards" in lock_block
+
+
 def test_confirmation_center_does_not_restore_submitter_history_view():
     source = _page()
     assert "viewMode === 'mine'" not in source
@@ -45,3 +54,10 @@ def test_write_feedback_is_shared_by_all_review_panels():
     assert "actionError" in source
     assert "activeCard.coordinatorNote" in source
     assert "activeCard.ceoNote" in source
+
+
+def test_return_transfer_and_ceo_decisions_share_the_required_note_guard():
+    source = _page()
+    decision_dialog = source[source.index("onClick={() => handleDecision(pendingAction)}") - 1200:source.index("onClick={() => handleDecision(pendingAction)}") + 300]
+    assert "handleDecision(pendingAction)" in decision_dialog
+    assert "disabled={acting || !actionNote.trim()}" in decision_dialog

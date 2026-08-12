@@ -337,7 +337,6 @@ def test_t3_head_schema_matches_current_orm(tmp_path: Path):
         "project_type",
         "client_name",
         "background",
-        "objectives",
         "expected_outcomes",
         "lifecycle_status",
         "kickoff_date",
@@ -638,3 +637,34 @@ def test_postgresql_dialect_compiles_static_bootstrap_ddl(tmp_path: Path):
     assert "create table projects" in output
     assert "create table _moways_migration_bootstrap" in output
     assert "pragma" not in output
+
+
+def test_meeting_revision_downgrade_drops_dependents_before_analysis_runs(
+    monkeypatch,
+):
+    path = (
+        BACKEND_ROOT
+        / "migrations"
+        / "versions"
+        / "f0a1b2c3d4e5_add_meeting_revisions.py"
+    )
+    spec = importlib.util.spec_from_file_location("meeting_revision_migration", path)
+    assert spec is not None and spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    dropped_tables: list[str] = []
+
+    class Operations:
+        def drop_index(self, *_args, **_kwargs):
+            pass
+
+        def drop_table(self, table_name: str):
+            dropped_tables.append(table_name)
+
+    monkeypatch.setattr(migration, "op", Operations())
+    migration.downgrade()
+
+    assert dropped_tables.index("meeting_revisions") < dropped_tables.index(
+        "meeting_analysis_runs"
+    )

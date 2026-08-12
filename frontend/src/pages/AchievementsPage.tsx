@@ -11,7 +11,6 @@ import type { AchievementItem, Project, SubTaskItem, TaskItem } from '../types'
 
 const ACHIEVEMENT_TYPES = ['方案', '模板', 'SOP', 'Prompt', 'Agent', '文档'] as const
 const SOURCE_OPTIONS = ['全部', 'AI确认入库', '手动登记'] as const
-const DATE_OPTIONS = ['全部', '本周', '本月'] as const
 
 type RegistrationForm = {
   project_id: number | null
@@ -73,6 +72,22 @@ function isThisWeek(value?: string | null): boolean {
   const end = new Date(start)
   end.setDate(start.getDate() + 7)
   return date >= start && date < end
+}
+
+function isWithinDateRange(value: string | null | undefined, startDate: string, endDate: string): boolean {
+  if (!startDate && !endDate) return true
+  if (!value) return false
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return false
+  if (startDate) {
+    const start = new Date(`${startDate}T00:00:00`)
+    if (date < start) return false
+  }
+  if (endDate) {
+    const end = new Date(`${endDate}T23:59:59.999`)
+    if (date > end) return false
+  }
+  return true
 }
 
 function sourceLabel(item: AchievementItem): 'AI确认入库' | '手动登记' | '来源未标明' {
@@ -175,10 +190,8 @@ export function AchievementsPage() {
   const [projectAchievementSummary, setProjectAchievementSummary] = useState<Record<number, { count: number; month: number; lastUpdated: string | null }>>({})
   const [overviewLoading, setOverviewLoading] = useState(false)
   const [overviewPage, setOverviewPage] = useState(1)
-  const [filterType, setFilterType] = useState('全部')
   const [filterTaskId, setFilterTaskId] = useState('')
-  const [filterSource, setFilterSource] = useState<(typeof SOURCE_OPTIONS)[number]>('全部')
-  const [filterDate, setFilterDate] = useState<(typeof DATE_OPTIONS)[number]>('全部')
+  const [filterSubtaskId, setFilterSubtaskId] = useState('')
   const [keyword, setKeyword] = useState('')
   const [tasks, setTasks] = useState<TaskItem[]>([])
   const [tasksLoading, setTasksLoading] = useState(false)
@@ -224,15 +237,12 @@ export function AchievementsPage() {
   const filteredItems = useMemo(() => {
     const term = keyword.trim().toLowerCase()
     return items.filter((item) => {
-      if (filterType !== '全部' && item.achievement_type !== filterType) return false
       if (filterTaskId && String(item.related_task_id || '') !== filterTaskId) return false
-      if (filterSource !== '全部' && sourceLabel(item) !== filterSource) return false
-      if (filterDate === '本周' && !isThisWeek(item.confirmed_at || item.updated_at || item.created_at)) return false
-      if (filterDate === '本月' && !isThisMonth(item.confirmed_at || item.updated_at || item.created_at)) return false
+      if (filterSubtaskId && String(item.related_subtask_id || '') !== filterSubtaskId) return false
       if (term && !(item.name || '').toLowerCase().includes(term)) return false
       return true
     })
-  }, [items, filterType, filterTaskId, filterSource, filterDate, keyword])
+  }, [items, filterTaskId, filterSubtaskId, keyword])
 
   const stats = useMemo(() => {
     const latestUpdated = items
@@ -277,10 +287,7 @@ export function AchievementsPage() {
       .then((rows) => {
         if (cancelled) return
         setItems(rows)
-        setSelected((prev) => {
-          if (!prev) return rows[0] ?? null
-          return rows.find((item) => item.id === prev.id) ?? rows[0] ?? null
-        })
+        setSelected((prev) => prev ? rows.find((item) => item.id === prev.id) ?? null : null)
       })
       .catch((error: unknown) => {
         if (!cancelled) setLoadError(error instanceof Error ? error.message : '成果库加载失败')
@@ -366,7 +373,7 @@ export function AchievementsPage() {
     fetchAchievements(projectId)
       .then((rows) => {
         setItems(rows)
-        setSelected((prev) => rows.find((item) => item.id === prev?.id) ?? rows[0] ?? null)
+        setSelected((prev) => prev ? rows.find((item) => item.id === prev.id) ?? null : null)
       })
       .catch((error: unknown) => setLoadError(error instanceof Error ? error.message : '成果库加载失败'))
       .finally(() => setLoading(false))
@@ -650,59 +657,45 @@ export function AchievementsPage() {
           </div>
         </div>
 
-        <div className="grid min-h-0 flex-1 gap-5 lg:grid-cols-[1fr_420px]">
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
           <main className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="flex flex-col gap-3 border-b border-slate-100 bg-white px-4 py-3">
-              <div className="flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto pb-1">
-                <select value={filterType} onChange={(event) => setFilterType(event.target.value)} className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
-                  <option>全部</option>
-                  {ACHIEVEMENT_TYPES.map((type) => <option key={type}>{type}</option>)}
-                </select>
-                <select value={filterTaskId} onChange={(event) => setFilterTaskId(event.target.value)} className="max-w-[420px] shrink-0 truncate rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
-                  <option value="">重点工作</option>
+              <div className="flex max-w-full flex-wrap items-center gap-x-4 gap-y-2">
+                <label className="flex min-w-0 shrink-0 items-center gap-1 text-xs font-semibold text-slate-500"><span>重点工作：</span><select aria-label="重点工作筛选" value={filterTaskId} onChange={(event) => { setFilterTaskId(event.target.value); setFilterSubtaskId('') }} className="max-w-[340px] truncate rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
+                  <option value="">全部</option>
                   {tasks.map((task) => <option key={task.id} value={task.id}>{task.key_task}</option>)}
-                </select>
-                <select disabled className="rounded-lg border border-slate-200 bg-slate-100 px-2 py-1.5 text-xs font-semibold text-slate-400" title="关键任务筛选">
-                  <option>关键任务</option>
-                </select>
-                <select value={filterSource} onChange={(event) => setFilterSource(event.target.value as (typeof SOURCE_OPTIONS)[number])} className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
-                  {SOURCE_OPTIONS.map((source) => <option key={source}>{source}</option>)}
-                </select>
-                <select value={filterDate} onChange={(event) => setFilterDate(event.target.value as (typeof DATE_OPTIONS)[number])} className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400">
-                  {DATE_OPTIONS.map((option) => <option key={option}>{option}</option>)}
-                </select>
+                </select></label>
+                <label className="flex min-w-0 shrink-0 items-center gap-1 text-xs font-semibold text-slate-500"><span>关键任务：</span><select aria-label="关键任务筛选" value={filterSubtaskId} onChange={(event) => setFilterSubtaskId(event.target.value)} disabled={!filterTaskId || subtasksLoading} className="max-w-[260px] truncate rounded-lg border border-slate-200 bg-slate-100 px-2 py-1.5 text-xs font-semibold text-slate-400 outline-none focus:border-sky-400 disabled:cursor-not-allowed" title="关键任务筛选">
+                  <option value="">{filterTaskId ? subtasksLoading ? '加载中...' : '全部' : '请先选择重点工作'}</option>
+                  {filterTaskId && allSubtasks.filter((subtask) => String(subtask.task_id) === filterTaskId).map((subtask) => <option key={subtask.id} value={subtask.id}>{subtask.title}</option>)}
+                </select></label>
               </div>
-              <div className="relative w-full sm:max-w-[280px]">
+              <div className="relative w-full sm:w-[220px]">
                 <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索成果名称" className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-9 pr-3 text-xs text-slate-700 outline-none focus:border-sky-400 sm:w-[220px]" />
                 <svg className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>
               </div>
+              <button type="button" onClick={() => { setFilterTaskId(''); setFilterSubtaskId(''); setKeyword('') }} className="rounded-lg border border-slate-200 bg-white px-4 py-1.5 text-xs font-semibold text-slate-600 outline-none transition hover:border-sky-300 hover:text-sky-600">重置</button>
             </div>
 
             {loadError && <div className="mx-4 mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{loadError}</div>}
 
-            <div className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full min-w-[1000px] text-left text-sm">
+            <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+              <table className="w-full min-w-0 table-fixed text-left text-sm">
                 <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-4 py-3 font-semibold">成果名称</th>
                     <th className="px-3 py-3 font-semibold">成果类型</th>
                     <th className="px-3 py-3 font-semibold">关联重点工作 / 关键任务</th>
-                    <th className="px-3 py-3 font-semibold">来源</th>
                     <th className="px-3 py-3 font-semibold">提交/登记人</th>
-                    <th className="px-3 py-3 font-semibold">确认/入库人</th>
-                    <th className="px-3 py-3 text-right font-semibold">入库时间</th>
-                    <th className="px-3 py-3 font-semibold">版本</th>
-                    <th className="px-3 py-3 text-center font-semibold">操作</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {loading ? (
-                    <tr><td colSpan={9} className="px-4 py-16 text-center text-sm text-slate-400">加载中...</td></tr>
+                    <tr><td colSpan={4} className="px-4 py-16 text-center text-sm text-slate-400">加载中...</td></tr>
                   ) : filteredItems.length === 0 ? (
-                    <tr><td colSpan={9} className="px-4 py-16 text-center text-sm text-slate-400">暂无已入库成果</td></tr>
+                    <tr><td colSpan={4} className="px-4 py-16 text-center text-sm text-slate-400">暂无已入库成果</td></tr>
                   ) : filteredItems.map((item) => {
                     const active = selected?.id === item.id
-                    const source = sourceLabel(item)
                     return (
                       <tr key={item.id} onClick={() => { setSelected(item); setEditMode(false) }} className={`cursor-pointer transition hover:bg-sky-50 ${active ? 'border-l-2 border-sky-500 bg-sky-50 ring-1 ring-inset ring-sky-200' : 'border-l-2 border-transparent'}`}>
                         <td className="px-4 py-3 font-semibold text-slate-900">{item.name || '未命名成果'}</td>
@@ -711,14 +704,7 @@ export function AchievementsPage() {
                           <p className="truncate">{taskName(tasks, item.related_task_id)}</p>
                           <p className="text-xs text-slate-400">关键任务：{keyTaskLabelForAchievement(item, subtaskById)}</p>
                         </td>
-                        <td className="px-3 py-3"><span className={`rounded-full border px-2 py-0.5 text-xs font-black ${source === 'AI确认入库' ? 'border-purple-100 bg-purple-50 text-purple-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>{source}</span></td>
                         <td className="px-3 py-3 text-slate-600">{item.owner || '—'}</td>
-                        <td className="px-3 py-3 text-slate-600">{item.confirmed_by || item.owner || '—'}</td>
-                        <td className="px-3 py-3 text-right font-mono text-xs text-slate-500">{formatDate(item.confirmed_at || item.updated_at || item.created_at)}</td>
-                        <td className="px-3 py-3 font-mono text-xs text-slate-500">{item.version || 'V0.1'}</td>
-                        <td className="px-3 py-3 text-center">
-                          <button type="button" onClick={(event) => { event.stopPropagation(); setSelected(item) }} className="rounded-md px-2 py-1 text-xs font-bold text-sky-700 hover:bg-sky-100">查看</button>
-                        </td>
                       </tr>
                     )
                   })}

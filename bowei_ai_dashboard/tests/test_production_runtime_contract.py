@@ -71,6 +71,11 @@ def test_production_environment_example_is_secret_free_and_complete():
         "SESSION_COOKIE_NAME=moways_session",
         "ANTHROPIC_API_KEY=",
         "DASHSCOPE_API_KEY=",
+        "ASR_REALTIME_MODEL=fun-asr-realtime",
+        "ASR_CONTEXT_ENABLED=true",
+        "ASR_PACKET_DURATION_MS=100",
+        "ASR_STOP_TIMEOUT_SECONDS=8",
+        "ASR_HEARTBEAT_ENABLED=true",
         "DEEPSEEK_API_KEY=",
         "ZHIPUAI_API_KEY=",
     ):

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useProject } from '../context/ProjectContext'
 import { getPlatformSettings, savePlatformSettings } from '../api/platformSettings'
 import { Card, Field, SectionTitle, Toggle } from '../features/settings/settingsShared'
-import { LLMConfigSection } from '../features/settings/LLMConfigSection'
+import { AIConfigurationSection } from '../features/settings/AIConfigurationSection'
 import { AccountPeopleMgmtSection } from '../features/settings/AccountPeopleMgmtSection'
 import { LogsSection } from '../features/settings/LogsSection'
 import { PeopleBatchImportModal } from '../features/settings/PeopleBatchImportModal'
@@ -330,7 +330,7 @@ export function SettingsPage() {
                       </div>
                     </Field>
                   </Card>
-                  <LLMConfigSection />
+                  <AIConfigurationSection />
                 </>
               )}
 

@@ -742,7 +742,7 @@ MonthPlanStatus = Literal["未开始", "进行中", "暂缓", "已完成", "已�
 
 
 class MonthPlanCreatePayload(BaseModel):
-    plan_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    plan_month: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     title: str = Field(min_length=1, max_length=200)
     expected_output: str = Field(min_length=1)
     assignee_id: int = Field(gt=0)

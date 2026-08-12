@@ -45,6 +45,48 @@ def test_month_plan_payload_requires_valid_month_and_completed_output():
             assignee_id=2,
         )
 
+
+def test_month_plan_payload_allows_no_month_group():
+    payload = schemas.MonthPlanCreatePayload(
+        plan_month=None,
+        title="不按月份推进权限梳理",
+        expected_output="权限清单",
+        assignee_id=2,
+    )
+
+    assert payload.plan_month is None
+
+
+def test_month_plan_rows_include_ungrouped_records():
+    from app.routers import monthly_plans
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    db.add_all([
+        models.ExecutionSchedule(
+            subtask_id=1,
+            plan_type="month",
+            plan_month=None,
+            title="未分月",
+            expected_output="x",
+            assignee="A",
+            status="未开始",
+        ),
+        models.ExecutionSchedule(
+            subtask_id=1,
+            plan_type="month",
+            plan_month="2026-08",
+            title="八月",
+            expected_output="x",
+            assignee="A",
+            status="未开始",
+        ),
+    ])
+    db.commit()
+
+    assert {row.title for row in monthly_plans._month_plan_rows(1, db)} == {"未分月", "八月"}
+
     with pytest.raises(ValueError, match="实际产出"):
         schemas.MonthPlanCreatePayload(
             plan_month="2026-08",

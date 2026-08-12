@@ -99,7 +99,6 @@ def _month_plan_rows(subtask_id: int, db: Session, month: str | None = None) -> 
     query = db.query(models.ExecutionSchedule).filter(
         models.ExecutionSchedule.subtask_id == subtask_id,
         models.ExecutionSchedule.plan_type == "month",
-        models.ExecutionSchedule.plan_month.is_not(None),
         models.ExecutionSchedule.is_deleted.is_(False),
     )
     if month:
@@ -172,8 +171,8 @@ def update_monthly_plan(
     current_user = require_login(current_user, db)
     context = get_user_context_from_db(current_user, db)
     row = db.get(models.ExecutionSchedule, plan_id)
-    if not row or row.is_deleted or row.plan_type != "month" or not row.plan_month:
-        raise HTTPException(404, "月计划不存在")
+    if not row or row.is_deleted or row.plan_type != "month":
+        raise HTTPException(404, "子任务不存在")
     subtask, task = _parent(row, db)
     _require_write(current_user, context, subtask, task, db)
     changes = payload.model_dump(exclude_unset=True)
@@ -216,8 +215,8 @@ def delete_monthly_plan(
     current_user = require_login(current_user, db)
     context = get_user_context_from_db(current_user, db)
     row = db.get(models.ExecutionSchedule, plan_id)
-    if not row or row.is_deleted or row.plan_type != "month" or not row.plan_month:
-        raise HTTPException(404, "月计划不存在")
+    if not row or row.is_deleted or row.plan_type != "month":
+        raise HTTPException(404, "子任务不存在")
     subtask, task = _parent(row, db)
     _require_write(current_user, context, subtask, task, db)
     before = crud.to_dict(row)

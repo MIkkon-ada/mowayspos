@@ -279,6 +279,7 @@ export function TaskManagementPage() {
   const projectOptions = resolvedTaskProjects.map((p) => p.name)
   const ownerNames = [...new Set(resolvedTaskProjects.flatMap((p) => p.owners ?? []))]
   const focusedProject = projectFromContext ?? resolvedProjectForContext ?? null
+  const focusedSubTaskProject = projectForSubTask(resolvedTaskProjects, tasks, selectedSubTask)
   const projectArchived = isProjectArchived(focusedProject)
   const trashProject = resolvedTaskProjects.find((p) => p.id === effectiveTaskProjectId) ?? null
   const canManageTrash = currentUser?.is_tech_admin || resolvedTaskProjects.some((p) =>
@@ -555,6 +556,7 @@ export function TaskManagementPage() {
   }
 
   function focusSubTask(st: SubTaskItem, opts?: { keepTask?: boolean }) {
+    ensureProjectMembersLoaded(projectForSubTask(resolvedTaskProjects, tasks, st)?.id)
     setSelectedSubTask(null)
     setSubDetailLoading(true)
     setSubEditField(null)
@@ -1044,10 +1046,11 @@ function handleFormSave(payload: TaskPayload) {
       {/* Main */}
       {viewMode === 'execution' && selectedSubTask ? (
         <KeyTaskExecutionDetailView
-          project={focusedProject}
+          project={focusedProject ?? focusedSubTaskProject}
           task={tasks.find((task) => task.id === selectedSubTask.task_id) ?? null}
           subTask={selectedSubTask}
-          canManageSchedules={Boolean(currentUser?.is_tech_admin || currentUser?.name === selectedSubTask.assignee || canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: focusedProject?.user_roles ?? currentProjectRoles }))}
+          projectMembers={projectMembersByProject[(focusedProject ?? focusedSubTaskProject)?.id ?? 0] ?? []}
+          canManageSchedules={Boolean(currentUser?.is_tech_admin || currentUser?.name === selectedSubTask.assignee || canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: (focusedProject ?? focusedSubTaskProject)?.user_roles ?? currentProjectRoles }))}
           onSchedulesChanged={() => { fetchSubtaskDetail(selectedSubTask.id).then(setSelectedSubTask).catch(() => {}) }}
           onBack={() => clearSelection()}
         />

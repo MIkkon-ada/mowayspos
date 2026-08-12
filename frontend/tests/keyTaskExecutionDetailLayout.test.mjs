@@ -26,8 +26,14 @@ test('execution project overview splits base information and evaluation criteria
   assert.doesNotMatch(overview, /整体进度/)
 })
 
-test('key task detail embeds the execution schedule timeline', () => {
+test('key task detail is a monthly-plan workbench while retaining task context and process records', () => {
   const detail = read('src/components/task-management/KeyTaskExecutionDetailView.tsx')
-  assert.match(detail, /ExecutionScheduleTimeline/)
-  assert.match(detail, /execution_schedules/)
+  const page = read('src/pages/TaskManagementPage.tsx')
+  assert.match(detail, /返回工作推进表/)
+  assert.match(detail, /直接负责人/)
+  assert.match(detail, /MonthlyPlanWorkspace/)
+  assert.match(detail, /关键任务概览/)
+  assert.match(detail, /工作汇报记录/)
+  assert.doesNotMatch(detail, /ExecutionScheduleTimeline/)
+  assert.match(page, /projectMembers=\{projectMembersByProject/)
 })

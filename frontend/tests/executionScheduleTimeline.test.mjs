@@ -6,10 +6,20 @@ import path from 'node:path'
 const root = path.resolve(import.meta.dirname, '..')
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 
-test('execution schedule timeline exposes status filters and an accessible create action', () => {
-  const source = read('src/components/task-management/ExecutionScheduleTimeline.tsx')
-  assert.match(source, /全部.*待开始.*进行中.*已逾期.*已完成/s)
-  assert.match(source, /新建执行安排/)
-  assert.match(source, /aria-label/)
-  assert.match(source, /周计划.*月计划/s)
+test('monthly plan workspace defaults to the current month and exposes monthly-plan actions', () => {
+  const source = read('src/components/task-management/MonthlyPlanWorkspace.tsx')
+  assert.match(source, /currentMonthKey/)
+  assert.match(source, /monthTabs/)
+  assert.match(source, /sortMonthPlans/)
+  assert.match(source, /新增月计划/)
+  assert.match(source, /已延期.*进行中.*暂缓.*未开始.*已完成/s)
+  assert.match(source, /MonthlyPlanDrawer/)
+})
+
+test('monthly plan drawer only presents business fields, never audit fields', () => {
+  const source = read('src/components/task-management/MonthlyPlanDrawer.tsx')
+  assert.match(source, /预期产出/)
+  assert.match(source, /执行负责人/)
+  assert.match(source, /实际产出/)
+  assert.doesNotMatch(source, /created_by|updated_by|创建人|最后修改人/)
 })

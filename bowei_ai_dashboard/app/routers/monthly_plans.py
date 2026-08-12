@@ -144,7 +144,6 @@ def create_monthly_plan(
     if not subtask or not task or subtask.is_deleted or task.is_deleted:
         raise HTTPException(404, "关键任务不存在")
     _require_write(current_user, context, subtask, task, db)
-    requested_ids = {payload.assignee_id, *payload.collaborator_ids}
     people = _validate_people(task.project_id, payload.assignee_id, payload.collaborator_ids, db)
     data = payload.model_dump()
     data["assignee"] = people[payload.assignee_id].name

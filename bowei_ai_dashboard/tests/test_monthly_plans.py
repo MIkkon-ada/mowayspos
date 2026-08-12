@@ -70,3 +70,40 @@ def test_month_plan_projection_marks_overdue_and_sorts_by_management_order():
 
     assert [row.id for row in result] == [3, 4, 2, 5, 1]
     assert monthly_plans.to_month_plan_dict(result[0], today=date(2026, 8, 12))["display_status"] == "已延期"
+
+
+def test_month_plan_create_returns_business_fields_without_audit_fields():
+    from app.routers import monthly_plans
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    db.add_all([
+        models.Project(id=1, name="AI项目", status="active", is_active=True),
+        models.Person(id=1, name="项目负责人"),
+        models.Person(id=2, name="执行负责人"),
+        models.Account(username="project-owner", password_hash="test", person_id=1, status="active"),
+        models.ProjectMember(project_id=1, person_id=1, person_name_snapshot="项目负责人", role="owner"),
+        models.ProjectMember(project_id=1, person_id=2, person_name_snapshot="执行负责人", role="member"),
+        models.Task(id=1, project_id=1, key_task="重点工作"),
+        models.SubTask(id=1, task_id=1, title="关键任务", assignee="项目负责人"),
+    ])
+    db.commit()
+
+    result = monthly_plans.create_monthly_plan(
+        1,
+        schemas.MonthPlanCreatePayload(
+            plan_month="2026-08",
+            title="完成联合市场活动方案",
+            expected_output="可评审的活动方案",
+            assignee_id=2,
+            status="进行中",
+        ),
+        current_user="project-owner",
+        db=db,
+    )
+
+    assert result["assignee"] == "执行负责人"
+    assert result["expected_output"] == "可评审的活动方案"
+    assert "created_by" not in result
+    assert "updated_by" not in result

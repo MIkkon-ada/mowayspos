@@ -372,6 +372,7 @@ export type SubTaskItem = {
   project_id?: number | null
   title: string
   assignee: string
+  assignee_id?: number | null
   plan_time: string
   status: string
   completion_criteria?: string

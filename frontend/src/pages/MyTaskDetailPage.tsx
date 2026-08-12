@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
+import { getProjectMembers } from '../api/projects'
 import { fetchSubtaskDetail, type SubTaskDetail } from '../api/subtasks'
+import { MonthlyPlanWorkspace } from '../components/task-management/MonthlyPlanWorkspace'
+import { useProject } from '../context/ProjectContext'
+import { canManageProjectWork } from '../domain/taskPermission'
 import { getMyTaskProgressText, getMyTaskStatusTone, normalizeMyTaskStatus, parseMyTaskPlanTime } from '../features/my-tasks/myTasksViewModel'
+import type { ProjectMember } from '../types'
 import '../features/my-tasks/myTasks.css'
 
 type LoopItem = {
@@ -96,6 +101,7 @@ function buildLoopItems(detail: SubTaskDetail): LoopItem[] {
 }
 
 export function MyTaskDetailPage() {
+  const { currentUser, projects } = useProject()
   const navigate = useNavigate()
   const location = useLocation()
   const { taskId: taskIdParam } = useParams()
@@ -108,6 +114,7 @@ export function MyTaskDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [reloadToken, setReloadToken] = useState(0)
+  const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -125,6 +132,18 @@ export function MyTaskDetailPage() {
     return () => { cancelled = true }
   }, [taskId, scopedProjectId, reloadToken])
 
+  useEffect(() => {
+    let cancelled = false
+    if (scopedProjectId === null) {
+      setProjectMembers([])
+      return
+    }
+    getProjectMembers(scopedProjectId)
+      .then((members) => { if (!cancelled) setProjectMembers(members) })
+      .catch(() => { if (!cancelled) setProjectMembers([]) })
+    return () => { cancelled = true }
+  }, [scopedProjectId])
+
   const reload = () => setReloadToken((value) => value + 1)
 
   const plan = useMemo(() => parseMyTaskPlanTime(detail?.plan_time), [detail?.plan_time])
@@ -132,6 +151,19 @@ export function MyTaskDetailPage() {
   const progress = getProgress(detail?.status)
   const status = normalizeMyTaskStatus(detail?.status)
   const statusTone = getMyTaskStatusTone(detail?.status)
+  const project = useMemo(
+    () => projects.find((item) => item.id === scopedProjectId) ?? null,
+    [projects, scopedProjectId],
+  )
+  const defaultAssigneeId = projectMembers.find((member) => member.person_name_snapshot === detail?.assignee)?.person_id
+    ?? detail?.assignee_id
+    ?? null
+  const canManageMonthlyPlans = Boolean(
+    canManageProjectWork({
+      isTechAdmin: currentUser?.is_tech_admin,
+      projectRoles: project?.user_roles,
+    }) || (currentUser?.name && detail?.assignee && currentUser.name === detail.assignee),
+  )
   const projectName = fallback(
     detail?.parent_task?.special_project,
     routeState?.projectName || (loading ? '正在读取项目归属' : '项目归属暂不可用'),
@@ -168,6 +200,14 @@ export function MyTaskDetailPage() {
         {!loading && detail && (
           <div className="my-task-detail-layout">
             <section className="my-task-detail-main">
+              <MonthlyPlanWorkspace
+                subtaskId={detail.id}
+                defaultAssigneeId={defaultAssigneeId}
+                members={projectMembers}
+                canManage={canManageMonthlyPlans}
+                onChanged={reload}
+              />
+
               <article className="my-task-progress-card">
                 <div>
                   <span>整体完成率</span>

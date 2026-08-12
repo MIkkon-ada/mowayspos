@@ -18,6 +18,7 @@ import { useVoiceRecorder } from '../features/voice-update/useVoiceRecorder'
 import { useVoiceSubmission } from '../features/voice-update/useVoiceSubmission'
 import { readVoiceDraftState, useVoiceTaskBinding } from '../features/voice-update/useVoiceTaskBinding'
 import { useVoiceUpload } from '../features/voice-update/useVoiceUpload'
+import { useVoiceDocumentUpload } from '../features/voice-update/useVoiceDocumentUpload'
 import { canExtractVoiceUpdate } from '../features/voice-update/voiceUpdateResultTypes'
 import type { VoiceReportScope } from '../features/voice-update/voiceUpdateResultTypes'
 import { formatTime } from '../features/voice-update/voiceUpdateHelpers'
@@ -156,11 +157,20 @@ export function VoiceUpdatePage() {
   })
 
   const { uploading, uploadFileName, uploadInputRef, handleUploadFile } = useVoiceUpload({ setText, setError: setExtractionError })
+  const {
+    documentUploading,
+    documentFileName,
+    documentCharCount,
+    documentInputRef,
+    handleDocumentFile,
+    removeDocument,
+  } = useVoiceDocumentUpload({ setText, setError: setExtractionError })
   const canRecord = reportScope === 'task'
     && selectedProjectIsActive
     && selectedProjectId !== null
     && taskBinding.selectedSubtaskId !== null
     && !uploading
+    && !documentUploading
   const {
     recorderState,
     recording,
@@ -206,7 +216,7 @@ export function VoiceUpdatePage() {
     refreshHistory: historyState.refreshHistory,
   })
 
-  const controlsLocked = phase === 'extracting' || phase === 'submitting' || mediaActive || uploading
+  const controlsLocked = phase === 'extracting' || phase === 'submitting' || mediaActive || uploading || documentUploading
   const extractDisabled = !canExtractVoiceUpdate({
     scope: reportScope,
     candidateCount: taskBinding.taskOptions.length,
@@ -215,13 +225,14 @@ export function VoiceUpdatePage() {
     text,
     projectActive: reportScope === 'all' || selectedProjectIsActive,
     recording,
-    uploading,
+    uploading: uploading || documentUploading,
     phase,
   })
 
   function handleProjectChange(projectId: number | null) {
     if (controlsLocked) return
     resetExtractionState()
+    removeDocument()
     setQuickSubtaskId(null)
     setSelectedProjectId(projectId)
   }
@@ -229,6 +240,7 @@ export function VoiceUpdatePage() {
   function handleScopeChange(scope: VoiceReportScope) {
     if (controlsLocked) return
     resetExtractionState()
+    removeDocument()
     setQuickSubtaskId(null)
     setReportScope(scope)
     if (scope === 'all') setSelectedProjectId(null)
@@ -237,6 +249,7 @@ export function VoiceUpdatePage() {
   function handleTaskChange(subtaskId: number | null) {
     if (controlsLocked) return
     resetExtractionState()
+    removeDocument()
     setQuickSubtaskId(null)
     taskBinding.selectTask(subtaskId)
   }
@@ -244,6 +257,7 @@ export function VoiceUpdatePage() {
   function handleQuickTaskSelect(projectId: number, subtaskId: number) {
     if (controlsLocked) return
     resetExtractionState()
+    removeDocument()
     setQuickSubtaskId(subtaskId)
     setSelectedProjectId(projectId)
     setReportScope('task')
@@ -320,6 +334,12 @@ export function VoiceUpdatePage() {
                   uploadFileName={uploadFileName}
                   uploadInputRef={uploadInputRef}
                   onUploadFile={handleUploadFile}
+                  documentUploading={documentUploading}
+                  documentFileName={documentFileName}
+                  documentCharCount={documentCharCount}
+                  documentInputRef={documentInputRef}
+                  onDocumentFile={handleDocumentFile}
+                  onRemoveDocument={removeDocument}
                   onStartRecording={startRecording}
                   onStopRecording={stopRecording}
                   onExtract={handleExtract}
@@ -371,8 +391,8 @@ export function VoiceUpdatePage() {
               submittedAt={submittedAt}
               draftSaved={draftSaved}
               onSaveDraft={handleSaveDraft}
-              onResetExtractionState={resetExtractionState}
-              onClear={() => resetExtractionState({ clearText: true })}
+              onResetExtractionState={() => { resetExtractionState(); removeDocument() }}
+              onClear={() => { resetExtractionState({ clearText: true }); removeDocument() }}
               onSubmitFinal={handleSubmitFinal}
               onViewSubmissionHistory={() => setHistoryOpen(true)}
               projectArchived={projectArchived || Boolean(selectedProject && !selectedProjectIsActive)}

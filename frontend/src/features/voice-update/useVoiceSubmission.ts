@@ -15,7 +15,7 @@ type UseVoiceSubmissionArgs = {
   selectedTaskContext: UserSubtaskContext | null
   currentUser: { name?: string } | null
   text: string
-  mode: 'voice' | 'upload' | 'text'
+  mode: 'voice' | 'upload' | 'text' | 'document'
   result: Record<string, unknown> | null
   editValues: Record<string, unknown> | null
   taskReports: TaskReport[]
@@ -141,7 +141,7 @@ export function useVoiceSubmission({
       })
       const { submission } = await createUpdate({
         project_id: projectId,
-        source_type: mode === 'voice' ? '语音更新' : '文字更新',
+        source_type: mode === 'voice' ? '语音更新' : mode === 'document' ? '文档解析' : '文字更新',
         transcript_text: content,
         submitter: submitterName,
         human_result: mergedHumanResult,

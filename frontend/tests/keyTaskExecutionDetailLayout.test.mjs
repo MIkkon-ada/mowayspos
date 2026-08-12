@@ -55,3 +55,20 @@ test('work progress table opens a key task through the shared execution-workbenc
   assert.match(planTable, /onOpenSubTask\?\.\(row\.subtask\)/)
   assert.doesNotMatch(planTable, /setEditingSubTask\(row\.subtask\)/)
 })
+
+test('monthly workbench owns base-task editing and the table no longer carries a legacy detail modal', () => {
+  const detail = read('src/components/task-management/KeyTaskExecutionDetailView.tsx')
+  const page = read('src/pages/TaskManagementPage.tsx')
+  const planTable = read('src/components/task-management/PlanTableViewV2.tsx')
+
+  assert.match(detail, /onEditSubTask/)
+  assert.match(detail, /编辑关键任务/)
+  assert.match(detail, /KeyTaskEditDrawer/)
+  for (const label of ['任务名称', '责任人', '协同人', '计划时间', '整体状态', '完成标准']) {
+    assert.match(detail, new RegExp(label))
+  }
+  assert.match(page, /onEditSubTask=\{handleWorkbenchSubTaskSave\}/)
+  assert.doesNotMatch(planTable, /function SubTaskEditModal/)
+  assert.doesNotMatch(planTable, /editingSubTaskDetail/)
+  assert.equal(fs.existsSync(path.join(root, 'src/components/task-management/PlanTableView.tsx')), false)
+})

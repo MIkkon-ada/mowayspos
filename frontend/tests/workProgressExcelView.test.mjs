@@ -367,17 +367,14 @@ test('key task execution detail combines the monthly-plan workbench with process
   assert.doesNotMatch(detail, /function Line\(/)
 })
 
-test('table-view key task editor keeps people, time and status on one row', () => {
+test('key-task base editor lives in the execution workbench instead of a table modal', () => {
   const view = read(VIEW_FILE)
-  const css = read(CSS_FILE)
-  assert.match(view, /v2-edit-form__context/)
-  assert.match(view, /v2-edit-form__grid/)
-  assert.match(view, /v2-modal__footer/)
-  assert.match(view, /fetchSubtaskDetail/)
-  assert.match(view, /v2-edit-form__latest-progress/)
-  assert.match(css, /\.v2-modal--edit\s*\{[^}]*width:\s*760px/s)
-  assert.match(css, /\.v2-edit-form__grid\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/s)
-  assert.match(view, /责任人[\s\S]*协同人\s*\/\s*备注[\s\S]*计划时间[\s\S]*当前状态/)
+  const detail = read(DETAIL_FILE)
+  assert.doesNotMatch(view, /function SubTaskEditModal/)
+  assert.doesNotMatch(view, /fetchSubtaskDetail/)
+  assert.match(detail, /function KeyTaskEditDrawer/)
+  assert.match(detail, /fixed inset-0.*ml-auto.*max-w-md/s)
+  assert.match(detail, /任务名称[\s\S]*责任人[\s\S]*协同人[\s\S]*计划时间[\s\S]*整体状态[\s\S]*完成标准/)
 })
 
 test('page resolves an archived project detail without falling back to another project', () => {

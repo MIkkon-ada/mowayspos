@@ -7,7 +7,7 @@ import type { TaskLog, TaskPayload, TaskUpdate, TaskDraft } from '../api/tasks'
 import { fetchSubTasks, fetchSubTasksBatch, createSubTask, patchSubTaskStatus, isPendingConfirmation, updateSubTask, deleteSubTask, restoreSubTask, fetchSubtaskDetail } from '../api/subtasks'
 import type { SubTaskDetail, SubTaskPayload } from '../api/subtasks'
 import { createUpdate } from '../api/updates'
-import { ApiError, apiGet } from '../api/client'
+import { ApiError } from '../api/client'
 import { getProject, getProjectMembers } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } from '../domain/taskPermission'
@@ -662,6 +662,19 @@ export function TaskManagementPage() {
     }
   }
 
+  async function handleWorkbenchSubTaskSave(payload: Omit<SubTaskPayload, 'project_id'>) {
+    if (!selectedSubTask) return
+    const projectId = selectedSubTask.project_id ?? focusedSubTaskProject?.id ?? currentProjectId
+    if (!projectId) throw new Error('缺少项目上下文，无法保存关键任务')
+    const updated = await updateSubTask(selectedSubTask.id, { ...payload, project_id: projectId })
+    setSelectedSubTask((current) => current ? { ...current, ...updated } as SubTaskDetail : current)
+    setSubTasks((prev) => prev.map((item) => item.id === updated.id ? { ...item, ...updated } : item))
+    setTaskSubMap((prev) => ({
+      ...prev,
+      [updated.task_id]: (prev[updated.task_id] ?? []).map((item) => item.id === updated.id ? { ...item, ...updated } : item),
+    }))
+  }
+
   function openDetail(task: TaskItem) {
     focusTask(task)
     setTaskLogs([])
@@ -1052,6 +1065,8 @@ function handleFormSave(payload: TaskPayload) {
           subTask={selectedSubTask}
           projectMembers={projectMembersByProject[(focusedProject ?? focusedSubTaskProject)?.id ?? 0] ?? []}
           canManageSchedules={Boolean(currentUser?.is_tech_admin || currentUser?.name === selectedSubTask.assignee || canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: (focusedProject ?? focusedSubTaskProject)?.user_roles ?? currentProjectRoles }))}
+          canChangeAssignee={canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: (focusedProject ?? focusedSubTaskProject)?.user_roles ?? currentProjectRoles })}
+          onEditSubTask={handleWorkbenchSubTaskSave}
           onSchedulesChanged={() => { fetchSubtaskDetail(selectedSubTask.id).then(setSelectedSubTask).catch(() => {}) }}
           onBack={() => clearSelection()}
         />
@@ -1088,31 +1103,7 @@ function handleFormSave(payload: TaskPayload) {
               onExport={handlePlanExport}
               canCreateTask={!showDeleted && !projectArchived && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProjectRoles })}
               onCreateTask={() => openTaskCreateForProject(focusedProject?.id)}
-              currentUserName={currentUser?.name}
-              projectRoles={currentProjectRoles ?? []}
-              isTechAdmin={currentUser?.is_tech_admin ?? false}
-              projectMembers={projectMembersByProject[focusedProject?.id ?? 0] ?? []}
               onOpenSubTask={openSubDetail}
-              onUpdateSubTask={async (id, payload) => {
-                const updated = await updateSubTask(id, {
-                  ...payload,
-                  project_id: focusedProject!.id,
-                })
-                setTaskSubMap((prev) => {
-                  const next = { ...prev }
-                  for (const tid of Object.keys(next)) {
-                    const list = next[Number(tid)]
-                    const idx = list.findIndex((s) => s.id === id)
-                    if (idx >= 0) {
-                      next[Number(tid)] = [...list]
-                      next[Number(tid)][idx] = updated
-                      break
-                    }
-                  }
-                  return next
-                })
-                return updated
-              }}
             />
           ) : viewMode === 'execution' ? (
             <ExecutionProgressView
@@ -1791,11 +1782,9 @@ function OutlineImportModal({ defaultProjectId, projects, onCreated, onClose }: 
   const [noEngine, setNoEngine] = useState(false)
 
   useEffect(() => {
-    apiGet<{ provider: string; display_name: string }[]>('/api/llm-config/available').then((list) => {
-      if (list.length === 0) { setNoEngine(true); return }
-      setProvider(list[0].provider)
-      setProviderLabel(list[0].display_name)
-    }).catch(() => setNoEngine(true))
+    setProvider('capability')
+    setProviderLabel('AI能力策略')
+    setNoEngine(false)
   }, [])
 
   async function handleExtract() {

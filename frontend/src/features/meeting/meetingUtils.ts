@@ -4,21 +4,24 @@ import type { MeetingItem } from '../../types'
 export type PublishStatus = 'draft' | 'published' | 'returned'
 
 export const TYPE_LABEL: Record<string, string> = {
-  weekly: '周会',
-  monthly: '月会',
+  weekly: '项目例会',
+  monthly: '项目例会',
+  regular: '项目例会',
   review: '评审会',
-  special: '专项会',
-  discuss: '讨论会',
+  special: '专题会议',
+  discuss: '沟通会',
+  communication: '沟通会',
   kickoff: '启动会',
+  retrospective: '复盘会',
 }
 
 export const TYPE_STYLE: Record<string, string> = {
-  周会: 'bg-blue-100 text-blue-700',
-  月会: 'bg-blue-100 text-blue-700',
+  项目例会: 'bg-blue-100 text-blue-700',
   评审会: 'bg-purple-100 text-purple-700',
-  专项会: 'bg-emerald-100 text-emerald-700',
-  讨论会: 'bg-orange-100 text-orange-700',
+  专题会议: 'bg-emerald-100 text-emerald-700',
+  沟通会: 'bg-orange-100 text-orange-700',
   启动会: 'bg-amber-100 text-amber-700',
+  复盘会: 'bg-slate-100 text-slate-600',
 }
 
 export const STATUS_CONFIG: Record<PublishStatus, { cls: string; label: string }> = {

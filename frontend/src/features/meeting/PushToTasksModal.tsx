@@ -1,456 +1,195 @@
-import { useState } from 'react'
-import { apiPatch, apiPost } from '../../api/client'
-import { generateTaskCards } from '../../api/meetings'
-import type { TaskCard } from '../../api/meetings'
-import type { ProjectMember } from '../../types'
+import { useEffect, useMemo, useState } from 'react'
+import { apiPost } from '../../api/client'
+import { createTask, fetchTasks } from '../../api/tasks'
+import type { TaskItem } from '../../types'
 import { ErrorBar } from './meetingShared'
 
-type CardWithState = TaskCard & { approved: boolean; executing?: boolean; done?: boolean; error?: string }
+type PushStep = 'review' | 'executing' | 'done'
 
-type Step = 'map' | 'loading' | 'review' | 'executing' | 'done'
+type ActionItem = {
+  id: string
+  title: string
+  owner: string
+  dueDate: string
+  source: string
+  selected: boolean
+  targetTaskId: string
+  executing?: boolean
+  done?: boolean
+  error?: string
+}
+
+function firstValue(row: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = String(row[key] ?? '').trim()
+    if (value) return value
+  }
+  return ''
+}
+
+function parseActionItems(raw: string): ActionItem[] {
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+
+    return parsed.flatMap((entry, index) => {
+      if (typeof entry === 'string') {
+        const title = entry.trim()
+        return title ? [{ id: `${index}-${title}`, title, owner: '', dueDate: '', source: '', selected: true, targetTaskId: '' }] : []
+      }
+      if (!entry || typeof entry !== 'object') return []
+
+      const row = entry as Record<string, unknown>
+      const title = firstValue(row, ['会议安排事项', '事项', '待办事项', 'task', 'title', 'content', 'name'])
+      if (!title) return []
+      return [{
+        id: `${index}-${title}`,
+        title,
+        owner: firstValue(row, ['负责人', '责任人', 'owner', 'assignee']),
+        dueDate: firstValue(row, ['完成时限', '完成时间', '截止日期', 'due_date', 'dueDate', 'plan_time']),
+        source: firstValue(row, ['本周进展/说明', '说明', '备注', 'source', 'note']),
+        selected: true,
+        targetTaskId: '',
+      }]
+    })
+  } catch {
+    return []
+  }
+}
 
 export function PushToTasksModal({
   projectId,
-  reportsJson,
-  transcriptText,
-  members,
+  taskListJson,
   onClose,
   onDone,
 }: {
   projectId: number
-  reportsJson: string
-  transcriptText: string
-  members: ProjectMember[]
+  taskListJson: string
   onClose: () => void
   onDone: () => void
 }) {
-  const [step, setStep] = useState<Step>('map')
-  const [speakerMap, setSpeakerMap] = useState<Record<string, string>>({})
-  const [customNames, setCustomNames] = useState<Record<string, string>>({})
-  const [cards, setCards] = useState<CardWithState[]>([])
+  const [step, setStep] = useState<PushStep>('review')
+  const [items, setItems] = useState<ActionItem[]>(() => parseActionItems(taskListJson))
+  const [workstreams, setWorkstreams] = useState<TaskItem[]>([])
+  const [loadingWorkstreams, setLoadingWorkstreams] = useState(true)
   const [error, setError] = useState('')
   const [doneCount, setDoneCount] = useState(0)
   const [failCount, setFailCount] = useState(0)
 
-  let reports: { member: string }[] = []
-  try {
-    reports = JSON.parse(reportsJson)
-  } catch {
-    reports = []
+  useEffect(() => {
+    let active = true
+    fetchTasks(projectId)
+      .then((result) => { if (active) setWorkstreams(result) })
+      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)) })
+      .finally(() => { if (active) setLoadingWorkstreams(false) })
+    return () => { active = false }
+  }, [projectId])
+
+  const selectedItems = useMemo(() => items.filter((item) => item.selected), [items])
+  const missingTargets = selectedItems.some((item) => !item.targetTaskId)
+
+  function updateItem(id: string, patch: Partial<ActionItem>) {
+    setItems((previous) => previous.map((item) => item.id === id ? { ...item, ...patch } : item))
   }
 
-  const speakerSet = new Set<string>()
-  reports.forEach((r) => {
-    if (r.member) speakerSet.add(r.member)
-  })
-  const speakers = [...speakerSet]
-  const uniqueMembers = [...new Map(members.map((m) => [m.person_name_snapshot, m])).values()]
-
-  const resolveName = (label: string) => {
-    if (label in customNames) return customNames[label] || label
-    return speakerMap[label] || label
-  }
-
-  async function handleGenerate() {
-    setError('')
-    setStep('loading')
-
-    const finalMap: Record<string, string> = {}
-    speakers.forEach((s) => {
-      finalMap[s] = resolveName(s)
-    })
-
-    try {
-      const result = await generateTaskCards(projectId, transcriptText, finalMap)
-      const loaded: CardWithState[] = (result.task_cards || []).map((c) => ({ ...c, approved: true }))
-      setCards(loaded)
-      setStep('review')
-    } catch (e: unknown) {
-      setError(`AI 分析失败：${e instanceof Error ? e.message : String(e)}`)
-      setStep('map')
-    }
-  }
-
-  async function handleExecute() {
+  async function handlePush() {
+    if (!selectedItems.length || missingTargets) return
     setStep('executing')
-    setDoneCount(0)
-    setFailCount(0)
+    setError('')
+    let succeeded = 0
+    let failed = 0
 
-    const approved = cards.filter((c) => c.approved)
-    let ok = 0
-    let fail = 0
-
-    for (let i = 0; i < cards.length; i++) {
-      if (!cards[i].approved) continue
-      setCards((prev) => prev.map((c, idx) => (idx === i ? { ...c, executing: true } : c)))
-
+    for (const selected of selectedItems) {
+      updateItem(selected.id, { executing: true, error: '' })
       try {
-        const card = cards[i]
-        if (card.action === 'create') {
-          await apiPost(`/api/tasks/${card.parent_task_id}/subtasks`, {
-            title: card.title,
-            assignee: card.assignee || '',
-            plan_time: card.plan_time || '',
+        const note = selected.source ? `会议待办：${selected.source}` : '会议待办'
+        if (selected.targetTaskId === '__new__') {
+          await createTask({
+            project_id: projectId,
+            key_task: selected.title,
+            owner: selected.owner,
+            plan_time: selected.dueDate,
             status: '未开始',
-            notes: card.notes || '',
+            problem_note: note,
           })
-        } else if (card.action === 'update_status') {
-          const base = card.current_payload ?? { title: card.subtask_title, assignee: '', plan_time: '', status: '', completion_criteria: '', notes: '' }
-          await apiPatch(`/api/subtasks/${card.subtask_id}`, {
-            ...base,
-            status: card.new_status,
-            notes: card.notes ? (base.notes ? base.notes + '\n' + card.notes : card.notes) : base.notes,
-          })
-        } else if (card.action === 'add_note') {
-          const base = card.current_payload ?? { title: card.subtask_title, assignee: '', plan_time: '', status: '', completion_criteria: '', notes: '' }
-          const appendedNote = base.notes ? base.notes + '\n【会议备注】' + card.note : '【会议备注】' + card.note
-          await apiPatch(`/api/subtasks/${card.subtask_id}`, {
-            ...base,
-            notes: appendedNote,
+        } else {
+          await apiPost(`/api/tasks/${selected.targetTaskId}/subtasks`, {
+            title: selected.title,
+            assignee: selected.owner,
+            plan_time: selected.dueDate,
+            status: '未开始',
+            notes: note,
           })
         }
-        ok++
-        setCards((prev) => prev.map((c, idx) => (idx === i ? { ...c, executing: false, done: true } : c)))
-      } catch (e: unknown) {
-        fail++
-        const msg = e instanceof Error ? e.message : String(e)
-        setCards((prev) => prev.map((c, idx) => (idx === i ? { ...c, executing: false, error: msg } : c)))
+        succeeded += 1
+        updateItem(selected.id, { executing: false, done: true })
+      } catch (reason: unknown) {
+        failed += 1
+        updateItem(selected.id, { executing: false, error: reason instanceof Error ? reason.message : String(reason) })
       }
-      setDoneCount(ok)
-      setFailCount(fail)
+      setDoneCount(succeeded)
+      setFailCount(failed)
     }
-
-    if (approved.length === 0 || ok > 0) {
-      setStep('done')
-    } else {
-      setStep('executing')
-    }
+    setStep('done')
   }
 
-  const approvedCount = cards.filter((c) => c.approved).length
-
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center"
-      style={{ background: 'rgba(15,23,42,0.6)' }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
-    >
-      <div className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden" style={{ width: 640, maxHeight: '88vh' }}>
-
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: '#E9EFF6' }}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50" onClick={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <div className="flex max-h-[88vh] w-[760px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <header className="flex items-start justify-between border-b border-slate-100 px-6 py-5">
           <div>
-            <div className="text-sm font-bold text-slate-800">推送到工作推进</div>
-            <div className="text-xs text-slate-400 mt-0.5">
-              {step === 'map' && '映射发言人 → 生成 AI 任务建议卡片'}
-              {step === 'loading' && 'AI 正在分析会议内容，生成任务建议…'}
-              {step === 'review' && `共生成 ${cards.length} 张卡片，请逐一确认后执行`}
-              {step === 'executing' && '正在执行已批准的卡片…'}
-              {step === 'done' && `执行完毕：成功 ${doneCount} 张，失败 ${failCount} 张`}
-            </div>
+            <h2 className="text-base font-semibold text-slate-900">推送待办到工作推进</h2>
+            <p className="mt-1 text-sm text-slate-500">选择已确认待办的归属重点工作；系统只创建任务，不再分析发言人或生成 AI 卡片。</p>
           </div>
-          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-slate-100 text-slate-400">
-            <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
+          <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="关闭">×</button>
+        </header>
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto p-6">
-
-          {/* Step: map */}
-          {step === 'map' && (
-            <div className="space-y-5">
-              {speakers.length > 0 ? (
-                <div>
-                  <div className="text-xs font-bold text-slate-700 mb-3">发言人映射</div>
-                  <div className="space-y-2">
-                    {speakers.map((speaker) => (
-                      <div key={speaker} className="grid items-center gap-3" style={{ gridTemplateColumns: '120px 1fr' }}>
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 text-xs font-bold flex-shrink-0">
-                            {speaker.slice(0, 1)}
-                          </div>
-                          <span className="text-xs font-semibold text-slate-600 truncate">{speaker}</span>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <select
-                            className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-300"
-                            value={speaker in customNames ? '__custom__' : speakerMap[speaker] ?? ''}
-                            onChange={(e) => {
-                              const val = e.target.value
-                              if (val === '__custom__') {
-                                setCustomNames((c) => ({ ...c, [speaker]: speakerMap[speaker] ?? '' }))
-                              } else {
-                                setCustomNames((c) => { const n = { ...c }; delete n[speaker]; return n })
-                                setSpeakerMap((m) => ({ ...m, [speaker]: val }))
-                              }
-                            }}
-                          >
-                            <option value="">保持原标签</option>
-                            {uniqueMembers.length > 0 && (
-                              <optgroup label="本项目成员">
-                                {uniqueMembers.map((m) => (
-                                  <option key={m.id} value={m.person_name_snapshot}>
-                                    {m.person_name_snapshot} ({m.role})
-                                  </option>
-                                ))}
-                              </optgroup>
-                            )}
-                            <option value="__custom__">手动填写</option>
-                          </select>
-                          {speaker in customNames && (
-                            <input
-                              autoFocus
-                              type="text"
-                              className="w-full border border-blue-300 rounded-lg px-2.5 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                              placeholder="输入姓名"
-                              value={customNames[speaker]}
-                              onChange={(e) => {
-                                const v = e.target.value
-                                setCustomNames((c) => ({ ...c, [speaker]: v }))
-                                setSpeakerMap((m) => ({ ...m, [speaker]: v }))
-                              }}
-                            />
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="text-xs text-slate-400 text-center py-4">
-                  未检测到说话人标签（如"说话人1："），请确认转录文本格式
-                </div>
-              )}
-              {error && <ErrorBar msg={error} />}
-            </div>
-          )}
-
-          {/* Step: loading */}
-          {step === 'loading' && (
-            <div className="flex flex-col items-center justify-center py-16 gap-4">
-              <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-500 rounded-full animate-spin" />
-              <div className="text-sm text-slate-500">AI 正在对照任务清单生成建议卡片…</div>
-            </div>
-          )}
-
-          {/* Step: review */}
-          {(step === 'review' || step === 'executing' || step === 'done') && (
+        <main className="flex-1 overflow-y-auto p-6">
+          {!items.length ? (
+            <div className="rounded-xl border border-dashed border-slate-200 py-12 text-center text-sm text-slate-400">无待办事项可推送</div>
+          ) : (
             <div className="space-y-3">
-              {cards.length === 0 && (
-                <div className="text-xs text-slate-400 text-center py-8">AI 未生成任何卡片，可能会议内容与现有任务无明显交集</div>
-              )}
-              {cards.map((card, i) => (
-                <TaskCardItem
-                  key={i}
-                  card={card}
-                  readonly={step !== 'review'}
-                  onToggle={() => {
-                    setCards((prev) => prev.map((c, idx) => idx === i ? { ...c, approved: !c.approved } : c))
-                  }}
-                  onEditField={(field, value) => {
-                    setCards((prev) => prev.map((c, idx) => idx === i ? { ...c, [field]: value } : c))
-                  }}
-                />
+              {items.map((item, index) => (
+                <section key={item.id} className={`rounded-xl border p-4 ${item.done ? 'border-emerald-200 bg-emerald-50/50' : item.error ? 'border-red-200 bg-red-50/50' : 'border-slate-200'}`}>
+                  <div className="flex gap-3">
+                    <input aria-label={`选择待办 ${index + 1}`} type="checkbox" checked={item.selected} disabled={step !== 'review'} onChange={(event) => updateItem(item.id, { selected: event.target.checked })} className="mt-1 h-4 w-4 accent-sky-600" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-medium text-slate-800">{item.title}</p>
+                        {item.done && <span className="text-xs font-medium text-emerald-600">已推送</span>}
+                        {item.executing && <span className="text-xs text-sky-600">推送中…</span>}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500">
+                        <span>负责人：{item.owner || '未填写'}</span>
+                        <span>完成时间：{item.dueDate || '未填写'}</span>
+                        {item.source && <span>说明：{item.source}</span>}
+                      </div>
+                      {step === 'review' && (
+                        <label className="mt-4 block text-xs font-medium text-slate-600">
+                          归属重点工作
+                          <select value={item.targetTaskId} onChange={(event) => updateItem(item.id, { targetTaskId: event.target.value })} disabled={!item.selected || loadingWorkstreams} className="mt-1.5 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-700 outline-none focus:border-sky-400 disabled:bg-slate-50">
+                            <option value="">请选择</option>
+                            <option value="__new__">新建重点工作</option>
+                            {workstreams.map((workstream) => <option key={workstream.id} value={String(workstream.id)}>{workstream.key_task}</option>)}
+                          </select>
+                        </label>
+                      )}
+                      {item.error && <p className="mt-3 text-xs text-red-600">推送失败：{item.error}</p>}
+                    </div>
+                  </div>
+                </section>
               ))}
             </div>
           )}
-        </div>
+          {error && <div className="mt-4"><ErrorBar msg={error} /></div>}
+        </main>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t" style={{ borderColor: '#E9EFF6' }}>
-          <button onClick={onClose} className="text-sm text-slate-500 hover:text-slate-700">
-            {step === 'done' ? '关闭' : '取消'}
-          </button>
-          <div className="flex items-center gap-3">
-            {step === 'map' && (
-              <button
-                onClick={handleGenerate}
-                disabled={speakers.length === 0}
-                className="px-6 py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90 disabled:opacity-40"
-                style={{ background: 'linear-gradient(135deg,#3B82F6,#6366F1)' }}
-              >
-                AI 生成任务卡片
-              </button>
-            )}
-            {step === 'review' && (
-              <button
-                onClick={handleExecute}
-                disabled={approvedCount === 0}
-                className="px-6 py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90 disabled:opacity-40"
-                style={{ background: 'linear-gradient(135deg,#059669,#10B981)' }}
-              >
-                执行 {approvedCount} 张已批准的卡片
-              </button>
-            )}
-            {step === 'done' && (
-              <button
-                onClick={onDone}
-                className="px-6 py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90"
-                style={{ background: 'linear-gradient(135deg,#059669,#10B981)' }}
-              >
-                完成
-              </button>
-            )}
-          </div>
-        </div>
+        <footer className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
+          <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">{step === 'done' ? '关闭' : '取消'}</button>
+          {step === 'review' && <button onClick={() => void handlePush()} disabled={!selectedItems.length || missingTargets || loadingWorkstreams} className="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40">推送 {selectedItems.length} 项待办</button>}
+          {step === 'done' && <button onClick={onDone} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-sky-700">完成</button>}
+        </footer>
       </div>
-    </div>
-  )
-}
-
-
-function TaskCardItem({
-  card,
-  readonly,
-  onToggle,
-  onEditField,
-}: {
-  card: CardWithState
-  readonly: boolean
-  onToggle: () => void
-  onEditField: (field: string, value: string) => void
-}) {
-  const [showEvidence, setShowEvidence] = useState(false)
-
-  const actionMeta = {
-    create: { label: '新建关键任务', color: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
-    update_status: { label: '更新状态', color: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' },
-    add_note: { label: '追加备注', color: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
-  }[card.action]
-
-  const isCompleted = card.done
-  const isFailed = !!card.error
-  const isRunning = card.executing
-
-  let borderColor = actionMeta.border
-  if (isCompleted) borderColor = '#86EFAC'
-  if (isFailed) borderColor = '#FCA5A5'
-
-  return (
-    <div
-      className="rounded-xl border p-4 transition-all"
-      style={{
-        borderColor,
-        background: card.approved ? actionMeta.bg : '#F8FAFC',
-        opacity: card.approved ? 1 : 0.55,
-      }}
-    >
-      {/* Card header */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span
-            className="text-xs font-bold px-2 py-0.5 rounded-full"
-            style={{ color: actionMeta.color, background: 'white', border: `1px solid ${actionMeta.border}` }}
-          >
-            {actionMeta.label}
-          </span>
-          {isRunning && <span className="text-xs text-slate-400">执行中…</span>}
-          {isCompleted && <span className="text-xs text-green-600 font-medium">已完成</span>}
-          {isFailed && <span className="text-xs text-red-500 font-medium">失败：{card.error}</span>}
-        </div>
-        {!readonly && (
-          <button
-            onClick={onToggle}
-            className="flex-shrink-0 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors"
-            style={{
-              borderColor: card.approved ? actionMeta.color : '#CBD5E1',
-              background: card.approved ? actionMeta.color : 'white',
-            }}
-            title={card.approved ? '点击跳过此卡片' : '点击批准此卡片'}
-          >
-            {card.approved && (
-              <svg style={{ width: 10, height: 10 }} fill="none" stroke="white" strokeWidth="3" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-            )}
-          </button>
-        )}
-      </div>
-
-      {/* Card body */}
-      <div className="mt-3 space-y-1.5 text-xs text-slate-700">
-        {card.action === 'create' && (
-          <>
-            <div><span className="text-slate-400">关键任务：</span>
-              {!readonly ? (
-                <input
-                  className="ml-1 border-b border-slate-300 bg-transparent focus:outline-none focus:border-blue-400 font-medium"
-                  value={card.title}
-                  onChange={(e) => onEditField('title', e.target.value)}
-                />
-              ) : (
-                <span className="font-medium">{card.title}</span>
-              )}
-            </div>
-            <div><span className="text-slate-400">负责人：</span><span>{card.assignee || '—'}</span></div>
-            <div><span className="text-slate-400">计划时间：</span><span>{card.plan_time || '—'}</span></div>
-            <div><span className="text-slate-400">重点工作：</span><span className="text-slate-500">{card.parent_key_task}</span></div>
-            {card.notes && <div><span className="text-slate-400">备注：</span><span>{card.notes}</span></div>}
-          </>
-        )}
-        {card.action === 'update_status' && (
-          <>
-            <div><span className="text-slate-400">关键任务：</span><span className="font-medium">{card.subtask_title}</span></div>
-            <div>
-              <span className="text-slate-400">状态改为：</span>
-              {!readonly ? (
-                <select
-                  className="ml-1 border-b border-slate-300 bg-transparent focus:outline-none focus:border-blue-400 font-medium text-xs"
-                  value={card.new_status}
-                  onChange={(e) => onEditField('new_status', e.target.value)}
-                >
-                  {['未开始', '进行中', '已完成', '暂停', '已取消'].map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              ) : (
-                <span className="font-medium" style={{ color: actionMeta.color }}>{card.new_status}</span>
-              )}
-            </div>
-            {card.notes && <div><span className="text-slate-400">附加备注：</span><span>{card.notes}</span></div>}
-          </>
-        )}
-        {card.action === 'add_note' && (
-          <>
-            <div><span className="text-slate-400">关键任务：</span><span className="font-medium">{card.subtask_title}</span></div>
-            <div>
-              <span className="text-slate-400">追加备注：</span>
-              {!readonly ? (
-                <input
-                  className="ml-1 border-b border-slate-300 bg-transparent focus:outline-none focus:border-blue-400 w-56"
-                  value={card.note}
-                  onChange={(e) => onEditField('note', e.target.value)}
-                />
-              ) : (
-                <span>{card.note}</span>
-              )}
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Evidence */}
-      {card.evidence && (
-        <div className="mt-2.5">
-          <button
-            className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1"
-            onClick={() => setShowEvidence((v) => !v)}
-          >
-            <svg style={{ width: 10, height: 10, transform: showEvidence ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
-            </svg>
-            会议依据
-          </button>
-          {showEvidence && (
-            <div className="mt-1.5 pl-3 border-l-2 border-slate-200 text-xs text-slate-500 italic leading-relaxed">
-              {card.evidence}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }

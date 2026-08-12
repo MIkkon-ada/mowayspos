@@ -23,16 +23,21 @@ def upgrade() -> None:
         sa.Column("title", sa.String(length=200), nullable=False),
         sa.Column("start_date", sa.Date(), nullable=False),
         sa.Column("due_date", sa.Date(), nullable=False),
-        sa.Column("assignee", sa.String(length=50), nullable=False, server_default=""),
+        sa.Column("assignee", sa.String(length=50), nullable=False),
         sa.Column("assignee_id", sa.Integer(), sa.ForeignKey("people.id")),
-        sa.Column("status", sa.String(length=20), nullable=False, server_default="待开始"),
+        sa.Column("status", sa.String(length=20), nullable=False),
         sa.Column("reminder_policy", sa.JSON(), nullable=False),
-        sa.Column("created_by", sa.String(length=50), nullable=False, server_default=""),
-        sa.Column("updated_by", sa.String(length=50), nullable=False, server_default=""),
-        sa.Column("is_deleted", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column("created_by", sa.String(length=50), nullable=False),
+        sa.Column("updated_by", sa.String(length=50), nullable=False),
+        sa.Column("is_deleted", sa.Boolean(), nullable=False),
         sa.Column("created_at", sa.DateTime()), sa.Column("updated_at", sa.DateTime()),
     )
+    op.create_index("ix_execution_schedules_id", "execution_schedules", ["id"])
     op.create_index("ix_execution_schedules_subtask_id", "execution_schedules", ["subtask_id"])
+    op.create_index("ix_execution_schedules_plan_type", "execution_schedules", ["plan_type"])
+    op.create_index("ix_execution_schedules_assignee_id", "execution_schedules", ["assignee_id"])
+    op.create_index("ix_execution_schedules_status", "execution_schedules", ["status"])
+    op.create_index("ix_execution_schedules_is_deleted", "execution_schedules", ["is_deleted"])
     op.create_index("ix_execution_schedules_start_date", "execution_schedules", ["start_date"])
     op.create_index("ix_execution_schedules_due_date", "execution_schedules", ["due_date"])
     op.create_table(
@@ -43,10 +48,13 @@ def upgrade() -> None:
         sa.Column("due_on", sa.Date(), nullable=False),
         sa.Column("recipient_id", sa.Integer(), sa.ForeignKey("people.id"), nullable=False),
         sa.Column("notification_id", sa.Integer(), sa.ForeignKey("notifications.id")),
-        sa.Column("wecom_error", sa.Text(), nullable=False, server_default=""),
+        sa.Column("wecom_error", sa.Text(), nullable=False),
         sa.Column("created_at", sa.DateTime()), sa.Column("updated_at", sa.DateTime()),
         sa.UniqueConstraint("schedule_id", "reminder_kind", "due_on", "recipient_id", name="uq_execution_schedule_reminder"),
     )
+    op.create_index("ix_execution_schedule_reminders_id", "execution_schedule_reminders", ["id"])
+    op.create_index("ix_execution_schedule_reminders_schedule_id", "execution_schedule_reminders", ["schedule_id"])
+    op.create_index("ix_execution_schedule_reminders_recipient_id", "execution_schedule_reminders", ["recipient_id"])
 
 
 def downgrade() -> None:

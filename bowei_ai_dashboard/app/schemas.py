@@ -438,14 +438,49 @@ class MeetingPayload(BaseModel):
     meeting_type: str = ""
     title: str = ""
     meeting_date: str = ""
+    location: str = ""
     host: str = ""
     participants: str = ""
+    organizer: str = ""
+    copied_to: str = ""
+    agenda_items_json: str = "[]"
+    prior_action_items_json: str = "[]"
+    source_mode: str = "ai_analysis"
     transcript_text: str = ""
     summary: str = ""
     task_list_json: str = ""
     decision_items_json: str = ""
     risk_items_json: str = ""
     publish_status: str = "draft"
+    skill_run_id: int | None = None
+
+
+class MeetingSkillReferenceFile(BaseModel):
+    source_id: str
+    kind: str = "meeting_document"
+    filename: str = ""
+
+
+class MeetingSkillPreflightPayload(BaseModel):
+    project_id: int
+    meeting_type: str = ""
+    transcript_text: str = ""
+    reference_files: list[MeetingSkillReferenceFile] = Field(default_factory=list)
+
+
+class MeetingSkillSnapshotPayload(BaseModel):
+    transcript_text: str = ""
+    reference_files: list[MeetingSkillReferenceFile] = Field(default_factory=list)
+
+
+class MeetingSkillAnswerItem(BaseModel):
+    question_id: int
+    value: Any | None = None
+    omit: bool = False
+
+
+class MeetingSkillAnswersPayload(BaseModel):
+    answers: list[MeetingSkillAnswerItem] = Field(default_factory=list)
 
 
 class MeetingRevisionResponse(BaseModel):
@@ -459,8 +494,14 @@ class MeetingRevisionResponse(BaseModel):
     meeting_type: str = ""
     title: str = ""
     meeting_date: str = ""
+    location: str = ""
     host: str = ""
     participants: str = ""
+    organizer: str = ""
+    copied_to: str = ""
+    agenda_items_json: str = "[]"
+    prior_action_items_json: str = "[]"
+    source_mode: str = "ai_analysis"
     transcript_text: str = ""
     summary: str = ""
     task_list_json: str = ""

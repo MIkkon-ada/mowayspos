@@ -201,6 +201,7 @@ export function AppRoutes() {
           <Route path="issues/:issueId" element={<IssueDetailPage />} />
           <Route path="org" element={<CoordinatePage />} />
           <Route path="decisions" element={<LegacyCoachDecisionRedirect />} />
+          <Route path="meetings/detail/:meetingId" element={<MeetingPage />} />
           <Route path="meetings" element={<MeetingPage />} />
           <Route path="notifications" element={<NotificationCenterPage />} />
         </Route>

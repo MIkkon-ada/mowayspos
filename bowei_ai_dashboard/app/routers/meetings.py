@@ -3,7 +3,7 @@ import json
 import logging
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
@@ -32,6 +32,15 @@ from ..services.kickoff_agent import build_kickoff_snapshot, run_kickoff_agent
 from ..services.kickoff_writeback import confirm_kickoff_start
 from ..services.meeting_revisions import append_meeting_revision
 from ..services.meeting_traceability import normalize_action_items
+from ..services.meeting_document_text import MeetingDocumentTextError, extract_meeting_document_text
+from ..services.standard_meeting_minutes import parse_standard_meeting_minutes
+from ..services.meeting_skill_clarification import (
+    BlockingClarificationsError,
+    append_input_snapshot,
+    resume_run,
+    start_preflight,
+    submit_answers,
+)
 from ..services.meeting_progress_review import (
     PROGRESS_STATUSES,
     build_progress_prompt,
@@ -44,6 +53,72 @@ from ..services.meeting_progress_review import (
 from ..time_utils import utc_now
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
+
+
+def _skill_run_payload(run: models.MeetingSkillRun, db: Session) -> dict:
+    """Expose the current snapshot only; historical snapshots remain auditable server-side."""
+    snapshot = db.get(models.MeetingSkillInputSnapshot, run.current_input_snapshot_id)
+    questions = (
+        db.query(models.MeetingSkillClarification)
+        .filter(
+            models.MeetingSkillClarification.run_id == run.id,
+            models.MeetingSkillClarification.input_snapshot_id == run.current_input_snapshot_id,
+        )
+        .order_by(models.MeetingSkillClarification.id.asc())
+        .all()
+    )
+    return {
+        "id": run.id,
+        "project_id": run.project_id,
+        "skill_name": run.skill_name,
+        "skill_version": run.skill_version,
+        "status": run.status,
+        "current_input_snapshot_id": run.current_input_snapshot_id,
+        "current_input_snapshot_version": snapshot.version if snapshot else None,
+        "questions": [
+            {
+                "id": item.id,
+                "code": item.code,
+                "question": item.question,
+                "question_kind": item.question_kind,
+                "blocking": item.blocking,
+                "required": item.required,
+                "action": item.action,
+                "answer_mode": item.answer_mode,
+                "allow_other": item.allow_other,
+                "allow_omit": item.allow_omit,
+                "options": json.loads(item.options_json or "[]"),
+                "evidence": json.loads(item.evidence_json or "[]"),
+                "resolved_at": item.resolved_at.isoformat() if item.resolved_at else None,
+            }
+            for item in questions
+        ],
+        "output": json.loads(run.output_json or "{}"),
+    }
+
+
+def _current_person_id(current_user: str, db: Session) -> int | None:
+    account = db.query(models.Account).filter(models.Account.username == current_user).first()
+    return account.person_id if account else None
+
+
+def _get_accessible_skill_run(run_id: int, current_user: str, db: Session) -> models.MeetingSkillRun:
+    run = db.get(models.MeetingSkillRun, run_id)
+    if run is None:
+        raise HTTPException(404, "Skill Run 不存在")
+    require_project_access(current_user, run.project_id, db)
+    return run
+
+
+def _require_skill_run_ready(skill_run_id: int | None, project_id: int, db: Session) -> None:
+    """Server-side gate: a skill-derived draft cannot bypass blocking questions."""
+    if skill_run_id is None:
+        return
+    run = db.get(models.MeetingSkillRun, skill_run_id)
+    if run is None or run.project_id != project_id:
+        raise HTTPException(422, "Skill Run 与当前项目不匹配")
+    if run.status != "ready_for_review":
+        raise HTTPException(409, "存在未完成的预检或澄清项，暂不能生成或保存会议纪要")
 
 
 def _kickoff_run_payload(run: models.KickoffAgentRun, db: Session) -> dict:
@@ -299,6 +374,7 @@ def create_meeting(
         db,
     )
     require_project_business_writable(payload.project_id, db)
+    _require_skill_run_ready(payload.skill_run_id, payload.project_id, db)
     project = db.get(models.Project, payload.project_id)
     if project and project.status == "pending_kickoff":
         raise HTTPException(409, "项目待启动会确认，不能创建普通会议")
@@ -311,7 +387,7 @@ def create_meeting(
     data = {
         k: v
         for k, v in payload.model_dump().items()
-        if k not in {"project_id", "related_special_project"}
+        if k not in {"project_id", "related_special_project", "skill_run_id"}
     }
     row = models.Meeting(**data)
     row.project_id = payload.project_id
@@ -340,8 +416,122 @@ def create_meeting(
 class MeetingAnalyzeRequest(BaseModel):
     text: str
     project_id: int | None = None
+    skill_run_id: int | None = None
     mode: str | None = None  # "kickoff" | "progress" | None(自动)
     member_names: list[str] | None = None  # 项目成员姓名列表，用于构建成员上下文
+
+
+@router.post("/skill-runs/preflight")
+def create_meeting_skill_preflight(
+    payload: schemas.MeetingSkillPreflightPayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    require_project_role(
+        current_user,
+        payload.project_id,
+        [PROJECT_ROLE_OWNER_KEY, PROJECT_ROLE_COORD_KEY, PROJECT_ROLE_MEMBER_KEY],
+        db,
+    )
+    run = start_preflight(
+        db,
+        project_id=payload.project_id,
+        created_by_person_id=_current_person_id(current_user, db),
+        meeting_type=payload.meeting_type,
+        transcript_text=payload.transcript_text,
+        reference_files=[item.model_dump() for item in payload.reference_files],
+    )
+    return _skill_run_payload(run, db)
+
+
+@router.get("/skill-runs/{run_id}")
+def get_meeting_skill_run(
+    run_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    return _skill_run_payload(_get_accessible_skill_run(run_id, current_user, db), db)
+
+
+@router.post("/skill-runs/{run_id}/snapshots")
+def add_meeting_skill_snapshot(
+    run_id: int,
+    payload: schemas.MeetingSkillSnapshotPayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    run = _get_accessible_skill_run(run_id, current_user, db)
+    run = append_input_snapshot(
+        db,
+        run,
+        transcript_text=payload.transcript_text,
+        reference_files=[item.model_dump() for item in payload.reference_files],
+    )
+    return _skill_run_payload(run, db)
+
+
+@router.post("/skill-runs/{run_id}/answers")
+def answer_meeting_skill_questions(
+    run_id: int,
+    payload: schemas.MeetingSkillAnswersPayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    run = _get_accessible_skill_run(run_id, current_user, db)
+    try:
+        run = submit_answers(
+            db,
+            run,
+            answers=[item.model_dump() for item in payload.answers],
+            answered_by_person_id=_current_person_id(current_user, db),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return _skill_run_payload(run, db)
+
+
+@router.post("/skill-runs/{run_id}/resume")
+def resume_meeting_skill_run(
+    run_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    run = _get_accessible_skill_run(run_id, current_user, db)
+    try:
+        run = resume_run(db, run)
+    except BlockingClarificationsError as exc:
+        raise HTTPException(
+            409,
+            {"message": str(exc), "question_ids": [question.id for question in exc.questions]},
+        ) from exc
+    return _skill_run_payload(run, db)
+
+
+@router.post("/extract-document-text")
+async def extract_document_text(
+    project_id: int,
+    file: UploadFile = File(...),
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    require_project_access(current_user, project_id, db)
+    filename = file.filename or ""
+    content = await file.read()
+    try:
+        text = extract_meeting_document_text(filename, content)
+    except MeetingDocumentTextError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "filename": filename,
+        "text": text,
+        "standard_minutes": parse_standard_meeting_minutes(filename, content),
+    }
 
 
 def _project_member_names(project_id: int | None, db: Session) -> set[str]:
@@ -396,6 +586,7 @@ async def analyze_meeting(
     current_user = require_login(current_user, db)
     if payload.project_id is not None:
         require_project_access(current_user, payload.project_id, db)
+        _require_skill_run_ready(payload.skill_run_id, payload.project_id, db)
 
     if not payload.text.strip():
         raise HTTPException(422, "text 不能为空")
@@ -406,7 +597,9 @@ async def analyze_meeting(
     member_context_text = work_plan_context
     tasks_context_text = work_plan_context
 
-    has_speakers = bool(re.search(r"\d+", payload.text))
+    # 仅把明确的说话人标记当作“逐人汇报”。议程序号、表格编号、日期等数字
+    # 都不能触发成员上下文提示词，否则会把标准会议纪要改写成成员进度报告。
+    has_speakers = bool(re.search(r"(?im)^\s*(?:说话人|speaker)\s*\d*\s*[:：]", payload.text))
 
     # 用户明确选择了模式就用指定 prompt；否则自动检测
     if payload.mode == "progress":

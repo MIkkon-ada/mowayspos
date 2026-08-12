@@ -99,8 +99,14 @@ class Meeting(Base, TimestampMixin):
     meeting_type = Column(String(40), default="")
     title = Column(String(200), default="")
     meeting_date = Column(String(20), default="")
+    location = Column(String(200), default="")
     host = Column(String(50), default="")
     participants = Column(Text, default="")
+    organizer = Column(String(100), default="")
+    copied_to = Column(Text, default="")
+    agenda_items_json = Column(Text, default="[]")
+    prior_action_items_json = Column(Text, default="[]")
+    source_mode = Column(String(32), default="ai_analysis")
     transcript_text = Column(Text, default="")
     summary = Column(Text, default="")
     task_list_json = Column(Text, default="")
@@ -185,6 +191,83 @@ class MeetingAnalysisCandidate(Base, TimestampMixin):
     review_comment = Column(Text, default="")
 
 
+class MeetingSkillRun(Base, TimestampMixin):
+    """Agent-owned orchestration record for a skill-backed meeting workflow."""
+
+    __tablename__ = "meeting_skill_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=True, index=True)
+    skill_name = Column(String(96), nullable=False, index=True)
+    skill_version = Column(String(32), nullable=False)
+    status = Column(String(32), nullable=False, default="created", index=True)
+    current_input_snapshot_id = Column(Integer, nullable=True, index=True)
+    output_json = Column(Text, nullable=False, default="{}")
+    output_answer_revisions_json = Column(Text, nullable=False, default="{}")
+    created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+
+
+class MeetingSkillInputSnapshot(Base, TimestampMixin):
+    __tablename__ = "meeting_skill_input_snapshots"
+    __table_args__ = (UniqueConstraint("run_id", "version", name="uq_meeting_skill_snapshot_version"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("meeting_skill_runs.id"), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    transcript_text = Column(Text, nullable=False, default="")
+    reference_files_json = Column(Text, nullable=False, default="[]")
+    input_hash = Column(String(64), nullable=False, index=True)
+    is_current = Column(Boolean, nullable=False, default=True, index=True)
+
+
+class MeetingSkillClarification(Base, TimestampMixin):
+    __tablename__ = "meeting_skill_clarifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("meeting_skill_runs.id"), nullable=False, index=True)
+    input_snapshot_id = Column(Integer, ForeignKey("meeting_skill_input_snapshots.id"), nullable=False, index=True)
+    code = Column(String(96), nullable=False, index=True)
+    question = Column(Text, nullable=False)
+    question_kind = Column(String(40), nullable=False, index=True)
+    blocking = Column(Boolean, nullable=False, default=False, index=True)
+    required = Column(Boolean, nullable=False, default=False)
+    action = Column(String(32), nullable=False, default="answer")
+    answer_mode = Column(String(32), nullable=True)
+    allow_other = Column(Boolean, nullable=False, default=False)
+    allow_omit = Column(Boolean, nullable=False, default=False)
+    options_json = Column(Text, nullable=False, default="[]")
+    evidence_json = Column(Text, nullable=False, default="[]")
+    resolved_at = Column(DateTime, nullable=True)
+
+
+class MeetingSkillClarificationAnswerRevision(Base, TimestampMixin):
+    __tablename__ = "meeting_skill_clarification_answer_revisions"
+    __table_args__ = (
+        UniqueConstraint("question_id", "answer_revision", name="uq_meeting_skill_answer_revision"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    question_id = Column(Integer, ForeignKey("meeting_skill_clarifications.id"), nullable=False, index=True)
+    answer_revision = Column(Integer, nullable=False)
+    answer_json = Column(Text, nullable=False, default="{}")
+    answered_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+
+
+class MeetingSkillResolvedFact(Base, TimestampMixin):
+    __tablename__ = "meeting_skill_resolved_facts"
+    __table_args__ = (UniqueConstraint("run_id", "field_name", name="uq_meeting_skill_resolved_fact"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("meeting_skill_runs.id"), nullable=False, index=True)
+    field_name = Column(String(96), nullable=False)
+    value_json = Column(Text, nullable=False, default="{}")
+    display_value = Column(Text, nullable=False, default="")
+    source_type = Column(String(32), nullable=False)
+    evidence_json = Column(Text, nullable=False, default="[]")
+    answer_revision_id = Column(Integer, ForeignKey("meeting_skill_clarification_answer_revisions.id"), nullable=True, index=True)
+
+
 class MeetingProgressReview(Base, TimestampMixin):
     """Evidence-bound member progress result awaiting human confirmation."""
 
@@ -241,8 +324,14 @@ class MeetingRevision(Base):
     meeting_type = Column(String(40), default="")
     title = Column(String(200), default="")
     meeting_date = Column(String(20), default="")
+    location = Column(String(200), default="")
     host = Column(String(50), default="")
     participants = Column(Text, default="")
+    organizer = Column(String(100), default="")
+    copied_to = Column(Text, default="")
+    agenda_items_json = Column(Text, default="[]")
+    prior_action_items_json = Column(Text, default="[]")
+    source_mode = Column(String(32), default="ai_analysis")
     transcript_text = Column(Text, nullable=False, default="")
     summary = Column(Text, default="")
     task_list_json = Column(Text, default="")

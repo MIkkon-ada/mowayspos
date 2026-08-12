@@ -58,7 +58,7 @@ def test_progress_meeting_analysis_returns_speaker_flag(monkeypatch):
     monkeypatch.setattr(meetings, "_do_analyze", lambda *_args: {"title": "Progress review", "participants": "Invented attendee"})
 
     result = asyncio.run(meetings.analyze_meeting(
-        meetings.MeetingAnalyzeRequest(text="1. Owner completed the weekly review", project_id=1, mode="progress"),
+        meetings.MeetingAnalyzeRequest(text="Speaker 1: Owner completed the weekly review", project_id=1, mode="progress"),
         current_user="owner",
         db=db,
     ))

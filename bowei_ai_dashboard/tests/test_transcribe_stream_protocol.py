@@ -68,6 +68,10 @@ class FakeAsr:
         self.started = False
         self.stopped = False
         self.stop_frame_count: int | None = None
+        self.context: str | None = None
+
+    def update_context(self, context: str) -> None:
+        self.context = context
 
     async def start(self):
         if self.start_error:
@@ -128,6 +132,24 @@ def test_stream_sends_ready_started_audio_stop_and_done_in_order():
         assert asr.stopped is True
         assert calls[0]["api_key"] == "key"
         assert calls[0]["context"] == "context"
+
+    asyncio.run(scenario())
+
+
+def test_stream_updates_a_preselected_capability_session_with_validated_context():
+    async def scenario():
+        ws = FakeWebSocket([_start_message(), _stop()])
+        asr = FakeAsr()
+
+        await run_transcribe_stream(
+            ws,
+            current_user="member",
+            db=object(),
+            context_builder=lambda *args: "capability context",
+            asr_session=asr,
+        )
+
+        assert asr.context == "capability context"
 
     asyncio.run(scenario())
 

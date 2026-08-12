@@ -26,6 +26,19 @@ const emptyModel: AIModelWrite = {
   base_url: 'https://api.deepseek.com', config: {}, enabled: true, source: 'custom',
 }
 
+function defaultPolicy(capabilityKey: string): AICapabilityPolicy {
+  return {
+    id: 0,
+    capability_key: capabilityKey,
+    primary_model_id: null,
+    fallback_model_ids: [],
+    timeout_seconds: 60,
+    max_attempts: 1,
+    policy_version: 0,
+    enabled: false,
+  }
+}
+
 export function AIConfigurationSection() {
   const [models, setModels] = useState<AIModel[]>([])
   const [policies, setPolicies] = useState<AICapabilityPolicy[]>([])
@@ -131,12 +144,12 @@ export function AIConfigurationSection() {
         <p className="mb-3 text-xs text-slate-500">每项能力绑定一个同类型主模型；尚未绑定的能力保持禁用。</p>
         <div className="space-y-3">
           {Object.keys(CAPABILITY_LABELS).map(key => {
-            const policy = policies.find(item => item.capability_key === key)
+            const policy = policies.find(item => item.capability_key === key) ?? defaultPolicy(key)
             const requiredType = key === 'speech.realtime' ? 'asr' : 'chat'
             const options = models.filter(model => model.enabled && model.model_type === requiredType && model.credential_configured)
             return <div key={key} className="grid gap-2 rounded-xl border border-slate-100 p-3 sm:grid-cols-[1fr_220px]">
               <div><p className="text-sm font-semibold text-slate-800">{CAPABILITY_LABELS[key]}</p><p className="text-xs text-slate-500">{key}{policy?.enabled ? ` · 策略版本 ${policy.policy_version}` : ' · 未启用'}</p></div>
-              <select value={policy?.primary_model_id ?? ''} onChange={event => policy && void savePolicy(policy, event.target.value ? Number(event.target.value) : null)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs">
+              <select value={policy.primary_model_id ?? ''} onChange={event => void savePolicy(policy, event.target.value ? Number(event.target.value) : null)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs">
                 <option value="">未绑定</option>{options.map(model => <option key={model.id} value={model.id}>{model.display_name}</option>)}
               </select>
             </div>

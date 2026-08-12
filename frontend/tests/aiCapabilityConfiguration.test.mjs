@@ -17,6 +17,8 @@ test('AI capability settings manages models and policies without rendering secre
   assert.match(source, /credential_configured/)
   assert.match(api, /\/api\/ai-config\/models/)
   assert.match(api, /\/api\/ai-config\/policies/)
+  assert.match(source, /defaultPolicy/)
+  assert.doesNotMatch(source, /policy && void savePolicy/)
   assert.doesNotMatch(source, /value=\{[^}]*api_key/)
   assert.doesNotMatch(source, /credential\.api_key/)
 })

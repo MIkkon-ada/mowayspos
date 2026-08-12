@@ -469,6 +469,9 @@ async def run_transcribe_stream(
                 settings=settings,
                 context=context,
             )
+            update_context = getattr(session, "update_context", None)
+            if callable(update_context):
+                update_context(context)
             try:
                 await session.start()
             except Exception:

@@ -65,6 +65,12 @@ class RealtimeASRHandle:
         self.model_code = ""
         self.invocation_log_id: int | None = None
 
+    def update_context(self, context_text: str) -> None:
+        """Accept validated stream context until the upstream session starts."""
+        if self._session is not None:
+            raise RuntimeError("ASR session context cannot change after start")
+        self._context_text = context_text
+
     async def start(self) -> None:
         last_error: AIUpstreamError | None = None
         for attempt_no, model in enumerate(self._candidates, start=1):

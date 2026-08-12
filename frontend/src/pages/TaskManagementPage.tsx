@@ -556,6 +556,7 @@ export function TaskManagementPage() {
   }
 
   function focusSubTask(st: SubTaskItem, opts?: { keepTask?: boolean }) {
+    setViewMode('execution')
     ensureProjectMembersLoaded(projectForSubTask(resolvedTaskProjects, tasks, st)?.id)
     setSelectedSubTask(null)
     setSubDetailLoading(true)

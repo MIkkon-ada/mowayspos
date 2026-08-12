@@ -37,3 +37,11 @@ test('key task detail is a monthly-plan workbench while retaining task context a
   assert.doesNotMatch(detail, /ExecutionScheduleTimeline/)
   assert.match(page, /projectMembers=\{projectMembersByProject/)
 })
+
+test('opening a key task switches from every entry point into execution detail', () => {
+  const page = read('src/pages/TaskManagementPage.tsx')
+  const focusSubTask = page.match(/function focusSubTask\([\s\S]*?function focusProject/)
+
+  assert.ok(focusSubTask)
+  assert.match(focusSubTask[0], /setViewMode\('execution'\)/)
+})

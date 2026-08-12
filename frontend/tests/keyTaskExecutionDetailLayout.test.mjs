@@ -45,3 +45,13 @@ test('opening a key task switches from every entry point into execution detail',
   assert.ok(focusSubTask)
   assert.match(focusSubTask[0], /setViewMode\('execution'\)/)
 })
+
+test('work progress table opens a key task through the shared execution-workbench entry', () => {
+  const page = read('src/pages/TaskManagementPage.tsx')
+  const planTable = read('src/components/task-management/PlanTableViewV2.tsx')
+
+  assert.match(page, /<PlanTableViewV2[\s\S]*?onOpenSubTask=\{openSubDetail\}/)
+  assert.match(planTable, /onOpenSubTask\?: \(subtask: SubTaskItem\) => void/)
+  assert.match(planTable, /onOpenSubTask\?\.\(row\.subtask\)/)
+  assert.doesNotMatch(planTable, /setEditingSubTask\(row\.subtask\)/)
+})

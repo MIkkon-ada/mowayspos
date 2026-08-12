@@ -27,6 +27,7 @@ type Props = {
   isTechAdmin?: boolean
   projectMembers?: ProjectMember[]
   onUpdateSubTask?: (id: number, payload: Omit<SubTaskPayload, 'project_id'>) => Promise<SubTaskItem>
+  onOpenSubTask?: (subtask: SubTaskItem) => void
 }
 
 type EditLevel = 'full' | 'self' | 'none'
@@ -489,6 +490,7 @@ export function PlanTableViewV2({
   isTechAdmin,
   projectMembers,
   onUpdateSubTask,
+  onOpenSubTask,
 }: Props) {
   const [selectedSubTaskId, setSelectedSubTaskId] = useState<number | null>(null)
   const [showProjectStandard, setShowProjectStandard] = useState(false)
@@ -517,11 +519,7 @@ export function PlanTableViewV2({
   const openKeyTask = (row: PlanTableRow) => {
     if (!row.subtask) return
     setSelectedSubTaskId(row.subtask.id)
-    setEditingSubTask(row.subtask)
-    setEditingSubTaskDetail(null)
-    void fetchSubtaskDetail(row.subtask.id)
-      .then(setEditingSubTaskDetail)
-      .catch(() => setEditingSubTaskDetail(null))
+    onOpenSubTask?.(row.subtask)
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>, row: PlanTableRow) => {

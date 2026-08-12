@@ -1092,6 +1092,7 @@ function handleFormSave(payload: TaskPayload) {
               projectRoles={currentProjectRoles ?? []}
               isTechAdmin={currentUser?.is_tech_admin ?? false}
               projectMembers={projectMembersByProject[focusedProject?.id ?? 0] ?? []}
+              onOpenSubTask={openSubDetail}
               onUpdateSubTask={async (id, payload) => {
                 const updated = await updateSubTask(id, {
                   ...payload,

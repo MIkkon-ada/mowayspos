@@ -2,7 +2,7 @@ import asyncio
 import json
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
@@ -33,6 +33,10 @@ from ..services.work_report_agent import extract_work_report_agent
 from ..services.cross_project_submission import create_submission_batch, serialize_batch_result
 from ..services.notify import person_id_for_account as _pid_for_account, send as _notify
 from ..services.project_resolution import resolve_project_context
+from ..services.work_report_document_text import (
+    WorkReportDocumentTextError,
+    extract_work_report_document_text,
+)
 from ..archived_guard import require_project_not_archived
 
 router = APIRouter(prefix="/api/updates", tags=["updates"])
@@ -158,6 +162,28 @@ def _require_project_active(project_id: int | None, db: Session) -> None:
 
 
 # ── 端点 ───────────────────────────────────────────────────────
+
+@router.post("/extract-document-text")
+async def extract_document_text(
+    file: UploadFile = File(...),
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """Return editable document text without creating a work-report row."""
+    require_login(current_user, db)
+    filename = (file.filename or "").strip()
+    content = await file.read()
+    try:
+        text = extract_work_report_document_text(filename, content)
+    except WorkReportDocumentTextError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "filename": filename,
+        "text": text,
+        "char_count": len(text),
+        "source_type": ST.DOCUMENT,
+    }
+
 
 @router.get("/voice-context")
 def get_voice_context(

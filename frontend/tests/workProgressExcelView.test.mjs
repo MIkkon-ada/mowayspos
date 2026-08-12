@@ -353,14 +353,16 @@ test('work progress header keeps mode tabs next to the title', () => {
   assert.doesNotMatch(page, /min-w-\[260px\]/)
 })
 
-test('key task execution detail is report-driven with optional criteria', () => {
+test('key task execution detail combines the monthly-plan workbench with process records', () => {
   const detail = read(DETAIL_FILE)
+  assert.match(detail, /MonthlyPlanWorkspace/)
+  assert.match(detail, /关键任务概览/)
   assert.match(detail, /工作汇报记录/)
   assert.match(detail, /已完成内容/)
   assert.match(detail, /下一步计划/)
   assert.match(detail, /related_achievements/)
   assert.match(detail, /暂无工作汇报/)
-  assert.match(detail, /const hasReports = reports\.length > 0/)
+  assert.doesNotMatch(detail, /ExecutionScheduleTimeline/)
   assert.doesNotMatch(detail, /function Step\(/)
   assert.doesNotMatch(detail, /function Line\(/)
 })

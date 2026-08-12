@@ -6,6 +6,18 @@ import path from 'node:path'
 const root = path.resolve(import.meta.dirname, '..')
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 
+test('execution timeline combines key-task reports, achievements, issues, and meeting filter', () => {
+  const file = path.join(root, 'src/components/task-management/KeyTaskExecutionTimeline.tsx')
+  assert.equal(fs.existsSync(file), true)
+  const timeline = fs.readFileSync(file, 'utf8')
+  for (const label of ['执行过程', '全部', '工作汇报', '成果', '问题', '会议纪要']) {
+    assert.match(timeline, new RegExp(label))
+  }
+  assert.match(timeline, /related_achievements/)
+  assert.match(timeline, /related_issues/)
+  assert.match(timeline, /work_reports/)
+})
+
 test('execution view retains key-task navigation and detail integration', () => {
   const overview = read('src/components/task-management/ExecutionProgressView.tsx')
   const detail = read('src/components/task-management/KeyTaskExecutionDetailView.tsx')
@@ -13,7 +25,7 @@ test('execution view retains key-task navigation and detail integration', () => 
 
   assert.match(overview, /onOpenSubTask/)
   assert.match(overview, /completion_standard/)
-  assert.match(detail, /工作汇报记录/)
+  assert.match(detail, /KeyTaskExecutionTimeline/)
   assert.match(page, /ExecutionProgressView/)
   assert.match(page, /KeyTaskExecutionDetailView/)
 })
@@ -26,14 +38,16 @@ test('execution project overview splits base information and evaluation criteria
   assert.doesNotMatch(overview, /整体进度/)
 })
 
-test('key task detail is a monthly-plan workbench while retaining task context and process records', () => {
+test('key task detail presents the approved subtask execution page semantics', () => {
   const detail = read('src/components/task-management/KeyTaskExecutionDetailView.tsx')
   const page = read('src/pages/TaskManagementPage.tsx')
   assert.match(detail, /返回工作推进表/)
-  assert.match(detail, /直接负责人/)
-  assert.match(detail, /MonthlyPlanWorkspace/)
-  assert.match(detail, /关键任务概览/)
-  assert.match(detail, /工作汇报记录/)
+  for (const label of ['负责人', '协作人', '开始时间', '状态']) {
+    assert.match(detail, new RegExp(label))
+  }
+  assert.match(detail, /KeyTaskSubtasksWorkspace/)
+  assert.match(detail, /KeyTaskExecutionTimeline/)
+  assert.doesNotMatch(detail, /MonthlyPlanWorkspace|工作汇报记录|过程记录/)
   assert.doesNotMatch(detail, /ExecutionScheduleTimeline/)
   assert.match(page, /projectMembers=\{projectMembersByProject/)
 })
@@ -56,7 +70,7 @@ test('work progress table opens a key task through the shared execution-workbenc
   assert.doesNotMatch(planTable, /setEditingSubTask\(row\.subtask\)/)
 })
 
-test('monthly workbench owns base-task editing and the table no longer carries a legacy detail modal', () => {
+test('key task execution page owns base-task editing and the table no longer carries a legacy detail modal', () => {
   const detail = read('src/components/task-management/KeyTaskExecutionDetailView.tsx')
   const page = read('src/pages/TaskManagementPage.tsx')
   const planTable = read('src/components/task-management/PlanTableViewV2.tsx')
@@ -64,7 +78,7 @@ test('monthly workbench owns base-task editing and the table no longer carries a
   assert.match(detail, /onEditSubTask/)
   assert.match(detail, /编辑关键任务/)
   assert.match(detail, /KeyTaskEditDrawer/)
-  for (const label of ['任务名称', '责任人', '协同人', '计划时间', '整体状态', '完成标准']) {
+  for (const label of ['任务名称', '负责人', '协作人', '开始时间', '状态', '完成标准']) {
     assert.match(detail, new RegExp(label))
   }
   assert.match(page, /onEditSubTask=\{handleWorkbenchSubTaskSave\}/)

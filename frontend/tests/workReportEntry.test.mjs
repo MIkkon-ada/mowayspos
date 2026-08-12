@@ -18,3 +18,16 @@ test('work report entry keeps project and key task ownership', () => {
   assert.match(entry, /entryIntent/)
   assert.doesNotMatch(entry, /monthlyPlanId|planId/)
 })
+
+test('work report page interprets entry intent without changing the submission flow', () => {
+  const page = read('src/pages/VoiceUpdatePage.tsx')
+  const panel = read('src/features/voice-update/VoiceUpdateInputPanel.tsx')
+
+  assert.match(page, /searchParams\.get\('entryIntent'\)/)
+  assert.match(page, /<VoiceUpdateInputPanel[\s\S]*?entryIntent=\{entryIntent\}/)
+  assert.match(panel, /entryIntent:\s*WorkReportEntryIntent/)
+  assert.match(panel, /记录问题/)
+  assert.match(panel, /添加成果/)
+  assert.match(panel, /提交工作汇报/)
+  assert.doesNotMatch(page, /monthlyPlanId|planId/)
+})

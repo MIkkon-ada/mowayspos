@@ -6,20 +6,15 @@ import path from 'node:path'
 const root = path.resolve(import.meta.dirname, '..')
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 
-test('monthly plan workspace defaults to the current month and exposes monthly-plan actions', () => {
-  const source = read('src/components/task-management/MonthlyPlanWorkspace.tsx')
-  assert.match(source, /currentMonthKey/)
-  assert.match(source, /monthTabs/)
-  assert.match(source, /sortMonthPlans/)
-  assert.match(source, /新增月计划/)
-  assert.match(source, /已延期.*进行中.*暂缓.*未开始.*已完成/s)
-  assert.match(source, /MonthlyPlanDrawer/)
-})
-
-test('monthly plan drawer only presents business fields, never audit fields', () => {
-  const source = read('src/components/task-management/MonthlyPlanDrawer.tsx')
-  assert.match(source, /预期产出/)
-  assert.match(source, /执行负责人/)
-  assert.match(source, /实际产出/)
-  assert.doesNotMatch(source, /created_by|updated_by|创建人|最后修改人/)
+test('key task subtasks replace the legacy monthly-plan presentation', () => {
+  const workspace = read('src/components/task-management/KeyTaskSubtasksWorkspace.tsx')
+  const drawer = read('src/components/task-management/KeyTaskSubtaskDrawer.tsx')
+  assert.match(workspace, /全部子任务/)
+  assert.match(workspace, /sortMonthPlans/)
+  assert.match(drawer, /预期产出/)
+  assert.match(drawer, /负责人/)
+  assert.match(drawer, /实际产出/)
+  assert.doesNotMatch(drawer, /created_by|updated_by|创建人|最后修改人/)
+  assert.equal(fs.existsSync(path.join(root, 'src/components/task-management/MonthlyPlanWorkspace.tsx')), false)
+  assert.equal(fs.existsSync(path.join(root, 'src/components/task-management/MonthlyPlanDrawer.tsx')), false)
 })

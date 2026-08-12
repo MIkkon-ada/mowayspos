@@ -22,6 +22,7 @@ import { canExtractVoiceUpdate } from '../features/voice-update/voiceUpdateResul
 import type { VoiceReportScope } from '../features/voice-update/voiceUpdateResultTypes'
 import { formatTime } from '../features/voice-update/voiceUpdateHelpers'
 import { getProjectStatusLabel, isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
+import type { WorkReportEntryIntent } from '../domain/workReportEntry'
 import type { Project } from '../types'
 import '../features/voice-update/voiceUpdateFlow.css'
 
@@ -40,6 +41,10 @@ export function VoiceUpdatePage() {
   const requestedProjectId = parseId(searchParams.get('projectId'))
   const requestedSubtaskId = parseId(searchParams.get('subtaskId'))
   const requestedSubmissionId = parseId(searchParams.get('submissionId'))
+  const requestedEntryIntent = searchParams.get('entryIntent')
+  const entryIntent: WorkReportEntryIntent = requestedEntryIntent === 'issue' || requestedEntryIntent === 'achievement'
+    ? requestedEntryIntent
+    : 'report'
   const historyRequested = searchParams.get('history') === '1'
   const [mode, setMode] = useState<VoiceInputMode>(draftState.mode ?? 'text')
   const [text, setText] = useState('')
@@ -309,6 +314,7 @@ export function VoiceUpdatePage() {
             <div className="voice-update-workspace">
               <div className="voice-update-left-column">
                 <VoiceUpdateInputPanel
+                  entryIntent={entryIntent}
                   mode={mode}
                   onModeChange={setMode}
                   providers={providers}

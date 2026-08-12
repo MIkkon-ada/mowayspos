@@ -1,4 +1,5 @@
 import { useState, type RefObject } from 'react'
+import type { WorkReportEntryIntent } from '../../domain/workReportEntry'
 import type { RecorderState } from './voiceRecorderProtocol'
 import type { Phase } from './voiceUpdateResultTypes'
 
@@ -6,6 +7,7 @@ type AvailableProvider = { provider: string; display_name: string; model: string
 export type VoiceInputMode = 'text' | 'voice' | 'upload' | 'document'
 
 type VoiceUpdateInputPanelProps = {
+  entryIntent: WorkReportEntryIntent
   mode: VoiceInputMode
   onModeChange: (mode: VoiceInputMode) => void
   providers: AvailableProvider[]
@@ -44,7 +46,26 @@ const MODE_OPTIONS: { key: VoiceInputMode; label: string; path: string }[] = [
   { key: 'document', label: '上传文档', path: 'M6 2h9l3 3v15H6zM15 2v4h4M9 11h6M9 15h6' },
 ]
 
+const ENTRY_COPY: Record<WorkReportEntryIntent, { heading: string; placeholder: string; hint: string }> = {
+  report: {
+    heading: '提交工作汇报',
+    placeholder: '请输入本次完成、下一步计划、遇到的问题和形成的成果…',
+    hint: '建议包含：本次完成、下一步计划、问题、成果',
+  },
+  issue: {
+    heading: '记录问题',
+    placeholder: '请描述问题现象、影响范围、当前处理情况和需要的支持…',
+    hint: '建议包含：问题现象、影响范围、处理进展、所需支持',
+  },
+  achievement: {
+    heading: '添加成果',
+    placeholder: '请描述成果名称、完成内容、交付形式和可验证依据…',
+    hint: '建议包含：成果名称、完成内容、交付形式、验证依据',
+  },
+}
+
 export function VoiceUpdateInputPanel({
+  entryIntent,
   mode,
   onModeChange,
   providers,
@@ -75,6 +96,7 @@ export function VoiceUpdateInputPanel({
   onStopRecording,
   onExtract,
 }: VoiceUpdateInputPanelProps) {
+  const entryCopy = ENTRY_COPY[entryIntent]
   const [documentDragging, setDocumentDragging] = useState(false)
   const recorderStatus = recorderState === 'connecting' || recorderState === 'starting'
     ? '正在连接语音服务'
@@ -98,7 +120,7 @@ export function VoiceUpdateInputPanel({
     <section className="voice-update-input-panel" aria-label="输入汇报内容">
       <header className="voice-update-panel-header voice-update-input-panel-header">
         <div className="voice-update-panel-heading">
-          <h2>输入内容</h2>
+          <h2>{entryCopy.heading}</h2>
         </div>
       </header>
 
@@ -131,7 +153,7 @@ export function VoiceUpdateInputPanel({
             value={text}
             onChange={(event) => onTextChange(event.target.value)}
             readOnly={mediaActive}
-            placeholder="请输入本次完成、下一步计划、遇到的问题和形成的成果…"
+            placeholder={entryCopy.placeholder}
             maxLength={5000}
           />
           <div className="voice-update-character-count">{text.length}/5000</div>
@@ -271,7 +293,7 @@ export function VoiceUpdateInputPanel({
       )}
 
       <div className="voice-update-input-hints">
-        <span>建议包含：本次完成、下一步计划、问题、成果</span>
+        <span>{entryCopy.hint}</span>
         <span>内容越完整，AI 提取结果越准确</span>
       </div>
 

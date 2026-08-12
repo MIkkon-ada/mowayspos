@@ -353,16 +353,17 @@ test('work progress header keeps mode tabs next to the title', () => {
   assert.doesNotMatch(page, /min-w-\[260px\]/)
 })
 
-test('key task execution detail combines the monthly-plan workbench with process records', () => {
+test('key task execution detail combines subtasks with the execution timeline', () => {
   const detail = read(DETAIL_FILE)
-  assert.match(detail, /MonthlyPlanWorkspace/)
-  assert.match(detail, /关键任务概览/)
-  assert.match(detail, /工作汇报记录/)
-  assert.match(detail, /已完成内容/)
-  assert.match(detail, /下一步计划/)
-  assert.match(detail, /related_achievements/)
-  assert.match(detail, /暂无工作汇报/)
+  assert.match(detail, /KeyTaskSubtasksWorkspace/)
+  assert.match(detail, /KeyTaskExecutionTimeline/)
+  assert.match(detail, /buildWorkReportEntryUrl/)
+  assert.match(detail, /负责人/)
+  assert.match(detail, /协作人/)
+  assert.match(detail, /开始时间/)
+  assert.match(detail, /状态/)
   assert.doesNotMatch(detail, /ExecutionScheduleTimeline/)
+  assert.doesNotMatch(detail, /MonthlyPlanWorkspace/)
   assert.doesNotMatch(detail, /function Step\(/)
   assert.doesNotMatch(detail, /function Line\(/)
 })
@@ -374,7 +375,7 @@ test('key-task base editor lives in the execution workbench instead of a table m
   assert.doesNotMatch(view, /fetchSubtaskDetail/)
   assert.match(detail, /function KeyTaskEditDrawer/)
   assert.match(detail, /fixed inset-0.*ml-auto.*max-w-md/s)
-  assert.match(detail, /任务名称[\s\S]*责任人[\s\S]*协同人[\s\S]*计划时间[\s\S]*整体状态[\s\S]*完成标准/)
+  assert.match(detail, /任务名称[\s\S]*负责人[\s\S]*协作人[\s\S]*开始时间[\s\S]*状态[\s\S]*完成标准/)
 })
 
 test('page resolves an archived project detail without falling back to another project', () => {

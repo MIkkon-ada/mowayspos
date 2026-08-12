@@ -378,7 +378,8 @@ test('work report scope menu previews project and key-task candidates on hover',
 test('input and result panels expose plain headings and the re-extract action', () => {
   const input = read(INPUT)
   const result = read(RESULT)
-  assert.match(input, /<h2>输入内容<\/h2>/)
+  assert.match(input, /<h2>\{entryCopy\.heading\}<\/h2>/)
+  assert.match(input, /提交工作汇报/)
   assert.doesNotMatch(input, /voice-update-panel-step/)
   assert.doesNotMatch(result, /voice-update-panel-step/)
   assert.match(result, /AI 提取结果/)
@@ -598,7 +599,7 @@ test('compact work report layout keeps the two-column workspace and bottom actio
 test('compact work report panels use plain titles without numbered step badges', () => {
   const source = `${read(INPUT)}\n${read(RESULT)}\n${read(REPORTS)}`
   assert.doesNotMatch(source, /voice-update-panel-step/)
-  assert.match(source, /<h2>输入内容<\/h2>/)
+  assert.match(source, /<h2>\{entryCopy\.heading\}<\/h2>/)
   assert.match(source, /AI 提取结果/)
 })
 

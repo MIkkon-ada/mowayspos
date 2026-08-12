@@ -3,9 +3,10 @@ import { useLocation, useNavigate, useParams, useSearchParams } from 'react-rout
 import { ApiError } from '../api/client'
 import { getProjectMembers } from '../api/projects'
 import { fetchSubtaskDetail, type SubTaskDetail } from '../api/subtasks'
-import { MonthlyPlanWorkspace } from '../components/task-management/MonthlyPlanWorkspace'
+import { KeyTaskSubtasksWorkspace } from '../components/task-management/KeyTaskSubtasksWorkspace'
 import { useProject } from '../context/ProjectContext'
 import { canManageProjectWork } from '../domain/taskPermission'
+import { buildWorkReportEntryUrl, type WorkReportEntryIntent } from '../domain/workReportEntry'
 import { getMyTaskProgressText, getMyTaskStatusTone, normalizeMyTaskStatus, parseMyTaskPlanTime } from '../features/my-tasks/myTasksViewModel'
 import type { ProjectMember } from '../types'
 import '../features/my-tasks/myTasks.css'
@@ -158,7 +159,7 @@ export function MyTaskDetailPage() {
   const defaultAssigneeId = projectMembers.find((member) => member.person_name_snapshot === detail?.assignee)?.person_id
     ?? detail?.assignee_id
     ?? null
-  const canManageMonthlyPlans = Boolean(
+  const canManageSubtasks = Boolean(
     canManageProjectWork({
       isTechAdmin: currentUser?.is_tech_admin,
       projectRoles: project?.user_roles,
@@ -174,6 +175,9 @@ export function MyTaskDetailPage() {
   )
   const deadline = plan.end || plan.display || '未设置'
   const submitUrl = `/work/submit?${new URLSearchParams({ ...(projectId ? { projectId } : {}), subtaskId: String(taskId) }).toString()}`
+  const workReportUrl = (intent: WorkReportEntryIntent) => scopedProjectId !== null && Number.isInteger(taskId)
+    ? buildWorkReportEntryUrl(scopedProjectId, taskId, intent)
+    : submitUrl
 
   return (
     <div className="my-task-detail-page">
@@ -190,7 +194,7 @@ export function MyTaskDetailPage() {
         </div>
         <div className="my-task-detail-header-actions">
           <button type="button" onClick={() => navigate('/member/tasks')}>返回列表</button>
-          <button type="button" className="is-primary" onClick={() => navigate(submitUrl)} disabled={!Number.isInteger(taskId)}>提交更新</button>
+          <button type="button" className="is-primary" onClick={() => navigate(workReportUrl('report'))} disabled={!Number.isInteger(taskId)}>提交更新</button>
         </div>
       </header>
 
@@ -200,12 +204,13 @@ export function MyTaskDetailPage() {
         {!loading && detail && (
           <div className="my-task-detail-layout">
             <section className="my-task-detail-main">
-              <MonthlyPlanWorkspace
+              <KeyTaskSubtasksWorkspace
                 subtaskId={detail.id}
                 defaultAssigneeId={defaultAssigneeId}
                 members={projectMembers}
-                canManage={canManageMonthlyPlans}
+                canManage={canManageSubtasks}
                 onChanged={reload}
+                onEntry={(intent) => navigate(workReportUrl(intent))}
               />
 
               <article className="my-task-progress-card">

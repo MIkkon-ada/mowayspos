@@ -14,7 +14,7 @@ type UseVoiceExtractionArgs = {
   voiceCandidates: UserSubtaskContext[]
   currentUser: { name?: string } | null
   text: string
-  mode: 'voice' | 'upload' | 'text'
+  mode: 'voice' | 'upload' | 'text' | 'document'
   selectedProvider: string
   setText: (value: string) => void
 }
@@ -142,7 +142,7 @@ export function useVoiceExtraction({
       const res = await extractOnly({
         ...(projectId ? { project_id: projectId } : {}),
         report_scope: reportScope,
-        source_type: mode === 'voice' ? '语音更新' : '文字更新',
+        source_type: mode === 'voice' ? '语音更新' : mode === 'document' ? '文档解析' : '文字更新',
         transcript_text: content,
         submitter: currentUser?.name,
         llm_provider: selectedProvider,

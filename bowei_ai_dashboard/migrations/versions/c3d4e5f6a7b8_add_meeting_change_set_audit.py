@@ -1,6 +1,6 @@
 """add meeting change set audit tables
 
-Revision ID: c3d4e5f6a7b8
+Revision ID: b7c8d9e0f1a2
 Revises: e8f9a0b1c2d3
 """
 
@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "c3d4e5f6a7b8"
+revision = "b7c8d9e0f1a2"
 down_revision = "e8f9a0b1c2d3"
 branch_labels = None
 depends_on = None

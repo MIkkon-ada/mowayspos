@@ -11,7 +11,6 @@ import json
 import re
 from collections.abc import Callable
 
-from .extractor import _extract_json_blob, _get_cfg
 
 MATCHED = "matched"
 NEEDS_CONFIRMATION = "needs_confirmation"
@@ -379,29 +378,25 @@ def _agent_prompt(text: str, candidates: list[dict]) -> str:
 只输出 JSON：{{"task_reports":[{{"evidence":["原文逐字片段"],"match_status":"matched","matched_subtask_id":123,"match_candidate_ids":[],"match_confidence":0.9,"match_reason":"简要说明归属判断理由","completed":"清晰的完成内容归纳","achievements":["业务化成果归纳"],"subtask_issues":["业务化风险或问题归纳"],"next_steps":["清晰的下一步计划归纳"],"status_update":"进行中—核心功能已联调通过"}}]}}"""
 
 
-def _call_agent_llm(prompt: str, provider: str) -> dict:
-    cfg = _get_cfg(provider)
-    if not cfg.get("api_key"):
-        raise RuntimeError(f"AI引擎（{provider}）未配置 API Key")
-    if provider == "anthropic":
-        import anthropic
-        response = anthropic.Anthropic(api_key=cfg["api_key"]).messages.create(
-            model=cfg["model"], max_tokens=4000, messages=[{"role": "user", "content": prompt}])
-        raw = response.content[0].text
-    else:
-        from openai import OpenAI
-        response = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"]).chat.completions.create(
-            model=cfg["model"], messages=[{"role": "user", "content": prompt}], max_tokens=4000)
-        raw = response.choices[0].message.content or ""
-    return _extract_json_blob(raw)
-
-
-def extract_work_report_agent(transcript_text: str, candidates: list[dict], provider: str, submitter: str | None = None,
-                              llm_call: Callable[[str, str], dict] = _call_agent_llm) -> dict:
+def extract_work_report_agent(
+    transcript_text: str,
+    candidates: list[dict],
+    provider: str | None = None,
+    submitter: str | None = None,
+    llm_call: Callable[[str, str], dict] | None = None,
+    *,
+    ai_call: Callable[[str], dict] | None = None,
+) -> dict:
     """Run the full Agent pipeline with one LLM call and server-side ID validation."""
     if not transcript_text.strip():
         return build_ai_work_report_draft(transcript_text, candidates, [], submitter)
-    parsed = llm_call(_agent_prompt(transcript_text, candidates), provider)
+    prompt = _agent_prompt(transcript_text, candidates)
+    if ai_call is not None:
+        parsed = ai_call(prompt)
+    elif llm_call is not None:
+        parsed = llm_call(prompt, provider or "")
+    else:
+        raise RuntimeError("AI capability service is required")
     if isinstance(parsed.get("task_reports"), list):
         return build_ai_work_report_draft(transcript_text, candidates, parsed["task_reports"], submitter)
     fragments = parsed.get("fragments") or []

@@ -1,4 +1,6 @@
+import { useEffect, useRef, useState } from 'react'
 import type { MyTaskRow } from './myTasksViewModel'
+import { getMyTaskMenuPlacement } from './menuPlacement'
 
 type Props = {
   rows: MyTaskRow[]
@@ -25,6 +27,28 @@ export function MyTasksTable({
   onPageChange, onPageSizeChange, onOpenDetail, onOpenProject, onOpenSubmit,
 }: Props) {
   const pageNumbers = Array.from({ length: totalPages }, (_, index) => index + 1)
+  const [openMenuId, setOpenMenuId] = useState<number | null>(null)
+  const [menuPlacement, setMenuPlacement] = useState<'top' | 'bottom'>('bottom')
+  const menuRootRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (openMenuId === null) return
+
+    const closeOnOutsidePointerDown = (event: PointerEvent) => {
+      const menuRoot = menuRootRef.current
+      if (menuRoot && !menuRoot.contains(event.target as Node)) setOpenMenuId(null)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpenMenuId(null)
+    }
+
+    document.addEventListener('pointerdown', closeOnOutsidePointerDown)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointerDown)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [openMenuId])
 
   return (
     <section className="my-task-table-card" aria-label="个人任务列表">
@@ -67,13 +91,44 @@ export function MyTasksTable({
                       event.stopPropagation()
                       onOpenDetail(row)
                     }}>查看详情</button>
-                    <details className="my-task-actions" onClick={(event) => event.stopPropagation()}>
-                      <summary aria-label={`打开 ${row.title} 操作菜单`}><span aria-hidden="true">•••</span></summary>
-                      <div className="my-task-actions-menu">
-                        <button type="button" onClick={() => onOpenProject(row)}><span aria-hidden="true">↗</span>查看工作推进</button>
-                        <button type="button" onClick={() => onOpenSubmit(row)}><span aria-hidden="true">▤</span>提交工作汇报</button>
-                      </div>
-                    </details>
+                    {(() => {
+                      const isMenuOpen = openMenuId === row.id
+                      const menuId = `my-task-actions-${row.id}`
+                      return (
+                        <div className="my-task-actions" ref={isMenuOpen ? menuRootRef : undefined} onClick={(event) => event.stopPropagation()}>
+                          <button
+                            type="button"
+                            className="my-task-actions-trigger"
+                            aria-label={`打开 ${row.title} 操作菜单`}
+                            aria-expanded={isMenuOpen}
+                            aria-controls={isMenuOpen ? menuId : undefined}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              if (isMenuOpen) {
+                                setOpenMenuId(null)
+                                return
+                              }
+                              setMenuPlacement(getMyTaskMenuPlacement(event.currentTarget.getBoundingClientRect(), window.innerHeight, 112, 8))
+                              setOpenMenuId(row.id)
+                            }}
+                          >
+                            <span aria-hidden="true">•••</span>
+                          </button>
+                          {isMenuOpen && (
+                            <div id={menuId} className={`my-task-actions-menu${menuPlacement === 'top' ? ' my-task-actions-menu--top' : ''}`}>
+                              <button type="button" onClick={() => {
+                                setOpenMenuId(null)
+                                onOpenProject(row)
+                              }}><span aria-hidden="true">↗</span>查看工作推进</button>
+                              <button type="button" onClick={() => {
+                                setOpenMenuId(null)
+                                onOpenSubmit(row)
+                              }}><span aria-hidden="true">▤</span>提交工作汇报</button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </div>
                 </td>
               </tr>

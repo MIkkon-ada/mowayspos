@@ -366,6 +366,7 @@ def list_subtasks_batch(
 @router.get("/api/subtasks/{row_id}/detail")
 def get_subtask_detail(
     row_id: int,
+    project_id: int | None = None,
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
@@ -378,13 +379,21 @@ def get_subtask_detail(
 
     parent = db.get(models.Task, row.task_id)
     if parent:
-        project_id = _get_task_project_id(parent, db)
-        if project_id is not None:
-            require_project_access(current_user, project_id, db)
+        resolved_project_id = _get_task_project_id(parent, db)
+        if project_id is not None and resolved_project_id != project_id:
+            raise HTTPException(404, "subtask not found")
+        if resolved_project_id is not None:
+            require_project_access(current_user, resolved_project_id, db)
         elif not (context.get("is_tech_admin") or context.get("is_ceo")):
             raise HTTPException(403, "permission denied")
 
     result = crud.to_dict(row)
+    from .execution_schedules import to_schedule_dict
+    schedules = db.query(models.ExecutionSchedule).filter(
+        models.ExecutionSchedule.subtask_id == row.id,
+        models.ExecutionSchedule.is_deleted.is_(False),
+    ).order_by(models.ExecutionSchedule.start_date, models.ExecutionSchedule.due_date, models.ExecutionSchedule.id).all()
+    result["execution_schedules"] = [to_schedule_dict(schedule) for schedule in schedules]
 
     # 执行详情使用：按关键任务聚合已确认/已提交的工作汇报，保留四项固定结构。
     import json as _json

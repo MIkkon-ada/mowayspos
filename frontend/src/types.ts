@@ -319,8 +319,14 @@ export type MeetingItem = {
   meeting_type?: string
   title?: string
   meeting_date?: string
+  location?: string
   host?: string
   participants?: string
+  organizer?: string
+  copied_to?: string
+  agenda_items_json?: string
+  prior_action_items_json?: string
+  source_mode?: 'standard_minutes' | 'ai_analysis'
   summary?: string
   task_list_json?: string
   decision_items_json?: string
@@ -366,6 +372,7 @@ export type SubTaskItem = {
   project_id?: number | null
   title: string
   assignee: string
+  assignee_id?: number | null
   plan_time: string
   status: string
   completion_criteria?: string

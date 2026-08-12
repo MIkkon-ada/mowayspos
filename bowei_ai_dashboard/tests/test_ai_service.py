@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app import models
+from app.ai.contracts import AIInvocationContext, AIUpstreamError, Capability
+from app.ai.repository import AIConfigurationRepository
+from app.ai.service import AIService
+from app.database import Base
+
+
+TEST_FERNET_KEY = "m6F5dBXMRy1ZOQ4Dv_rwuPhtchxZzTCBuRUg-hxeF6U="
+
+
+class FakeAdapters:
+    def __init__(self):
+        self.chat_errors = {}
+        self.chat_results = {}
+        self.chat_calls = []
+
+    def complete_chat(self, model, api_key, prompt, *, timeout_seconds):
+        self.chat_calls.append(model.id)
+        if model.id in self.chat_errors:
+            raise self.chat_errors[model.id]
+        return self.chat_results[model.id]
+
+
+@pytest.fixture()
+def db():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    try:
+        yield session
+    finally:
+        session.close()
+        Base.metadata.drop_all(engine)
+
+
+@pytest.fixture()
+def configured_chat_policy(db):
+    repo = AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY)
+    primary = repo.create_model(
+        code="primary",
+        display_name="Primary",
+        provider="deepseek",
+        model_name="deepseek-chat",
+        model_type="chat",
+        base_url="https://api.deepseek.com",
+        config={},
+        enabled=True,
+        source="custom",
+    )
+    fallback = repo.create_model(
+        code="fallback",
+        display_name="Fallback",
+        provider="dashscope",
+        model_name="qwen-plus",
+        model_type="chat",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        config={},
+        enabled=True,
+        source="custom",
+    )
+    repo.replace_credential(primary.id, api_key="primary-key", app_secret=None)
+    repo.replace_credential(fallback.id, api_key="fallback-key", app_secret=None)
+    repo.save_policy(
+        Capability.MEETING_ANALYSIS,
+        primary_model_id=primary.id,
+        fallback_model_ids=[fallback.id],
+        timeout_seconds=30,
+        max_attempts=2,
+        enabled=True,
+    )
+    return primary, fallback
+
+
+@pytest.fixture()
+def fake_adapters():
+    return FakeAdapters()
+
+
+def test_chat_uses_primary_then_retryable_fallback_and_logs_each_attempt(
+    db, configured_chat_policy, fake_adapters
+):
+    primary, fallback = configured_chat_policy
+    fake_adapters.chat_errors[primary.id] = AIUpstreamError(
+        "AI_UPSTREAM_TIMEOUT", retryable=True
+    )
+    fake_adapters.chat_results[fallback.id] = '{"title":"ok"}'
+
+    result = AIService(
+        db, adapters=fake_adapters, cipher_key=TEST_FERNET_KEY
+    ).invoke_chat(
+        Capability.MEETING_ANALYSIS,
+        "prompt",
+        AIInvocationContext(actor="pm", resource_type="meeting", resource_id=8),
+    )
+
+    assert result.text == '{"title":"ok"}'
+    assert result.model_code == "fallback"
+    logs = db.query(models.AIInvocationLog).order_by(models.AIInvocationLog.attempt_no).all()
+    assert [(row.status, row.error_code, row.fallback_used) for row in logs] == [
+        ("failed", "AI_UPSTREAM_TIMEOUT", False),
+        ("succeeded", "", True),
+    ]
+    assert [(row.actor, row.resource_type, row.resource_id) for row in logs] == [
+        ("pm", "meeting", 8),
+        ("pm", "meeting", 8),
+    ]
+
+
+def test_non_retryable_error_does_not_try_fallback(db, configured_chat_policy, fake_adapters):
+    primary, _fallback = configured_chat_policy
+    fake_adapters.chat_errors[primary.id] = AIUpstreamError(
+        "AI_UPSTREAM_BAD_REQUEST", retryable=False
+    )
+
+    with pytest.raises(AIUpstreamError, match="AI upstream request failed"):
+        AIService(db, adapters=fake_adapters, cipher_key=TEST_FERNET_KEY).invoke_chat(
+            Capability.MEETING_ANALYSIS, "prompt"
+        )
+
+    assert fake_adapters.chat_calls == [primary.id]

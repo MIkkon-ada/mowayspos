@@ -40,6 +40,82 @@ def _seed_project_team(db):
     db.commit()
 
 
+def _add_people_for_picker(db):
+    db.add_all(
+        [
+            models.Person(id=5, name="New Assignee", system_role="normal_member", is_active=True),
+            models.Person(id=6, name="Helper One", system_role="normal_member", is_active=True),
+            models.Person(id=7, name="Helper Two", system_role="normal_member", is_active=True),
+        ]
+    )
+    db.commit()
+
+
+def test_owner_submit_adds_selected_people_to_project_and_snapshots_names():
+    db = _make_session()
+    _seed_project_team(db)
+    _add_people_for_picker(db)
+
+    owner_submit_project_profile(
+        1,
+        schemas.ProjectProfilePayload(
+            work_progress_draft=[
+                schemas.ProjectWorkProgressTaskDraft(
+                    title="Selected people task",
+                    subtasks=[
+                        schemas.ProjectWorkProgressSubTaskDraft(
+                            title="Selected key task",
+                            assignee_id=5,
+                            helper_ids=[6, 7, 6],
+                        )
+                    ],
+                )
+            ]
+        ),
+        current_user="owner",
+        db=db,
+    )
+
+    members = db.query(models.ProjectMember).filter_by(project_id=1).all()
+    subtasks = db.query(models.SubTask).join(models.Task).filter(models.Task.project_id == 1).all()
+    assert {(m.person_id, m.role) for m in members} >= {(5, "member"), (6, "member"), (7, "member")}
+    assert len([m for m in members if m.person_id == 6 and m.role == "member"]) == 1
+    assert subtasks[0].assignee == "New Assignee"
+    assert subtasks[0].assignee_id == 5
+    assert "Helper One" in subtasks[0].notes
+    assert "Helper Two" in subtasks[0].notes
+
+
+def test_owner_submit_rejects_invalid_selected_person_atomically():
+    db = _make_session()
+    _seed_project_team(db)
+
+    with pytest.raises(HTTPException) as exc:
+        owner_submit_project_profile(
+            1,
+            schemas.ProjectProfilePayload(
+                work_progress_draft=[
+                    schemas.ProjectWorkProgressTaskDraft(
+                        title="Invalid selected people task",
+                        subtasks=[
+                            schemas.ProjectWorkProgressSubTaskDraft(
+                                title="Invalid key task",
+                                assignee_id=9999,
+                            )
+                        ],
+                    )
+                ]
+            ),
+            current_user="owner",
+            db=db,
+        )
+
+    assert exc.value.status_code == 422
+    assert db.get(models.Project, 1).status == "dispatched"
+    assert db.query(models.Task).filter_by(project_id=1).count() == 0
+    assert db.query(models.ProjectMember).filter_by(project_id=1, role="member").count() == 1
+
+
 def test_owner_submit_saves_work_progress_draft_without_activating_project():
     db = _make_session()
     _seed_project_team(db)

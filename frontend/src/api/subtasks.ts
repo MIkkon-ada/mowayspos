@@ -1,5 +1,6 @@
 import { apiGet, apiPost, apiPatch, apiDelete } from './client'
 import type { SubTaskItem, KeyTaskItem } from '../types'
+import type { ExecutionSchedule } from './executionSchedules'
 
 /**
  * SubTaskPayload 业务语义：关键任务创建/更新参数
@@ -78,6 +79,7 @@ export function restoreSubTask(id: number): Promise<SubTaskItem> {
 }
 
 export type SubTaskDetail = SubTaskItem & {
+  execution_schedules?: ExecutionSchedule[]
   work_reports?: {
     id: number
     submitter: string
@@ -118,8 +120,11 @@ export type SubTaskDetail = SubTaskItem & {
   }[]
 }
 
-export function fetchSubtaskDetail(id: number): Promise<SubTaskDetail> {
-  return apiGet<SubTaskDetail>(`/api/subtasks/${id}/detail`)
+export function fetchSubtaskDetail(id: number, projectId?: number | null): Promise<SubTaskDetail> {
+  const params = new URLSearchParams()
+  if (projectId != null) params.set('project_id', String(projectId))
+  const query = params.size ? `?${params.toString()}` : ''
+  return apiGet<SubTaskDetail>(`/api/subtasks/${id}/detail${query}`)
 }
 
 export function fetchSubtasksByAssignee(assignee: string, projectId: number | null): Promise<SubTaskWithParent[]> {

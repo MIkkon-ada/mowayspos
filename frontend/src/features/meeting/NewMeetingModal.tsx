@@ -1,19 +1,37 @@
 import { useMemo, useRef, useState } from 'react'
-import { analyzeMeeting, createMeeting, transcribeAudio, updateMeeting, type MeetingAnalyzeResult } from '../../api/meetings'
+import {
+  analyzeMeeting,
+  addMeetingSkillSnapshot,
+  answerMeetingSkillQuestions,
+  createMeeting,
+  extractMeetingDocumentText,
+  preflightMeetingSkill,
+  resumeMeetingSkillRun,
+  transcribeAudio,
+  type MeetingSkillRun,
+  type StandardMeetingMinutes,
+  updateMeeting,
+  type MeetingAnalyzeResult,
+} from '../../api/meetings'
 import type { MeetingItem } from '../../types'
 import { ErrorBar, Field, JsonListSection, SectionTitle } from './meetingShared'
 import { ReportsSection } from './MeetingReportsSection'
 import { MeetingChangeSetReviewModal } from './MeetingChangeSetReviewModal'
 
-type ModalStep = 'input' | 'analyzing' | 'review'
-type MeetingMode = 'progress'
+type ModalStep = 'input' | 'analyzing' | 'clarifying' | 'review'
 
 type ReviewForm = {
   title: string
   meeting_type: string
   meeting_date: string
+  location: string
   host: string
   participants: string
+  organizer: string
+  copied_to: string
+  agenda_items_json: string
+  prior_action_items_json: string
+  source_mode: 'standard_minutes' | 'ai_analysis'
   summary: string
   reports_json: string
   task_list_json: string
@@ -23,13 +41,28 @@ type ReviewForm = {
   transcript_text: string
 }
 
+const MEETING_TYPE_OPTIONS = [
+  { value: 'regular', label: '项目例会', description: '同步进展、问题与下一步安排', accent: '#0EA5E9', soft: '#E0F2FE' },
+  { value: 'special', label: '专题会议', description: '围绕一个议题形成结论或方案', accent: '#8B5CF6', soft: '#EDE9FE' },
+  { value: 'kickoff', label: '启动会', description: '明确目标、范围、分工与计划', accent: '#F59E0B', soft: '#FEF3C7' },
+  { value: 'communication', label: '沟通会', description: '对齐协作事项与处理方案', accent: '#2563EB', soft: '#DBEAFE' },
+  { value: 'review', label: '评审会', description: '评审交付物、方案或关键决策', accent: '#7C3AED', soft: '#F3E8FF' },
+  { value: 'retrospective', label: '复盘会', description: '沉淀经验、改进项与后续动作', accent: '#10B981', soft: '#D1FAE5' },
+] as const
+
 function emptyForm(defaultMeetingType: string): ReviewForm {
   return {
     title: '',
-    meeting_type: defaultMeetingType,
+    meeting_type: defaultMeetingType || 'regular',
     meeting_date: '',
+    location: '',
     host: '',
     participants: '',
+    organizer: '',
+    copied_to: '',
+    agenda_items_json: '[]',
+    prior_action_items_json: '[]',
+    source_mode: 'ai_analysis',
     summary: '',
     reports_json: '[]',
     task_list_json: '[]',
@@ -38,6 +71,67 @@ function emptyForm(defaultMeetingType: string): ReviewForm {
     risk_items_json: '[]',
     transcript_text: '',
   }
+}
+
+export function combineAnalysisSources({
+  documentText,
+  supplementalText,
+  audioText,
+}: {
+  documentText: string
+  supplementalText: string
+  audioText: string
+}): string {
+  return [
+    ['会议文档', documentText],
+    ['补充原文', supplementalText],
+    ['音频转写', audioText],
+  ]
+    .filter(([, value]) => value.trim())
+    .map(([label, value]) => `【${label}】\n${value.trim()}`)
+    .join('\n\n')
+}
+
+function SourceStatus({ text, emptyLabel }: { text: string; emptyLabel: string }) {
+  return text.trim() ? (
+    <span className="text-xs font-medium text-emerald-600">已就绪</span>
+  ) : (
+    <span className="text-xs text-slate-400">{emptyLabel}</span>
+  )
+}
+
+function ParsedRows({ value }: { value: string }) {
+  let rows: Record<string, string>[] = []
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (Array.isArray(parsed)) {
+      rows = parsed.flatMap((item) => {
+        if (typeof item === 'string') return [{ 内容: item }]
+        if (!item || typeof item !== 'object') return []
+        return [Object.fromEntries(Object.entries(item as Record<string, unknown>).map(([key, itemValue]) => [key, String(itemValue ?? '')]))]
+      })
+    }
+  } catch {
+    rows = []
+  }
+  if (!rows.length) return <p className="mt-3 text-sm text-slate-400">暂无内容</p>
+  const headers = Object.keys(rows[0])
+  return <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200"><table className="min-w-full text-left text-xs"><thead><tr className="bg-slate-50 text-slate-500">{headers.map((header) => <th key={header} className="whitespace-nowrap px-3 py-2.5 font-medium">{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index} className="border-t border-slate-100 text-slate-700">{headers.map((header) => <td key={header} className="min-w-28 px-3 py-2.5 align-top leading-5">{row[header] || '—'}</td>)}</tr>)}</tbody></table></div>
+}
+
+function StandardMinutesReview({ form }: { form: ReviewForm }) {
+  let agenda: string[] = []
+  try {
+    const parsed: unknown = JSON.parse(form.agenda_items_json)
+    agenda = Array.isArray(parsed) ? parsed.map((item) => String(item).trim()).filter(Boolean) : []
+  } catch {
+    agenda = []
+  }
+  return <section className="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <div><SectionTitle>会议议程</SectionTitle>{agenda.length ? <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6 text-slate-700">{agenda.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ol> : <p className="mt-3 text-sm text-slate-400">暂无议程</p>}</div>
+    <div className="border-t border-slate-100 pt-6"><SectionTitle>本周新增待办事项</SectionTitle><ParsedRows value={form.task_list_json} /></div>
+    <div className="border-t border-slate-100 pt-6"><SectionTitle>上周待办追踪</SectionTitle><ParsedRows value={form.prior_action_items_json} /></div>
+  </section>
 }
 
 export function NewMeetingModal({
@@ -54,28 +148,39 @@ export function NewMeetingModal({
   onCreated: (m: MeetingItem) => void
 }) {
   const isEdit = useMemo(() => !!editItem, [editItem])
-
   const [step, setStep] = useState<ModalStep>(isEdit ? 'review' : 'input')
-  const [meetingMode] = useState<MeetingMode>('progress')
-  const [meetingText, setMeetingText] = useState('')
   const [statusMsg, setStatusMsg] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [analysisId, setAnalysisId] = useState<number | null>(null)
   const [savedMeeting, setSavedMeeting] = useState<MeetingItem | null>(null)
   const [reviewMeetingId, setReviewMeetingId] = useState<number | null>(null)
+  const [documentName, setDocumentName] = useState('')
+  const [documentText, setDocumentText] = useState('')
+  const [supplementalText, setSupplementalText] = useState('')
   const [audioFile, setAudioFile] = useState<File | null>(null)
-  const [uploading, setUploading] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
-
+  const [audioText, setAudioText] = useState('')
+  const [documentReferenceKind, setDocumentReferenceKind] = useState('meeting_document')
+  const [skillRun, setSkillRun] = useState<MeetingSkillRun | null>(null)
+  const [clarificationValues, setClarificationValues] = useState<Record<number, string>>({})
+  const [documentUploading, setDocumentUploading] = useState(false)
+  const [audioUploading, setAudioUploading] = useState(false)
+  const documentRef = useRef<HTMLInputElement>(null)
+  const audioRef = useRef<HTMLInputElement>(null)
   const [form, setForm] = useState<ReviewForm>(() => {
     if (editItem) {
       return {
         title: editItem.title ?? '',
-        meeting_type: editItem.meeting_type ?? defaultMeetingType,
+        meeting_type: editItem.meeting_type ?? (defaultMeetingType || 'regular'),
         meeting_date: editItem.meeting_date ?? '',
+        location: editItem.location ?? '',
         host: editItem.host ?? '',
         participants: editItem.participants ?? '',
+        organizer: editItem.organizer ?? '',
+        copied_to: editItem.copied_to ?? '',
+        agenda_items_json: editItem.agenda_items_json ?? '[]',
+        prior_action_items_json: editItem.prior_action_items_json ?? '[]',
+        source_mode: editItem.source_mode ?? 'ai_analysis',
         summary: editItem.summary ?? '',
         reports_json: String((editItem as Record<string, unknown>).reports_json ?? '[]'),
         task_list_json: editItem.task_list_json ?? '[]',
@@ -88,59 +193,190 @@ export function NewMeetingModal({
     return emptyForm(defaultMeetingType)
   })
 
-  function setField(key: keyof ReviewForm, val: string) {
-    setForm((f) => ({ ...f, [key]: val }))
+  const analysisText = useMemo(
+    () => combineAnalysisSources({ documentText, supplementalText, audioText }),
+    [documentText, supplementalText, audioText],
+  )
+  const sourceCount = Number(Boolean(documentText.trim())) + Number(Boolean(supplementalText.trim())) + Number(Boolean(audioText.trim()))
+  const skillReferenceFiles = useMemo(() => [
+    ...(documentText.trim() ? [{ source_id: `document:${documentName || 'uploaded'}`, kind: documentReferenceKind, filename: documentName }] : []),
+    ...(supplementalText.trim() ? [{ source_id: 'supplemental-text', kind: 'supplemental_text', filename: '' }] : []),
+    ...(audioText.trim() ? [{ source_id: audioFile ? `audio:${audioFile.name}` : 'audio-transcript', kind: 'audio_transcript', filename: audioFile?.name || '' }] : []),
+  ], [audioFile, audioText, documentName, documentReferenceKind, documentText, supplementalText])
+
+  function setField(key: keyof ReviewForm, value: string) {
+    setForm((previous) => ({ ...previous, [key]: value }))
+  }
+
+  async function handleDocumentSelected(file: File) {
+    setDocumentUploading(true)
+    setError('')
+    try {
+      const result = await extractMeetingDocumentText(projectId, file)
+      setDocumentName(result.filename)
+      setDocumentText(result.text)
+      if (result.standard_minutes?.is_standard_minutes) {
+        const minutes = result.standard_minutes
+        setForm((previous) => ({
+          ...previous,
+          title: minutes.title || previous.title,
+          meeting_type: minutes.meeting_type || previous.meeting_type,
+          meeting_date: minutes.meeting_date || previous.meeting_date,
+          location: minutes.location || previous.location,
+          host: minutes.host || previous.host,
+          participants: minutes.participants || previous.participants,
+          organizer: minutes.organizer || previous.organizer,
+          copied_to: minutes.copied_to || previous.copied_to,
+          summary: minutes.summary || previous.summary,
+          agenda_items_json: JSON.stringify(minutes.agenda_items ?? []),
+          task_list_json: JSON.stringify(minutes.current_action_items ?? []),
+          prior_action_items_json: JSON.stringify(minutes.prior_action_items ?? []),
+          source_mode: 'standard_minutes',
+          transcript_text: `【会议文档】\n${result.text}`,
+        }))
+        setStep('review')
+      }
+    } catch (cause: unknown) {
+      setError(`文档读取失败：${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      setDocumentUploading(false)
+    }
   }
 
   async function handleUploadAudio() {
     if (!audioFile) return
-    setUploading(true)
+    setAudioUploading(true)
     setError('')
     try {
       const result = await transcribeAudio(audioFile)
-      setMeetingText(result.text)
-      setAudioFile(null)
-    } catch (e: unknown) {
-      setError(`转录失败：${e instanceof Error ? e.message : String(e)}`)
+      setAudioText(result.text)
+    } catch (cause: unknown) {
+      setError(`转录失败：${cause instanceof Error ? cause.message : String(cause)}`)
     } finally {
-      setUploading(false)
+      setAudioUploading(false)
     }
   }
 
+  async function generateAfterPreflight(run: MeetingSkillRun) {
+    setStep('analyzing')
+    setStatusMsg('材料已完成预检，正在生成会议纪要草稿…')
+    const readyRun = run.status === 'ready_for_review' ? run : await resumeMeetingSkillRun(run.id)
+    setSkillRun(readyRun)
+    const result: MeetingAnalyzeResult = await analyzeMeeting(analysisText, projectId, undefined, undefined, readyRun.id)
+    setAnalysisId(result.analysis_id)
+    setForm((previous) => ({
+      ...previous,
+      title: previous.title || result.title,
+      meeting_date: previous.meeting_date || result.meeting_date,
+      host: previous.host || result.host,
+      summary: result.summary,
+      reports_json: result.reports_json ?? '[]',
+      task_list_json: result.task_list_json,
+      confirmed_items_json: result.confirmed_items_json ?? '[]',
+      decision_items_json: result.decision_items_json,
+      risk_items_json: result.risk_items_json,
+      transcript_text: analysisText,
+      source_mode: 'ai_analysis',
+    }))
+    setStep('review')
+  }
+
   async function handleAnalyze() {
-    const text = meetingText.trim()
-    if (!text) {
-      setError('请输入会议讨论文字')
+    if (!analysisText.trim()) {
+      setError('请至少添加一份会议材料后再生成草稿')
       return
     }
     setError('')
     setAnalysisId(null)
     setStep('analyzing')
-    setStatusMsg('AI 正在分析会议内容，提取摘要和行动计划...')
+    setStatusMsg('正在检查材料完整性与需要确认的事实…')
     try {
-      const result: MeetingAnalyzeResult = await analyzeMeeting(
-        text,
-        projectId,
-        meetingMode,
-      )
+      const run = await preflightMeetingSkill({
+        project_id: projectId,
+        meeting_type: form.meeting_type,
+        transcript_text: analysisText,
+        reference_files: skillReferenceFiles,
+      })
+      setSkillRun(run)
+      if (run.status === 'waiting_for_answers') {
+        setStep('clarifying')
+        return
+      }
+      await generateAfterPreflight(run)
+    } catch (cause: unknown) {
+      setError(`预检或 AI 分析失败：${cause instanceof Error ? cause.message : String(cause)}`)
+      setStep('input')
+    }
+  }
+
+  async function handleClarificationContinue() {
+    if (!skillRun) return
+    setError('')
+    const unresolvedMaterials = skillRun.questions.filter((item) => item.action === 'material_upload' && !item.resolved_at)
+    try {
+      if (unresolvedMaterials.length) {
+        if (!documentText.trim()) {
+          setError('请先为缺失材料上传 Word、Excel 或 TXT 文件')
+          return
+        }
+        const refreshed = await addMeetingSkillSnapshot(skillRun.id, {
+          transcript_text: analysisText,
+          reference_files: skillReferenceFiles,
+        })
+        setSkillRun(refreshed)
+        if (refreshed.status === 'waiting_for_answers') return
+        await generateAfterPreflight(refreshed)
+        return
+      }
+
+      const answers = skillRun.questions
+        .filter((item) => item.action === 'answer' && !item.resolved_at)
+        .map((item) => ({ question_id: item.id, value: clarificationValues[item.id] || undefined }))
+      if (answers.some((item) => !item.value)) {
+        setError('请明确处置所有阻断问题后再继续')
+        return
+      }
+      const updated = await answerMeetingSkillQuestions(skillRun.id, answers)
+      setSkillRun(updated)
+      await generateAfterPreflight(updated)
+    } catch (cause: unknown) {
+      setError(`澄清处理失败：${cause instanceof Error ? cause.message : String(cause)}`)
+    }
+  }
+
+  function chooseMissingMaterial(questionCode: string) {
+    setDocumentReferenceKind(questionCode.replace(/_missing$/, ''))
+    documentRef.current?.click()
+  }
+
+  async function handleLegacyAnalyze() {
+    if (!analysisText.trim()) {
+      setError('请至少添加一份会议材料后再生成草稿')
+      return
+    }
+    setError('')
+    setStep('analyzing')
+    setStatusMsg('AI 正在整理会议材料并生成通用会议纪要草稿…')
+    try {
+      const result: MeetingAnalyzeResult = await analyzeMeeting(analysisText, projectId)
       setAnalysisId(result.analysis_id)
-      setForm({
-        title: result.title,
-        meeting_type: result.meeting_type,
-        meeting_date: result.meeting_date,
-        host: result.host,
-        participants: '',
+      setForm((previous) => ({
+        ...previous,
+        title: previous.title || result.title,
+        meeting_date: previous.meeting_date || result.meeting_date,
+        host: previous.host || result.host,
         summary: result.summary,
         reports_json: result.reports_json ?? '[]',
         task_list_json: result.task_list_json,
         confirmed_items_json: result.confirmed_items_json ?? '[]',
         decision_items_json: result.decision_items_json,
         risk_items_json: result.risk_items_json,
-        transcript_text: text,
-      })
+        transcript_text: analysisText,
+        source_mode: 'ai_analysis',
+      }))
       setStep('review')
-    } catch (e: unknown) {
-      setError(`AI 分析失败：${e instanceof Error ? e.message : String(e)}`)
+    } catch (cause: unknown) {
+      setError(`AI 分析失败：${cause instanceof Error ? cause.message : String(cause)}`)
       setStep('input')
     }
   }
@@ -149,345 +385,216 @@ export function NewMeetingModal({
     setSaving(true)
     setError('')
     try {
-      const { confirmed_items_json, ...meetingForm } = form
-      const payload = { project_id: projectId, ...meetingForm, risk_items_json: confirmed_items_json }
-      if (isEdit && editItem) {
-        const item = await updateMeeting(editItem.id, payload)
+      const { confirmed_items_json, reports_json: _reportsJson, ...meetingForm } = form
+      const payload = { project_id: projectId, ...meetingForm, risk_items_json: confirmed_items_json, skill_run_id: skillRun?.id, analysis_id: analysisId }
+      const item = isEdit && editItem
+        ? await updateMeeting(editItem.id, payload)
+        : await createMeeting(payload)
+      if (isEdit || analysisId === null) {
         onCreated(item)
       } else {
-        const item = await createMeeting({
-          ...payload,
-          analysis_id: analysisId,
-        })
         setSavedMeeting(item)
-        if (analysisId !== null) {
-          setReviewMeetingId(item.id)
-        } else {
-          onCreated(item)
-        }
+        setReviewMeetingId(item.id)
       }
-    } catch (e: unknown) {
-      setError(`保存失败：${e instanceof Error ? e.message : String(e)}`)
+    } catch (cause: unknown) {
+      setError(`保存失败：${cause instanceof Error ? cause.message : String(cause)}`)
     } finally {
       setSaving(false)
     }
   }
 
   const steps = [
-    { key: 'input' as ModalStep, label: '输入文字' },
-    { key: 'analyzing' as ModalStep, label: 'AI 提取' },
+    { key: 'input' as ModalStep, label: '会议设置与材料' },
+    { key: 'analyzing' as ModalStep, label: 'AI 生成草稿' },
+    { key: 'clarifying' as ModalStep, label: '确认待核事实' },
     { key: 'review' as ModalStep, label: '确认保存' },
   ]
-  const currentIdx = isEdit ? 2 : steps.findIndex((s) => s.key === step)
-
-  const subtitle = isEdit
-    ? '编辑并保存'
-    : step === 'input'
-      ? '粘贴会议讨论文字，AI 自动提取会议总结和工作计划'
-      : step === 'analyzing'
-        ? statusMsg
-        : '检查 AI 提取结果，确认后保存'
+  const currentIdx = isEdit ? 2 : steps.findIndex((item) => item.key === step)
 
   if (reviewMeetingId !== null && savedMeeting) {
     const finishReview = () => onCreated(savedMeeting)
-    return (
-      <MeetingChangeSetReviewModal
-        meetingId={reviewMeetingId}
-        onClose={finishReview}
-        onDone={finishReview}
-      />
-    )
+    return <MeetingChangeSetReviewModal meetingId={reviewMeetingId} onClose={finishReview} onDone={finishReview} />
   }
 
   return (
     <>
-      <div
-        className="fixed inset-0 z-50 flex items-center justify-center"
-        style={{ background: 'rgba(15,23,42,0.5)' }}
-        onClick={(e) => {
-          if (e.target === e.currentTarget) onClose()
-        }}
-      >
-        <div className="bg-white shadow-2xl flex flex-col overflow-hidden" style={{ width: '100vw', height: '100vh' }}>
-          {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: '#E9EFF6' }}>
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#6366F1,#0EA5E9)' }}>
-                <svg style={{ width: 15, height: 15, color: 'white' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
-              <div>
-                <div className="text-sm font-bold text-slate-800">{isEdit ? '编辑会议纪要' : '新建会议纪要'}</div>
-                <div className="text-xs text-slate-400">{subtitle}</div>
-              </div>
+      <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-[#F5F8FC]" style={{ fontFamily: 'Inter, sans-serif' }}>
+        <header className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-8 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-sky-500 text-lg text-white">▤</div>
+            <div>
+              <h1 className="text-lg font-semibold text-slate-900">{isEdit ? '编辑会议纪要' : '新建会议纪要'}</h1>
+              <p className="mt-0.5 text-sm text-slate-400">选择会议类型，补充任意会议材料后生成草稿</p>
             </div>
-            <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-slate-100 text-slate-400">
-              <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
           </div>
+          <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-800">关闭</button>
+        </header>
 
-          {/* Steps */}
-          <div className="flex items-center gap-1 px-6 py-3 border-b" style={{ borderColor: '#F1F5F9', background: '#FAFBFC' }}>
-            {steps.map((s, i) => {
-              const done = currentIdx > i
-              const active = currentIdx === i
+        <div className="shrink-0 border-b border-slate-200 bg-white px-8">
+          <div className="mx-auto flex max-w-[1180px] items-center gap-2 py-3">
+            {steps.map((item, index) => {
+              const active = currentIdx === index
+              const done = currentIdx > index
               return (
-                <div key={s.key} className="flex items-center gap-1">
-                  {i > 0 && <div className="w-8 h-px mx-1" style={{ background: done ? '#0EA5E9' : '#E2E8F0' }} />}
-                  <div className="flex items-center gap-1.5">
-                    <div
-                      className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-                      style={{
-                        background: done ? '#0EA5E9' : active ? '#EFF6FF' : '#F1F5F9',
-                        color: done ? 'white' : active ? '#0369A1' : '#94A3B8',
-                        border: active ? '1.5px solid #0EA5E9' : '1.5px solid transparent',
-                      }}
-                    >
-                      {done ? '\u2713' : i + 1}
-                    </div>
-                    <span className="text-xs font-medium" style={{ color: active ? '#0369A1' : '#94A3B8' }}>
-                      {s.label}
-                    </span>
-                  </div>
+                <div key={item.key} className="flex items-center gap-2">
+                  {index > 0 && <span className="mx-2 h-px w-10 bg-slate-200" />}
+                  <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${done ? 'bg-sky-500 text-white' : active ? 'border-2 border-sky-500 bg-sky-50 text-sky-700' : 'bg-slate-100 text-slate-400'}`}>{done ? '✓' : index + 1}</span>
+                  <span className={`text-sm ${active ? 'font-medium text-sky-700' : 'text-slate-400'}`}>{item.label}</span>
                 </div>
               )
             })}
           </div>
-
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto">
-            {step === 'input' && (
-              <div className="p-6 space-y-4">
-                {/* 会议模式选择 */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-2">会议类型</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      className="hidden"
-                      style={{
-                        borderColor: '#E2E8F0',
-                        background: 'white',
-                      }}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <div
-                          className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
-                          style={{ background: '#DBEAFE' }}
-                        >
-                          <svg style={{ width: 14, height: 14, color: '#2563EB' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                          </svg>
-                        </div>
-                        <div>
-                          <div className="text-sm font-bold text-slate-700">启动会</div>
-                          <div className="text-xs text-slate-400">讨论修改计划</div>
-                        </div>
-                      </div>
-                      <div className="text-xs text-slate-500 leading-relaxed ml-9">
-                        AI 提取会议讨论中确定的修改方案、调整后的工作计划和待办事项
-                      </div>
-                    </button>
-                    <button
-                      onClick={() => undefined}
-                      className="text-left p-4 rounded-xl border-2 transition-all"
-                      style={{
-                        borderColor: meetingMode === 'progress' ? '#0EA5E9' : '#E2E8F0',
-                        background: meetingMode === 'progress' ? '#F0F9FF' : 'white',
-                      }}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <div
-                          className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
-                          style={{ background: '#DCFCE7' }}
-                        >
-                          <svg style={{ width: 14, height: 14, color: '#16A34A' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                          </svg>
-                        </div>
-                        <div>
-                          <div className="text-sm font-bold text-slate-700">进度汇报</div>
-                          <div className="text-xs text-slate-400">各成员汇报进展</div>
-                        </div>
-                      </div>
-                      <div className="text-xs text-slate-500 leading-relaxed ml-9">
-                        AI 按发言人逐人提取：已完成工作、遇到的困难、领导反馈、下一步计划
-                      </div>
-                    </button>
-                  </div>
-                </div>
-
-                {/* 文字输入 */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-semibold text-slate-600">会议讨论文字</label>
-                    <div className="flex items-center gap-1">
-                      {audioFile ? (
-                        <span className="flex items-center gap-1.5 text-xs">
-                          <span className="text-slate-500 truncate max-w-[120px]">{audioFile.name}</span>
-                          <button
-                            onClick={handleUploadAudio}
-                            disabled={uploading}
-                            className="px-2 py-0.5 rounded text-xs font-medium text-white"
-                            style={{ background: '#0EA5E9' }}
-                          >
-                            {uploading ? '转录中...' : '转录'}
-                          </button>
-                          <button onClick={() => setAudioFile(null)} className="text-slate-400 hover:text-slate-600 text-xs">移除</button>
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => fileRef.current?.click()}
-                          className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 transition-colors"
-                          title="上传录音辅助转录为文字"
-                        >
-                          <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                          </svg>
-                          上传录音
-                        </button>
-                      )}
-                      <input
-                        ref={fileRef}
-                        type="file"
-                        accept="audio/*,.mp3,.wav,.m4a,.webm,.flac,.aac,.ogg"
-                        className="hidden"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0]
-                          if (f) setAudioFile(f)
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <textarea
-                    className="w-full border border-slate-200 rounded-xl p-4 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-300 resize-none"
-                    rows={14}
-                    placeholder={
-                      '在此粘贴会议讨论文字或转写文本\n\n' +
-                      '适用于：\n' +
-                      '· 启动会 —— 各方讨论计划、修改方案，AI 提取调整后的工作计划\n' +
-                      '· 进度汇报会 —— 成员依次汇报进展、领导点评，AI 提取总结和下一步行动\n\n' +
-                      '提示：可直接粘贴会议文字，或先点右上角「上传录音」将录音转为文字后再编辑'
-                    }
-                    value={meetingText}
-                    onChange={(e) => setMeetingText(e.target.value)}
-                  />
-                  <div className="flex items-center justify-between mt-1.5">
-                    <span className="text-xs text-slate-400">
-                      {meetingText.length} 字
-                    </span>
-                    {meetingText.trim() && (
-                      <span className="text-xs text-slate-400">
-                        AI 将自动提取：会议标题、会议要点、决策事项、暂定工作计划
-                      </span>
-                    )}
-                  </div>
-                </div>
-                {error && <ErrorBar msg={error} />}
-              </div>
-            )}
-
-            {step === 'analyzing' && (
-              <div className="p-12 flex flex-col items-center gap-5">
-                <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#EFF6FF,#DBEAFE)' }}>
-                  <svg className="animate-spin" style={{ width: 28, height: 28, color: '#0369A1' }} fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                </div>
-                <div className="text-center">
-                  <div className="text-base font-bold text-slate-700">{statusMsg}</div>
-                  <div className="text-sm text-slate-400 mt-1">请稍候</div>
-                </div>
-              </div>
-            )}
-
-            {step === 'review' && (
-              <div className="grid grid-cols-5 gap-6 p-6 h-full overflow-hidden">
-              <div className="col-span-3 space-y-5 overflow-y-auto pr-2">
-                <div>
-                  <SectionTitle>基本信息</SectionTitle>
-                  <div className="grid grid-cols-2 gap-3 mt-2">
-                    <Field label="标题" value={form.title} onChange={(v) => setField('title', v)} />
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-500 mb-1">会议类型</label>
-                      <select
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-300"
-                        value={form.meeting_type}
-                        onChange={(e) => setField('meeting_type', e.target.value)}
-                      >
-                        <option value="">请选择</option>
-                        <option value="weekly">周会</option>
-                        <option value="monthly">月会</option>
-                        <option value="review">评审会</option>
-                        <option value="special">专项会</option>
-                        <option value="discuss">讨论会</option>
-                      </select>
-                    </div>
-                    <Field label="日期" value={form.meeting_date} onChange={(v) => setField('meeting_date', v)} placeholder="YYYY-MM-DD" />
-                    <Field label="主持人" value={form.host} onChange={(v) => setField('host', v)} />
-                  </div>
-                </div>
-
-                <div>
-                  <SectionTitle>会议要点</SectionTitle>
-                  <textarea
-                    className="w-full mt-2 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-300 resize-none"
-                    rows={3}
-                    value={form.summary}
-                    onChange={(e) => setField('summary', e.target.value)}
-                  />
-                </div>
-
-                <ReportsSection reportsJson={form.reports_json} />
-                <JsonListSection label="已确认事项（直接入库）" value={form.confirmed_items_json} onChange={(v) => setField('confirmed_items_json', v)} dotColor="#10B981" />
-                <JsonListSection label="待企业教练决策" value={form.decision_items_json} onChange={(v) => setField('decision_items_json', v)} dotColor="#F59E0B" />
-                <JsonListSection label="暂定工作计划" value={form.task_list_json} onChange={(v) => setField('task_list_json', v)} dotColor="#10B981" />
-
-                {error && <ErrorBar msg={error} />}
-              </div>
-              <aside className="col-span-2 border border-slate-200 rounded-xl bg-slate-50 p-4 overflow-y-auto">
-                <SectionTitle>会议原文对照</SectionTitle>
-                <p className="mt-3 text-sm leading-7 whitespace-pre-wrap text-slate-600">{form.transcript_text || meetingText || '暂无原文'}</p>
-              </aside>
-              </div>
-            )}
-          </div>
-
-          {/* Footer */}
-          <div className="flex items-center justify-between px-6 py-4 border-t" style={{ borderColor: '#E9EFF6' }}>
-            {step === 'review' ? (
-              <>
-                <button onClick={() => (isEdit ? onClose() : setStep('input'))} className="text-sm text-slate-500 hover:text-slate-700 font-medium">
-                  {isEdit ? '取消' : '返回修改'}
-                </button>
-                <div className="flex gap-2">
-                  <button onClick={handleSave} disabled={saving} className="px-6 py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90 disabled:opacity-50" style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}>
-                    {saving ? '保存中...' : isEdit ? '保存修改' : '保存草稿'}
-                  </button>
-                </div>
-              </>
-            ) : step === 'input' ? (
-              <>
-                <button onClick={onClose} className="text-sm text-slate-500 hover:text-slate-700 font-medium">
-                  取消
-                </button>
-                <button
-                  onClick={handleAnalyze}
-                  disabled={!meetingText.trim()}
-                  className="px-6 py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90 disabled:opacity-50"
-                  style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}
-                >
-                  AI 分析
-                </button>
-              </>
-            ) : (
-              <div />
-            )}
-          </div>
         </div>
+
+        <main className="flex-1 overflow-y-auto">
+          {step === 'input' && (
+            <div className="mx-auto max-w-[1180px] space-y-7 px-8 py-8 pb-32">
+              <section>
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-800">会议类型</h2>
+                    <p className="mt-1 text-sm text-slate-400">六类会议均使用通用会议纪要模板</p>
+                  </div>
+                  <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700">通用模板</span>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+                  {MEETING_TYPE_OPTIONS.map((item) => {
+                    const selected = form.meeting_type === item.value
+                    return (
+                      <button
+                        key={item.value}
+                        type="button"
+                        onClick={() => setField('meeting_type', item.value)}
+                        className="rounded-xl border p-3 text-left transition"
+                        style={{ borderColor: selected ? item.accent : '#E2E8F0', background: selected ? item.soft : '#FFFFFF', boxShadow: selected ? `0 0 0 1px ${item.accent}` : 'none' }}
+                      >
+                        <span className="mb-2 flex h-7 w-7 items-center justify-center rounded-lg text-sm font-semibold" style={{ background: item.soft, color: item.accent }}>●</span>
+                        <span className="block text-sm font-semibold text-slate-800">{item.label}</span>
+                        <span className="mt-1 block text-xs leading-5 text-slate-500">{item.description}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <SectionTitle>会议信息</SectionTitle>
+                <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <Field label="会议主题" value={form.title} onChange={(value) => setField('title', value)} placeholder="例如：项目推进周例会" />
+                  <Field label="会议日期" value={form.meeting_date} onChange={(value) => setField('meeting_date', value)} placeholder="YYYY-MM-DD" />
+                  <Field label="会议地点" value={form.location} onChange={(value) => setField('location', value)} placeholder="线上会议或具体地点" />
+                  <Field label="主持人" value={form.host} onChange={(value) => setField('host', value)} placeholder="单独填写主持人" />
+                  <Field label="参会人员" value={form.participants} onChange={(value) => setField('participants', value)} placeholder="多人用顿号或逗号分隔" />
+                  <Field label="整理人" value={form.organizer} onChange={(value) => setField('organizer', value)} placeholder="可选" />
+                  <Field label="抄送" value={form.copied_to} onChange={(value) => setField('copied_to', value)} placeholder="可选，多人用顿号或逗号分隔" />
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <SectionTitle>会议材料</SectionTitle>
+                    <p className="mt-1 text-sm text-slate-400">材料可以同时添加，AI 会合并分析；暂不支持 PDF。</p>
+                  </div>
+                  <span className="text-sm text-slate-400">已添加 {sourceCount} 份材料</span>
+                </div>
+                <div className="mt-5 grid gap-4 lg:grid-cols-3">
+                  <div className="rounded-xl border border-dashed border-sky-200 bg-sky-50/50 p-4">
+                    <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">上传会议文档</h3><p className="mt-1 text-xs leading-5 text-slate-500">支持 Word（.docx）和 TXT，读取文字后参与 AI 分析。</p></div><SourceStatus text={documentText} emptyLabel="未上传" /></div>
+                    {documentName && <p className="mt-3 truncate text-xs text-slate-600">{documentName}</p>}
+                    <button type="button" onClick={() => documentRef.current?.click()} disabled={documentUploading} className="mt-4 rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50">{documentUploading ? '读取中…' : documentText ? '更换文档' : '选择 Word / TXT'}</button>
+                    <input ref={documentRef} type="file" accept=".docx,.xlsx,.txt" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleDocumentSelected(file); event.currentTarget.value = '' }} />
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 p-4">
+                    <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">补充原文</h3><p className="mt-1 text-xs leading-5 text-slate-500">可粘贴聊天记录、手写整理或对文档的补充说明。</p></div><SourceStatus text={supplementalText} emptyLabel="可选" /></div>
+                    <textarea className="mt-3 min-h-28 w-full resize-y rounded-lg border border-slate-200 p-3 text-sm leading-6 text-slate-700 outline-none focus:border-sky-400" value={supplementalText} onChange={(event) => setSupplementalText(event.target.value)} placeholder="粘贴需要补充分析的会议原文" />
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 p-4">
+                    <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">上传录音（可选）</h3><p className="mt-1 text-xs leading-5 text-slate-500">先转写为文字，再与其他材料一同分析。</p></div><SourceStatus text={audioText} emptyLabel="未上传" /></div>
+                    {audioFile && <p className="mt-3 truncate text-xs text-slate-600">{audioFile.name}</p>}
+                    <div className="mt-4 flex gap-2"><button type="button" onClick={() => audioRef.current?.click()} className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50">选择录音</button>{audioFile && <button type="button" onClick={() => void handleUploadAudio()} disabled={audioUploading} className="rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">{audioUploading ? '转写中…' : '开始转写'}</button>}</div>
+                    <input ref={audioRef} type="file" accept="audio/*,.mp3,.wav,.m4a,.webm,.flac,.aac,.ogg" className="hidden" onChange={(event) => { setAudioFile(event.target.files?.[0] ?? null); setAudioText(''); event.currentTarget.value = '' }} />
+                  </div>
+                </div>
+              </section>
+              {error && <ErrorBar msg={error} />}
+            </div>
+          )}
+
+          {step === 'analyzing' && (
+            <div className="mx-auto flex max-w-[1180px] flex-col items-center py-28 text-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-sky-100 text-2xl text-sky-600 animate-pulse">✦</div>
+              <h2 className="mt-5 text-lg font-semibold text-slate-800">{statusMsg}</h2>
+              <p className="mt-2 text-sm text-slate-400">已汇总 {sourceCount} 份材料，请稍候。</p>
+            </div>
+          )}
+
+          {step === 'clarifying' && skillRun && (
+            <div className="mx-auto max-w-[920px] space-y-5 px-8 py-10 pb-32">
+              <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
+                <p className="text-sm font-semibold text-amber-900">生成已暂停，需先完成以下核对</p>
+                <p className="mt-2 text-sm leading-6 text-amber-800">这些问题来自当前材料快照。完成后系统会以新的答案版本或材料快照继续运行，不会在预检阶段生成纪要草稿。</p>
+              </section>
+              {skillRun.questions.filter((item) => !item.resolved_at).map((question) => (
+                <section key={question.id} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-base font-semibold text-slate-900">{question.question}</h2>
+                      <p className="mt-1 text-xs text-slate-500">{question.blocking ? '阻断项：明确处置后才能开始生成' : '非阻断项'}</p>
+                    </div>
+                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">{question.question_kind}</span>
+                  </div>
+                  {question.evidence.length > 0 && <div className="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600">{question.evidence.map((item, index) => <p key={`${item.source_id}-${index}`}>{item.locator}{item.quote ? `：${item.quote}` : ''}</p>)}</div>}
+                  {question.action === 'material_upload' ? (
+                    <div className="mt-5 flex flex-wrap items-center gap-3"><button type="button" onClick={() => chooseMissingMaterial(question.code)} className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-medium text-sky-700 hover:bg-sky-100">补充文件</button><span className="text-xs text-slate-500">支持 Word、Excel、TXT；补充后会创建新的材料快照并重新预检。</span></div>
+                  ) : question.answer_mode === 'single_choice' && question.options.length ? (
+                    <div className="mt-5 flex flex-wrap gap-2">{question.options.map((option) => <button key={option.value} type="button" onClick={() => setClarificationValues((previous) => ({ ...previous, [question.id]: option.value }))} className={`rounded-lg border px-3 py-2 text-sm ${clarificationValues[question.id] === option.value ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}>{option.label || option.value}</button>)}</div>
+                  ) : <textarea value={clarificationValues[question.id] || ''} onChange={(event) => setClarificationValues((previous) => ({ ...previous, [question.id]: event.target.value }))} placeholder="填写确认后的事实" className="mt-5 min-h-28 w-full resize-y rounded-lg border border-slate-200 p-3 text-sm leading-6 outline-none focus:border-sky-400" />}
+                </section>
+              ))}
+              {error && <ErrorBar msg={error} />}
+            </div>
+          )}
+
+          {step === 'review' && (
+            <div className="mx-auto max-w-[1180px] px-8 py-8 pb-32">
+              <div className="space-y-6">
+                {form.source_mode === 'standard_minutes' && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">已按标准会议纪要读取：原文中的议程、决议、本周待办和上周追踪将直接保留，不经过 AI 改写。</div>}
+                <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <SectionTitle>确认会议信息</SectionTitle>
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <Field label="会议主题" value={form.title} onChange={(value) => setField('title', value)} />
+                    <Field label="会议日期" value={form.meeting_date} onChange={(value) => setField('meeting_date', value)} />
+                    <Field label="会议地点" value={form.location} onChange={(value) => setField('location', value)} />
+                    <Field label="主持人" value={form.host} onChange={(value) => setField('host', value)} />
+                    <Field label="参会人员" value={form.participants} onChange={(value) => setField('participants', value)} />
+                    <Field label="整理人" value={form.organizer} onChange={(value) => setField('organizer', value)} />
+                    <Field label="抄送" value={form.copied_to} onChange={(value) => setField('copied_to', value)} />
+                  </div>
+                </section>
+                <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><SectionTitle>会议小结与决议</SectionTitle><textarea className="mt-3 min-h-28 w-full resize-y rounded-lg border border-slate-200 p-3 text-sm leading-7 text-slate-700 outline-none focus:border-sky-400" value={form.summary} onChange={(event) => setField('summary', event.target.value)} /></section>
+                {form.source_mode === 'standard_minutes' ? <StandardMinutesReview form={form} /> : <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><ReportsSection reportsJson={form.reports_json} /><div className="space-y-5"><JsonListSection label="会议议程" value={form.agenda_items_json} onChange={(value) => setField('agenda_items_json', value)} dotColor="#0EA5E9" /><JsonListSection label="已确认事项" value={form.confirmed_items_json} onChange={(value) => setField('confirmed_items_json', value)} dotColor="#10B981" /><JsonListSection label="待决策事项" value={form.decision_items_json} onChange={(value) => setField('decision_items_json', value)} dotColor="#F59E0B" /><JsonListSection label="本周待办" value={form.task_list_json} onChange={(value) => setField('task_list_json', value)} dotColor="#0EA5E9" /><JsonListSection label="上周待办追踪" value={form.prior_action_items_json} onChange={(value) => setField('prior_action_items_json', value)} dotColor="#8B5CF6" /></div></section>}
+                {error && <ErrorBar msg={error} />}
+              </div>
+            </div>
+          )}
+        </main>
+
+        {step === 'clarifying' && (
+          <footer className="flex shrink-0 items-center justify-between border-t border-slate-200 bg-white px-8 py-4 shadow-[0_-6px_18px_rgba(15,23,42,0.04)]">
+            <button onClick={() => setStep('input')} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">返回修改材料</button>
+            <button onClick={() => void handleClarificationContinue()} disabled={documentUploading || audioUploading} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40">确认并继续</button>
+          </footer>
+        )}
+
+        {step !== 'analyzing' && step !== 'clarifying' && (
+          <footer className="flex shrink-0 items-center justify-between border-t border-slate-200 bg-white px-8 py-4 shadow-[0_-6px_18px_rgba(15,23,42,0.04)]">
+            {step === 'review' ? <button onClick={() => (isEdit ? onClose() : setStep('input'))} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">{isEdit ? '取消' : '返回修改'}</button> : <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">取消</button>}
+            {step === 'input' ? <button onClick={() => void handleAnalyze()} disabled={!analysisText.trim() || documentUploading || audioUploading} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40">AI 生成草稿</button> : <button onClick={() => void handleSave()} disabled={saving} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">{saving ? '保存中…' : isEdit ? '保存修改' : '保存草稿'}</button>}
+          </footer>
+        )}
       </div>
 
     </>

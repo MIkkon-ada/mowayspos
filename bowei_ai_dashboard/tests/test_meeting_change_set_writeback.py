@@ -210,11 +210,9 @@ from fastapi.testclient import TestClient
 active_user = {"name": "owner"}
 main.get_session_user = lambda _session_id: active_user["name"]
 app.dependency_overrides[meetings.get_current_user_name] = lambda: active_user["name"]
-meetings._pick_provider = lambda: "test"
-
 transcript = "Owner agreed to update the task notes."
 captured_prompts = []
-def _valid_analysis(_text, prompt, _provider):
+def _valid_analysis(_db, _text, prompt, **_kwargs):
     captured_prompts.append(prompt)
     return {
         "title": "Weekly review",

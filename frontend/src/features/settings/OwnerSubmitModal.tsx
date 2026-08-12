@@ -1,8 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ownerSubmitProfile } from '../../api/projects'
+import { applyInitAnalysisRun } from '../../api/projectInitAi'
+import { fetchPeople } from '../../api/people'
 import type { ProjectProfilePayload, ProjectWorkProgressTaskDraft } from '../../api/projects'
 import { toast } from '../../utils/toast'
-import type { Project } from '../../types'
+import type { Person, Project } from '../../types'
+import { OwnerSubmitAiPanel, type ProjectInitAiDecision } from './OwnerSubmitAiPanel'
+import type { ProjectInitAiDraft, ProjectInitCurrentDraft } from '../../api/projectInitAi'
+import { buildAiMergePreview, toCurrentDraft, toSubmitDraft, type OwnerSubmitAiDecision as DraftDecision, type OwnerSubmitMergePreview } from './ownerSubmitDraft'
 
 type Props = {
   project: Project
@@ -11,15 +17,22 @@ type Props = {
 }
 
 type LocalSubTaskDraft = {
+  id?: number
+  subtask_id?: number
   title: string
   evaluation_standard: string
   assignee: string
+  assigneeId: number | ''
   helper: string
+  helperIds: number[]
   plan_start: string
   plan_end: string
+  evidence?: Array<{ attachment_id: number | null; file_name: string; location: string; excerpt: string; source_label?: string }>
 }
 
 type LocalTaskDraft = {
+  id?: number
+  task_id?: number
   title: string
   description: string
   owner: string
@@ -27,6 +40,7 @@ type LocalTaskDraft = {
   plan_start: string
   plan_end: string
   subtasks: LocalSubTaskDraft[]
+  evidence?: Array<{ attachment_id: number | null; file_name: string; location: string; excerpt: string; source_label?: string }>
 }
 
 type ParsedPeriod = {
@@ -38,7 +52,9 @@ const EMPTY_SUBTASK: LocalSubTaskDraft = {
   title: '',
   evaluation_standard: '',
   assignee: '',
+  assigneeId: '',
   helper: '',
+  helperIds: [],
   plan_start: '',
   plan_end: '',
 }
@@ -102,6 +118,8 @@ function parsePeriodValue(value: string): ParsedPeriod {
 function toPayloadDraft(tasks: LocalTaskDraft[]): ProjectWorkProgressTaskDraft[] {
   return tasks
     .map((task) => ({
+      ...(task.id !== undefined ? { id: task.id } : {}),
+      ...(task.task_id !== undefined ? { task_id: task.task_id } : {}),
       title: task.title.trim(),
       description: task.description.trim(),
       owner: task.owner.trim(),
@@ -110,10 +128,14 @@ function toPayloadDraft(tasks: LocalTaskDraft[]): ProjectWorkProgressTaskDraft[]
       plan_end: task.plan_end,
       subtasks: task.subtasks
         .map((subtask) => ({
+          ...(subtask.id !== undefined ? { id: subtask.id } : {}),
+          ...(subtask.subtask_id !== undefined ? { subtask_id: subtask.subtask_id } : {}),
           title: subtask.title.trim(),
           evaluation_standard: subtask.evaluation_standard.trim(),
           assignee: subtask.assignee.trim(),
+          assignee_id: subtask.assigneeId || undefined,
           helper: subtask.helper.trim(),
+          helper_ids: subtask.helperIds,
           plan_start: subtask.plan_start,
           plan_end: subtask.plan_end,
         }))
@@ -122,7 +144,233 @@ function toPayloadDraft(tasks: LocalTaskDraft[]): ProjectWorkProgressTaskDraft[]
     .filter((task) => task.title)
 }
 
+function AssigneePicker({
+  people,
+  value,
+  disabled,
+  onChange,
+}: {
+  people: Person[]
+  value: number | ''
+  disabled?: boolean
+  onChange: (value: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null)
+  const anchorRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const selected = people.find((person) => person.id === value)
+  const filtered = people.filter((person) => {
+    const haystack = `${person.name} ${person.department ?? ''}`.toLowerCase()
+    return haystack.includes(query.trim().toLowerCase())
+  })
+
+  useEffect(() => {
+    if (!open) return undefined
+    const closeMenu = (event: Event) => {
+      if (menuRef.current?.contains(event.target as Node)) return
+      setOpen(false)
+    }
+    window.addEventListener('scroll', closeMenu, true)
+    window.addEventListener('resize', closeMenu)
+    return () => {
+      window.removeEventListener('scroll', closeMenu, true)
+      window.removeEventListener('resize', closeMenu)
+    }
+  }, [open])
+
+  function toggleOpen() {
+    if (open) {
+      setOpen(false)
+      return
+    }
+    const rect = anchorRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setMenuPosition({ top: rect.bottom + 6, left: rect.left, width: Math.max(rect.width, 240) })
+    setOpen(true)
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        ref={anchorRef}
+        disabled={disabled}
+        onClick={toggleOpen}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-left text-xs font-semibold text-slate-700 outline-none transition-colors hover:border-blue-300 hover:bg-white focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <span className="truncate">{selected?.name ?? '请选择负责人'}</span>
+        <span className={`text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}>⌄</span>
+      </button>
+      {open && menuPosition && createPortal(
+        <div
+          ref={menuRef}
+          className="fixed z-[100] overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]"
+          style={{ top: menuPosition.top, left: menuPosition.left, width: menuPosition.width }}
+          role="listbox"
+        >
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索姓名或部门"
+            className="mb-2 h-8 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs text-slate-700 outline-none focus:border-blue-400 focus:bg-white"
+          />
+          <div className="max-h-52 space-y-0.5 overflow-y-auto">
+            <button
+              type="button"
+              onClick={() => { onChange(''); setOpen(false); setQuery('') }}
+              className="w-full rounded-lg px-2.5 py-2 text-left text-xs text-slate-400 hover:bg-slate-50"
+            >
+              请选择负责人
+            </button>
+            {filtered.map((person) => (
+              <button
+                key={person.id}
+                type="button"
+                onClick={() => { onChange(String(person.id)); setOpen(false); setQuery('') }}
+                className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs transition-colors hover:bg-blue-50 ${person.id === value ? 'bg-blue-50 text-blue-700' : 'text-slate-700'}`}
+              >
+                <span className="min-w-0 truncate font-semibold">{person.name}</span>
+                <span className="ml-2 shrink-0 text-[10px] text-slate-400">{person.department || '未填写部门'}</span>
+              </button>
+            ))}
+            {filtered.length === 0 && <p className="px-2.5 py-3 text-xs text-slate-400">未找到匹配人员</p>}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  )
+}
+
+function HelperPicker({
+  people,
+  value,
+  excludedId,
+  disabled,
+  onChange,
+}: {
+  people: Person[]
+  value: number[]
+  excludedId: number | ''
+  disabled?: boolean
+  onChange: (personId: number) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null)
+  const anchorRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const selectedPeople = people.filter((person) => value.includes(person.id))
+  const filtered = people.filter((person) => {
+    if (person.id === excludedId) return false
+    const haystack = `${person.name} ${person.department ?? ''}`.toLowerCase()
+    return haystack.includes(query.trim().toLowerCase())
+  })
+
+  useEffect(() => {
+    if (!open) return undefined
+    const closeMenu = (event: Event) => {
+      if (menuRef.current?.contains(event.target as Node)) return
+      setOpen(false)
+    }
+    window.addEventListener('scroll', closeMenu, true)
+    window.addEventListener('resize', closeMenu)
+    return () => {
+      window.removeEventListener('scroll', closeMenu, true)
+      window.removeEventListener('resize', closeMenu)
+    }
+  }, [open])
+
+  function toggleOpen() {
+    if (open) {
+      setOpen(false)
+      return
+    }
+    const rect = anchorRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setMenuPosition({ top: rect.bottom + 6, left: rect.left, width: Math.max(rect.width, 260) })
+    setOpen(true)
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        ref={anchorRef}
+        disabled={disabled}
+        onClick={toggleOpen}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        className="flex min-h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 outline-none transition-colors hover:border-blue-300 hover:bg-white focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <span className="min-w-0 truncate">
+          {selectedPeople.length > 0 ? selectedPeople.map((person) => person.name).join('、') : '请选择协助人'}
+        </span>
+        <span className={`shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}>⌄</span>
+      </button>
+      {open && menuPosition && createPortal(
+        <div
+          ref={menuRef}
+          className="fixed z-[100] overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]"
+          style={{ top: menuPosition.top, left: menuPosition.left, width: menuPosition.width }}
+          role="listbox"
+          aria-multiselectable="true"
+        >
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索姓名或部门"
+            className="mb-2 h-8 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs text-slate-700 outline-none focus:border-blue-400 focus:bg-white"
+          />
+          <div className="mb-1 flex items-center justify-between px-2.5 text-[11px] text-slate-400">
+            <span>{value.length > 0 ? `已选 ${value.length} 人` : '可多选协助人'}</span>
+            {value.length > 0 && (
+              <button
+                type="button"
+                onClick={() => value.forEach((personId) => onChange(personId))}
+                className="font-semibold text-blue-600 hover:text-blue-700"
+              >
+                清空
+              </button>
+            )}
+          </div>
+          <div className="max-h-52 space-y-0.5 overflow-y-auto">
+            {filtered.map((person) => {
+              const checked = value.includes(person.id)
+              return (
+                <button
+                  key={person.id}
+                  type="button"
+                  role="option"
+                  aria-selected={checked}
+                  onClick={() => onChange(person.id)}
+                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors hover:bg-blue-50 ${checked ? 'bg-blue-50 text-blue-700' : 'text-slate-700'}`}
+                >
+                  <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] ${checked ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-transparent'}`}>✓</span>
+                  <span className="min-w-0 truncate font-semibold">{person.name}</span>
+                  <span className="ml-auto shrink-0 text-[10px] text-slate-400">{person.department || '未填写部门'}</span>
+                </button>
+              )
+            })}
+            {filtered.length === 0 && <p className="px-2.5 py-3 text-xs text-slate-400">未找到匹配人员</p>}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  )
+}
+
 export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
+  const [people, setPeople] = useState<Person[]>([])
+  const [peopleLoading, setPeopleLoading] = useState(true)
+  const [peopleError, setPeopleError] = useState('')
   const [fillForm, setFillForm] = useState<ProjectProfilePayload>(() => ({
     project_type: project.project_type ?? '',
     client_name: project.client_name ?? '',
@@ -135,6 +383,42 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
   const [projectPeriod, setProjectPeriod] = useState(() => composeProjectPeriod(project.start_date, project.end_date))
   const [draftTasks, setDraftTasks] = useState<LocalTaskDraft[]>([cloneEmptyTask()])
   const [fillLoading, setFillLoading] = useState(false)
+  const [showAiPanel, setShowAiPanel] = useState(false)
+  const [aiPreview, setAiPreview] = useState<OwnerSubmitMergePreview | null>(null)
+  const [aiError, setAiError] = useState('')
+  const [aiAuditPendingRunId, setAiAuditPendingRunId] = useState<number | null>(null)
+  const [aiAuditRetrying, setAiAuditRetrying] = useState(false)
+  const draftTasksRef = useRef<LocalTaskDraft[]>(draftTasks)
+  const savedAiDraftRef = useRef<ProjectInitAiDraft | null>(null)
+  const savedAiDecisionsRef = useRef<DraftDecision[]>([])
+  const pendingAiRunIdRef = useRef<number | null>(null)
+  const savedAiRunIdRef = useRef<number | null>(null)
+  const submittedResultRef = useRef<(Project & { submitted_for_review: boolean }) | null>(null)
+
+  useEffect(() => {
+    draftTasksRef.current = draftTasks
+  }, [draftTasks])
+
+  useEffect(() => {
+    let cancelled = false
+    setPeopleLoading(true)
+    fetchPeople()
+      .then((rows) => {
+        if (cancelled) return
+        setPeople(rows.filter((person) => person.is_active !== false))
+        setPeopleError('')
+      })
+      .catch((error: any) => {
+        if (cancelled) return
+        setPeopleError(error?.message || '人员列表加载失败')
+      })
+      .finally(() => {
+        if (!cancelled) setPeopleLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   function addTaskDraft() {
     setDraftTasks((prev) => [...prev, cloneEmptyTask()])
@@ -181,6 +465,61 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
     )
   }
 
+  function updateSubTaskAssignee(taskIndex: number, subIndex: number, value: string) {
+    const assigneeId = value ? Number(value) : ''
+    const person = people.find((item) => item.id === assigneeId)
+    setDraftTasks((prev) =>
+      prev.map((task, idx) =>
+        idx === taskIndex
+          ? {
+              ...task,
+              subtasks: task.subtasks.map((subtask, sidx) =>
+                sidx === subIndex
+                  ? {
+                      ...subtask,
+                      assigneeId,
+                      assignee: person?.name ?? '',
+                      helperIds: subtask.helperIds.filter((id) => id !== assigneeId),
+                      helper: subtask.helperIds
+                        .filter((id) => id !== assigneeId)
+                        .map((id) => people.find((item) => item.id === id)?.name)
+                        .filter(Boolean)
+                        .join('、'),
+                    }
+                  : subtask,
+              ),
+            }
+          : task,
+      ),
+    )
+  }
+
+  function toggleSubTaskHelper(taskIndex: number, subIndex: number, personId: number) {
+    setDraftTasks((prev) =>
+      prev.map((task, idx) =>
+        idx === taskIndex
+          ? {
+              ...task,
+              subtasks: task.subtasks.map((subtask, sidx) => {
+                if (sidx !== subIndex) return subtask
+                const helperIds = subtask.helperIds.includes(personId)
+                  ? subtask.helperIds.filter((id) => id !== personId)
+                  : [...subtask.helperIds, personId]
+                return {
+                  ...subtask,
+                  helperIds,
+                  helper: helperIds
+                    .map((id) => people.find((item) => item.id === id)?.name)
+                    .filter(Boolean)
+                    .join('、'),
+                }
+              }),
+            }
+          : task,
+      ),
+    )
+  }
+
   function updateSubTaskPeriod(taskIndex: number, subIndex: number, value: string) {
     const parsed = parseTaskPeriod(value)
     setDraftTasks((prev) =>
@@ -197,9 +536,135 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
     )
   }
 
+  function currentAiDraft(tasks: LocalTaskDraft[] = draftTasks): ProjectInitCurrentDraft {
+    return toCurrentDraft(toPayloadDraft(tasks))
+  }
+
+  function mergeContextFor(draft: ProjectInitCurrentDraft) {
+    const taskIds = new Set<number>()
+    const subtaskIds = new Set<number>()
+    draft.forEach((task) => {
+      const taskRecord = task as typeof task & { id?: number; task_id?: number }
+      for (const id of [taskRecord.id, taskRecord.task_id]) if (typeof id === 'number' && Number.isInteger(id) && id > 0) taskIds.add(id)
+      for (const subtask of task.subtasks ?? []) {
+        const subtaskRecord = subtask as typeof subtask & { id?: number; subtask_id?: number }
+        for (const id of [subtaskRecord.id, subtaskRecord.subtask_id]) if (typeof id === 'number' && Number.isInteger(id) && id > 0) subtaskIds.add(id)
+      }
+    })
+    return {
+      knownMemberIds: people.map((person) => person.id),
+      knownTaskIds: [...taskIds],
+      knownSubtaskIds: [...subtaskIds],
+    }
+  }
+
+  function applyMergedDraftToForm(nextDraft: ProjectInitCurrentDraft) {
+    const nextTasks = nextDraft.map((task) => {
+      const taskRecord = task as ProjectWorkProgressTaskDraft & { id?: number; task_id?: number; evidence?: unknown[] }
+      return {
+        ...(taskRecord.id !== undefined ? { id: taskRecord.id } : {}),
+        ...(taskRecord.task_id !== undefined ? { task_id: taskRecord.task_id } : {}),
+        title: taskRecord.title ?? '',
+        description: taskRecord.description ?? '',
+        owner: taskRecord.owner ?? '',
+        helper: taskRecord.helper ?? '',
+        plan_start: taskRecord.plan_start ?? '',
+        plan_end: taskRecord.plan_end ?? '',
+        evidence: Array.isArray(taskRecord.evidence) ? taskRecord.evidence as LocalTaskDraft['evidence'] : [],
+        subtasks: (taskRecord.subtasks ?? []).map((subtask) => ({
+          ...((subtask as typeof subtask & { id?: number }).id !== undefined ? { id: (subtask as typeof subtask & { id?: number }).id } : {}),
+          ...((subtask as typeof subtask & { subtask_id?: number }).subtask_id !== undefined ? { subtask_id: (subtask as typeof subtask & { subtask_id?: number }).subtask_id } : {}),
+          title: subtask.title ?? '',
+          evaluation_standard: subtask.evaluation_standard ?? '',
+          assignee: subtask.assignee ?? '',
+          assigneeId: typeof subtask.assignee_id === 'number' ? subtask.assignee_id : '',
+          helper: subtask.helper ?? '',
+          helperIds: Array.isArray(subtask.helper_ids) ? [...subtask.helper_ids] : [],
+          plan_start: subtask.plan_start ?? '',
+          plan_end: subtask.plan_end ?? '',
+          evidence: Array.isArray((subtask as typeof subtask & { evidence?: unknown[] }).evidence)
+            ? (subtask as typeof subtask & { evidence?: LocalSubTaskDraft['evidence'] }).evidence
+            : [],
+        })),
+      }
+    }).filter((task) => task.title.trim()) as LocalTaskDraft[]
+    setDraftTasks(nextTasks.length > 0 ? nextTasks : [cloneEmptyTask()])
+  }
+
+  function handleAiDraft(draft: ProjectInitAiDraft, decisions: ProjectInitAiDecision[], runId: number) {
+    try {
+      const selectedDecisions = decisions as DraftDecision[]
+      const current = currentAiDraft(draftTasksRef.current)
+      const preview = buildAiMergePreview(current, draft, selectedDecisions, mergeContextFor(current))
+      savedAiDraftRef.current = draft
+      savedAiDecisionsRef.current = selectedDecisions
+      pendingAiRunIdRef.current = runId
+      setAiPreview(preview)
+      setAiError('')
+    } catch (error: any) {
+      const message = error?.message || 'AI 草稿无法安全合并，请检查人员和任务 ID'
+      setAiError(message)
+      throw error
+    }
+  }
+
+  function confirmAiPreview() {
+    if (!aiPreview || !savedAiDraftRef.current) return
+    try {
+      const current = currentAiDraft(draftTasksRef.current)
+      const latestPreview = buildAiMergePreview(current, savedAiDraftRef.current, savedAiDecisionsRef.current, mergeContextFor(current))
+      applyMergedDraftToForm(latestPreview.draft)
+      savedAiRunIdRef.current = pendingAiRunIdRef.current
+      pendingAiRunIdRef.current = null
+      setAiPreview(null)
+      savedAiDraftRef.current = null
+      savedAiDecisionsRef.current = []
+      setShowAiPanel(false)
+      setAiError('')
+      toast.success('AI 草稿已合并到当前表单，请继续检查后提交')
+    } catch (error: any) {
+      setAiError(error?.message || 'AI 草稿无法安全合并，请检查人员和任务 ID')
+    }
+  }
+
+  function cancelAiPreview() {
+    setAiPreview(null)
+    savedAiDraftRef.current = null
+    savedAiDecisionsRef.current = []
+    pendingAiRunIdRef.current = null
+  }
+
+  async function retryAiApplyAudit() {
+    const runId = aiAuditPendingRunId
+    const submittedResult = submittedResultRef.current
+    if (!runId || !submittedResult || aiAuditRetrying) return
+    setAiAuditRetrying(true)
+    try {
+      await applyInitAnalysisRun(project.id, runId)
+      savedAiRunIdRef.current = null
+      setAiAuditPendingRunId(null)
+      setAiError('')
+      toast.success('AI 分析审计已补记成功')
+      if (onSuccess) onSuccess(submittedResult)
+      else onClose()
+    } catch (error: any) {
+      setAiError(`工作推进表已成功提交，但 AI 审计仍未补记成功：${error?.message || '请稍后重试'}`)
+    } finally {
+      setAiAuditRetrying(false)
+    }
+  }
+
   async function handleSubmit() {
     if (!project?.id) return
-    const workProgressDraft = toPayloadDraft(draftTasks)
+    if (peopleLoading) {
+      toast.error('人员列表加载中，请稍候')
+      return
+    }
+    if (peopleError) {
+      toast.error(peopleError)
+      return
+    }
+    const workProgressDraft = toSubmitDraft(currentAiDraft())
     if (workProgressDraft.length === 0) {
       toast.error('请至少新增一条重点工作')
       return
@@ -209,7 +674,15 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
       toast.error('请至少添加一个关键任务')
       return
     }
+    if (workProgressDraft.some((task) => task.subtasks?.some((subtask) => !subtask.assignee_id))) {
+      toast.error('请选择关键任务负责人')
+      return
+    }
 
+    if (aiAuditPendingRunId) {
+      toast.error('工作推进表已经提交，请先补记 AI 审计，不要重复提交')
+      return
+    }
     const parsedProjectPeriod = parseProjectPeriod(projectPeriod)
     setFillLoading(true)
     try {
@@ -219,6 +692,21 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
         end_date: parsedProjectPeriod.end,
         work_progress_draft: workProgressDraft,
       })
+      submittedResultRef.current = result
+      const auditRunId = savedAiRunIdRef.current
+      if (auditRunId) {
+        try {
+          await applyInitAnalysisRun(project.id, auditRunId)
+          savedAiRunIdRef.current = null
+          setAiAuditPendingRunId(null)
+        } catch (auditError: any) {
+          setAiAuditPendingRunId(auditRunId)
+          const message = `工作推进表已成功提交，但 AI 审计未记录：${auditError?.message || '请点击重试补记'}`
+          setAiError(message)
+          toast.error(message)
+          return
+        }
+      }
       toast.success('已提交审核，等待企业教练审核通过后正式启动')
       if (onSuccess) onSuccess(result)
       else onClose()
@@ -236,18 +724,18 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
       onClick={() => !fillLoading && onClose()}
     >
       <div
-        className="owner-submit-workbench-shell flex h-[90vh] w-[96vw] max-w-[1280px] flex-col overflow-hidden rounded-xl bg-[#f6f9ff] text-slate-900 shadow-2xl"
+        className="owner-submit-workbench-shell flex h-[92vh] w-[96vw] max-w-[1560px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-[#f7f9fc] text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.24)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="owner-submit-workbench-header flex h-[72px] shrink-0 items-center justify-between border-b border-[#e0c0b1] bg-white px-6">
-          <div className="flex min-w-0 items-center gap-4">
-            <div className="h-10 w-1.5 rounded-full bg-orange-500" aria-hidden="true" />
+        <header className="owner-submit-workbench-header flex min-h-[68px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
+          <div className="flex min-w-0 items-center gap-3.5">
+            <div className="h-11 w-1.5 rounded-full bg-orange-500" aria-hidden="true" />
             <div className="min-w-0">
-              <h2 className="truncate text-lg font-semibold tracking-[-0.01em] text-slate-900">
+              <h2 className="truncate text-xl font-bold tracking-[-0.02em] text-slate-900">
                 填写立项信息 — {project.name}
               </h2>
               <div className="mt-1 flex flex-wrap items-center gap-2">
-                <span className="rounded border border-orange-200 bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-orange-800">
+                <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-[11px] font-bold text-orange-700">
                   待负责人完善
                 </span>
                 <span className="text-xs text-slate-500">补全项目资料，提交后进入企业教练审核。</span>
@@ -265,13 +753,13 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
           </button>
         </header>
 
-        <main className="owner-submit-workbench-main flex-1 overflow-y-auto bg-[#f6f9ff] pb-8">
-          <div className="owner-submit-workbench-columns mx-auto flex gap-6 items-start max-w-[1440px] px-6 py-6">
-            <aside className="owner-submit-left-pane sticky top-6 w-[400px] shrink-0 space-y-6">
-              <section className="owner-submit-core-card overflow-hidden rounded-xl border border-[#e0c0b1]/70 bg-white shadow-sm">
+        <main className="owner-submit-workbench-main min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-[#f7f9fc] pb-6">
+          <div className="owner-submit-workbench-columns mx-auto flex max-w-[1560px] flex-col items-stretch gap-6 px-6 py-6 lg:flex-row lg:items-start">
+            <aside className="owner-submit-left-pane w-full shrink-0 space-y-4 lg:sticky lg:top-6 lg:w-[280px] xl:w-[300px]">
+              <section className="owner-submit-core-card overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
                 <h3 className="sr-only">项目核心信息</h3>
-                <div className="p-6">
-                  <div className="space-y-6">
+                <div className="p-5">
+                  <div className="space-y-5">
                     <div className="space-y-2">
                       <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                         项目名称
@@ -279,7 +767,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                       <input
                         value={project.name}
                         disabled
-                        className="w-full border-none p-0 bg-transparent text-lg font-semibold text-slate-900 placeholder:text-slate-300 focus:ring-0 disabled:opacity-100"
+                        className="w-full border-none bg-transparent p-0 text-xl font-bold text-slate-900 placeholder:text-slate-300 focus:ring-0 disabled:opacity-100"
                       />
                     </div>
                     <div className="space-y-2">
@@ -290,7 +778,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                         value={projectPeriod}
                         onChange={(e) => setProjectPeriod(e.target.value)}
                         placeholder="例如：2026-07-01 至 2026-12-31"
-                        className="w-full border-none p-0 bg-transparent text-base text-slate-800 placeholder:text-slate-300 focus:ring-0"
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800 placeholder:text-slate-400 focus:border-orange-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-orange-100"
                       />
                     </div>
                     <div className="space-y-2">
@@ -302,7 +790,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                         onChange={(e) => setFillForm((prev) => ({ ...prev, objectives: e.target.value }))}
                         placeholder="描述项目完成后如何验收，例如关键结果、通过标准、交付边界等"
                         rows={3}
-                        className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                        className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-orange-100"
                       />
                     </div>
                   </div>
@@ -358,53 +846,100 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
             </aside>
 
             <section className="owner-submit-right-pane flex-1 min-w-0">
-              <div className="owner-submit-workplan-heading mb-4 flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <h3 className="text-lg font-semibold text-slate-900">工作推进方案</h3>
-                  <span className="text-sm italic text-slate-500">
-                    规划重点工作方向，并细化关键任务执行计划。重点工作用于归类工作方向；关键任务才需要明确责任人、协助人和时间段。
-                  </span>
+              <div className="owner-submit-workplan-heading mb-4 flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-3">
+                    <h3 className="shrink-0 text-xl font-semibold text-slate-900">工作推进方案</h3>
+                    <span className="mt-1 block max-w-3xl text-xs leading-5 text-slate-500">
+                      规划重点工作方向，并细化关键任务执行计划。重点工作用于归类工作方向；关键任务才需要明确责任人、协助人和时间段。
+                    </span>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={addTaskDraft}
-                  className="flex shrink-0 items-center gap-1.5 rounded-lg border border-orange-500 bg-white px-4 py-2 text-xs font-semibold text-orange-700 transition-colors hover:bg-orange-50"
-                >
-                  + 新增重点工作
-                </button>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setShowAiPanel((current) => !current); setAiError('') }}
+                    disabled={fillLoading}
+                    className="flex items-center gap-1.5 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-xs font-bold text-violet-700 shadow-sm transition-colors hover:border-violet-300 hover:bg-violet-100 disabled:opacity-50"
+                  >
+                    {showAiPanel ? '收起 AI 草稿' : 'AI 分析文件 / AI 草稿'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={addTaskDraft}
+                    className="flex items-center gap-1.5 rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-xs font-bold text-blue-700 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
+                  >
+                    + 新增重点工作
+                  </button>
+                </div>
               </div>
+
+              {showAiPanel && (
+                <div className="mb-4" data-testid="owner-submit-ai-panel">
+                  <OwnerSubmitAiPanel
+                    projectId={project.id}
+                    currentDraft={currentAiDraft()}
+                    onApplyDraft={handleAiDraft}
+                    onClose={() => setShowAiPanel(false)}
+                    disabled={fillLoading}
+                  />
+                </div>
+              )}
+
+              {aiError && <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+                <p>{aiError}</p>
+                {aiAuditPendingRunId && <button type="button" onClick={() => void retryAiApplyAudit()} disabled={aiAuditRetrying} className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50">
+                  {aiAuditRetrying ? '正在补记审计…' : '重试补记 AI 审计'}
+                </button>}
+              </div>}
+
+              {aiPreview && (
+                <section className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4" aria-label="AI 草稿合并预览" data-testid="owner-submit-ai-preview">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h4 className="text-sm font-bold text-emerald-900">请确认 AI 草稿合并</h4>
+                      <p className="mt-1 text-xs text-emerald-800">将新增 {aiPreview.addedTaskCount} 项重点工作，检测到 {aiPreview.changeCount} 项字段或结构变化；现有非空内容不会被覆盖。</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={cancelAiPreview} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100">取消</button>
+                      <button type="button" onClick={confirmAiPreview} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700">确认合并到表单</button>
+                    </div>
+                  </div>
+                  {aiPreview.warnings.length > 0 && <div role="alert" className="mt-3 space-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><p className="font-semibold">仍有 {aiPreview.warningCount} 条待确认提示：</p>{aiPreview.warnings.slice(0, 8).map((warning) => <p key={warning}>{warning}</p>)}</div>}
+                </section>
+              )}
 
               <div>
                 {draftTasks.map((task, taskIndex) => (
                   <div
                     key={taskIndex}
-                    className="owner-submit-task-group mb-6 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm"
+                    className="owner-submit-task-group mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.05)]"
                   >
-                    <div className="owner-submit-task-group-header flex items-start gap-4 border-b border-slate-200 bg-slate-100/70 px-6 py-4">
-                      <div className="flex w-8 h-8 shrink-0 items-center justify-center rounded bg-orange-50 text-lg font-semibold text-orange-700">
+                    <div className="owner-submit-task-group-header flex items-start gap-4 border-b border-slate-200 bg-slate-50 px-6 py-5">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-base font-bold text-white shadow-sm">
                         {taskIndex + 1}
                       </div>
-                      <div className="grid flex-1 grid-cols-1 gap-4 md:grid-cols-2">
+                      <div className="grid min-w-0 flex-1 grid-cols-1 gap-5 md:grid-cols-2">
                         <div>
-                          <label className="block text-[10px] font-semibold uppercase text-slate-500/80">
+                          <label className="mb-1 block text-xs font-semibold tracking-wide text-slate-500">
                             重点工作名称
                           </label>
                           <input
                             value={task.title}
                             onChange={(e) => updateTaskDraft(taskIndex, 'title', e.target.value)}
                             placeholder="请输入重点工作"
-                            className="w-full border-none p-0 bg-transparent text-lg font-semibold text-slate-900 placeholder:text-slate-300 focus:ring-0"
+                            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xl font-bold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-4 focus:ring-blue-100"
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] font-semibold uppercase text-slate-500/80">
+                          <label className="mb-1 block text-xs font-semibold tracking-wide text-slate-500">
                             目标成果 / 验收标准
                           </label>
                           <input
                             value={task.description}
                             onChange={(e) => updateTaskDraft(taskIndex, 'description', e.target.value)}
                             placeholder="请输入完成准则"
-                            className="w-full border-none p-0 bg-transparent text-sm text-slate-600 placeholder:text-slate-300 focus:ring-0"
+                            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-base font-medium text-slate-700 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-4 focus:ring-blue-100"
                           />
                         </div>
                       </div>
@@ -412,50 +947,51 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                         type="button"
                         onClick={() => removeTaskDraft(taskIndex)}
                         disabled={draftTasks.length <= 1}
-                        className="rounded p-1 text-xs text-slate-400 transition-colors hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-30"
+                        className="rounded-lg px-2 py-1 text-xs font-semibold text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-30"
                         aria-label={`删除重点工作 ${taskIndex + 1}`}
                       >
                         删除
                       </button>
                     </div>
 
-                    <div className="overflow-x-auto">
-                      <table className="owner-submit-subtask-table w-full border-collapse text-left text-sm">
+                    <div className="overflow-x-auto px-3 pb-1">
+                          <table className="owner-submit-subtask-table table-fixed min-w-[860px] w-full border-separate border-spacing-0 text-left text-sm">
                         <thead>
-                          <tr className="border-b border-slate-200/80 bg-slate-50/80 text-[11px] font-semibold text-slate-500">
-                            <th className="w-[250px] py-2 pl-6 pr-3">关键任务</th>
-                            <th className="w-[100px] px-3 py-2">责任人</th>
-                            <th className="w-[100px] px-3 py-2">协助人</th>
-                            <th className="w-[160px] px-3 py-2">时间段</th>
-                            <th className="px-3 py-2">备注 / 标准</th>
+                            <tr className="border-b border-slate-200 bg-white text-xs font-bold tracking-wide text-slate-500">
+                            <th className="w-[220px] py-2 pl-6 pr-3">关键任务</th>
+                            <th className="w-[120px] px-3 py-2">责任人</th>
+                            <th className="w-[120px] px-3 py-2">协助人</th>
+                            <th className="w-[140px] px-3 py-2">时间段</th>
+                            <th className="w-[180px] px-3 py-2">备注 / 标准</th>
                             <th className="w-[60px] px-3 py-2">操作</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {task.subtasks.map((subtask, subIndex) => (
-                            <tr key={subIndex} className="group transition-colors hover:bg-slate-50">
+                            <tr key={subIndex} className="group transition-colors hover:bg-blue-50/40">
                               <td className="py-3 pl-6 pr-3">
                                 <input
                                   value={subtask.title}
                                   onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'title', e.target.value)}
                                   placeholder="例如：任务名称"
-                                  className="w-full border-none p-0 bg-transparent text-sm text-slate-800 placeholder:text-slate-300 focus:ring-0"
+                                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
                                 />
                               </td>
-                              <td className="px-3 py-3">
-                                <input
-                                  value={subtask.assignee}
-                                  onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'assignee', e.target.value)}
-                                  placeholder="责任人"
-                                  className="w-full border-none p-0 bg-transparent text-sm text-slate-800 placeholder:text-slate-300 focus:ring-0"
+                              <td className="px-3 py-2.5 align-top">
+                                <AssigneePicker
+                                  people={people}
+                                  value={subtask.assigneeId}
+                                  disabled={peopleLoading || Boolean(peopleError)}
+                                  onChange={(value) => updateSubTaskAssignee(taskIndex, subIndex, value)}
                                 />
                               </td>
-                              <td className="px-3 py-3">
-                                <input
-                                  value={subtask.helper}
-                                  onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'helper', e.target.value)}
-                                  placeholder="协助人"
-                                  className="w-full border-none p-0 bg-transparent text-sm text-slate-600 placeholder:text-slate-300 focus:ring-0"
+                              <td className="px-3 py-2.5 align-top">
+                                <HelperPicker
+                                  people={people}
+                                  value={subtask.helperIds}
+                                  excludedId={subtask.assigneeId}
+                                  disabled={peopleLoading || Boolean(peopleError)}
+                                  onChange={(personId) => toggleSubTaskHelper(taskIndex, subIndex, personId)}
                                 />
                               </td>
                               <td className="px-3 py-3">
@@ -463,15 +999,15 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                                   value={composeTaskPeriod(subtask.plan_start, subtask.plan_end)}
                                   onChange={(e) => updateSubTaskPeriod(taskIndex, subIndex, e.target.value)}
                                   placeholder="7.1 - 7.5"
-                                  className="w-full border-none p-0 bg-transparent text-sm text-slate-600 placeholder:text-slate-300 focus:ring-0"
+                                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
                                 />
                               </td>
-                              <td className="px-3 py-3">
-                                <input
-                                  value={subtask.evaluation_standard}
-                                  onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'evaluation_standard', e.target.value)}
-                                  placeholder="补充说明，可选"
-                                  className="w-full border-none p-0 bg-transparent text-sm text-slate-600 placeholder:text-slate-300 focus:ring-0"
+                                  <td className="w-[180px] max-w-[180px] px-3 py-3">
+                                    <input
+                                      value={subtask.evaluation_standard}
+                                      onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'evaluation_standard', e.target.value)}
+                                      placeholder="补充说明，可选"
+                                      className="w-full max-w-[180px] truncate border-none bg-transparent p-0 text-sm text-slate-600 placeholder:text-slate-300 focus:ring-0"
                                 />
                               </td>
                               <td className="px-3 py-3 text-right">
@@ -494,7 +1030,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                       <button
                         type="button"
                         onClick={() => addSubTaskDraft(taskIndex)}
-                        className="text-xs font-semibold text-orange-700 transition-colors hover:underline"
+                        className="text-xs font-bold text-blue-700 transition-colors hover:text-blue-800 hover:underline"
                       >
                         + 新增关键任务
                       </button>
@@ -506,12 +1042,12 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
           </div>
         </main>
 
-        <footer className="owner-submit-workbench-footer flex h-[72px] shrink-0 items-center justify-between border-t border-[#e0c0b1] bg-white px-6 shadow-[0_-4px_12px_-2px_rgba(0,0,0,0.05)]">
+        <footer className="owner-submit-workbench-footer sticky bottom-0 z-10 flex min-h-[64px] shrink-0 items-center justify-between border-t border-slate-200 bg-white/95 px-5 py-3 shadow-[0_-8px_20px_rgba(15,23,42,0.06)] backdrop-blur lg:px-7">
           <button
             type="button"
             onClick={onClose}
             disabled={fillLoading}
-            className="h-10 rounded-lg border border-slate-300 px-6 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
+            className="h-10 rounded-xl border border-slate-200 bg-white px-5 text-sm font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"
           >
             取消
           </button>
@@ -519,7 +1055,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
             type="button"
             onClick={handleSubmit}
             disabled={fillLoading}
-            className="h-10 rounded-lg bg-orange-600 px-10 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-700 disabled:opacity-50"
+            className="h-10 rounded-xl bg-orange-600 px-8 text-sm font-bold text-white shadow-[0_6px_16px_rgba(234,88,12,0.22)] transition-colors hover:bg-orange-700 disabled:opacity-50"
           >
             {fillLoading ? '提交中…' : '提交立项审核'}
           </button>

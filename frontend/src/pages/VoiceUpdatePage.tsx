@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { apiGet } from '../api/client'
 import { getProject } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { VoiceUpdateDetailDrawer } from '../features/voice-update/VoiceUpdateDetailDrawer'
@@ -18,6 +17,7 @@ import { useVoiceRecorder } from '../features/voice-update/useVoiceRecorder'
 import { useVoiceSubmission } from '../features/voice-update/useVoiceSubmission'
 import { readVoiceDraftState, useVoiceTaskBinding } from '../features/voice-update/useVoiceTaskBinding'
 import { useVoiceUpload } from '../features/voice-update/useVoiceUpload'
+import { useVoiceDocumentUpload } from '../features/voice-update/useVoiceDocumentUpload'
 import { canExtractVoiceUpdate } from '../features/voice-update/voiceUpdateResultTypes'
 import type { VoiceReportScope } from '../features/voice-update/voiceUpdateResultTypes'
 import { formatTime } from '../features/voice-update/voiceUpdateHelpers'
@@ -43,11 +43,13 @@ export function VoiceUpdatePage() {
   const historyRequested = searchParams.get('history') === '1'
   const [mode, setMode] = useState<VoiceInputMode>(draftState.mode ?? 'text')
   const [text, setText] = useState('')
-  const [selectedProvider, setSelectedProvider] = useState('deepseek')
+  const [selectedProvider, setSelectedProvider] = useState('capability')
   const [reportScope, setReportScope] = useState<VoiceReportScope>('all')
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
   const [quickSubtaskId, setQuickSubtaskId] = useState<number | null>(null)
-  const [providers, setProviders] = useState<AvailableProvider[]>([])
+  const [providers] = useState<AvailableProvider[]>([
+    { provider: 'capability', display_name: 'AI能力策略', model: '' },
+  ])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [resolvedProjectDetail, setResolvedProjectDetail] = useState<Project | null>(null)
   const projectSelectionInitialized = useRef(false)
@@ -76,12 +78,6 @@ export function VoiceUpdatePage() {
       : selectedProjectIsActive
         ? null
         : projectInactiveMessage
-
-  useEffect(() => {
-    apiGet<AvailableProvider[]>('/api/llm-config/available')
-      .then(setProviders)
-      .catch(() => setProviders([]))
-  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -156,11 +152,20 @@ export function VoiceUpdatePage() {
   })
 
   const { uploading, uploadFileName, uploadInputRef, handleUploadFile } = useVoiceUpload({ setText, setError: setExtractionError })
+  const {
+    documentUploading,
+    documentFileName,
+    documentCharCount,
+    documentInputRef,
+    handleDocumentFile,
+    removeDocument,
+  } = useVoiceDocumentUpload({ setText, setError: setExtractionError })
   const canRecord = reportScope === 'task'
     && selectedProjectIsActive
     && selectedProjectId !== null
     && taskBinding.selectedSubtaskId !== null
     && !uploading
+    && !documentUploading
   const {
     recorderState,
     recording,
@@ -206,7 +211,7 @@ export function VoiceUpdatePage() {
     refreshHistory: historyState.refreshHistory,
   })
 
-  const controlsLocked = phase === 'extracting' || phase === 'submitting' || mediaActive || uploading
+  const controlsLocked = phase === 'extracting' || phase === 'submitting' || mediaActive || uploading || documentUploading
   const extractDisabled = !canExtractVoiceUpdate({
     scope: reportScope,
     candidateCount: taskBinding.taskOptions.length,
@@ -215,13 +220,14 @@ export function VoiceUpdatePage() {
     text,
     projectActive: reportScope === 'all' || selectedProjectIsActive,
     recording,
-    uploading,
+    uploading: uploading || documentUploading,
     phase,
   })
 
   function handleProjectChange(projectId: number | null) {
     if (controlsLocked) return
     resetExtractionState()
+    removeDocument()
     setQuickSubtaskId(null)
     setSelectedProjectId(projectId)
   }
@@ -229,6 +235,7 @@ export function VoiceUpdatePage() {
   function handleScopeChange(scope: VoiceReportScope) {
     if (controlsLocked) return
     resetExtractionState()
+    removeDocument()
     setQuickSubtaskId(null)
     setReportScope(scope)
     if (scope === 'all') setSelectedProjectId(null)
@@ -237,6 +244,7 @@ export function VoiceUpdatePage() {
   function handleTaskChange(subtaskId: number | null) {
     if (controlsLocked) return
     resetExtractionState()
+    removeDocument()
     setQuickSubtaskId(null)
     taskBinding.selectTask(subtaskId)
   }
@@ -244,6 +252,7 @@ export function VoiceUpdatePage() {
   function handleQuickTaskSelect(projectId: number, subtaskId: number) {
     if (controlsLocked) return
     resetExtractionState()
+    removeDocument()
     setQuickSubtaskId(subtaskId)
     setSelectedProjectId(projectId)
     setReportScope('task')
@@ -320,6 +329,12 @@ export function VoiceUpdatePage() {
                   uploadFileName={uploadFileName}
                   uploadInputRef={uploadInputRef}
                   onUploadFile={handleUploadFile}
+                  documentUploading={documentUploading}
+                  documentFileName={documentFileName}
+                  documentCharCount={documentCharCount}
+                  documentInputRef={documentInputRef}
+                  onDocumentFile={handleDocumentFile}
+                  onRemoveDocument={removeDocument}
                   onStartRecording={startRecording}
                   onStopRecording={stopRecording}
                   onExtract={handleExtract}
@@ -371,8 +386,8 @@ export function VoiceUpdatePage() {
               submittedAt={submittedAt}
               draftSaved={draftSaved}
               onSaveDraft={handleSaveDraft}
-              onResetExtractionState={resetExtractionState}
-              onClear={() => resetExtractionState({ clearText: true })}
+              onResetExtractionState={(options) => { resetExtractionState(options); removeDocument() }}
+              onClear={() => { resetExtractionState({ clearText: true }); removeDocument() }}
               onSubmitFinal={handleSubmitFinal}
               onViewSubmissionHistory={() => setHistoryOpen(true)}
               projectArchived={projectArchived || Boolean(selectedProject && !selectedProjectIsActive)}
@@ -405,9 +420,10 @@ export function VoiceUpdatePage() {
         onToggleTranscript={() => historyState.setShowTranscript((value) => !value)}
         currentUserName={currentUser?.name}
         onResubmitted={async (id) => { await historyState.refreshHistory(); void historyState.handleSelectUpdate(id) }}
-        onRestartFromSubmission={(detailItem) => {
-          resetExtractionState()
-          const taskReports = Array.isArray(detailItem.human_result?.task_reports)
+            onRestartFromSubmission={(detailItem) => {
+              resetExtractionState()
+              removeDocument()
+              const taskReports = Array.isArray(detailItem.human_result?.task_reports)
             ? detailItem.human_result.task_reports as Array<Record<string, unknown>>
             : []
           const evidence = taskReports.flatMap((report) =>

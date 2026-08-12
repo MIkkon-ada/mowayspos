@@ -8,6 +8,7 @@ VOICE = "voice"
 MEETING = "meeting"
 AI_EXTRACT = "ai_extract"
 IMPORT = "import"
+DOCUMENT = "document"
 UNKNOWN = "unknown"
 
 _LABELS: dict[str, str] = {
@@ -16,6 +17,7 @@ _LABELS: dict[str, str] = {
     MEETING: "会议纪要",
     AI_EXTRACT: "AI提取",
     IMPORT: "批量导入",
+    DOCUMENT: "文档解析",
     UNKNOWN: "未知来源",
 }
 
@@ -56,6 +58,10 @@ _ALIASES: dict[str, str] = {
     "excel": IMPORT,
     "import": IMPORT,
     "batch_import": IMPORT,
+    "文档解析": DOCUMENT,
+    "文档上传": DOCUMENT,
+    "document": DOCUMENT,
+    "file": DOCUMENT,
 }
 
 _ALIASES_BY_KEY: dict[str, tuple[str, ...]] = {
@@ -110,6 +116,13 @@ _ALIASES_BY_KEY: dict[str, tuple[str, ...]] = {
         "import",
         "batch_import",
     ),
+    DOCUMENT: (
+        DOCUMENT,
+        "文档解析",
+        "文档上传",
+        "document",
+        "file",
+    ),
     UNKNOWN: (UNKNOWN, "unknown", "未知", "无", "none"),
 }
 
@@ -139,6 +152,10 @@ def is_ai_extract(value: str | None) -> bool:
 
 def is_import(value: str | None) -> bool:
     return normalize(value) == IMPORT
+
+
+def is_document(value: str | None) -> bool:
+    return normalize(value) == DOCUMENT
 
 
 def label(value: str | None) -> str:

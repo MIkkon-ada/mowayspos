@@ -115,7 +115,9 @@ export type ProjectWorkProgressSubTaskDraft = {
   title: string
   evaluation_standard?: string
   assignee?: string
+  assignee_id?: number
   helper?: string
+  helper_ids?: number[]
   plan_start?: string
   plan_end?: string
 }

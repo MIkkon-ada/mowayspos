@@ -86,7 +86,7 @@ jobs:
             exit 1
           fi
 
-          for container in mowayspos-postgres mowayspos-backend mowayspos-frontend; do
+          for container in mowayspos-backend-permissions-init mowayspos-postgres mowayspos-backend mowayspos-frontend; do
             if docker ps -a --format '{{.Names}}' | grep -Fxq "$container"; then
               echo "Unexpected pre-existing container: $container" >&2
               exit 1
@@ -102,6 +102,8 @@ jobs:
           mkdir -p \
             "$MOWAYS_DATA_ROOT/postgres" \
             "$MOWAYS_DATA_ROOT/env" \
+            "$MOWAYS_DATA_ROOT/achievement-attachments" \
+            "$MOWAYS_DATA_ROOT/project-init-attachments" \
             "$MOWAYS_DATA_ROOT/uploads" \
             "$MOWAYS_DATA_ROOT/backups" \
             "$MOWAYS_DATA_ROOT/logs"
@@ -464,6 +466,33 @@ jobs:
 
           "${dc[@]}" up -d backend
           wait_for_health mowayspos-backend
+
+          test "$(docker inspect --format '{{.State.ExitCode}}' mowayspos-backend-permissions-init)" = "0"
+          config_owner=$(stat -c '%u:%g' "$MOWAYS_DATA_ROOT/env/llm_configs.json")
+          attachments_owner=$(stat -c '%u:%g' "$MOWAYS_DATA_ROOT/achievement-attachments")
+          project_init_attachments_owner=$(stat -c '%u:%g' "$MOWAYS_DATA_ROOT/project-init-attachments")
+          test "$config_owner" = "10001:10001"
+          test "$attachments_owner" = "10001:10001"
+          test "$project_init_attachments_owner" = "10001:10001"
+          test "$(stat -c '%a' "$MOWAYS_DATA_ROOT/env/llm_configs.json")" = "600"
+          test "$(stat -c '%a' "$MOWAYS_DATA_ROOT/achievement-attachments")" = "700"
+          test "$(stat -c '%a' "$MOWAYS_DATA_ROOT/project-init-attachments")" = "700"
+
+          "${dc[@]}" exec -T backend python - <<'PY'
+          import os
+          from pathlib import Path
+
+          assert os.getuid() == 10001
+          assert os.getgid() == 10001
+          Path("/app/llm_configs.json").open("a").close()
+          probe = Path("/app/data/achievement-attachments/.permission-probe")
+          probe.write_text("ok", encoding="utf-8")
+          probe.unlink()
+          probe = Path("/app/data/project-init-attachments/.permission-probe")
+          probe.write_text("ok", encoding="utf-8")
+          probe.unlink()
+          PY
+
           "${dc[@]}" up -d frontend
           wait_for_health mowayspos-frontend
 
@@ -512,7 +541,7 @@ jobs:
           set -euo pipefail
           dc=(docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$MOWAYS_ENV_FILE" -f docker-compose.prod.yml)
 
-          cat > "$MOWAYS_DATA_ROOT/env/llm_configs.json" <<'JSON'
+          "${dc[@]}" exec -T backend sh -c 'cat > /app/llm_configs.json' <<'JSON'
           {
             "deepseek": {
               "enabled": true,
@@ -521,9 +550,8 @@ jobs:
             }
           }
           JSON
-          chmod 600 "$MOWAYS_DATA_ROOT/env/llm_configs.json"
 
-          if grep -q 'api_key' "$MOWAYS_DATA_ROOT/env/llm_configs.json"; then
+          if "${dc[@]}" exec -T backend grep -q 'api_key' /app/llm_configs.json; then
             echo 'Persistent LLM file unexpectedly contains an API key field.' >&2
             exit 1
           fi
@@ -589,7 +617,7 @@ jobs:
             rm -f "$RUNNER_TEMP/moways-p1b2a-owned" "$RUNNER_TEMP/moways-health.json"
           fi
 
-          for container in mowayspos-postgres mowayspos-backend mowayspos-frontend; do
+          for container in mowayspos-backend-permissions-init mowayspos-postgres mowayspos-backend mowayspos-frontend; do
             if docker ps -a --format '{{.Names}}' | grep -Fxq "$container"; then
               echo "Task container remains after cleanup: $container" >&2
               exit 1

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, false, true
 
 from .database import Base
 from .time_utils import utc_now
@@ -99,8 +99,16 @@ class Meeting(Base, TimestampMixin):
     meeting_type = Column(String(40), default="")
     title = Column(String(200), default="")
     meeting_date = Column(String(20), default="")
+    location = Column(String(200), nullable=False, default="", server_default="")
     host = Column(String(50), default="")
     participants = Column(Text, default="")
+    organizer = Column(String(100), nullable=False, default="", server_default="")
+    copied_to = Column(Text, nullable=False, default="", server_default="")
+    agenda_items_json = Column(Text, nullable=False, default="[]", server_default="[]")
+    prior_action_items_json = Column(Text, nullable=False, default="[]", server_default="[]")
+    source_mode = Column(
+        String(32), nullable=False, default="ai_analysis", server_default="ai_analysis"
+    )
     transcript_text = Column(Text, default="")
     summary = Column(Text, default="")
     task_list_json = Column(Text, default="")
@@ -185,6 +193,133 @@ class MeetingAnalysisCandidate(Base, TimestampMixin):
     review_comment = Column(Text, default="")
 
 
+class MeetingSkillRun(Base, TimestampMixin):
+    """Agent-owned orchestration record for a skill-backed meeting workflow."""
+
+    __tablename__ = "meeting_skill_runs"
+
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=True, index=True)
+    skill_name = Column(String(96), nullable=False, index=True)
+    skill_version = Column(String(32), nullable=False)
+    status = Column(
+        String(32), nullable=False, default="created", server_default="created", index=True
+    )
+    current_input_snapshot_id = Column(Integer, nullable=True, index=True)
+    output_json = Column(Text, nullable=False, default="{}", server_default="{}")
+    output_answer_revisions_json = Column(
+        Text, nullable=False, default="{}", server_default="{}"
+    )
+    created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+
+
+class MeetingSkillInputSnapshot(Base, TimestampMixin):
+    __tablename__ = "meeting_skill_input_snapshots"
+    __table_args__ = (UniqueConstraint("run_id", "version", name="uq_meeting_skill_snapshot_version"),)
+
+    id = Column(Integer, primary_key=True)
+    run_id = Column(Integer, ForeignKey("meeting_skill_runs.id"), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    transcript_text = Column(Text, nullable=False, default="", server_default="")
+    reference_files_json = Column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
+    input_hash = Column(String(64), nullable=False, index=True)
+    is_current = Column(
+        Boolean, nullable=False, default=True, server_default=true(), index=True
+    )
+
+
+class MeetingSkillClarification(Base, TimestampMixin):
+    __tablename__ = "meeting_skill_clarifications"
+
+    id = Column(Integer, primary_key=True)
+    run_id = Column(Integer, ForeignKey("meeting_skill_runs.id"), nullable=False, index=True)
+    input_snapshot_id = Column(Integer, ForeignKey("meeting_skill_input_snapshots.id"), nullable=False, index=True)
+    code = Column(String(96), nullable=False, index=True)
+    question = Column(Text, nullable=False)
+    question_kind = Column(String(40), nullable=False, index=True)
+    blocking = Column(
+        Boolean, nullable=False, default=False, server_default=false(), index=True
+    )
+    required = Column(Boolean, nullable=False, default=False, server_default=false())
+    action = Column(
+        String(32), nullable=False, default="answer", server_default="answer"
+    )
+    answer_mode = Column(String(32), nullable=True)
+    allow_other = Column(Boolean, nullable=False, default=False, server_default=false())
+    allow_omit = Column(Boolean, nullable=False, default=False, server_default=false())
+    options_json = Column(Text, nullable=False, default="[]", server_default="[]")
+    evidence_json = Column(Text, nullable=False, default="[]", server_default="[]")
+    resolved_at = Column(DateTime, nullable=True)
+
+
+class MeetingSkillClarificationAnswerRevision(Base, TimestampMixin):
+    __tablename__ = "meeting_skill_clarification_answer_revisions"
+    __table_args__ = (
+        UniqueConstraint("question_id", "answer_revision", name="uq_meeting_skill_answer_revision"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    question_id = Column(Integer, ForeignKey("meeting_skill_clarifications.id"), nullable=False, index=True)
+    answer_revision = Column(Integer, nullable=False)
+    answer_json = Column(Text, nullable=False, default="{}", server_default="{}")
+    answered_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+
+
+class MeetingSkillResolvedFact(Base, TimestampMixin):
+    __tablename__ = "meeting_skill_resolved_facts"
+    __table_args__ = (UniqueConstraint("run_id", "field_name", name="uq_meeting_skill_resolved_fact"),)
+
+    id = Column(Integer, primary_key=True)
+    run_id = Column(Integer, ForeignKey("meeting_skill_runs.id"), nullable=False, index=True)
+    field_name = Column(String(96), nullable=False)
+    value_json = Column(Text, nullable=False, default="{}", server_default="{}")
+    display_value = Column(Text, nullable=False, default="", server_default="")
+    source_type = Column(String(32), nullable=False)
+    evidence_json = Column(Text, nullable=False, default="[]", server_default="[]")
+    answer_revision_id = Column(Integer, ForeignKey("meeting_skill_clarification_answer_revisions.id"), nullable=True, index=True)
+
+
+class MeetingProgressReview(Base, TimestampMixin):
+    """Evidence-bound member progress result awaiting human confirmation."""
+
+    __tablename__ = "meeting_progress_reviews"
+    __table_args__ = (
+        UniqueConstraint(
+            "meeting_id",
+            "analysis_version",
+            "member_name",
+            "baseline_subtask_id",
+            name="uq_meeting_progress_review_version_member_subtask",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=False, index=True)
+    baseline_run_id = Column(
+        Integer, ForeignKey("kickoff_agent_runs.id"), nullable=False, index=True
+    )
+    baseline_task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True, index=True)
+    baseline_subtask_id = Column(
+        Integer, ForeignKey("subtasks.id"), nullable=True, index=True
+    )
+    member_name = Column(String(100), nullable=False)
+    baseline_snapshot_json = Column(Text, nullable=False, default="{}")
+    report_text = Column(Text, nullable=False, default="")
+    status = Column(String(24), nullable=False, default="not_mentioned", index=True)
+    evidence_quote = Column(Text, nullable=False, default="")
+    suggested_task_status = Column(String(40), default="")
+    review_status = Column(String(24), nullable=False, default="pending", index=True)
+    reviewer_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    review_comment = Column(Text, default="")
+    validation_json = Column(Text, nullable=False, default="[]")
+    analysis_version = Column(Integer, nullable=False, default=1, index=True)
+
+
 class MeetingRevision(Base):
     """Immutable full snapshot of one saved meeting-minutes version."""
 
@@ -203,8 +338,16 @@ class MeetingRevision(Base):
     meeting_type = Column(String(40), default="")
     title = Column(String(200), default="")
     meeting_date = Column(String(20), default="")
+    location = Column(String(200), nullable=False, default="", server_default="")
     host = Column(String(50), default="")
     participants = Column(Text, default="")
+    organizer = Column(String(100), nullable=False, default="", server_default="")
+    copied_to = Column(Text, nullable=False, default="", server_default="")
+    agenda_items_json = Column(Text, nullable=False, default="[]", server_default="[]")
+    prior_action_items_json = Column(Text, nullable=False, default="[]", server_default="[]")
+    source_mode = Column(
+        String(32), nullable=False, default="ai_analysis", server_default="ai_analysis"
+    )
     transcript_text = Column(Text, nullable=False, default="")
     summary = Column(Text, default="")
     task_list_json = Column(Text, default="")
@@ -230,6 +373,79 @@ class MeetingRevision(Base):
     human_diff_json = Column(Text, default="{}")
 
 
+class AIModel(Base, TimestampMixin):
+    """One provider/model endpoint eligible for capability policies."""
+
+    __tablename__ = "ai_models"
+    __table_args__ = (UniqueConstraint("code", name="uq_ai_models_code"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(96), nullable=False, index=True)
+    display_name = Column(String(160), nullable=False)
+    provider = Column(String(64), nullable=False, index=True)
+    model_name = Column(String(160), nullable=False)
+    model_type = Column(String(24), nullable=False, index=True)
+    base_url = Column(Text, nullable=False, default="", server_default="")
+    config_json = Column(Text, nullable=False, default="{}", server_default="{}")
+    enabled = Column(Boolean, nullable=False, default=False, server_default=false(), index=True)
+    source = Column(
+        String(24), nullable=False, default="custom", server_default="custom", index=True
+    )
+    managed_by = Column(String(24), nullable=False, default="", server_default="")
+    revision = Column(Integer, nullable=False, default=1, server_default="1")
+
+
+class AIModelCredential(Base, TimestampMixin):
+    """Encrypted credentials kept separately from public model metadata."""
+
+    __tablename__ = "ai_model_credentials"
+    __table_args__ = (UniqueConstraint("model_id", name="uq_ai_model_credentials_model"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    model_id = Column(Integer, ForeignKey("ai_models.id"), nullable=False, index=True)
+    encrypted_api_key = Column(Text, nullable=False, default="", server_default="")
+    encrypted_app_secret = Column(Text, nullable=False, default="", server_default="")
+    key_version = Column(String(32), nullable=False, default="v1", server_default="v1")
+
+
+class AICapabilityPolicy(Base, TimestampMixin):
+    """Global model selection and fallback policy for one capability key."""
+
+    __tablename__ = "ai_capability_policies"
+    __table_args__ = (UniqueConstraint("capability_key", name="uq_ai_capability_policies_key"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    capability_key = Column(String(96), nullable=False, index=True)
+    primary_model_id = Column(Integer, ForeignKey("ai_models.id"), nullable=True, index=True)
+    fallback_model_ids_json = Column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
+    timeout_seconds = Column(Integer, nullable=False, default=60, server_default="60")
+    max_attempts = Column(Integer, nullable=False, default=1, server_default="1")
+    policy_version = Column(Integer, nullable=False, default=1, server_default="1")
+    enabled = Column(Boolean, nullable=False, default=False, server_default=false(), index=True)
+
+
+class AIInvocationLog(Base, TimestampMixin):
+    """Sanitized audit metadata for a single model invocation attempt."""
+
+    __tablename__ = "ai_invocation_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    capability_key = Column(String(96), nullable=False, index=True)
+    policy_version = Column(Integer, nullable=False)
+    model_id = Column(Integer, ForeignKey("ai_models.id"), nullable=True, index=True)
+    model_revision = Column(Integer, nullable=False, default=0, server_default="0")
+    attempt_no = Column(Integer, nullable=False, default=1, server_default="1")
+    status = Column(String(24), nullable=False, index=True)
+    fallback_used = Column(Boolean, nullable=False, default=False, server_default=false())
+    duration_ms = Column(Integer, nullable=False, default=0, server_default="0")
+    error_code = Column(String(64), nullable=False, default="", server_default="", index=True)
+    resource_type = Column(String(64), nullable=False, default="", server_default="", index=True)
+    resource_id = Column(Integer, nullable=True, index=True)
+    actor = Column(String(50), nullable=False, default="", server_default="", index=True)
+
+
 class KickoffAgentRun(Base, TimestampMixin):
     __tablename__ = "kickoff_agent_runs"
 
@@ -237,6 +453,7 @@ class KickoffAgentRun(Base, TimestampMixin):
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
     meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=True, index=True)
     snapshot_json = Column(Text, nullable=False, default="{}")
+    approved_snapshot_json = Column(Text, nullable=False, default="{}")
     result_json = Column(Text, nullable=False, default="{}")
     status = Column(String(20), nullable=False, default="draft", index=True)
     created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
@@ -369,6 +586,52 @@ class AchievementAttachment(Base, TimestampMixin):
     uploaded_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
     deleted_at = Column(DateTime, nullable=True)
     deleted_by = Column(String(50), default="")
+
+
+class ProjectInitAttachment(Base, TimestampMixin):
+    __tablename__ = "project_init_attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    storage_key = Column(String(255), nullable=False, unique=True)
+    original_name = Column(String(255), nullable=False)
+    mime_type = Column(String(120), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    uploaded_by = Column(String(50), nullable=False, index=True)
+    uploaded_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    deleted_by = Column(String(50), default="")
+
+
+class ProjectInitAnalysisRun(Base, TimestampMixin):
+    __tablename__ = "project_init_analysis_runs"
+    __table_args__ = (
+        Index("uq_project_init_analysis_runs_retry_of", "retry_of_run_id", unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    attachment_ids_json = Column(Text, nullable=False, default="[]")
+    snapshot_json = Column(Text, nullable=False, default="{}")
+    current_draft_json = Column(Text, nullable=False, default="[]")
+    status = Column(String(24), nullable=False, default="queued", index=True)
+    stage = Column(String(24), nullable=False, default="reading")
+    progress = Column(Integer, nullable=False, default=0)
+    result_json = Column(Text, nullable=False, default="{}")
+    file_results_json = Column(Text, nullable=False, default="[]")
+    error_summary = Column(Text, nullable=False, default="")
+    provider = Column(String(30), nullable=False, default="")
+    model_name = Column(String(100), nullable=False, default="")
+    created_by = Column(String(50), nullable=False, index=True)
+    created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    applied_at = Column(DateTime, nullable=True)
+    retry_of_run_id = Column(
+        Integer,
+        ForeignKey("project_init_analysis_runs.id", name="fk_project_init_analysis_retry_of"),
+        nullable=True,
+    )
 
 
 class Issue(Base, TimestampMixin):
@@ -554,6 +817,57 @@ class Notification(Base):
     is_read = Column(Boolean, default=False, index=True)
     created_at = Column(DateTime, default=now, index=True)
     project_id = Column(Integer, nullable=True)
+
+
+class ExecutionSchedule(Base, TimestampMixin):
+    __tablename__ = "execution_schedules"
+    __table_args__ = (
+        Index(
+            "ix_execution_schedules_month_plan_lookup",
+            "subtask_id",
+            "plan_type",
+            "plan_month",
+            "is_deleted",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    subtask_id = Column(Integer, ForeignKey("subtasks.id"), nullable=False, index=True)
+    plan_type = Column(String(10), nullable=False, index=True)
+    plan_month = Column(String(7), nullable=True)
+    title = Column(String(200), nullable=False)
+    start_date = Column(Date, nullable=True, index=True)
+    due_date = Column(Date, nullable=True, index=True)
+    assignee = Column(String(50), nullable=False, default="")
+    assignee_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    status = Column(String(20), nullable=False, default="待开始", index=True)
+    expected_output = Column(Text, nullable=False, default="", server_default="")
+    collaborator_ids = Column(JSON, nullable=False, default=list, server_default="[]")
+    completion_criteria = Column(Text, nullable=False, default="", server_default="")
+    progress_note = Column(Text, nullable=False, default="", server_default="")
+    risk_dependency = Column(Text, nullable=False, default="", server_default="")
+    actual_output = Column(Text, nullable=False, default="", server_default="")
+    delay_reason = Column(Text, nullable=False, default="", server_default="")
+    sort_order = Column(Integer, nullable=False, default=0, server_default="0")
+    reminder_policy = Column(JSON, nullable=False, default=dict)
+    created_by = Column(String(50), nullable=False, default="")
+    updated_by = Column(String(50), nullable=False, default="")
+    is_deleted = Column(Boolean, nullable=False, default=False, index=True)
+
+
+class ExecutionScheduleReminder(Base, TimestampMixin):
+    __tablename__ = "execution_schedule_reminders"
+    __table_args__ = (
+        UniqueConstraint("schedule_id", "reminder_kind", "due_on", "recipient_id", name="uq_execution_schedule_reminder"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    schedule_id = Column(Integer, ForeignKey("execution_schedules.id"), nullable=False, index=True)
+    reminder_kind = Column(String(20), nullable=False)
+    due_on = Column(Date, nullable=False)
+    recipient_id = Column(Integer, ForeignKey("people.id"), nullable=False, index=True)
+    notification_id = Column(Integer, ForeignKey("notifications.id"), nullable=True)
+    wecom_error = Column(Text, nullable=False, default="")
 
 
 class SubTaskDraft(Base, TimestampMixin):

@@ -1,12 +1,12 @@
 """merge meeting revision and change set heads
 
-Revision ID: d4e5f6a7b8c9
-Revises: c1d2e3f4a5b6, c3d4e5f6a7b8
+Revision ID: b8c9d0e1f2a3
+Revises: a8b9c0d1e2f3, b7c8d9e0f1a2
 """
 
 
-revision = "d4e5f6a7b8c9"
-down_revision = ("c1d2e3f4a5b6", "c3d4e5f6a7b8")
+revision = "b8c9d0e1f2a3"
+down_revision = ("a8b9c0d1e2f3", "b7c8d9e0f1a2")
 branch_labels = None
 depends_on = None
 

@@ -11,7 +11,6 @@ export type PlatformSettingsData = {
   notify_decision: boolean
   notify_weekly: boolean
   notify_channels: string[]
-  confidence: number
   two_fa: boolean
   session_ttl: string
 }

@@ -1,6 +1,5 @@
 import asyncio
 import json
-import sys
 from types import SimpleNamespace
 
 from sqlalchemy import create_engine
@@ -29,11 +28,10 @@ def test_progress_and_generic_prompts_define_required_change_set_contract(monkey
     ])
     db.commit()
     captured: list[str] = []
-    monkeypatch.setattr(meetings, "_pick_provider", lambda: "test")
     monkeypatch.setattr(
         meetings,
         "_do_analyze",
-        lambda _text, prompt, _provider: captured.append(prompt) or {"change_set": []},
+        lambda _db, _text, prompt, **_kwargs: captured.append(prompt) or {"change_set": []},
     )
 
     for mode in ("progress", "kickoff"):
@@ -94,11 +92,10 @@ def test_progress_meeting_analysis_returns_speaker_flag(monkeypatch):
         models.ProjectMember(project_id=1, person_id=1, person_name_snapshot="Owner", role="owner"),
     ])
     db.commit()
-    monkeypatch.setattr(meetings, "_pick_provider", lambda: "deepseek")
     monkeypatch.setattr(meetings, "_do_analyze", lambda *_args: {"title": "Progress review", "participants": "Invented attendee"})
 
     result = asyncio.run(meetings.analyze_meeting(
-        meetings.MeetingAnalyzeRequest(text="1. Owner completed the weekly review", project_id=1, mode="progress"),
+        meetings.MeetingAnalyzeRequest(text="Speaker 1: Owner completed the weekly review", project_id=1, mode="progress"),
         current_user="owner",
         db=db,
     ))
@@ -109,26 +106,16 @@ def test_progress_meeting_analysis_returns_speaker_flag(monkeypatch):
 
 
 def test_meeting_analyzer_uses_first_json_object_when_model_returns_multiple(monkeypatch):
-    fake_response = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content='{"title":"First"}\n{"title":"Second"}'))]
-    )
-    fake_openai = SimpleNamespace(
-        OpenAI=lambda **_kwargs: SimpleNamespace(
-            chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **_request: fake_response))
-        )
-    )
-    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    db = _db()
     monkeypatch.setattr(
         meetings,
-        "get_provider_config",
-        lambda _provider: {
-            "api_key": "test-key",
-            "base_url": "https://example.invalid/v1",
-            "model": "test-model",
-        },
+        "AIService",
+        lambda _db: SimpleNamespace(
+            invoke_chat=lambda *_args: SimpleNamespace(text='{"title":"First"}\n{"title":"Second"}')
+        ),
     )
 
-    result = meetings._do_analyze("sample", "prompt", "dashscope")
+    result = meetings._do_analyze(db, "sample", "prompt")
 
     assert result == {"title": "First"}
 
@@ -144,8 +131,7 @@ def test_progress_meeting_analysis_uses_work_plan_as_non_factual_context(monkeyp
     db.commit()
     captured: dict[str, str] = {}
     monkeypatch.setattr(meetings, "_build_all_members_context", lambda *_args: "WORK PLAN: Owner is assigned the historical task")
-    monkeypatch.setattr(meetings, "_pick_provider", lambda: "deepseek")
-    monkeypatch.setattr(meetings, "_do_analyze", lambda _text, prompt, _provider: captured.setdefault("prompt", prompt) and {"title": "Review"})
+    monkeypatch.setattr(meetings, "_do_analyze", lambda _db, _text, prompt, **_kwargs: captured.setdefault("prompt", prompt) and {"title": "Review"})
 
     asyncio.run(meetings.analyze_meeting(
         meetings.MeetingAnalyzeRequest(text="Owner confirmed the agenda", project_id=1, mode="progress", member_names=["Owner"]),
@@ -167,11 +153,10 @@ def test_progress_meeting_prompt_forbids_inference_and_status_judgments(monkeypa
     ])
     db.commit()
     captured: dict[str, str] = {}
-    monkeypatch.setattr(meetings, "_pick_provider", lambda: "deepseek")
     monkeypatch.setattr(
         meetings,
         "_do_analyze",
-        lambda _text, prompt, _provider: captured.setdefault("prompt", prompt) and {},
+        lambda _db, _text, prompt, **_kwargs: captured.setdefault("prompt", prompt) and {},
     )
 
     asyncio.run(meetings.analyze_meeting(
@@ -195,7 +180,6 @@ def test_meeting_analysis_tags_only_exact_project_member_matches(monkeypatch):
         models.ProjectMember(project_id=1, person_id=2, person_name_snapshot="Member", role="member"),
     ])
     db.commit()
-    monkeypatch.setattr(meetings, "_pick_provider", lambda: "deepseek")
     monkeypatch.setattr(meetings, "_do_analyze", lambda *_args: {
         "reports": [
             {"member": "Member", "role": "项目经理", "content": "说明当前安排"},

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useProject } from '../context/ProjectContext'
 import { getPlatformSettings, savePlatformSettings } from '../api/platformSettings'
 import { Card, Field, SectionTitle, Toggle } from '../features/settings/settingsShared'
-import { LLMConfigSection } from '../features/settings/LLMConfigSection'
+import { AIConfigurationSection } from '../features/settings/AIConfigurationSection'
 import { AccountPeopleMgmtSection } from '../features/settings/AccountPeopleMgmtSection'
 import { LogsSection } from '../features/settings/LogsSection'
 import { PeopleBatchImportModal } from '../features/settings/PeopleBatchImportModal'
@@ -44,9 +44,6 @@ export function SettingsPage() {
   const [notifyWeekly, setNotifyWeekly] = useState(false)
   const [channels, setChannels] = useState<Set<string>>(new Set(['站内信', '企业微信']))
 
-  // AI
-  const [confidence, setConfidence] = useState(75)
-
   // 安全
   const [twoFA, setTwoFA] = useState(true)
   const [sessionTTL, setSessionTTL] = useState('8 小时')
@@ -65,7 +62,6 @@ export function SettingsPage() {
         setNotifyDecision(d.notify_decision)
         setNotifyWeekly(d.notify_weekly)
         setChannels(new Set(d.notify_channels))
-        setConfidence(d.confidence)
         setTwoFA(d.two_fa)
         setSessionTTL(d.session_ttl)
       })
@@ -110,7 +106,6 @@ export function SettingsPage() {
         notify_decision: notifyDecision,
         notify_weekly: notifyWeekly,
         notify_channels: [...channels],
-        confidence,
         two_fa: twoFA,
         session_ttl: sessionTTL,
       })
@@ -318,21 +313,7 @@ export function SettingsPage() {
                 </Card>
               )}
 
-              {effectiveSection === 'ai' && (
-                <>
-                  <Card>
-                    <SectionTitle>AI 建议置信度</SectionTitle>
-                    <Field label="置信度阈值" desc={`低于该值的 AI 提取结果将标记为"待人工复核"，需负责人手动确认后方可入库`} last>
-                      <div className="flex items-center gap-3" style={{ width: 280 }}>
-                        <input type="range" min={50} max={95} value={confidence} onChange={(e) => setConfidence(Number(e.target.value))}
-                          className="flex-1 cursor-pointer" style={{ accentColor: '#0369A1' }} />
-                        <span className="text-sm font-bold text-blue-700 w-10 text-right">{confidence}%</span>
-                      </div>
-                    </Field>
-                  </Card>
-                  <LLMConfigSection />
-                </>
-              )}
+              {effectiveSection === 'ai' && <AIConfigurationSection />}
 
               {effectiveSection === 'security' && (
                 <>

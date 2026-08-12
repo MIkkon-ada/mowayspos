@@ -28,7 +28,7 @@ from ..permissions import (
 )
 from ..time_utils import utc_now
 from ..services.policy import can_submit_to_project as _can_submit_to_project
-from ..services.extractor import extract_update
+from ..services.extractor import _extract_json_blob, extract_update
 from ..services.work_report_agent import extract_work_report_agent
 from ..ai.contracts import AIInvocationContext, Capability
 from ..ai.service import AIService
@@ -311,7 +311,7 @@ async def extract(
                 payload.transcript_text,
                 candidates,
                 submitter=payload.submitter or current_user,
-                ai_call=lambda prompt: json.loads(
+                ai_call=lambda prompt: _extract_json_blob(
                     AIService(db)
                     .invoke_chat(
                         Capability.TASK_EXTRACTION,

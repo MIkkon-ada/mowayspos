@@ -10,7 +10,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..ai.contracts import AIInvocationContext, Capability
 from ..ai.repository import AIConfigurationRepository, InvalidAIModel, InvalidAIPolicy
 from ..ai.service import AIService
 from ..database import get_db
@@ -141,15 +140,10 @@ def test_model(model_id: int, payload: AIModelTestRequest, current_user: str = D
         raise HTTPException(422, "仅支持测试对话模型")
     try:
         key = payload.temporary_api_key
-        if key:
-            from ..ai.adapters import DefaultAIAdapters
-            DefaultAIAdapters().complete_chat(model, key, "ping", timeout_seconds=10)
-        else:
-            AIService(db).invoke_chat(
-                Capability.MEETING_ANALYSIS,
-                "ping",
-                AIInvocationContext(actor=current_user, resource_type="ai_model_test", resource_id=model_id),
-            )
+        service = AIService(db)
+        key = key or service._credential(model.id)
+        from ..ai.adapters import DefaultAIAdapters
+        DefaultAIAdapters().complete_chat(model, key, "ping", timeout_seconds=10)
         return {"ok": True, "message": "连接成功"}
     except Exception:
         return {"ok": False, "code": "AI_MODEL_TEST_FAILED", "message": "连接失败"}

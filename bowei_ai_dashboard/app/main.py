@@ -3,6 +3,7 @@ import asyncio
 from datetime import datetime, time, timedelta
 import logging
 import os
+from pathlib import Path
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -25,6 +26,7 @@ from .auth import (
     validate_password_policy,
     verify_password,
 )
+from .ai.crypto import AICredentialCipher, AIConfigurationKeyError
 from .database import Base, SQLALCHEMY_DATABASE_URL, SessionLocal, engine
 from .database_safety import (
     authorize_dev_create_all,
@@ -74,6 +76,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger("bowei")
 _reminder_task: asyncio.Task | None = None
+_AI_CAPABILITY_DATABASE_MODE = "database"
+_AI_CAPABILITY_LEGACY_ROLLBACK_MODE = "legacy-rollback"
+
+
+def _ai_capability_mode() -> str:
+    mode = os.getenv("AI_CAPABILITY_CENTER_MODE", _AI_CAPABILITY_DATABASE_MODE).strip().lower()
+    if mode not in {_AI_CAPABILITY_DATABASE_MODE, _AI_CAPABILITY_LEGACY_ROLLBACK_MODE}:
+        raise RuntimeError("AI_CAPABILITY_CENTER_MODE must be 'database' or 'legacy-rollback'.")
+
+    if mode == _AI_CAPABILITY_LEGACY_ROLLBACK_MODE:
+        if os.getenv("AI_LEGACY_ROLLBACK_ACKNOWLEDGED", "").strip().lower() != "true":
+            raise RuntimeError(
+                "AI legacy rollback requires AI_LEGACY_ROLLBACK_ACKNOWLEDGED=true."
+            )
+        if not Path("/app/llm_configs.json").is_file():
+            raise RuntimeError(
+                "AI legacy rollback requires /app/llm_configs.json to be mounted."
+            )
+        return mode
+
+    if get_settings().app_env == "production":
+        try:
+            AICredentialCipher(os.getenv("AI_CONFIG_ENCRYPTION_KEY", ""))
+        except AIConfigurationKeyError as exc:
+            raise RuntimeError(
+                "AI_CONFIG_ENCRYPTION_KEY must be a valid Fernet key in production database mode."
+            ) from exc
+    return mode
 
 
 def run_execution_schedule_reminder_scan() -> None:
@@ -97,6 +127,7 @@ async def _execution_schedule_reminder_loop() -> None:
 
 def _startup():
     print_database_target(SQLALCHEMY_DATABASE_URL, mode="startup")
+    ai_capability_mode = _ai_capability_mode()
 
     dev_seed_requested = os.getenv("BOWEI_DEV_MODE", "").lower() == "true"
     if dev_seed_requested:
@@ -108,6 +139,16 @@ def _startup():
 
     inspector = inspect(engine)
     required_tables = {"accounts", "auth_sessions", "people", "projects"}
+    if (
+        get_settings().app_env == "production"
+        and ai_capability_mode == _AI_CAPABILITY_DATABASE_MODE
+    ):
+        required_tables |= {
+            "ai_models",
+            "ai_model_credentials",
+            "ai_capability_policies",
+            "ai_invocation_logs",
+        }
     if not required_tables.issubset(set(inspector.get_table_names())):
         raise RuntimeError(
             "Database schema is not ready. Run the approved migration procedure."
@@ -116,6 +157,15 @@ def _startup():
     with SessionLocal() as db:
         db.query(models.AuthSession).filter(models.AuthSession.expires_at <= utc_now()).delete(synchronize_session=False)
         db.query(models.AuthSession).filter(models.AuthSession.session_token_hash == None).delete(synchronize_session=False)
+        if ai_capability_mode == _AI_CAPABILITY_LEGACY_ROLLBACK_MODE:
+            db.add(
+                models.OperationLog(
+                    operator="system",
+                    action="ai_capability_legacy_rollback",
+                    target_type="ai_capability_center",
+                    note="Legacy JSON configuration rollback mode enabled at startup.",
+                )
+            )
         db.commit()
 
     if dev_seed_requested:

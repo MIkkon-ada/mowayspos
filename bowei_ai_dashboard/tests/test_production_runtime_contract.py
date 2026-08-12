@@ -21,7 +21,6 @@ def test_compose_isolates_services_and_publishes_only_loopback_frontend():
         "mowayspos_app:",
         "127.0.0.1:18100:80",
         "${MOWAYS_DATA_ROOT:-/data/mowayspos}/postgres:/var/lib/postgresql/data",
-        "${MOWAYS_DATA_ROOT:-/data/mowayspos}/env/llm_configs.json:/app/llm_configs.json",
         "postgresql+psycopg://",
     ):
         assert expected in compose
@@ -56,6 +55,7 @@ def test_compose_forces_production_security_values_after_env_file():
         "BOWEI_DEV_MODE: \"false\"",
         "ALLOW_DEV_SCHEMA_CREATE_ALL: \"\"",
         "ALLOW_PROTECTED_DATABASE_MIGRATION: \"\"",
+        "AI_CAPABILITY_CENTER_MODE: database",
     ):
         assert expected in compose
 
@@ -69,6 +69,8 @@ def test_production_environment_example_is_secret_free_and_complete():
         "MOWAYS_ENV_FILE=/data/mowayspos/env/production.env",
         "DATABASE_URL=postgresql+psycopg://mowayspos:replace_with_same_password@postgres:5432/mowayspos",
         "SESSION_COOKIE_NAME=moways_session",
+        "AI_CAPABILITY_CENTER_MODE=database",
+        "AI_CONFIG_ENCRYPTION_KEY=",
         "ANTHROPIC_API_KEY=",
         "DASHSCOPE_API_KEY=",
         "ASR_REALTIME_MODEL=fun-asr-realtime",

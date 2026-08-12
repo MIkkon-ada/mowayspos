@@ -17,9 +17,7 @@ RUN groupadd --system --gid 10001 app \
 COPY bowei_ai_dashboard/ .
 
 RUN mkdir -p /app/data \
-    && touch /app/llm_configs.json \
-    && chown -R app:app /app/data \
-    && chown app:app /app/llm_configs.json
+    && chown -R app:app /app/data
 
 # 暴露端口
 EXPOSE 8008

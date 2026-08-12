@@ -738,6 +738,65 @@ class ExecutionSchedulePayload(BaseModel):
         return self
 
 
+MonthPlanStatus = Literal["未开始", "进行中", "暂缓", "已完成", "已取消"]
+
+
+class MonthPlanCreatePayload(BaseModel):
+    plan_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    title: str = Field(min_length=1, max_length=200)
+    expected_output: str = Field(min_length=1)
+    assignee_id: int = Field(gt=0)
+    collaborator_ids: list[int] = Field(default_factory=list)
+    status: MonthPlanStatus = "未开始"
+    start_date: date | None = None
+    due_date: date | None = None
+    completion_criteria: str = ""
+    progress_note: str = ""
+    risk_dependency: str = ""
+    actual_output: str = ""
+    delay_reason: str = ""
+    sort_order: int = 0
+
+    @field_validator("title", "expected_output")
+    @classmethod
+    def required_text_cannot_be_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("不能为空")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_month_plan(self):
+        if bool(self.start_date) != bool(self.due_date):
+            raise ValueError("开始日期和截止日期需同时填写")
+        if self.start_date and self.due_date and self.due_date < self.start_date:
+            raise ValueError("截止日期不得早于开始日期")
+        if self.status == "已完成" and not self.actual_output.strip():
+            raise ValueError("已完成的月计划必须填写实际产出")
+        if self.assignee_id in self.collaborator_ids:
+            raise ValueError("执行负责人不能同时作为协作人")
+        if len(self.collaborator_ids) != len(set(self.collaborator_ids)):
+            raise ValueError("协作人不能重复")
+        return self
+
+
+class MonthPlanUpdatePayload(BaseModel):
+    plan_month: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    expected_output: str | None = Field(default=None, min_length=1)
+    assignee_id: int | None = Field(default=None, gt=0)
+    collaborator_ids: list[int] | None = None
+    status: MonthPlanStatus | None = None
+    start_date: date | None = None
+    due_date: date | None = None
+    completion_criteria: str | None = None
+    progress_note: str | None = None
+    risk_dependency: str | None = None
+    actual_output: str | None = None
+    delay_reason: str | None = None
+    sort_order: int | None = None
+
+
 class SubTaskPayload(BaseModel):
     """关键任务(KeyTask)创建/更新参数 — 对应物理表 subtasks"""
     title: str = Field(..., max_length=200)

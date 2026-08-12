@@ -50,6 +50,7 @@ from .routers import (
     meetings,
     notifications,
     execution_schedules,
+    monthly_plans,
     project_init_ai,
     people,
     platform_settings,
@@ -531,6 +532,7 @@ app.include_router(subtasks.router)
 app.include_router(subtask_drafts.router)
 app.include_router(notifications.router)
 app.include_router(execution_schedules.router)
+app.include_router(monthly_plans.router)
 app.include_router(project_init_ai.router)
 app.include_router(project_init_ai.analysis_router)
 app.include_router(admin.router)

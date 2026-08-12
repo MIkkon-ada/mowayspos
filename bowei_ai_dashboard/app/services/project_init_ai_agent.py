@@ -18,7 +18,6 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from ..ai.contracts import AIInvocationContext, Capability
 from ..ai.service import AIService
-from ..llm_config import get_provider_config
 from .project_init_file_parser import SourceChunk
 
 MAX_BATCH_CHARS = 40_000
@@ -677,41 +676,6 @@ def _invoke_llm(llm_call: Callable[..., Any], prompt: str, provider: str) -> Any
     if len(positional) <= 1:
         return llm_call(prompt)
     return llm_call(prompt, provider)
-
-
-def _default_llm_call(prompt: str, provider: str) -> str:
-    config = get_provider_config(provider)
-    if not config.get("api_key"):
-        raise ProjectInitAiError(f"AI 引擎（{provider}）未配置 API Key")
-    try:
-        if provider == "anthropic":
-            import anthropic
-
-            response = anthropic.Anthropic(
-                api_key=config["api_key"],
-                timeout=LLM_TIMEOUT_SECONDS,
-            ).messages.create(
-                model=config["model"],
-                max_tokens=6_000,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return response.content[0].text
-        from openai import OpenAI
-
-        response = OpenAI(
-            api_key=config["api_key"],
-            base_url=config["base_url"],
-            timeout=LLM_TIMEOUT_SECONDS,
-        ).chat.completions.create(
-            model=config["model"],
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=6_000,
-        )
-        return response.choices[0].message.content or ""
-    except ProjectInitAiError:
-        raise
-    except Exception as exc:
-        raise ProjectInitAiError(f"AI 引擎（{provider}）调用失败") from exc
 
 
 def generate_project_init_draft(

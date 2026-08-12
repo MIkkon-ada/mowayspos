@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { apiGet } from '../api/client'
 import { getProject } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { VoiceUpdateDetailDrawer } from '../features/voice-update/VoiceUpdateDetailDrawer'
@@ -44,11 +43,13 @@ export function VoiceUpdatePage() {
   const historyRequested = searchParams.get('history') === '1'
   const [mode, setMode] = useState<VoiceInputMode>(draftState.mode ?? 'text')
   const [text, setText] = useState('')
-  const [selectedProvider, setSelectedProvider] = useState('deepseek')
+  const [selectedProvider, setSelectedProvider] = useState('capability')
   const [reportScope, setReportScope] = useState<VoiceReportScope>('all')
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
   const [quickSubtaskId, setQuickSubtaskId] = useState<number | null>(null)
-  const [providers, setProviders] = useState<AvailableProvider[]>([])
+  const [providers] = useState<AvailableProvider[]>([
+    { provider: 'capability', display_name: 'AI能力策略', model: '' },
+  ])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [resolvedProjectDetail, setResolvedProjectDetail] = useState<Project | null>(null)
   const projectSelectionInitialized = useRef(false)
@@ -77,12 +78,6 @@ export function VoiceUpdatePage() {
       : selectedProjectIsActive
         ? null
         : projectInactiveMessage
-
-  useEffect(() => {
-    apiGet<AvailableProvider[]>('/api/llm-config/available')
-      .then(setProviders)
-      .catch(() => setProviders([]))
-  }, [])
 
   useEffect(() => {
     let cancelled = false

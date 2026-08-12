@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import re
 from datetime import date
 
@@ -9,10 +8,6 @@ logger = logging.getLogger("bowei.extractor")
 from ..domain import issue_type as IT
 from ..ai.contracts import AIInvocationContext, Capability
 from ..ai.service import AIService
-
-USE_LLM = os.getenv("BOWEI_USE_LLM", "false").lower() == "true"
-# 单次 LLM 调用最长等待秒数，可通过环境变量覆盖
-_LLM_TIMEOUT = int(os.getenv("LLM_CALL_TIMEOUT", "45"))
 
 # 规则引擎项目名精确匹配列表（LLM 可用时不走此路径）
 # 如需精确匹配，可在运行时通过 extract_update(project_names=...) 传入 DB 数据
@@ -163,72 +158,11 @@ def _build_extract_prompt(text: str, user_subtasks: list[dict] | None) -> str:
     )
 
 
-def _get_cfg(provider: str) -> dict:
-    from ..llm_config import get_provider_config
-
-    cfg = get_provider_config(provider)
-    if not cfg.get("api_key"):
-        env_map = {
-            "anthropic": "ANTHROPIC_API_KEY",
-            "dashscope": "DASHSCOPE_API_KEY",
-            "deepseek": "DEEPSEEK_API_KEY",
-            "glm": "ZHIPUAI_API_KEY",
-        }
-        cfg["api_key"] = os.getenv(env_map.get(provider, ""), "")
-    return cfg
-
-
 def _extract_json_blob(raw: str) -> dict:
     match = re.search(r"\{[\s\S]+\}", raw.strip())
     if not match:
         raise ValueError("LLM did not return valid JSON")
     return json.loads(match.group())
-
-
-def _call_anthropic(text: str, user_subtasks: list[dict] | None = None) -> dict:
-    import anthropic
-
-    cfg = _get_cfg("anthropic")
-    if not cfg.get("api_key"):
-        raise ValueError("Claude API Key not configured")
-    client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=_LLM_TIMEOUT)
-    prompt = _build_extract_prompt(text, user_subtasks)
-    resp = client.messages.create(
-        model=cfg["model"],
-        max_tokens=3000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return _extract_json_blob(resp.content[0].text)
-
-
-def _call_openai_compat(text: str, provider: str, user_subtasks: list[dict] | None = None) -> dict:
-    from openai import OpenAI
-
-    cfg = _get_cfg(provider)
-    if not cfg.get("api_key"):
-        raise ValueError(f"{provider} API Key not configured")
-    client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"], timeout=_LLM_TIMEOUT)
-    prompt = _build_extract_prompt(text, user_subtasks)
-    resp = client.chat.completions.create(
-        model=cfg["model"],
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=3000,
-    )
-    return _extract_json_blob(resp.choices[0].message.content or "")
-
-
-def _extract_with_llm(text: str, provider: str, user_subtasks: list[dict] | None = None) -> dict | None:
-    try:
-        data = (
-            _call_anthropic(text, user_subtasks)
-            if provider == "anthropic"
-            else _call_openai_compat(text, provider, user_subtasks)
-        )
-        logger.info("LLM extract success provider=%s project=%s", provider, data.get("special_project"))
-        return data
-    except Exception as exc:
-        logger.warning("LLM extract failed provider=%s: %s", provider, exc)
-        return None
 
 
 def _extract_with_capability(
@@ -1071,52 +1005,19 @@ def extract_tasks(
     if not clean:
         return {"tasks": [], "project_guess": "", "suggested_project": "", "confidence": 0.0}
 
-    effective_provider: str | None = None
-    if ai_service is not None:
-        effective_provider = Capability.TASK_EXTRACTION
-    elif provider and provider != "rules":
-        from ..llm_config import resolve_provider
-        effective_provider = resolve_provider(provider)
-    elif USE_LLM:
-        from ..llm_config import resolve_provider
-        effective_provider = resolve_provider()
-
-    if not effective_provider and ai_service is None:
-        raise RuntimeError("未配置可用AI引擎，请在系统设置中配置API Key")
+    if ai_service is None:
+        raise RuntimeError("AI capability service is required")
+    effective_provider = Capability.TASK_EXTRACTION
 
     prompt = _TASK_OUTLINE_PROMPT.format(text=clean, current_year=date.today().year)
     try:
-        if ai_service is not None:
-            data = _extract_json_blob(
-                ai_service.invoke_chat(
-                    Capability.TASK_EXTRACTION,
-                    prompt,
-                    AIInvocationContext(resource_type="task_outline"),
-                ).text
-            )
-            effective_provider = Capability.TASK_EXTRACTION
-        elif effective_provider == "anthropic":
-            import anthropic
-            cfg = _get_cfg("anthropic")
-            if not cfg.get("api_key"):
-                raise ValueError("Claude API Key not configured")
-            client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=_LLM_TIMEOUT)
-            resp = client.messages.create(
-                model=cfg["model"], max_tokens=2048,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            data = _extract_json_blob(resp.content[0].text)
-        else:
-            from openai import OpenAI
-            cfg = _get_cfg(effective_provider)
-            if not cfg.get("api_key"):
-                raise ValueError(f"{effective_provider} API Key not configured")
-            client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"], timeout=_LLM_TIMEOUT)
-            resp = client.chat.completions.create(
-                model=cfg["model"], max_tokens=2048,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            data = _extract_json_blob(resp.choices[0].message.content or "")
+        data = _extract_json_blob(
+            ai_service.invoke_chat(
+                Capability.TASK_EXTRACTION,
+                prompt,
+                AIInvocationContext(resource_type="task_outline"),
+            ).text
+        )
 
         tasks = list(data.get("tasks") or [])
         for t in tasks:
@@ -1187,22 +1088,11 @@ def extract_update(
             },
         }, provider or "rules", False, "")
 
-    effective_provider = None
-    if ai_service is not None:
-        effective_provider = Capability.TASK_EXTRACTION
-    elif provider and provider != "rules":
-        from ..llm_config import resolve_provider
-        effective_provider = resolve_provider(provider)
-    elif USE_LLM:
-        from ..llm_config import resolve_provider
-        effective_provider = resolve_provider()
-
     if ai_service is not None:
         llm_data = _extract_with_capability(text, ai_service, user_subtasks)
         effective_provider = Capability.TASK_EXTRACTION
-    elif effective_provider:
-        llm_data = _extract_with_llm(text, effective_provider, user_subtasks)
     else:
+        effective_provider = None
         llm_data = None
     if effective_provider:
         if llm_data is not None:

@@ -1497,53 +1497,6 @@ def _build_all_members_context(
     return "\n".join(lines)
 
 
-def _legacy_do_analyze(text: str, prompt: str, provider: str) -> dict:
-    if provider == "anthropic":
-        import anthropic
-        cfg = get_provider_config("anthropic")
-        if not cfg.get("api_key"):
-            raise ValueError("未配置 Claude API Key")
-        client = anthropic.Anthropic(api_key=cfg["api_key"], timeout=90)
-        resp = client.messages.create(
-            model=cfg["model"],
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = resp.content[0].text
-    else:
-        from openai import OpenAI
-        cfg = get_provider_config(provider)
-        if not cfg.get("api_key"):
-            raise ValueError(f"未配置 {provider} API Key")
-        client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"], timeout=90)
-        resp = client.chat.completions.create(
-            model=cfg["model"],
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=4096,
-        )
-        raw = resp.choices[0].message.content or ""
-
-    start = raw.find("{")
-    if start < 0:
-        raise ValueError("LLM 未返回有效 JSON")
-    result, _ = json.JSONDecoder().raw_decode(raw[start:])
-    if not isinstance(result, dict):
-        raise ValueError("LLM 未返回有效 JSON")
-    return result
-
-
-def _pick_provider() -> str:
-    for p in ("anthropic", "dashscope", "deepseek", "glm"):
-        cfg = get_provider_config(p)
-        if cfg.get("api_key") and cfg.get("enabled", False):
-            return p
-    for p in ("anthropic", "dashscope", "deepseek", "glm"):
-        cfg = get_provider_config(p)
-        if cfg.get("api_key"):
-            return p
-    return "anthropic"
-
-
 def _do_analyze(
     db: Session,
     text: str,

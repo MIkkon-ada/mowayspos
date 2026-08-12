@@ -3,7 +3,6 @@ import asyncio
 from datetime import datetime, time, timedelta
 import logging
 import os
-from pathlib import Path
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -35,7 +34,6 @@ from .database_safety import (
     print_database_target,
 )
 from .excel_importer import read_project_assignments
-from .llm_config import PROVIDERS, load_configs
 from .permissions import get_all_project_roles, get_user_context_from_db, system_role_label
 from .routers import (
     accounts,
@@ -47,7 +45,6 @@ from .routers import (
     confirmations,
     dashboard,
     issues,
-    llm_config,
     logs,
     meetings,
     notifications,
@@ -90,9 +87,10 @@ def _ai_capability_mode() -> str:
             raise RuntimeError(
                 "AI legacy rollback requires AI_LEGACY_ROLLBACK_ACKNOWLEDGED=true."
             )
-        if not Path("/app/llm_configs.json").is_file():
+        rollback_path = os.getenv("AI_LEGACY_ROLLBACK_CONFIG_PATH", "").strip()
+        if not rollback_path or not os.path.isfile(rollback_path):
             raise RuntimeError(
-                "AI legacy rollback requires /app/llm_configs.json to be mounted."
+                "AI legacy rollback requires AI_LEGACY_ROLLBACK_CONFIG_PATH."
             )
         return mode
 
@@ -127,7 +125,6 @@ async def _execution_schedule_reminder_loop() -> None:
 
 def _startup():
     print_database_target(SQLALCHEMY_DATABASE_URL, mode="startup")
-    ai_capability_mode = _ai_capability_mode()
 
     dev_seed_requested = os.getenv("BOWEI_DEV_MODE", "").lower() == "true"
     if dev_seed_requested:
@@ -137,6 +134,7 @@ def _startup():
         authorize_dev_create_all(SQLALCHEMY_DATABASE_URL)
         Base.metadata.create_all(bind=engine)
 
+    ai_capability_mode = _ai_capability_mode()
     inspector = inspect(engine)
     required_tables = {"accounts", "auth_sessions", "people", "projects"}
     if (
@@ -205,7 +203,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_PUBLIC_PREFIXES = ("/api/auth/", "/api/llm-config/enabled", "/api/health", "/api/setup", "/login", "/setup")
+_PUBLIC_PREFIXES = ("/api/auth/", "/api/health", "/api/setup", "/login", "/setup")
 _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _FORCE_PASSWORD_ALLOWED_PREFIXES = ("/api/auth/me", "/api/auth/logout", "/api/auth/change-password", "/api/accounts/me/change-password")
 
@@ -543,16 +541,6 @@ def index():
     )
 
 
-@app.get("/api/llm-config/enabled")
-def llm_config_enabled():
-    stored = load_configs()
-    return [
-        {"provider": provider, "display_name": meta["display"]}
-        for provider, meta in PROVIDERS.items()
-        if stored.get(provider, {}).get("enabled", False)
-    ]
-
-
 @app.get("/api/project-assignments")
 def project_assignments():
     if EXCEL_SEED.exists():
@@ -574,7 +562,6 @@ app.include_router(people.router)
 app.include_router(accounts.router)
 app.include_router(projects.router)
 app.include_router(logs.router)
-app.include_router(llm_config.router)
 app.include_router(ai_config.router)
 app.include_router(platform_settings.router)
 app.include_router(transcribe.router)

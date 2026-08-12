@@ -28,6 +28,10 @@ encrypted in PostgreSQL; neither API keys nor the legacy JSON file are mounted
 into the production container. To import an existing legacy configuration, run
 the one-time administrator migration after the database schema is at head.
 
+The one-time migration file path is supplied only through
+AI_LEGACY_MIGRATION_FILE; remove that variable and its temporary mount before
+returning the stack to AI_CAPABILITY_CENTER_MODE=database.
+
 ## Validate and start
 
 Run Compose with the production environment file so interpolation and the backend `env_file` use the same source:

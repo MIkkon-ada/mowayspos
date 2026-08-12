@@ -5,7 +5,6 @@ import asyncio
 import pytest
 from fastapi import HTTPException
 
-from app.routers import llm_config as llm_router
 from app.routers import transcribe
 
 
@@ -103,62 +102,3 @@ def test_websocket_passes_authenticated_user_and_capability_session_to_coordinat
         "asr_session": asr_session,
     }
     assert websocket.closed == (1000, "")
-
-
-def test_production_persists_api_keys_without_returning_them(monkeypatch):
-    secret = "never-persist-or-return-this-key"
-    saved: list[dict] = []
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setattr(llm_router, "_require_admin", lambda *_: None)
-    monkeypatch.setattr(llm_router, "load_configs", lambda: {})
-    monkeypatch.setattr(llm_router, "save_configs", saved.append)
-
-    result = llm_router.save_config("deepseek", llm_router.LLMConfigPayload(api_key=secret, base_url="https://api.deepseek.com", model="deepseek-chat", enabled=True), current_user="admin", db=object())
-    assert result == {"ok": True}
-    assert saved[0]["deepseek"]["api_key"] == secret
-    assert secret not in repr(result)
-
-
-def test_production_can_persist_non_secret_provider_settings(monkeypatch):
-    saved: list[dict] = []
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setattr(llm_router, "_require_admin", lambda *_: None)
-    monkeypatch.setattr(
-        llm_router,
-        "load_configs",
-        lambda: {"deepseek": {"api_key": "legacy-file-secret", "enabled": False}},
-    )
-    monkeypatch.setattr(llm_router, "save_configs", saved.append)
-
-    result = llm_router.save_config(
-        "deepseek",
-        llm_router.LLMConfigPayload(
-            api_key="***",
-            base_url="https://gateway.example.invalid/v1",
-            model="deepseek-chat",
-            enabled=True,
-        ),
-        current_user="admin",
-        db=object(),
-    )
-
-    assert result == {"ok": True}
-    assert saved[0]["deepseek"] == {"base_url": "https://gateway.example.invalid/v1", "model": "deepseek-chat", "enabled": True, "api_key": "legacy-file-secret"}
-
-
-def test_production_reports_environment_api_key_without_exposing_it(monkeypatch):
-    secret = "environment-only-secret"
-    monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", secret)
-    monkeypatch.setattr(llm_router, "_require_admin", lambda *_: None)
-    monkeypatch.setattr(
-        llm_router,
-        "load_configs",
-        lambda: {"deepseek": {"enabled": True}},
-    )
-
-    result = llm_router.list_configs(current_user="admin", db=object())
-    deepseek = next(item for item in result if item["provider"] == "deepseek")
-
-    assert deepseek["api_key_set"] is True
-    assert secret not in repr(result)

@@ -182,10 +182,13 @@ def list_invocation_logs(capability_key: str | None = None, limit: int = Query(d
 @router.post("/migration/legacy-llm-config")
 def migrate_legacy_config(current_user: str = Depends(get_current_user_name), db: Session = Depends(get_db)):
     _admin(current_user, db)
+    legacy_path = os.getenv("AI_LEGACY_MIGRATION_FILE", "").strip()
+    if not legacy_path:
+        raise HTTPException(422, "请提供一次性迁移文件路径")
     try:
         report = import_legacy_llm_config(
             db,
-            Path(__file__).resolve().parents[2] / "llm_configs.json",
+            Path(legacy_path),
             cipher_key=os.getenv("AI_CONFIG_ENCRYPTION_KEY", ""),
         )
         db.commit()

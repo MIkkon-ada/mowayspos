@@ -776,25 +776,34 @@ class Notification(Base):
 
 class ExecutionSchedule(Base, TimestampMixin):
     __tablename__ = "execution_schedules"
+    __table_args__ = (
+        Index(
+            "ix_execution_schedules_month_plan_lookup",
+            "subtask_id",
+            "plan_type",
+            "plan_month",
+            "is_deleted",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     subtask_id = Column(Integer, ForeignKey("subtasks.id"), nullable=False, index=True)
     plan_type = Column(String(10), nullable=False, index=True)
-    plan_month = Column(String(7), nullable=True, index=True)
+    plan_month = Column(String(7), nullable=True)
     title = Column(String(200), nullable=False)
     start_date = Column(Date, nullable=True, index=True)
     due_date = Column(Date, nullable=True, index=True)
     assignee = Column(String(50), nullable=False, default="")
     assignee_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
     status = Column(String(20), nullable=False, default="待开始", index=True)
-    expected_output = Column(Text, nullable=False, default="")
-    collaborator_ids = Column(JSON, nullable=False, default=list)
-    completion_criteria = Column(Text, nullable=False, default="")
-    progress_note = Column(Text, nullable=False, default="")
-    risk_dependency = Column(Text, nullable=False, default="")
-    actual_output = Column(Text, nullable=False, default="")
-    delay_reason = Column(Text, nullable=False, default="")
-    sort_order = Column(Integer, nullable=False, default=0)
+    expected_output = Column(Text, nullable=False, default="", server_default="")
+    collaborator_ids = Column(JSON, nullable=False, default=list, server_default="[]")
+    completion_criteria = Column(Text, nullable=False, default="", server_default="")
+    progress_note = Column(Text, nullable=False, default="", server_default="")
+    risk_dependency = Column(Text, nullable=False, default="", server_default="")
+    actual_output = Column(Text, nullable=False, default="", server_default="")
+    delay_reason = Column(Text, nullable=False, default="", server_default="")
+    sort_order = Column(Integer, nullable=False, default=0, server_default="0")
     reminder_policy = Column(JSON, nullable=False, default=dict)
     created_by = Column(String(50), nullable=False, default="")
     updated_by = Column(String(50), nullable=False, default="")

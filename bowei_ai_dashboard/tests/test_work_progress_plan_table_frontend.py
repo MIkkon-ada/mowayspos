@@ -11,8 +11,8 @@ def test_task_management_provides_execution_and_plan_table_modes():
         assert symbol in PAGE
 
 
-def test_plan_table_reuses_project_task_and_subtask_data():
-    for symbol in ["project.objectives", "task.key_task", "subtask.title", "subtask.assignee", "parseProgressTimeline"]:
+def test_plan_table_reuses_project_and_key_task_data():
+    for symbol in ["project.objectives", "task.key_task", "TaskStandardModal", "ProjectStandardModal"]:
         assert symbol in PLAN
 
 

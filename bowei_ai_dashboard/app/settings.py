@@ -20,16 +20,9 @@ _DEFAULT_ALLOWED_ORIGINS = {
     "http://localhost:5175",
 }
 _PASSWORDS_FILE = Path(__file__).resolve().parent.parent / "passwords.json"
-_LLM_CONFIG_FILE = Path(__file__).resolve().parent.parent / "llm_configs.json"
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSEY = {"0", "false", "no", "off"}
 _SAMESITE_VALUES = {"lax", "strict", "none"}
-_LLM_PROVIDER_ENV_PREFIXES = {
-    "anthropic": "ANTHROPIC",
-    "dashscope": "DASHSCOPE",
-    "deepseek": "DEEPSEEK",
-    "glm": "ZHIPUAI",
-}
 
 
 def parse_bool(raw: str | None, default: bool | None = None) -> bool:
@@ -251,32 +244,3 @@ def legacy_password_login_enabled() -> bool:
 def get_legacy_password_file_users() -> dict[str, str]:
     """Return users from passwords.json for migration/audit screens."""
     return {str(k): str(v) for k, v in _read_json_file(_PASSWORDS_FILE).items() if k and v}
-
-
-def get_llm_env_config(provider: str) -> dict[str, str]:
-    """Return env-based LLM overrides for a provider."""
-    provider = (provider or "").strip().lower()
-    prefix = _LLM_PROVIDER_ENV_PREFIXES.get(provider, provider.upper() or "LLM")
-    values = {
-        "api_key": os.getenv("LLM_API_KEY", "").strip() or os.getenv(f"{prefix}_API_KEY", "").strip(),
-        "base_url": os.getenv("LLM_BASE_URL", "").strip() or os.getenv(f"{prefix}_BASE_URL", "").strip(),
-        "model": os.getenv("LLM_MODEL", "").strip() or os.getenv(f"{prefix}_MODEL", "").strip(),
-    }
-    return {key: value for key, value in values.items() if value}
-
-
-def get_llm_file_configs() -> dict:
-    if not _allow_file_secret_fallback():
-        return {}
-    return _read_json_file(_LLM_CONFIG_FILE)
-
-
-def get_llm_effective_config(provider: str, defaults: dict[str, str]) -> dict[str, str]:
-    """Merge env overrides, file fallback, and provider defaults."""
-    provider = (provider or "").strip().lower()
-    effective = dict(defaults)
-    file_cfg = get_llm_file_configs().get(provider, {})
-    env_cfg = get_llm_env_config(provider)
-    effective.update({k: v for k, v in file_cfg.items() if v is not None})
-    effective.update(env_cfg)
-    return effective

@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import secrets
-import tempfile
 import time
 from typing import Any, Literal
 
@@ -60,66 +59,6 @@ class StreamStart(BaseModel):
     format: Literal["pcm"]
 
 
-def _detect_format(filename: str) -> str:
-    ext = os.path.splitext(filename)[1].lower()
-    fmt_map = {
-        ".mp3": "mp3",
-        ".wav": "wav",
-        ".flac": "flac",
-        ".aac": "aac",
-        ".ogg": "ogg-opus",
-        ".m4a": "m4a",
-        ".wma": "wma",
-        ".amr": "amr",
-        ".webm": "opus",
-        ".mp4": "mp4",
-    }
-    return fmt_map.get(ext, "mp3")
-
-
-def _do_transcribe(file_bytes: bytes, filename: str, api_key: str) -> str:
-    import dashscope
-    from dashscope.audio.asr import Recognition
-
-    dashscope.api_key = api_key
-    suffix = os.path.splitext(filename)[1].lower() or ".mp3"
-    fmt = _detect_format(filename)
-
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(file_bytes)
-        tmp_path = tmp.name
-
-    try:
-        recognition = Recognition(
-            model="paraformer-realtime-v2",
-            format=fmt,
-            sample_rate=16000,
-            language_hints=["zh", "en"],
-            api_key=api_key,
-            callback=None,
-        )
-        result = recognition.call(tmp_path)
-        if result.status_code != 200:
-            raise RuntimeError(
-                f"转写失败（{result.status_code}）: {result.message}"
-            )
-
-        output = result.output or {}
-        sentences = output.get("sentence") or []
-        if sentences:
-            return "".join(
-                sentence.get("text", "")
-                for sentence in sentences
-                if sentence.get("text")
-            )
-        return output.get("text", "")
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-
-
 @router.post("")
 async def transcribe(
     file: UploadFile = File(...),
@@ -130,13 +69,6 @@ async def transcribe(
     ext = os.path.splitext(filename)[1].lower()
     if ext and ext not in _SUPPORTED_FORMATS:
         raise HTTPException(422, f"不支持的音频格式: {ext}")
-
-    api_key = "capability-managed"
-    if not api_key:
-        raise HTTPException(
-            500,
-            "未配置 Dashscope API Key，请在系统设置中填写",
-        )
 
     content = await file.read()
     if len(content) > 200 * 1024 * 1024:

@@ -22,12 +22,14 @@ function shiftMonth(month: string, delta: number) {
   return currentMonthKey(date)
 }
 
-export function monthTabs(currentMonth: string, storedMonths: string[]) {
-  return [...new Set([shiftMonth(currentMonth, -1), currentMonth, shiftMonth(currentMonth, 1), ...storedMonths])]
+export function monthTabs(currentMonth: string, storedMonths: Array<string | null>) {
+  const groupedMonths = storedMonths.filter((month): month is string => Boolean(month))
+  return [...new Set([shiftMonth(currentMonth, -1), currentMonth, shiftMonth(currentMonth, 1), ...groupedMonths])]
     .sort((left, right) => left.localeCompare(right))
 }
 
-export function formatMonthLabel(month: string) {
+export function formatMonthLabel(month: string | null) {
+  if (!month) return '未分月'
   const [year, value] = month.split('-')
   return `${year} 年 ${Number(value)} 月`
 }

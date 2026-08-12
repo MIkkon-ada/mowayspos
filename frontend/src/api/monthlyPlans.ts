@@ -6,7 +6,7 @@ export type MonthPlanDisplayStatus = MonthPlanStatus | '已延期'
 export type MonthlyPlan = {
   id: number
   subtask_id: number
-  plan_month: string
+  plan_month: string | null
   title: string
   expected_output: string
   assignee: string

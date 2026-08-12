@@ -52,15 +52,16 @@ def test_websocket_auth_uses_the_runtime_http_session_cookie_name(monkeypatch):
     assert websocket.closed[0] == 4001
 
 
-def test_websocket_reports_missing_dashscope_key(monkeypatch):
+def test_websocket_reports_unconfigured_asr_capability(monkeypatch):
     websocket = _RouteWebSocket()
     monkeypatch.setenv("SESSION_COOKIE_NAME", "custom_ws_session")
     monkeypatch.setattr(transcribe, "get_session_user", lambda _session_id: "member")
-    monkeypatch.setattr(
-        transcribe,
-        "get_provider_config",
-        lambda _provider: {"api_key": ""},
-    )
+    class UnconfiguredAIService:
+        def create_realtime_asr_session(self, *_args, **_kwargs):
+            from app.ai.contracts import AICapabilityNotConfigured
+            raise AICapabilityNotConfigured()
+
+    monkeypatch.setattr(transcribe, "AIService", lambda _db: UnconfiguredAIService())
 
     asyncio.run(transcribe.transcribe_stream(websocket, db=object()))
 
@@ -73,7 +74,7 @@ def test_websocket_reports_missing_dashscope_key(monkeypatch):
     assert websocket.closed == (4002, "")
 
 
-def test_websocket_passes_authenticated_user_key_and_db_to_coordinator(monkeypatch):
+def test_websocket_passes_authenticated_user_and_capability_session_to_coordinator(monkeypatch):
     websocket = _RouteWebSocket()
     fake_db = object()
     received: dict = {}
@@ -83,10 +84,14 @@ def test_websocket_passes_authenticated_user_key_and_db_to_coordinator(monkeypat
 
     monkeypatch.setenv("SESSION_COOKIE_NAME", "custom_ws_session")
     monkeypatch.setattr(transcribe, "get_session_user", lambda _session_id: "member")
+    asr_session = object()
     monkeypatch.setattr(
         transcribe,
-        "get_provider_config",
-        lambda _provider: {"api_key": "runtime-key"},
+        "AIService",
+        lambda _db: type(
+            "ConfiguredAIService",
+            (), {"create_realtime_asr_session": lambda self, *_args, **_kwargs: asr_session},
+        )(),
     )
     monkeypatch.setattr(transcribe, "run_transcribe_stream", coordinator)
 
@@ -95,7 +100,7 @@ def test_websocket_passes_authenticated_user_key_and_db_to_coordinator(monkeypat
     assert received == {
         "current_user": "member",
         "db": fake_db,
-        "api_key": "runtime-key",
+        "asr_session": asr_session,
     }
     assert websocket.closed == (1000, "")
 

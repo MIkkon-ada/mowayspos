@@ -373,6 +373,79 @@ class MeetingRevision(Base):
     human_diff_json = Column(Text, default="{}")
 
 
+class AIModel(Base, TimestampMixin):
+    """One provider/model endpoint eligible for capability policies."""
+
+    __tablename__ = "ai_models"
+    __table_args__ = (UniqueConstraint("code", name="uq_ai_models_code"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(96), nullable=False, index=True)
+    display_name = Column(String(160), nullable=False)
+    provider = Column(String(64), nullable=False, index=True)
+    model_name = Column(String(160), nullable=False)
+    model_type = Column(String(24), nullable=False, index=True)
+    base_url = Column(Text, nullable=False, default="", server_default="")
+    config_json = Column(Text, nullable=False, default="{}", server_default="{}")
+    enabled = Column(Boolean, nullable=False, default=False, server_default=false(), index=True)
+    source = Column(
+        String(24), nullable=False, default="custom", server_default="custom", index=True
+    )
+    managed_by = Column(String(24), nullable=False, default="", server_default="")
+    revision = Column(Integer, nullable=False, default=1, server_default="1")
+
+
+class AIModelCredential(Base, TimestampMixin):
+    """Encrypted credentials kept separately from public model metadata."""
+
+    __tablename__ = "ai_model_credentials"
+    __table_args__ = (UniqueConstraint("model_id", name="uq_ai_model_credentials_model"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    model_id = Column(Integer, ForeignKey("ai_models.id"), nullable=False, index=True)
+    encrypted_api_key = Column(Text, nullable=False, default="", server_default="")
+    encrypted_app_secret = Column(Text, nullable=False, default="", server_default="")
+    key_version = Column(String(32), nullable=False, default="v1", server_default="v1")
+
+
+class AICapabilityPolicy(Base, TimestampMixin):
+    """Global model selection and fallback policy for one capability key."""
+
+    __tablename__ = "ai_capability_policies"
+    __table_args__ = (UniqueConstraint("capability_key", name="uq_ai_capability_policies_key"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    capability_key = Column(String(96), nullable=False, index=True)
+    primary_model_id = Column(Integer, ForeignKey("ai_models.id"), nullable=True, index=True)
+    fallback_model_ids_json = Column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
+    timeout_seconds = Column(Integer, nullable=False, default=60, server_default="60")
+    max_attempts = Column(Integer, nullable=False, default=1, server_default="1")
+    policy_version = Column(Integer, nullable=False, default=1, server_default="1")
+    enabled = Column(Boolean, nullable=False, default=False, server_default=false(), index=True)
+
+
+class AIInvocationLog(Base, TimestampMixin):
+    """Sanitized audit metadata for a single model invocation attempt."""
+
+    __tablename__ = "ai_invocation_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    capability_key = Column(String(96), nullable=False, index=True)
+    policy_version = Column(Integer, nullable=False)
+    model_id = Column(Integer, ForeignKey("ai_models.id"), nullable=True, index=True)
+    model_revision = Column(Integer, nullable=False, default=0, server_default="0")
+    attempt_no = Column(Integer, nullable=False, default=1, server_default="1")
+    status = Column(String(24), nullable=False, index=True)
+    fallback_used = Column(Boolean, nullable=False, default=False, server_default=false())
+    duration_ms = Column(Integer, nullable=False, default=0, server_default="0")
+    error_code = Column(String(64), nullable=False, default="", server_default="", index=True)
+    resource_type = Column(String(64), nullable=False, default="", server_default="", index=True)
+    resource_id = Column(Integer, nullable=True, index=True)
+    actor = Column(String(50), nullable=False, default="", server_default="", index=True)
+
+
 class KickoffAgentRun(Base, TimestampMixin):
     __tablename__ = "kickoff_agent_runs"
 

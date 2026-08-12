@@ -41,6 +41,7 @@ from .routers import (
     achievement_submissions,
     achievements,
     admin,
+    ai_config,
     confirmations,
     dashboard,
     issues,
@@ -523,6 +524,7 @@ app.include_router(accounts.router)
 app.include_router(projects.router)
 app.include_router(logs.router)
 app.include_router(llm_config.router)
+app.include_router(ai_config.router)
 app.include_router(platform_settings.router)
 app.include_router(transcribe.router)
 app.include_router(subtasks.router)

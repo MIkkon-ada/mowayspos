@@ -25,6 +25,61 @@ def _safe_json_list(value: Any) -> list[Any]:
     return parsed if isinstance(parsed, list) else []
 
 
+class AIModelCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=96)
+    display_name: str = Field(min_length=1, max_length=160)
+    provider: str = Field(min_length=1, max_length=64)
+    model_name: str = Field(min_length=1, max_length=160)
+    model_type: Literal["chat", "asr"]
+    base_url: str = Field(min_length=1)
+    config: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = False
+    source: str = Field(default="custom", min_length=1, max_length=24)
+
+
+class AIModelUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
+    provider: str | None = Field(default=None, min_length=1, max_length=64)
+    model_name: str | None = Field(default=None, min_length=1, max_length=160)
+    model_type: Literal["chat", "asr"] | None = None
+    base_url: str | None = Field(default=None, min_length=1)
+    config: dict[str, Any] | None = None
+    enabled: bool | None = None
+
+
+class AIModelEnabledWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+
+
+class AICredentialWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    api_key: str | None = None
+    app_secret: str | None = None
+
+
+class AIPolicyWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    primary_model_id: int | None = Field(default=None, gt=0)
+    fallback_model_ids: list[int] = Field(default_factory=list)
+    timeout_seconds: int = Field(gt=0, le=600)
+    max_attempts: int = Field(ge=1, le=10)
+    enabled: bool
+
+
+class AIModelTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    temporary_api_key: str | None = None
+
+
 class UserSubtaskContext(BaseModel):
     id: int
     title: str

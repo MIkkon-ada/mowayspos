@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from ..ai.contracts import AIInvocationContext, Capability
 from ..ai.service import AIService
-from ..llm_config import get_provider_config, resolve_provider
+from ..llm_config import get_provider_config
 from .project_init_file_parser import SourceChunk
 
 MAX_BATCH_CHARS = 40_000
@@ -738,8 +738,7 @@ def generate_project_init_draft(
             AIInvocationContext(resource_type="project_init"),
         ).text
     else:
-        provider = resolve_provider()
-        caller = _default_llm_call
+        raise ProjectInitAiError("AI capability service is required")
     batches = _split_batches(source_values)
     canonical_sources = [source for batch in batches for source in batch]
     all_tasks: list[AgentTask] = []
@@ -778,10 +777,6 @@ def generate_project_init_draft(
         existing_tasks=indexed_tasks,
         chunks=canonical_sources,
         provider=provider,
-        model_name=(
-            get_provider_config(provider).get("model", "")
-            if provider not in {"injected", Capability.PROJECT_INIT_ANALYSIS}
-            else ""
-        ),
+        model_name="",
     )
     return result

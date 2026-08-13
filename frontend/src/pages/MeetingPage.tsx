@@ -384,7 +384,7 @@ export function MeetingPage() {
           {selected && (() => {
             const selected = legacySelected
             return false && (
-          <div className="mx-auto grid w-full max-w-[1180px] grid-cols-2 gap-5">
+          <div className="mx-auto grid w-full max-w-[1180px] grid-cols-2 gap-5 lg:grid-cols-3 xl:grid-cols-5">
             <div className="bg-white rounded-2xl border p-5 col-span-2 lg:col-span-3 xl:col-span-2 overflow-y-auto" style={{ maxHeight: 560, borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">

@@ -489,6 +489,7 @@ class ProjectProfilePayload(BaseModel):
 
 class MeetingPayload(BaseModel):
     project_id: int | None = None
+    analysis_id: int | None = None
     related_special_project: str = ""
     meeting_type: str = ""
     title: str = ""
@@ -677,6 +678,25 @@ class MeetingAnalysisCandidateResponse(BaseModel):
 class MeetingStatusPatch(BaseModel):
     publish_status: str
     reject_reason: str = ""
+
+
+class MeetingChangeProposalPatch(BaseModel):
+    proposed: dict[str, Any]
+    evidence: list[str]
+    reason: str
+
+
+class MeetingChangeSetExecutePayload(BaseModel):
+    proposal_ids: list[int]
+
+    @field_validator("proposal_ids")
+    @classmethod
+    def validate_proposal_ids(cls, value: list[int]) -> list[int]:
+        if any(isinstance(item, bool) or item <= 0 for item in value):
+            raise ValueError("proposal_ids must contain positive integers")
+        if len(set(value)) != len(value):
+            raise ValueError("proposal_ids must be unique")
+        return value
 
 
 class MeetingProgressReviewPatch(BaseModel):

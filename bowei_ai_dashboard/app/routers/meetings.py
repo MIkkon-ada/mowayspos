@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -31,6 +32,12 @@ from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
 from ..services.kickoff_agent import build_kickoff_snapshot, run_kickoff_agent
 from ..services.kickoff_writeback import confirm_kickoff_start
+from ..services.meeting_change_set import (
+    build_meeting_plan_snapshot,
+    edit_meeting_change_proposal,
+    execute_meeting_change_set,
+    validate_meeting_change_proposal,
+)
 from ..services.meeting_revisions import append_meeting_revision
 from ..services.meeting_traceability import normalize_action_items
 from ..services.meeting_document_text import MeetingDocumentTextError, extract_meeting_document_text
@@ -379,6 +386,20 @@ def create_meeting(
     if project and project.status == "pending_kickoff":
         raise HTTPException(409, "项目待启动会确认，不能创建普通会议")
 
+    account = db.query(models.Account).filter(models.Account.username == current_user).first()
+    change_set = None
+    if payload.analysis_id is not None:
+        change_set = db.get(models.MeetingChangeSet, payload.analysis_id)
+        if not (
+            change_set
+            and change_set.project_id == payload.project_id
+            and change_set.meeting_id is None
+            and change_set.status == "draft"
+            and account
+            and change_set.created_by_person_id == account.person_id
+        ):
+            raise HTTPException(409, "meeting analysis draft cannot be attached")
+
     project_name = resolve_project_context(
         db,
         project_id=payload.project_id,
@@ -387,11 +408,10 @@ def create_meeting(
     data = {
         k: v
         for k, v in payload.model_dump().items()
-        if k not in {"project_id", "related_special_project", "skill_run_id"}
+        if k not in {"project_id", "analysis_id", "related_special_project", "skill_run_id"}
     }
     row = models.Meeting(**data)
     row.project_id = payload.project_id
-    account = db.query(models.Account).filter(models.Account.username == current_user).first()
     row.creator_person_id = account.person_id if account else None
     if payload.related_special_project:
         row.related_special_project = payload.related_special_project
@@ -399,6 +419,38 @@ def create_meeting(
         row.related_special_project = project_name
     db.add(row)
     db.flush()
+    if change_set is not None:
+        claimed_count = (
+            db.query(models.MeetingChangeSet)
+            .filter(
+                models.MeetingChangeSet.id == change_set.id,
+                models.MeetingChangeSet.project_id == payload.project_id,
+                models.MeetingChangeSet.created_by_person_id == account.person_id,
+                models.MeetingChangeSet.meeting_id.is_(None),
+                models.MeetingChangeSet.status == "draft",
+            )
+            .update(
+                {
+                    models.MeetingChangeSet.meeting_id: row.id,
+                    models.MeetingChangeSet.status: "attached",
+                },
+                synchronize_session=False,
+            )
+        )
+        if claimed_count != 1:
+            raise HTTPException(409, "meeting analysis draft was attached concurrently")
+        change_set.meeting_id = row.id
+        change_set.status = "attached"
+        crud.log(
+            db,
+            current_user,
+            "meeting_change_set_attach",
+            "meeting_change_set",
+            change_set.id,
+            {"meeting_id": None, "status": "draft"},
+            {"meeting_id": row.id, "status": "attached"},
+            project_id=row.project_id,
+        )
     append_meeting_revision(db, row, saved_by=current_user)
     if row.publish_status == "draft" and row.project_id:
         from ..services.notify import company_ceo_person_ids, project_strict_owner_ids, send as _notify
@@ -419,6 +471,154 @@ class MeetingAnalyzeRequest(BaseModel):
     skill_run_id: int | None = None
     mode: str | None = None  # "kickoff" | "progress" | None(自动)
     member_names: list[str] | None = None  # 项目成员姓名列表，用于构建成员上下文
+
+
+def _json_value(value, fallback):
+    try:
+        return json.loads(value or "")
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _meeting_change_proposal_payload(
+    row: models.MeetingChangeProposal,
+    project_id: int,
+) -> dict:
+    validation = _json_value(row.validation_json, {"state": "blocked", "errors": []})
+    target = {"project_id": project_id}
+    if row.target_type == "workstream" and row.target_id is not None:
+        target["workstream_id"] = row.target_id
+    if row.target_type == "subtask" and row.target_id is not None:
+        target["subtask_id"] = row.target_id
+    if row.parent_workstream_id is not None:
+        target["parent_workstream_id"] = row.parent_workstream_id
+    return {
+        "id": row.id,
+        "action": row.action,
+        "target_type": row.target_type,
+        "target_id": row.target_id,
+        "parent_workstream_id": row.parent_workstream_id,
+        "target": target,
+        "before": _json_value(row.before_json, {}),
+        "proposed": _json_value(row.proposed_json, {}),
+        "evidence": _json_value(row.evidence_json, []),
+        "reason": row.reason,
+        "confidence": row.confidence,
+        "validation": validation,
+        "execution_status": row.execution_status,
+        "executed_by_person_id": row.executed_by_person_id,
+        "executed_at": row.executed_at,
+        "result_target_id": row.result_target_id,
+    }
+
+
+def _meeting_change_set_payload(row: models.MeetingChangeSet, db: Session) -> dict:
+    proposals = (
+        db.query(models.MeetingChangeProposal)
+        .filter_by(change_set_id=row.id)
+        .order_by(models.MeetingChangeProposal.id.asc())
+        .all()
+    )
+    return {
+        "id": row.id,
+        "project_id": row.project_id,
+        "status": row.status,
+        "proposals": [
+            _meeting_change_proposal_payload(proposal, row.project_id)
+            for proposal in proposals
+        ],
+    }
+
+
+def _proposal_target_columns(proposal: dict) -> tuple[str, int | None, int | None]:
+    action = proposal.get("action")
+    target = proposal.get("target") or {}
+    if action == "update_workstream":
+        return "workstream", target.get("workstream_id"), None
+    if action == "update_subtask":
+        return "subtask", target.get("subtask_id"), target.get("parent_workstream_id")
+    if action == "create_subtask":
+        return "subtask", None, target.get("parent_workstream_id")
+    return "workstream", None, None
+
+
+def _persist_meeting_change_set(
+    *,
+    project_id: int,
+    transcript_text: str,
+    raw_result: dict,
+    snapshot: dict,
+    current_user: str,
+    db: Session,
+) -> models.MeetingChangeSet:
+    raw_proposals = raw_result.get("change_set") if isinstance(raw_result.get("change_set"), list) else []
+    proposals = [
+        validate_meeting_change_proposal(raw, snapshot, transcript_text)
+        for raw in raw_proposals
+    ]
+    account = db.query(models.Account).filter_by(username=current_user).first()
+    change_set = models.MeetingChangeSet(
+        project_id=project_id,
+        created_by_person_id=account.person_id if account else None,
+        transcript_hash=hashlib.sha256(transcript_text.encode("utf-8")).hexdigest(),
+        snapshot_json=json.dumps(snapshot, ensure_ascii=False, allow_nan=False),
+        result_json=json.dumps(raw_result, ensure_ascii=False, allow_nan=False),
+        status="draft",
+    )
+    db.add(change_set)
+    db.flush()
+    for proposal in proposals:
+        target_type, target_id, parent_workstream_id = _proposal_target_columns(proposal)
+        db.add(
+            models.MeetingChangeProposal(
+                change_set_id=change_set.id,
+                action=proposal["action"],
+                target_type=target_type,
+                target_id=target_id,
+                parent_workstream_id=parent_workstream_id,
+                before_json=json.dumps(proposal["before"], ensure_ascii=False, allow_nan=False),
+                proposed_json=json.dumps(proposal["proposed"], ensure_ascii=False, allow_nan=False),
+                evidence_json=json.dumps(proposal["evidence"], ensure_ascii=False, allow_nan=False),
+                reason=proposal["reason"],
+                confidence=proposal["confidence"],
+                validation_json=json.dumps(proposal["validation"], ensure_ascii=False, allow_nan=False),
+                execution_status="pending",
+            )
+        )
+    db.commit()
+    db.refresh(change_set)
+    return change_set
+
+
+def _meeting_change_set_prompt(snapshot: dict) -> str:
+    snapshot_text = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
+    return f"""
+
+【工作推进表变更提案】
+此次请求已提供项目 ID，change_set 是必填字段；没有明确、可引用的变更时必须输出空数组。会议转录文字是唯一事实来源。下面的冻结快照只用于识别现有记录的 ID 和当前字段，绝不能把快照内容当作会议事实、补全会议内容或推断变更。
+
+冻结快照：
+```json
+{snapshot_text}
+```
+
+change_set 中每一项必须严格为：
+{{
+  "action": "create_workstream|update_workstream|create_subtask|update_subtask",
+  "target": {{"project_id": {snapshot.get("project_id")}, "workstream_id": 0, "subtask_id": 0, "parent_workstream_id": 0}},
+  "proposed": {{}},
+  "evidence": ["会议转录中的逐字连续引文"],
+  "reason": "该引文为何支持这一项变更",
+  "confidence": 0.0
+}}
+
+规则：
+- 只允许上述四种 action；update_workstream 必须使用快照中的 workstream_id，update_subtask 必须使用快照中的 subtask_id，create_subtask 必须使用快照中的 parent_workstream_id。
+- 引文必须是会议转录中的逐字连续片段，每项至少一条；不得概括、改写或凭常识补全。
+- 目标不明确时不得猜测任何 ID：保留能说明歧义的文字并省略该 ID，让系统将其标记为待复核。
+- create_workstream 只能在原文明示新增重点工作时提出；create_subtask 只能在原文明示新增关键任务时提出。
+- 不得删除重点工作或关键任务，不得创建问题、成果、决策或修改项目成员。
+"""
 
 
 @router.post("/skill-runs/preflight")
@@ -585,13 +785,22 @@ async def analyze_meeting(
 ):
     current_user = require_login(current_user, db)
     if payload.project_id is not None:
+        if not db.get(models.Project, payload.project_id):
+            raise HTTPException(404, "project not found")
         require_project_access(current_user, payload.project_id, db)
         _require_skill_run_ready(payload.skill_run_id, payload.project_id, db)
+    elif payload.mode == "progress":
+        raise HTTPException(422, "project_id is required for progress meeting analysis")
 
     if not payload.text.strip():
         raise HTTPException(422, "text 不能为空")
 
     # 推进表只提供关联与核对上下文；会议原文仍是唯一的纪要事实来源。
+    snapshot = (
+        build_meeting_plan_snapshot(payload.project_id, db)
+        if payload.project_id is not None
+        else None
+    )
     project_member_names = sorted(_project_member_names(payload.project_id, db))
     work_plan_context = _build_all_members_context(project_member_names, payload.project_id, db)
     member_context_text = work_plan_context
@@ -625,6 +834,8 @@ async def analyze_meeting(
                 text=payload.text[:8000],
             )
 
+    if snapshot is not None:
+        prompt += _meeting_change_set_prompt(snapshot)
     prompt += """
 HARD TRACEABILITY RULES:
 - Only extract work items, decisions, and risks explicitly supported by the transcript.
@@ -650,7 +861,7 @@ HARD TRACEABILITY RULES:
     )
     action_items = normalize_action_items(action_items, payload.text)
 
-    return {
+    response = {
         "title": result.get("title", ""),
         "meeting_type": result.get("meeting_type", ""),
         "meeting_date": result.get("meeting_date", ""),
@@ -665,6 +876,28 @@ HARD TRACEABILITY RULES:
         "transcript_text": payload.text,
         "has_speakers": has_speakers,
     }
+    if snapshot is None:
+        response["analysis_id"] = None
+        response["change_set"] = None
+        return response
+
+    try:
+        change_set = _persist_meeting_change_set(
+            project_id=payload.project_id,
+            transcript_text=payload.text,
+            raw_result=result,
+            snapshot=snapshot,
+            current_user=current_user,
+            db=db,
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.exception("meeting change-set analysis persistence failed")
+        raise HTTPException(500, f"meeting change-set persistence failed: {exc}") from exc
+
+    response["analysis_id"] = change_set.id
+    response["change_set"] = _meeting_change_set_payload(change_set, db)
+    return response
 
 
 def _progress_baseline_index(baseline: dict) -> dict[int, tuple[int | None, dict, dict]]:
@@ -962,13 +1195,11 @@ def get_meeting_revision(
     raise HTTPException(404, "meeting revision not found")
 
 
-@router.get("/{row_id}")
-def get_meeting(
+def _meeting_for_read(
     row_id: int,
-    current_user: str = Depends(get_current_user_name),
-    db: Session = Depends(get_db),
-):
-    current_user = require_login(current_user, db)
+    current_user: str,
+    db: Session,
+) -> models.Meeting:
     context = get_user_context_from_db(current_user, db)
     row = db.get(models.Meeting, row_id)
     if not row:
@@ -980,6 +1211,123 @@ def get_meeting(
         require_project_access(current_user, project_id, db)
     elif not (context.get("is_tech_admin") or context.get("is_ceo")):
         raise HTTPException(403, "permission denied")
+    return row
+
+
+@router.get("/{row_id}/change-set")
+def get_meeting_change_set(
+    row_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    row = _meeting_for_read(row_id, current_user, db)
+    change_set = (
+        db.query(models.MeetingChangeSet)
+        .filter_by(meeting_id=row.id)
+        .first()
+    )
+    if not change_set:
+        raise HTTPException(404, "meeting change set not found")
+    return _meeting_change_set_payload(change_set, db)
+
+
+@router.patch("/{row_id}/change-set/proposals/{proposal_id}")
+def patch_meeting_change_proposal(
+    row_id: int,
+    proposal_id: int,
+    payload: schemas.MeetingChangeProposalPatch,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    meeting = _meeting_for_read(row_id, current_user, db)
+    change_set = (
+        db.query(models.MeetingChangeSet)
+        .filter_by(meeting_id=meeting.id)
+        .first()
+    )
+    if not change_set:
+        raise HTTPException(404, "meeting change set not found")
+    proposal = (
+        db.query(models.MeetingChangeProposal)
+        .filter_by(id=proposal_id, change_set_id=change_set.id)
+        .first()
+    )
+    if not proposal:
+        raise HTTPException(404, "meeting change proposal not found")
+    edit_meeting_change_proposal(
+        proposal=proposal,
+        change_set=change_set,
+        transcript_text=meeting.transcript_text or "",
+        proposed=payload.proposed,
+        evidence=payload.evidence,
+        reason=payload.reason,
+        db=db,
+    )
+    db.commit()
+    db.refresh(proposal)
+    return _meeting_change_proposal_payload(proposal, change_set.project_id)
+
+
+@router.post("/{row_id}/change-set/execute")
+def execute_reviewed_meeting_change_set(
+    row_id: int,
+    payload: schemas.MeetingChangeSetExecutePayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    meeting = _meeting_for_read(row_id, current_user, db)
+    proposals = execute_meeting_change_set(
+        meeting=meeting,
+        proposal_ids=payload.proposal_ids,
+        actor=current_user,
+        db=db,
+    )
+    for proposal in proposals:
+        evidence = _json_value(proposal.evidence_json, [])
+        proposed = _json_value(proposal.proposed_json, {})
+        audit_before = {
+            "proposal_id": proposal.id,
+            "before": _json_value(proposal.before_json, {}),
+            "proposed": proposed,
+            "evidence": evidence,
+        }
+        audit_after = {
+            "proposal_id": proposal.id,
+            "proposed": proposed,
+            "evidence": evidence,
+            "result_target_id": proposal.result_target_id,
+            "execution_status": proposal.execution_status,
+        }
+        crud.log(
+            db,
+            current_user,
+            "meeting_change_execute",
+            "meeting_change_proposal",
+            proposal.id,
+            audit_before,
+            audit_after,
+            project_id=meeting.project_id,
+        )
+    db.commit()
+    change_set = (
+        db.query(models.MeetingChangeSet)
+        .filter_by(meeting_id=meeting.id)
+        .first()
+    )
+    return _meeting_change_set_payload(change_set, db)
+
+
+@router.get("/{row_id}")
+def get_meeting(
+    row_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    row = _meeting_for_read(row_id, current_user, db)
     return crud.to_dict(row)
 
 
@@ -1285,13 +1633,25 @@ _PROMPT_GENERIC = """你是一个只做事实提取的会议纪要助手。请�
   "reports": [],
   "confirmed_items": ["会议已明确确认并可直接入库的事项"],
   "decision_requests": ["需要企业教练判断的事项"],
-  "action_items": [{{"member": "负责人", "task": "事项", "deadline": "时间或空字符串"}}]
+  "action_items": [{{"member": "负责人", "task": "事项", "deadline": "时间或空字符串"}}],
+  "change_set": []
 }}
 
 要求：
 - confirmed_items 仅记录会议原文已明确拍板的结果；没有则空数组
 - decision_requests 仅记录原文明确要求企业教练判断、确认或裁定的事项；普通讨论、已拍板结果与待办不得放入此字段
 - 负责人或截止时间没有在原文明确出现时，分别填空字符串
+- 提供项目 ID 时，change_set 是必填字段；未提出任何可由原文逐字引文支撑的工作推进表变更时，返回 []
+- change_set 单项必须严格为：
+{{
+  "action": "create_workstream|update_workstream|create_subtask|update_subtask",
+  "target": {{"project_id": 123, "workstream_id": 456, "subtask_id": 789, "parent_workstream_id": 456}},
+  "proposed": {{"允许修改的字段": "字符串值"}},
+  "evidence": ["会议转录中的逐字连续引文"],
+  "reason": "非空字符串，说明引文如何支持变更",
+  "confidence": 0.0
+}}
+- target 内的 ID 必须是冻结快照中已有的整数；目标不明确时不得猜测任何 ID，省略不确定的 ID 并保留说明；evidence 必须是会议转录中的逐字连续片段。
 """
 
 # 项目汇报会提示词（有发言人映射 + 成员上下文时使用）
@@ -1342,8 +1702,21 @@ _PROMPT_REPORT = """你是一个只做事实提取的会议纪要助手。
   ],
   "confirmed_items": ["会议已明确确认并可直接入库的事项"],
   "decision_requests": ["需要企业教练判断的事项"],
-  "action_items": [{{"member": "负责人", "task": "事项", "deadline": "时间或空字符串"}}]
+  "action_items": [{{"member": "负责人", "task": "事项", "deadline": "时间或空字符串"}}],
+  "change_set": []
 }}
+
+提供项目 ID 时，change_set 是必填字段；未提出任何可由原文逐字引文支撑的工作推进表变更时，返回 []。
+change_set 单项必须严格为：
+{{
+  "action": "create_workstream|update_workstream|create_subtask|update_subtask",
+  "target": {{"project_id": 123, "workstream_id": 456, "subtask_id": 789, "parent_workstream_id": 456}},
+  "proposed": {{"允许修改的字段": "字符串值"}},
+  "evidence": ["会议转录中的逐字连续引文"],
+  "reason": "非空字符串，说明引文如何支持变更",
+  "confidence": 0.0
+}}
+target 内的 ID 必须是冻结快照中已有的整数；目标不明确时不得猜测任何 ID，省略不确定的 ID 并保留说明；evidence 必须是会议转录中的逐字连续片段。
 """
 
 

@@ -6,19 +6,18 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const sectionPath = path.join(root, 'src/features/settings/AIConfigurationSection.tsx')
+const drawerPath = path.join(root, 'src/features/settings/AIModelDrawer.tsx')
 const apiPath = path.join(root, 'src/api/aiConfig.ts')
 
-test('AI capability settings manages models and policies without rendering secrets', () => {
+test('AI model settings manages the model registry without business bindings or secrets', () => {
   const source = fs.readFileSync(sectionPath, 'utf8')
+  const drawer = fs.readFileSync(drawerPath, 'utf8')
   const api = fs.readFileSync(apiPath, 'utf8')
 
-  assert.match(source, /AI能力配置/)
-  assert.match(source, /能力策略/)
-  assert.match(source, /credential_configured/)
+  assert.match(source, /模型管理/)
+  assert.match(source, /添加模型/)
+  assert.match(drawer, /credential_configured/)
   assert.match(api, /\/api\/ai-config\/models/)
-  assert.match(api, /\/api\/ai-config\/policies/)
-  assert.match(source, /defaultPolicy/)
-  assert.doesNotMatch(source, /policy && void savePolicy/)
-  assert.doesNotMatch(source, /value=\{[^}]*api_key/)
-  assert.doesNotMatch(source, /credential\.api_key/)
+  assert.doesNotMatch(source, /能力策略|listAICapabilityPolicies|saveAICapabilityPolicy|defaultPolicy/)
+  assert.doesNotMatch(source + drawer, /value=\{[^}]*api_key|credential\.api_key/)
 })

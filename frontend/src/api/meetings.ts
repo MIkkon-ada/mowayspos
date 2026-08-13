@@ -106,6 +106,70 @@ export type MeetingAnalyzeResult = {
   decision_items_json: string
   risk_items_json: string
   transcript_text: string
+  analysis_id: number | null
+  change_set: MeetingChangeSet | null
+}
+
+export type MeetingChangeProposal = {
+  id: number
+  action: 'create_workstream' | 'update_workstream' | 'create_subtask' | 'update_subtask'
+  target_type: 'workstream' | 'subtask'
+  target_id: number | null
+  parent_workstream_id: number | null
+  target: {
+    project_id: number
+    workstream_id?: number
+    subtask_id?: number
+    parent_workstream_id?: number
+  }
+  before: Record<string, unknown>
+  proposed: Record<string, unknown>
+  evidence: string[]
+  reason: string
+  confidence: number
+  validation: { state: 'ready' | 'needs_review' | 'blocked'; errors: string[] }
+  execution_status: 'pending' | 'executed'
+  executed_by_person_id: number | null
+  executed_at: string | null
+  result_target_id: number | null
+}
+
+export type MeetingChangeSet = {
+  id: number
+  project_id: number
+  status: 'draft' | 'attached' | 'executed'
+  proposals: MeetingChangeProposal[]
+}
+
+export type ProposalEditPayload = {
+  proposed: Record<string, unknown>
+  evidence: string[]
+  reason: string
+}
+
+export function fetchMeetingChangeSet(meetingId: number): Promise<MeetingChangeSet> {
+  return apiGet<MeetingChangeSet>(`/api/meetings/${meetingId}/change-set`)
+}
+
+export function updateMeetingChangeProposal(
+  meetingId: number,
+  proposalId: number,
+  payload: ProposalEditPayload,
+): Promise<MeetingChangeProposal> {
+  return apiPatch<MeetingChangeProposal>(
+    `/api/meetings/${meetingId}/change-set/proposals/${proposalId}`,
+    payload,
+  )
+}
+
+export function executeMeetingChangeSet(
+  meetingId: number,
+  proposalIds: number[],
+): Promise<MeetingChangeSet> {
+  return apiPost<MeetingChangeSet>(
+    `/api/meetings/${meetingId}/change-set/execute`,
+    { proposal_ids: proposalIds },
+  )
 }
 
 export type MeetingSkillReferenceFile = {
@@ -260,60 +324,9 @@ export function confirmKickoffStart(runId: number): Promise<{ project: unknown; 
   return apiPost(`/api/meetings/kickoff-runs/${runId}/confirm-start`, {})
 }
 
-export type TaskCardAction = 'create' | 'update_status' | 'add_note'
-
-type SubTaskCurrentPayload = {
-  title: string
-  assignee: string
-  plan_time: string
-  status: string
-  completion_criteria: string
-  notes: string
-}
-
-export type TaskCard =
-  | {
-      action: 'create'
-      parent_task_id: number
-      parent_key_task: string
-      title: string
-      assignee: string
-      plan_time: string
-      notes: string
-      evidence: string
-    }
-  | {
-      action: 'update_status'
-      subtask_id: number
-      subtask_title: string
-      new_status: string
-      notes: string
-      evidence: string
-      current_payload?: SubTaskCurrentPayload
-    }
-  | {
-      action: 'add_note'
-      subtask_id: number
-      subtask_title: string
-      note: string
-      evidence: string
-      current_payload?: SubTaskCurrentPayload
-    }
-
-export function generateTaskCards(
-  projectId: number,
-  transcriptText: string,
-  speakerMap: Record<string, string>,
-): Promise<{ task_cards: TaskCard[] }> {
-  return apiPost('/api/meetings/generate-task-cards', {
-    project_id: projectId,
-    transcript_text: transcriptText,
-    speaker_map: speakerMap,
-  })
-}
-
 export function createMeeting(payload: {
   project_id: number
+  analysis_id?: number | null
   title: string
   meeting_type: string
   meeting_date: string

@@ -16,7 +16,7 @@ import {
 import type { MeetingItem } from '../../types'
 import { ErrorBar, Field, JsonListSection, SectionTitle } from './meetingShared'
 import { ReportsSection } from './MeetingReportsSection'
-import { PushToTasksModal } from './PushToTasksModal'
+import { MeetingChangeSetReviewModal } from './MeetingChangeSetReviewModal'
 
 type ModalStep = 'input' | 'analyzing' | 'clarifying' | 'review'
 
@@ -70,21 +70,6 @@ function emptyForm(defaultMeetingType: string): ReviewForm {
     decision_items_json: '[]',
     risk_items_json: '[]',
     transcript_text: '',
-  }
-}
-
-function hasActionItems(raw: string) {
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    return Array.isArray(parsed) && parsed.some((item) => {
-      if (typeof item === 'string') return Boolean(item.trim())
-      if (!item || typeof item !== 'object') return false
-      const row = item as Record<string, unknown>
-      return ['会议安排事项', '事项', '待办事项', 'task', 'title', 'content', 'name']
-        .some((key) => Boolean(String(row[key] ?? '').trim()))
-    })
-  } catch {
-    return false
   }
 }
 
@@ -167,7 +152,9 @@ export function NewMeetingModal({
   const [statusMsg, setStatusMsg] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
-  const [showPushModal, setShowPushModal] = useState(false)
+  const [analysisId, setAnalysisId] = useState<number | null>(null)
+  const [savedMeeting, setSavedMeeting] = useState<MeetingItem | null>(null)
+  const [reviewMeetingId, setReviewMeetingId] = useState<number | null>(null)
   const [documentName, setDocumentName] = useState('')
   const [documentText, setDocumentText] = useState('')
   const [supplementalText, setSupplementalText] = useState('')
@@ -276,6 +263,7 @@ export function NewMeetingModal({
     const readyRun = run.status === 'ready_for_review' ? run : await resumeMeetingSkillRun(run.id)
     setSkillRun(readyRun)
     const result: MeetingAnalyzeResult = await analyzeMeeting(analysisText, projectId, undefined, undefined, readyRun.id)
+    setAnalysisId(result.analysis_id)
     setForm((previous) => ({
       ...previous,
       title: previous.title || result.title,
@@ -299,6 +287,7 @@ export function NewMeetingModal({
       return
     }
     setError('')
+    setAnalysisId(null)
     setStep('analyzing')
     setStatusMsg('正在检查材料完整性与需要确认的事实…')
     try {
@@ -370,6 +359,7 @@ export function NewMeetingModal({
     setStatusMsg('AI 正在整理会议材料并生成通用会议纪要草稿…')
     try {
       const result: MeetingAnalyzeResult = await analyzeMeeting(analysisText, projectId)
+      setAnalysisId(result.analysis_id)
       setForm((previous) => ({
         ...previous,
         title: previous.title || result.title,
@@ -396,11 +386,16 @@ export function NewMeetingModal({
     setError('')
     try {
       const { confirmed_items_json, reports_json: _reportsJson, ...meetingForm } = form
-      const payload = { project_id: projectId, ...meetingForm, risk_items_json: confirmed_items_json, skill_run_id: skillRun?.id }
+      const payload = { project_id: projectId, ...meetingForm, risk_items_json: confirmed_items_json, skill_run_id: skillRun?.id, analysis_id: analysisId }
       const item = isEdit && editItem
         ? await updateMeeting(editItem.id, payload)
         : await createMeeting(payload)
-      onCreated(item)
+      if (isEdit || analysisId === null) {
+        onCreated(item)
+      } else {
+        setSavedMeeting(item)
+        setReviewMeetingId(item.id)
+      }
     } catch (cause: unknown) {
       setError(`保存失败：${cause instanceof Error ? cause.message : String(cause)}`)
     } finally {
@@ -415,6 +410,11 @@ export function NewMeetingModal({
     { key: 'review' as ModalStep, label: '确认保存' },
   ]
   const currentIdx = isEdit ? 2 : steps.findIndex((item) => item.key === step)
+
+  if (reviewMeetingId !== null && savedMeeting) {
+    const finishReview = () => onCreated(savedMeeting)
+    return <MeetingChangeSetReviewModal meetingId={reviewMeetingId} onClose={finishReview} onDone={finishReview} />
+  }
 
   return (
     <>
@@ -592,12 +592,11 @@ export function NewMeetingModal({
         {step !== 'analyzing' && step !== 'clarifying' && (
           <footer className="flex shrink-0 items-center justify-between border-t border-slate-200 bg-white px-8 py-4 shadow-[0_-6px_18px_rgba(15,23,42,0.04)]">
             {step === 'review' ? <button onClick={() => (isEdit ? onClose() : setStep('input'))} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">{isEdit ? '取消' : '返回修改'}</button> : <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">取消</button>}
-            {step === 'input' ? <button onClick={() => void handleAnalyze()} disabled={!analysisText.trim() || documentUploading || audioUploading} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40">AI 生成草稿</button> : <div className="flex gap-3">{hasActionItems(form.task_list_json) && <button onClick={() => setShowPushModal(true)} className="rounded-lg border border-emerald-200 px-4 py-2.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50">推送待办到工作推进</button>}<button onClick={() => void handleSave()} disabled={saving} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">{saving ? '保存中…' : isEdit ? '保存修改' : '保存草稿'}</button></div>}
+            {step === 'input' ? <button onClick={() => void handleAnalyze()} disabled={!analysisText.trim() || documentUploading || audioUploading} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40">AI 生成草稿</button> : <button onClick={() => void handleSave()} disabled={saving} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">{saving ? '保存中…' : isEdit ? '保存修改' : '保存草稿'}</button>}
           </footer>
         )}
       </div>
 
-      {showPushModal && <PushToTasksModal projectId={projectId} taskListJson={form.task_list_json} onClose={() => setShowPushModal(false)} onDone={() => { setShowPushModal(false); void handleSave() }} />}
     </>
   )
 }

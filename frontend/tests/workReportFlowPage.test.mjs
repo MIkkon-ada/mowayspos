@@ -553,12 +553,17 @@ test('unconfirmed Agent ownership blocks formal submission without changing crea
   assert.equal((read(SUBMISSION).match(/createUpdate\(/g) ?? []).length, 1)
 })
 
-test('submission uses createUpdate with human_result and handles drafts', () => {
+test('submission routes task scope to one update and broader scopes to an idempotent batch', () => {
   const submission = read(SUBMISSION)
   const api = read('src/api/updates.ts')
   const page = read(PAGE)
   assert.match(api, /createUpdate/)
-  assert.match(submission, /createUpdate\(/)
+  assert.match(api, /createUpdateBatch/)
+  assert.match(submission, /if\s*\(reportScope === 'task'\)[\s\S]*?createUpdate\(/)
+  assert.match(submission, /else\s*\{[\s\S]*?createUpdateBatch\(/)
+  assert.match(submission, /batchRequestId\.current\s*\|\|=/)
+  assert.match(submission, /client_request_id:\s*batchRequestId\.current/)
+  assert.match(submission, /batchRequestId\.current\s*=\s*null/)
   assert.match(submission, /human_result:/)
   assert.match(submission, /buildVoiceUpdateHumanResult/)
   assert.match(submission, /createDrafts/)

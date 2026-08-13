@@ -38,6 +38,8 @@ test('notes column receives a wide share without truncating its editor', () => {
 
 test('expanded task header inputs use compact workbench styling', () => {
   assert.match(source, /text-xs font-semibold tracking-wide text-slate-500/)
+  assert.match(source, /owner-submit-task-group-header[^\n]*py-1\.5/)
+  assert.equal((source.match(/mb-0\.5 block text-xs font-semibold tracking-wide text-slate-500/g) ?? []).length, 2)
   assert.match(source, /placeholder="请输入重点工作"[\s\S]{0,360}h-10[\s\S]{0,160}font-semibold[\s\S]{0,220}focus:ring-2/)
   assert.match(source, /placeholder="请输入完成准则"[\s\S]{0,360}h-10[\s\S]{0,220}focus:ring-2/)
 })
@@ -53,6 +55,21 @@ test('workbench uses a single-column project summary and full-width plan', () =>
   assert.doesNotMatch(source, /disabled[\s\S]{0,120}value=\{project\.name\}/)
 })
 
+test('project summary stays compact while preserving the horizontal three-field structure', () => {
+  assert.match(source, /owner-submit-project-summary[^\n]*py-2(?:\s|"|$)/)
+  assert.match(source, /mb-1\.5[^>]*>项目资料/)
+  assert.match(source, /md:grid-cols-\[minmax\(160px,0\.8fr\)_minmax\(260px,1fr\)_minmax\(360px,2fr\)\]/)
+  assert.match(source, /rows=\{2\}/)
+  assert.match(source, /<details className="group mt-1">/)
+})
+
+test('top add action stays primary while the list tail uses a weak full-width continue action', () => {
+  assert.match(source, /className="owner-submit-primary-add[^"]*"[\s\S]{0,80}>\s*\+ 新增重点工作/)
+  assert.match(source, /className="owner-submit-continue-add[^"]*w-full[^"]*h-10[^"]*border-dashed[^"]*"[\s\S]{0,80}>\s*＋ 继续新增重点工作/)
+  assert.doesNotMatch(source, /owner-submit-continue-add[^\n]*shadow/)
+  assert.equal((source.match(/onClick=\{addTaskDraft\}/g) ?? []).length, 2)
+})
+
 test('task expansion state defaults to the first task and collapsed cards are read-only summaries', () => {
   assert.match(source, /expandedTaskIndexes, setExpandedTaskIndexes[\s\S]{0,100}new Set\(\[0\]\)/)
   assert.match(source, /const isExpanded = expandedTaskIndexes\.has\(taskIndex\)/)
@@ -60,6 +77,8 @@ test('task expansion state defaults to the first task and collapsed cards are re
   assert.match(source, /task\.subtasks\.length\} 个关键任务/)
   assert.match(source, /onClick=\{\(\) => expandTask\(taskIndex\)\}/)
   assert.match(source, /aria-label=\{`重点工作 \$\{taskIndex \+ 1\} 更多操作`\}/)
+  assert.match(source, /\) : \([\s\S]*?role="button"[\s\S]*?\)\}/)
+  assert.doesNotMatch(source, /max-w-\[180px\]/)
 })
 
 test('adding and deleting tasks preserves expansion indexes without drift', () => {

@@ -811,9 +811,9 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
 
         <main className="owner-submit-workbench-main min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-slate-50">
           <div className="mx-auto flex w-full max-w-[1560px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
-            <section className="owner-submit-project-summary rounded-xl border border-slate-200 bg-white px-4 py-3.5 sm:px-5">
-              <h3 className="mb-3 text-sm font-bold text-slate-800">项目资料</h3>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(160px,0.8fr)_minmax(260px,1fr)_minmax(360px,2fr)] md:items-start">
+            <section className="owner-submit-project-summary rounded-xl border border-slate-200 bg-white px-4 py-2 sm:px-5">
+              <h3 className="mb-1.5 text-sm font-bold text-slate-800">项目资料</h3>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(160px,0.8fr)_minmax(260px,1fr)_minmax(360px,2fr)] md:items-start">
                 <div className="min-w-0">
                   <span className="block text-[11px] font-semibold text-slate-500">项目名称</span>
                   <p className="mt-1 truncate text-sm font-semibold text-slate-800">{project.name}</p>
@@ -839,7 +839,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                 </div>
               </div>
 
-              <details className="group mt-2">
+              <details className="group mt-1">
                 <summary className="flex cursor-pointer select-none items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700">
                   <span className="text-sm leading-none transition-transform group-open:rotate-90">›</span>
                   更多项目资料
@@ -907,7 +907,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                   <button
                     type="button"
                     onClick={addTaskDraft}
-                    className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-bold text-blue-700 transition-colors hover:border-blue-300 hover:bg-blue-50"
+                    className="owner-submit-primary-add flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 text-xs font-bold text-blue-700 transition-colors hover:border-blue-300 hover:bg-blue-50"
                   >
                     + 新增重点工作
                   </button>
@@ -956,13 +956,13 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                     <div key={taskIndex} className="owner-submit-task-group rounded-xl border border-slate-200 bg-white">
                       {isExpanded ? (
                         <>
-                          <div className="owner-submit-task-group-header flex items-end gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
+                              <div className="owner-submit-task-group-header flex items-end gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-1.5">
                             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-50 text-xs font-bold text-blue-700">
                               {String(taskIndex + 1).padStart(2, '0')}
                             </div>
                             <div className="grid min-w-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[42fr_43fr]">
                               <div>
-                                <label className="mb-1 block text-xs font-semibold tracking-wide text-slate-500">重点工作名称</label>
+                                    <label className="mb-0.5 block text-xs font-semibold tracking-wide text-slate-500">重点工作名称</label>
                                 <input
                                   value={task.title}
                                   onChange={(e) => updateTaskDraft(taskIndex, 'title', e.target.value)}
@@ -971,7 +971,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                                 />
                               </div>
                               <div>
-                                <label className="mb-1 block text-xs font-semibold tracking-wide text-slate-500">目标成果 / 验收标准</label>
+                                    <label className="mb-0.5 block text-xs font-semibold tracking-wide text-slate-500">目标成果 / 验收标准</label>
                                 <input
                                   value={task.description}
                                   onChange={(e) => updateTaskDraft(taskIndex, 'description', e.target.value)}
@@ -1049,8 +1049,8 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                 })}
               </div>
 
-              <div className="mt-4 flex justify-center">
-                <button type="button" onClick={addTaskDraft} className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-xs font-bold text-blue-700 hover:border-blue-300 hover:bg-blue-50">+ 新增重点工作</button>
+              <div className="mt-3">
+                <button type="button" onClick={addTaskDraft} className="owner-submit-continue-add w-full h-10 rounded-lg border border-dashed border-slate-300 bg-white text-xs font-semibold text-blue-600 transition-colors hover:border-blue-300 hover:bg-blue-50">＋ 继续新增重点工作</button>
               </div>
             </section>
           </div>

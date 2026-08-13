@@ -129,3 +129,24 @@ Expected: 无 whitespace error；除设计/计划文档外，仅 `OwnerSubmitMod
 
 在 1440、1600、1920px 检查单列布局、折叠只读、新增展开、删除不串位、Picker Portal、AI 面板/预览和 sticky footer。若本地页面缺少可进入该 Modal 的可用数据或登录状态，在结果中如实记录未完成的手工项，不用伪造结论。
 
+### Task 5: 收紧项目资料与列表尾部入口
+
+**Files:**
+- Modify: `frontend/src/features/settings/OwnerSubmitModal.tsx`
+- Test: `frontend/tests/ownerSubmitModalLayout.test.mjs`
+
+- [ ] **Step 1: 先补充本轮视觉结构断言并确认旧实现失败**
+
+断言项目摘要使用紧凑 padding/gap，顶部正式新增入口保留，底部使用独立的 `owner-submit-continue-add` 弱入口且不得复用顶部按钮 class；继续保护单列布局、折叠只读、Picker 和宽备注列。
+
+- [ ] **Step 2: 最小调整 JSX className**
+
+缩小项目资料卡的上下 padding、标题间距和字段间距；将底部按钮替换为全宽、约 40px、虚线浅灰边框的“＋ 继续新增重点工作”。不得修改 `addTaskDraft()` 或任何状态/业务函数。
+
+- [ ] **Step 3: 运行指定与全量验证**
+
+依次运行三个指定测试、全量前端 Node 测试和 `npm run build`，均要求 0 失败。
+
+- [ ] **Step 4: 真实页面三宽度验收与截图**
+
+在本地页面通过现有按钮建立三个重点工作，填写批准的名称、目标和 2/3/2 条关键任务；保持第一项展开、第二三项折叠，在 1440、1600、1920px 检查并保存最终截图。验收过程不提交表单、不修改数据库、不向正式组件写 mock。

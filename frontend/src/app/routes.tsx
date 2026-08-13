@@ -95,7 +95,7 @@ function ConfirmationCenterRoute() {
   return <ConfirmPage />
 }
 
-type SetupState = 'loading' | 'needed' | 'done'
+type SetupState = 'loading' | 'needed' | 'done' | 'error'
 
 export function AppRoutes() {
   const { authState } = useProject()
@@ -103,13 +103,31 @@ export function AppRoutes() {
 
   useEffect(() => {
     fetch('/api/setup/status')
-      .then((r) => r.json())
-      .then((d) => setSetupState(d.initialized ? 'done' : 'needed'))
-      .catch(() => setSetupState('done'))
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Setup status request failed: ${response.status}`)
+        }
+        const data: unknown = await response.json()
+        if (
+          typeof data !== 'object' ||
+          data === null ||
+          !('initialized' in data) ||
+          typeof data.initialized !== 'boolean'
+        ) {
+          throw new Error('Setup status response is invalid')
+        }
+        return data.initialized ? 'done' : 'needed'
+      })
+      .then(setSetupState)
+      .catch(() => setSetupState('error'))
   }, [])
 
   if (setupState === 'loading' || authState === 'loading') {
     return <CenterMessage title="加载中..." />
+  }
+
+  if (setupState === 'error') {
+    return <CenterMessage title="初始化状态检查失败，请刷新页面重试" />
   }
 
   if (setupState === 'needed') {

@@ -783,7 +783,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
       onClick={() => !fillLoading && onClose()}
     >
       <div
-        className="owner-submit-workbench-shell flex h-[94vh] w-full max-w-[1560px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-slate-900 shadow-[0_18px_50px_rgba(15,23,42,0.16)]"
+        className="owner-submit-workbench-shell flex w-full max-w-[1400px] min-h-[min(640px,calc(100vh-48px))] max-h-[calc(100vh-48px)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-slate-900 shadow-[0_18px_50px_rgba(15,23,42,0.16)]"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="owner-submit-workbench-header flex min-h-[72px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 py-3 sm:px-7">

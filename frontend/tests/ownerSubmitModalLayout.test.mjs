@@ -9,6 +9,8 @@ const sourcePath = path.resolve(here, '../src/features/settings/OwnerSubmitModal
 const source = fs.readFileSync(sourcePath, 'utf8')
 const aiSourcePath = path.resolve(here, '../src/features/settings/OwnerSubmitAiPanel.tsx')
 const aiSource = fs.readFileSync(aiSourcePath, 'utf8')
+const workbenchShellClassName = source.split(/\r?\n/).find((line) => line.includes('owner-submit-workbench-shell')) ?? ''
+const workbenchMainClassName = source.split(/\r?\n/).find((line) => line.includes('owner-submit-workbench-main')) ?? ''
 
 test('assignee picker renders outside the table overflow container', () => {
   assert.match(source, /from ['"]react-dom['"]/)
@@ -45,7 +47,8 @@ test('expanded task header inputs use compact workbench styling', () => {
 })
 
 test('workbench uses a single-column project summary and full-width plan', () => {
-  assert.match(source, /max-w-\[1560px\]/)
+  assert.match(workbenchShellClassName, /w-full/)
+  assert.match(workbenchShellClassName, /max-w-\[1400px\]/)
   assert.match(source, /填写项目方案 — \{project\.name\}/)
   assert.match(source, /完善项目计划内容，确认后提交企业教练审核/)
   assert.match(source, /owner-submit-project-summary/)
@@ -53,6 +56,16 @@ test('workbench uses a single-column project summary and full-width plan', () =>
   assert.doesNotMatch(source, /lg:flex-row/)
   assert.doesNotMatch(source, /owner-submit-left-pane/)
   assert.doesNotMatch(source, /disabled[\s\S]{0,120}value=\{project\.name\}/)
+})
+
+test('workbench shell sizes to content with a viewport-safe main scroll boundary', () => {
+  assert.match(workbenchShellClassName, /min-h-\[min\(640px,calc\(100vh-48px\)\)\]/)
+  assert.match(workbenchShellClassName, /max-h-\[calc\(100vh-48px\)\]/)
+  assert.doesNotMatch(workbenchShellClassName, /h-\[94vh\]/)
+  assert.match(workbenchMainClassName, /min-h-0/)
+  assert.match(workbenchMainClassName, /flex-1/)
+  assert.match(workbenchMainClassName, /overflow-x-hidden/)
+  assert.match(workbenchMainClassName, /overflow-y-auto/)
 })
 
 test('project summary stays compact while preserving the horizontal three-field structure', () => {

@@ -23,8 +23,8 @@ test('subtask detail keeps owner and collaborators compact until editing', () =>
   assert.match(drawer, /子任务详情/)
   assert.match(drawer, /负责人[\s\S]*协作人/)
   assert.match(drawer, /grid-cols-2/)
-  assert.match(drawer, /editing[\s\S]*multiple/)
-  assert.doesNotMatch(drawer, /<Field label="协作人">[\s\S]{0,200}<select multiple/)
+  assert.match(drawer, /CollaboratorMultiSelect/)
+  assert.doesNotMatch(drawer, /<select multiple/)
 })
 
 test('subtask form allows no month grouping', () => {
@@ -38,4 +38,15 @@ test('subtask selectors deduplicate repeated project members', () => {
   assert.match(drawer, /selectableMembers/)
   assert.match(drawer, /findIndex\(\(candidate\) => candidate\.person_id === member\.person_id\)/)
   assert.doesNotMatch(drawer, /\{members\.map\(\(member\)/)
+})
+
+test('collaborator field uses a compact checkbox dropdown while preserving collaborator ids', () => {
+  const drawer = read('src/components/task-management/KeyTaskSubtaskDrawer.tsx')
+  assert.match(drawer, /请选择协作人/)
+  assert.match(drawer, /selectedNames\.slice\(0, 2\)/)
+  assert.match(drawer, /absolute left-0 right-0 top-full/)
+  assert.match(drawer, /type="checkbox"/)
+  assert.match(drawer, /document\.addEventListener\('mousedown'/)
+  assert.match(drawer, /collaborator_ids.*filter\(\(id\) => id !== assigneeId\)/s)
+  assert.match(drawer, /patch\('collaborator_ids'/)
 })

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { MonthlyPlan, MonthlyPlanPayload, MonthPlanStatus } from '../../api/monthlyPlans'
 import type { WorkReportEntryIntent } from '../../domain/workReportEntry'
 import type { ProjectMember } from '../../types'
@@ -64,6 +64,14 @@ export function KeyTaskSubtaskDrawer({
   const patch = <K extends keyof MonthlyPlanPayload>(key: K, value: MonthlyPlanPayload[K]) =>
     setForm((current) => ({ ...current, [key]: value }))
 
+  function changeAssignee(assigneeId: number) {
+    setForm((current) => ({
+      ...current,
+      assignee_id: assigneeId,
+      collaborator_ids: current.collaborator_ids.filter((id) => id !== assigneeId),
+    }))
+  }
+
   async function submit(event: React.FormEvent) {
     event.preventDefault()
     if (!form.title.trim() || !form.expected_output.trim() || !form.assignee_id) {
@@ -123,8 +131,8 @@ export function KeyTaskSubtaskDrawer({
           </div>
           <Field label="子任务事项 *"><input value={form.title} disabled={saving} onChange={(event) => patch('title', event.target.value)} placeholder="需要推进的具体事项" className={inputClass} /></Field>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block text-xs font-medium text-slate-600"><span className="mb-1 block">负责人 *</span><select value={form.assignee_id || ''} disabled={saving} onChange={(event) => patch('assignee_id', Number(event.target.value))} className={inputClass}><option value="">请选择负责人</option>{selectableMembers.map((member) => <option key={member.person_id} value={member.person_id}>{member.person_name_snapshot}</option>)}</select></label>
-            {editing && <label className="block text-xs font-medium text-slate-600"><span className="mb-1 block">协作人</span><select multiple value={form.collaborator_ids.map(String)} disabled={saving} onChange={(event) => patch('collaborator_ids', [...event.currentTarget.selectedOptions].map((option) => Number(option.value)))} className={`${inputClass} min-h-20`}>{selectableMembers.filter((member) => member.person_id !== form.assignee_id).map((member) => <option key={member.person_id} value={member.person_id}>{member.person_name_snapshot}</option>)}</select></label>}
+            <label className="block text-xs font-medium text-slate-600"><span className="mb-1 block">负责人 *</span><select value={form.assignee_id || ''} disabled={saving} onChange={(event) => changeAssignee(Number(event.target.value))} className={inputClass}><option value="">请选择负责人</option>{selectableMembers.map((member) => <option key={member.person_id} value={member.person_id}>{member.person_name_snapshot}</option>)}</select></label>
+            {editing && <CollaboratorMultiSelect members={selectableMembers.filter((member) => member.person_id !== form.assignee_id)} selectedIds={form.collaborator_ids} disabled={saving} onChange={(collaboratorIds) => patch('collaborator_ids', collaboratorIds)} />}
           </div>
           <div className="grid gap-4 sm:grid-cols-2"><Field label="开始日期"><input type="date" value={form.start_date ?? ''} disabled={saving} onChange={(event) => patch('start_date', event.target.value || null)} className={inputClass} /></Field><Field label="截止日期"><input type="date" value={form.due_date ?? ''} disabled={saving} onChange={(event) => patch('due_date', event.target.value || null)} className={inputClass} /></Field></div>
           <Field label="预期产出 *"><textarea rows={3} value={form.expected_output} disabled={saving} onChange={(event) => patch('expected_output', event.target.value)} className={inputClass} /></Field>
@@ -174,6 +182,55 @@ function Detail({ label, value }: { label: string; value: string }) {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <label className="block text-xs font-medium text-slate-600"><span className="mb-1 block">{label}</span>{children}</label>
+}
+
+function CollaboratorMultiSelect({ members, selectedIds, disabled, onChange }: {
+  members: ProjectMember[]
+  selectedIds: number[]
+  disabled: boolean
+  onChange: (ids: number[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const selectedNames = members.filter((member) => selectedIds.includes(member.person_id)).map((member) => member.person_name_snapshot)
+  const displayValue = selectedNames.length === 0
+    ? '请选择协作人'
+    : selectedNames.length <= 2
+      ? selectedNames.join('、')
+      : `${selectedNames.slice(0, 2).join('、')}、+${selectedNames.length - 2}`
+
+  useEffect(() => {
+    if (!open) return
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      const target = event.target as Node | null
+      if (target && !rootRef.current?.contains(target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick)
+  }, [open])
+
+  function toggleMember(personId: number) {
+    onChange(selectedIds.includes(personId)
+      ? selectedIds.filter((id) => id !== personId)
+      : [...selectedIds, personId])
+  }
+
+  return <div ref={rootRef} className="relative text-xs font-medium text-slate-600">
+    <span className="mb-1 block">协作人</span>
+    <button type="button" disabled={disabled} aria-label="协作人" aria-expanded={open} onClick={() => setOpen((value) => !value)} title={selectedNames.join('、')} className={`${inputClass} flex h-[38px] items-center justify-between gap-2 text-left disabled:cursor-not-allowed`}>
+      <span className={selectedNames.length ? 'truncate text-slate-700' : 'truncate text-slate-400'}>{displayValue}</span>
+      <svg className={`size-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" /></svg>
+    </button>
+    {open && <div className="absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg" role="listbox" aria-label="协作人候选">
+      <div className="max-h-56 overflow-y-auto">{members.length ? members.map((member) => {
+        const checked = selectedIds.includes(member.person_id)
+        return <label key={member.person_id} className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+          <input type="checkbox" checked={checked} disabled={disabled} onChange={() => toggleMember(member.person_id)} className="size-4 rounded border-slate-300 accent-blue-600" />
+          <span className="truncate">{member.person_name_snapshot}</span>
+        </label>
+      }) : <p className="px-3 py-3 text-sm text-slate-400">暂无可选协作人</p>}</div>
+    </div>}
+  </div>
 }
 
 function monthOptions(current: string | null) {

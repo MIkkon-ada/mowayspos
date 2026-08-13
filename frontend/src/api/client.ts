@@ -58,7 +58,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 function extractMessage(body: unknown): string {
   if (!body || typeof body !== 'object') return ''
   const detail = (body as { detail?: unknown }).detail
-  if (typeof detail === 'string') return detail
+  if (typeof detail === 'string') {
+    return {
+      wecom_directory_disabled: '请先配置 WECOM_CORPID 和 WECOM_SECRET，然后重启后端服务',
+      wecom_login_disabled: '企业微信扫码登录尚未配置完整，请检查 WECOM_CORPID、WECOM_AGENT_ID、WECOM_SECRET 和 WECOM_REDIRECT_URI',
+    }[detail] || detail
+  }
   if (detail && typeof detail === 'object') {
     const msg = (detail as { message?: unknown }).message
     if (typeof msg === 'string') return msg

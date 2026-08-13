@@ -11,7 +11,7 @@ from app.routers.accounts import (
     sync_wecom_identity_records,
 )
 from app.routers.people import reset_wecom_identity_field
-from app.settings import get_settings
+from app.settings import get_settings, load_local_env
 from app.services import wecom
 
 
@@ -45,6 +45,18 @@ def test_directory_sync_does_not_require_login_redirect_uri(monkeypatch):
 
     assert settings.wecom_directory_enabled is True
     assert settings.wecom_enabled is False
+
+
+def test_local_env_loader_sets_missing_values_without_overriding_process_env(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("WECOM_CORPID=from-file\nWECOM_SECRET=from-file-secret\n", encoding="utf-8")
+    monkeypatch.delenv("WECOM_CORPID", raising=False)
+    monkeypatch.setenv("WECOM_SECRET", "from-process")
+
+    load_local_env(env_file)
+
+    assert __import__("os").environ["WECOM_CORPID"] == "from-file"
+    assert __import__("os").environ["WECOM_SECRET"] == "from-process"
 
 
 def test_wecom_detailed_directory_uses_member_detail_endpoint(monkeypatch):

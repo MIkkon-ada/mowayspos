@@ -7,6 +7,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv as _load_dotenv
+
 _DEFAULT_COOKIE_NAME = "bowei_session"
 _DEFAULT_COOKIE_SAMESITE = "lax"
 _DEFAULT_SESSION_TTL_DAYS = 7
@@ -23,6 +25,12 @@ _PASSWORDS_FILE = Path(__file__).resolve().parent.parent / "passwords.json"
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSEY = {"0", "false", "no", "off"}
 _SAMESITE_VALUES = {"lax", "strict", "none"}
+
+
+def load_local_env(path: Path | None = None) -> None:
+    """Load the local development env file without overriding real process env."""
+    env_path = path or Path(__file__).resolve().parents[1] / ".env"
+    _load_dotenv(dotenv_path=env_path, override=False)
 
 
 def parse_bool(raw: str | None, default: bool | None = None) -> bool:

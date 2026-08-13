@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { createAccount, fetchAccounts, resetAccountPassword, updateAccountStatus, updateAccount, bindAccountWecom, unbindAccountWecom, fetchWecomUsers, batchBindWecom, type AccountItem, type WecomUserItem } from '../../api/accounts'
-import { fetchPeople, createPerson, updatePerson, deletePerson } from '../../api/people'
+import { fetchPeople, createPerson, updatePerson, deletePerson, resetIdentityField } from '../../api/people'
 import type { Person } from '../../types'
 import { Card, SectionTitle } from './settingsShared'
 import { SYSTEM_ROLE_SUPER_ADMIN, SYSTEM_ROLE_NORMAL, SYSTEM_ROLE_OPTIONS, systemRoleLabel, normalizeSystemRole } from '../../domain/roles'
 import { PeopleBatchImportModal } from './PeopleBatchImportModal'
+import { WecomIdentitySyncModal } from './WecomIdentitySyncModal'
 import { toast } from '../../utils/toast'
 import {
   FaEdit, FaCheck, FaTimes, FaTrash, FaKey, FaPowerOff,
@@ -20,11 +21,12 @@ export function AccountPeopleMgmtSection() {
   const [newName, setNewName] = useState('')
   const [newRole, setNewRole] = useState(SYSTEM_ROLE_NORMAL)
   const [newDept, setNewDept] = useState('')
+  const [newPosition, setNewPosition] = useState('')
   const [newUsername, setNewUsername] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [createLoginAccount, setCreateLoginAccount] = useState(true)
   const [editingId, setEditingId] = useState<number | null>(null)
-  const [editForm, setEditForm] = useState<{ name: string; system_role: string; department: string }>({ name: '', system_role: SYSTEM_ROLE_NORMAL, department: '' })
+  const [editForm, setEditForm] = useState<{ name: string; system_role: string; department: string; position_title: string }>({ name: '', system_role: SYSTEM_ROLE_NORMAL, department: '', position_title: '' })
   const [creating, setCreating] = useState(false)
   const [accountDraft, setAccountDraft] = useState<Record<number, { username: string; password: string }>>({})
   const [resetDraft, setResetDraft] = useState<Record<number, string>>({})
@@ -37,6 +39,7 @@ export function AccountPeopleMgmtSection() {
   const [editingUsernameId, setEditingUsernameId] = useState<number | null>(null)
   const [usernameDraft, setUsernameDraft] = useState('')
   const [message, setMessage] = useState('')
+  const [showWecomIdentitySync, setShowWecomIdentitySync] = useState(false)
 
   function loadAll() {
     setLoading(true)
@@ -68,7 +71,7 @@ export function AccountPeopleMgmtSection() {
     }
     setCreating(true)
     try {
-      const person = await createPerson({ name: newName.trim(), system_role: newRole, department: newDept })
+      const person = await createPerson({ name: newName.trim(), system_role: newRole, department: newDept, position_title: newPosition })
       let createdAccount: AccountItem | null = null
       if (createLoginAccount) {
         createdAccount = await createAccount({
@@ -83,6 +86,7 @@ export function AccountPeopleMgmtSection() {
       setNewName('')
       setNewRole(SYSTEM_ROLE_NORMAL)
       setNewDept('')
+      setNewPosition('')
       setNewUsername('')
       setNewPassword('')
       setCreateLoginAccount(true)
@@ -100,10 +104,21 @@ export function AccountPeopleMgmtSection() {
       name: editForm.name,
       system_role: editForm.system_role,
       department: editForm.department,
+      position_title: editForm.position_title,
     })
     setPeople((prev) => prev.map((item) => item.id === id ? { ...item, ...person } : item))
     setEditingId(null)
     showMessage('人员信息已保存')
+  }
+
+  async function handleResetIdentity(id: number, field: 'department' | 'position') {
+    try {
+      const updated = await resetIdentityField(id, field)
+      setPeople((prev) => prev.map((item) => item.id === id ? { ...item, ...updated } : item))
+      showMessage(field === 'department' ? '部门已恢复企业微信值' : '岗位已恢复企业微信值')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '恢复企业微信值失败')
+    }
   }
 
   async function handleCreateAccount(person: Person) {
@@ -256,6 +271,10 @@ export function AccountPeopleMgmtSection() {
             className="cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-emerald-200 text-emerald-600 bg-emerald-50 hover:bg-emerald-100">
             拉取企微通讯录
           </button>
+          <button type="button" onClick={() => setShowWecomIdentitySync(true)}
+            className="cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-cyan-200 text-cyan-700 bg-cyan-50 hover:bg-cyan-100">
+            同步部门/岗位
+          </button>
           <button type="button" onClick={() => setShowNew(true)}
             className="cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-xs font-semibold"
             style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}>
@@ -265,6 +284,16 @@ export function AccountPeopleMgmtSection() {
       </div>
 
       {message && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700">{message}</div>}
+
+      {showWecomIdentitySync && (
+        <WecomIdentitySyncModal
+          onClose={() => setShowWecomIdentitySync(false)}
+          onDone={() => {
+            setShowWecomIdentitySync(false)
+            loadAll()
+          }}
+        />
+      )}
 
       {showBatchImport && (
         <PeopleBatchImportModal
@@ -380,6 +409,9 @@ export function AccountPeopleMgmtSection() {
             <input value={newDept} onChange={e => setNewDept(e.target.value)}
               placeholder="部门（可选）"
               className="w-36 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-sky-400" />
+            <input value={newPosition} onChange={e => setNewPosition(e.target.value)}
+              placeholder="岗位（可选）"
+              className="w-36 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/30 focus:border-sky-400" />
             <label className="flex items-center gap-1.5 text-xs text-slate-600 px-2">
               <input type="checkbox" checked={createLoginAccount} onChange={e => setCreateLoginAccount(e.target.checked)} />
               同时创建登录账号
@@ -439,6 +471,8 @@ export function AccountPeopleMgmtSection() {
                             </select>
                             <input value={editForm.department} onChange={e => setEditForm(f => ({ ...f, department: e.target.value }))}
                               placeholder="部门" className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-sky-200" />
+                            <input value={editForm.position_title} onChange={e => setEditForm(f => ({ ...f, position_title: e.target.value }))}
+                              placeholder="岗位" className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-sky-200" />
                           </div>
                           <div className="flex gap-2">
                             <button type="button" onClick={() => handleSaveEdit(person.id)}
@@ -474,6 +508,16 @@ export function AccountPeopleMgmtSection() {
                               }}>
                               <FaShieldAlt size={9} />{systemRoleLabel(person.system_role)}
                             </span>
+                          </div>
+                          <div className="mt-2 space-y-1 text-[11px] text-slate-500">
+                            {person.position_title && <div>岗位：{person.position_title as string}</div>}
+                            {(person.department_source === 'local' || person.position_source === 'local') && (
+                              <div className="flex items-center gap-2 text-orange-600">
+                                <span>本地覆盖</span>
+                                {person.department_source === 'local' && <button type="button" className="underline" onClick={() => handleResetIdentity(person.id, 'department')}>恢复部门</button>}
+                                {person.position_source === 'local' && <button type="button" className="underline" onClick={() => handleResetIdentity(person.id, 'position')}>恢复企业微信值</button>}
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}
@@ -613,7 +657,7 @@ export function AccountPeopleMgmtSection() {
                       <div className="border-t border-slate-100" />
                       <div className="flex items-center divide-x divide-slate-100">
                         <button type="button"
-                          onClick={() => { setEditingId(person.id); setEditForm({ name: person.name as string, system_role: normalizeSystemRole(person.system_role as string), department: (person.department as string) || '' }) }}
+                          onClick={() => { setEditingId(person.id); setEditForm({ name: person.name as string, system_role: normalizeSystemRole(person.system_role as string), department: (person.department as string) || '', position_title: (person.position_title as string) || '' }) }}
                           className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[11px] font-medium text-slate-500 hover:text-blue-600 hover:bg-blue-50/50 transition">
                           <FaEdit size={10} />编辑资料
                         </button>

@@ -229,6 +229,7 @@ class IssuePayload(BaseModel):
 class PersonPayload(BaseModel):
     name: str = Field(..., max_length=50)
     role: str = Field("", max_length=40)
+    position_title: str | None = Field(None, max_length=100)
     system_role: str = Field("normal_member", max_length=40)
     department: str = Field("", max_length=80)
     special_project_duty: str = ""
@@ -239,6 +240,10 @@ class PersonPayload(BaseModel):
     coordinated_projects: list[str] = []
     owned_projects: list[str] = []
     collaborated_projects: list[str] = []
+
+
+class IdentityResetPayload(BaseModel):
+    field: str
 
 
 class PersonBatchItem(BaseModel):
@@ -509,6 +514,23 @@ class MeetingPayload(BaseModel):
     risk_items_json: str = ""
     publish_status: str = "draft"
     skill_run_id: int | None = None
+
+
+class ProjectMeetingReviewPayload(BaseModel):
+    action: Literal["approve", "return"]
+    reason: str = ""
+    proposal_ids: list[int] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_review(self):
+        self.reason = self.reason.strip()
+        if self.action == "return" and not self.reason:
+            raise ValueError("return reason is required")
+        if any(isinstance(item, bool) or item <= 0 for item in self.proposal_ids):
+            raise ValueError("proposal_ids must contain positive integers")
+        if len(set(self.proposal_ids)) != len(self.proposal_ids):
+            raise ValueError("proposal_ids must be unique")
+        return self
 
 
 class MeetingSkillReferenceFile(BaseModel):

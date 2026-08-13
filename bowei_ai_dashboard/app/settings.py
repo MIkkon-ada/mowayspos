@@ -137,6 +137,11 @@ class RuntimeSettings:
             and self.wecom_redirect_uri
         )
 
+    @property
+    def wecom_directory_enabled(self) -> bool:
+        """企业微信通讯录同步是否可用；不依赖扫码登录回调地址。"""
+        return bool(self.wecom_corpid and self.wecom_secret)
+
 
 @dataclass(frozen=True)
 class AsrSettings:

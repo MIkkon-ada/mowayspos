@@ -3,6 +3,8 @@ import type { Person } from '../types'
 
 export type PersonPayload = {
   name: string
+  role?: string
+  position_title?: string
   system_role?: string
   department?: string
   is_active?: boolean
@@ -19,6 +21,10 @@ export function createPerson(payload: PersonPayload): Promise<Person> {
 
 export function updatePerson(id: number, payload: PersonPayload): Promise<Person> {
   return apiPut<Person>(`/api/people/${id}`, payload)
+}
+
+export function resetIdentityField(id: number, field: 'department' | 'position'): Promise<Person> {
+  return apiPost<Person>(`/api/people/${id}/identity-reset`, { field })
 }
 
 export function deletePerson(id: number): Promise<{ ok: boolean }> {

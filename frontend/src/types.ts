@@ -231,8 +231,15 @@ export type DashboardOverview = {
 export type Person = {
   id: number
   name: string
+  role?: string
+  position_title?: string
   system_role?: string
   department?: string
+  wecom_userid?: string
+  wecom_department?: string
+  wecom_position_title?: string
+  department_source?: 'wecom' | 'local' | string
+  position_source?: 'wecom' | 'local' | string
   contact?: string
   is_active?: boolean
   special_project_duty?: string

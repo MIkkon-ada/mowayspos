@@ -47,6 +47,33 @@ listed = client.get("/api/ai-config/models", cookies=admin_cookie)
 assert listed.status_code == 200
 assert listed.json()[0]["credential_configured"] is True
 assert "never-return-this" not in listed.text
+from app.ai.adapters import DefaultAIAdapters
+from app.ai.contracts import AIUpstreamError
+
+def fail_with_auth(*args, **kwargs):
+    raise AIUpstreamError("AI_UPSTREAM_AUTH", retryable=False)
+
+DefaultAIAdapters.complete_chat = fail_with_auth
+auth_test = client.post(f"/api/ai-config/models/{model_id}/test", cookies=admin_cookie, json={})
+assert auth_test.status_code == 200, auth_test.text
+assert auth_test.json() == {
+    "ok": False,
+    "code": "AI_UPSTREAM_AUTH",
+    "message": "API Key 无效或没有调用权限，请检查后重试",
+}
+
+def fail_with_bad_request(*args, **kwargs):
+    raise AIUpstreamError("AI_UPSTREAM_BAD_REQUEST", retryable=False)
+
+DefaultAIAdapters.complete_chat = fail_with_bad_request
+bad_request_test = client.post(f"/api/ai-config/models/{model_id}/test", cookies=admin_cookie, json={})
+assert bad_request_test.status_code == 200, bad_request_test.text
+assert bad_request_test.json() == {
+    "ok": False,
+    "code": "AI_UPSTREAM_BAD_REQUEST",
+    "message": "模型名称或请求参数无效，请核对模型标识",
+}
+assert "never-return-this" not in auth_test.text + bad_request_test.text
 wrong_type = client.put("/api/ai-config/policies/speech.realtime", cookies=admin_cookie, json={
     "primary_model_id": model_id, "fallback_model_ids":[], "timeout_seconds":30, "max_attempts":1, "enabled":True,
 })

@@ -99,7 +99,8 @@ export function AIModelDrawer({ open, model, onClose, onSaved }: Props) {
   async function ensureModelExists(): Promise<number | null> {
     if (!validate()) return null
     if (persistedModelId !== null) {
-      await updateAIModel(persistedModelId, payload())
+      const { code: _code, source: _source, ...updatePayload } = payload()
+      await updateAIModel(persistedModelId, updatePayload)
       return persistedModelId
     }
     const created = await createAIModel(payload())
@@ -120,9 +121,9 @@ export function AIModelDrawer({ open, model, onClose, onSaved }: Props) {
       const modelId = await ensureModelExists()
       if (modelId === null) return
       const result = await testAIModel(modelId, apiKey || undefined)
-      setMessage(result.ok ? '连接成功' : '连接失败，请检查模型名称、Base URL 和 API Key')
+      setMessage(result.message)
     } catch {
-      setMessage('连接失败，请检查模型名称、Base URL 和 API Key')
+      setMessage('连接测试请求未完成，请检查本地服务后重试')
     } finally {
       setTesting(false)
     }
@@ -180,8 +181,8 @@ export function AIModelDrawer({ open, model, onClose, onSaved }: Props) {
             <label className="block text-sm font-semibold text-slate-700">服务商 <span className="text-rose-600">*</span><div className="relative mt-2"><select value={form.provider} onChange={(event) => changeProvider(event.target.value)} className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-3 py-2.5 pr-9 text-sm font-normal">{providerOptions.map((provider) => <option key={provider.value} value={provider.value}>{provider.label}</option>)}</select><span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-500"><Chevron /></span></div></label>
             <p className="mt-1.5 text-xs text-slate-400">{providerByValue(form.provider).description}</p>
 
-            <label className="mt-5 block text-sm font-semibold text-slate-700">模型名称 <span className="text-rose-600">*</span><input value={form.model_name} onChange={(event) => setForm({ ...form, model_name: event.target.value })} placeholder="例如：deepseek-chat" className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal" /></label>
-            <label className="mt-5 block text-sm font-semibold text-slate-700">显示名称<input value={form.display_name} onChange={(event) => setForm({ ...form, display_name: event.target.value })} placeholder="例如：DeepSeek Chat" className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal" /></label>
+            <label className="mt-5 block text-sm font-semibold text-slate-700">模型名称 <span className="text-rose-600">*</span><input value={form.model_name} onChange={(event) => setForm({ ...form, model_name: event.target.value })} placeholder="例如：deepseek-v4-pro" className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal" /></label>
+            <label className="mt-5 block text-sm font-semibold text-slate-700">显示名称<input value={form.display_name} onChange={(event) => setForm({ ...form, display_name: event.target.value })} placeholder="例如：DeepSeek V4 Pro" className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal" /></label>
             <label className="mt-5 block text-sm font-semibold text-slate-700">Base URL <span className="text-rose-600">*</span><input value={form.base_url} onChange={(event) => setForm({ ...form, base_url: event.target.value })} placeholder="https://api.example.com/v1" className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal" /></label>
             <label className="mt-5 block text-sm font-semibold text-slate-700">API Key <span className="text-rose-600">*</span><input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={credentialConfigured ? '已配置 API Key；仅在输入新密钥时替换' : '请输入 API Key'} autoComplete="new-password" className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal" /></label>
             {credentialConfigured && <p className="mt-1.5 text-xs text-emerald-700">已配置 API Key，保存时不会覆盖现有密钥。</p>}

@@ -14,7 +14,7 @@ export const AI_MODEL_PROVIDERS: AIModelProviderOption[] = [
   {
     value: 'deepseek',
     label: 'DeepSeek',
-    description: 'deepseek-chat、deepseek-reasoner',
+    description: 'deepseek-v4-flash、deepseek-v4-pro',
     defaultBaseUrl: 'https://api.deepseek.com',
     modelTypes: ['chat'],
   },

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..ai.contracts import AIUpstreamError
 from ..ai.repository import AIConfigurationRepository, InvalidAIModel, InvalidAIPolicy
 from ..ai.service import AIService
 from ..database import get_db
@@ -26,6 +27,17 @@ from ..services.ai_legacy_migration import import_legacy_llm_config
 
 
 router = APIRouter(prefix="/api/ai-config", tags=["ai-config"])
+
+
+_MODEL_TEST_MESSAGES = {
+    "AI_UPSTREAM_AUTH": "API Key 无效或没有调用权限，请检查后重试",
+    "AI_UPSTREAM_BAD_REQUEST": "模型名称或请求参数无效，请核对模型标识",
+    "AI_UPSTREAM_TIMEOUT": "上游服务响应超时，请稍后重试",
+    "AI_UPSTREAM_RATE_LIMIT": "请求过于频繁或额度不足，请稍后重试",
+    "AI_UPSTREAM_5XX": "上游服务暂时不可用，请稍后重试",
+    "AI_UPSTREAM_CONNECTION": "无法连接上游服务，请检查网络或服务地址",
+    "AI_UPSTREAM_UNKNOWN": "上游服务返回了未知错误，请稍后重试",
+}
 
 
 def _admin(current_user: str, db: Session) -> str:
@@ -145,8 +157,14 @@ def test_model(model_id: int, payload: AIModelTestRequest, current_user: str = D
         from ..ai.adapters import DefaultAIAdapters
         DefaultAIAdapters().complete_chat(model, key, "ping", timeout_seconds=10)
         return {"ok": True, "message": "连接成功"}
+    except AIUpstreamError as exc:
+        return {
+            "ok": False,
+            "code": exc.code,
+            "message": _MODEL_TEST_MESSAGES.get(exc.code, _MODEL_TEST_MESSAGES["AI_UPSTREAM_UNKNOWN"]),
+        }
     except Exception:
-        return {"ok": False, "code": "AI_MODEL_TEST_FAILED", "message": "连接失败"}
+        return {"ok": False, "code": "AI_MODEL_TEST_FAILED", "message": "模型连接测试未完成，请稍后重试"}
 
 
 @router.get("/policies")

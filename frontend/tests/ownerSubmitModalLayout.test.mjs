@@ -72,7 +72,7 @@ test('AI merge identifies one genuinely new task by stable id or task_id', () =>
   assert.match(source, /task\.task_id/)
   assert.match(source, /task\.id/)
   assert.match(source, /existingTaskIdentities/)
-  assert.match(source, /findIndex\(\(task\) =>[\s\S]*!existingTaskIdentities\.has\(taskStableIdentity\(task\)\)/)
+  assert.match(source, /findIndex\(\(task\) => \{[\s\S]*const identity = taskStableIdentity\(task\)[\s\S]*!existingTaskIdentities\.has\(identity\)/)
   assert.match(source, /firstNewTaskIndex >= 0[\s\S]*next\.add\(firstNewTaskIndex\)/)
 })
 

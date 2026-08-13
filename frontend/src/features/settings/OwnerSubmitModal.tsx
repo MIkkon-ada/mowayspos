@@ -811,36 +811,42 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
 
         <main className="owner-submit-workbench-main min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-slate-50">
           <div className="mx-auto flex w-full max-w-[1560px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
-            <section className="owner-submit-project-summary rounded-xl border border-slate-200 bg-white px-4 py-2 sm:px-5">
+            <section className="owner-submit-project-summary owner-submit-project-summary-display rounded-xl border border-slate-200 bg-white px-5 py-3 sm:px-6">
               <h3 className="mb-1.5 text-sm font-bold text-slate-800">项目资料</h3>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(160px,0.8fr)_minmax(260px,1fr)_minmax(360px,2fr)] md:items-start">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(160px,0.8fr)_minmax(260px,1fr)_minmax(360px,2fr)] md:items-start md:gap-0">
                 <div className="min-w-0">
                   <span className="block text-[11px] font-semibold text-slate-500">项目名称</span>
-                  <p className="mt-1 truncate text-sm font-semibold text-slate-800">{project.name}</p>
+                  <p className="mt-2 truncate text-lg font-bold tracking-[-0.01em] text-slate-900">{project.name}</p>
                 </div>
-                <div className="min-w-0">
+                <div className="owner-submit-project-period-display min-w-0 md:border-l md:border-slate-100 md:px-6">
                   <label className="block text-[11px] font-semibold text-slate-500">项目周期</label>
+                  <div className="relative mt-1.5">
+                    <svg aria-hidden="true" viewBox="0 0 24 24" className="pointer-events-none absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <rect x="3" y="5" width="18" height="16" rx="2" />
+                      <path d="M16 3v4M8 3v4M3 10h18" />
+                    </svg>
                       <input
                         value={projectPeriod}
                         onChange={(e) => setProjectPeriod(e.target.value)}
                         placeholder="例如：2026-07-01 至 2026-12-31"
-                    className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+                        className="h-9 w-full border-0 border-b border-slate-200 bg-transparent pl-7 pr-1 text-sm font-medium text-slate-700 outline-none placeholder:text-slate-400 focus:border-blue-400 focus:ring-0"
                       />
+                  </div>
                 </div>
-                <div className="min-w-0">
+                <div className="min-w-0 md:border-l md:border-slate-100 md:px-6">
                   <label className="block text-[11px] font-semibold text-slate-500">项目完成准则 / 验收标准</label>
                       <textarea
                         value={fillForm.objectives ?? ''}
                         onChange={(e) => setFillForm((prev) => ({ ...prev, objectives: e.target.value }))}
                         placeholder="描述项目完成后如何验收，例如关键结果、通过标准、交付边界等"
                     rows={2}
-                    className="mt-1 w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-5 text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    className="mt-1 w-full resize-none border-0 bg-transparent px-0 py-0 text-sm leading-5 text-slate-700 placeholder:text-slate-400 outline-none focus:ring-0"
                       />
                 </div>
               </div>
 
               <details className="group mt-1">
-                <summary className="flex cursor-pointer select-none items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700">
+                <summary className="ml-auto flex w-fit cursor-pointer select-none items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-600 transition-colors hover:border-blue-200 hover:bg-blue-50">
                   <span className="text-sm leading-none transition-transform group-open:rotate-90">›</span>
                   更多项目资料
                     </summary>
@@ -949,36 +955,50 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                 </section>
               )}
 
-              <div className="space-y-3">
-                {draftTasks.map((task, taskIndex) => {
-                  const isExpanded = expandedTaskIndexes.has(taskIndex)
-                  return (
+                  <div className="space-y-3">
+                    {draftTasks.map((task, taskIndex) => {
+                      const isExpanded = expandedTaskIndexes.has(taskIndex)
+                      const taskPeriod = composeTaskPeriod(task.plan_start, task.plan_end)
+                        || task.subtasks.map((subtask) => composeTaskPeriod(subtask.plan_start, subtask.plan_end)).find(Boolean)
+                        || '待安排时间'
+                      return (
                     <div key={taskIndex} className="owner-submit-task-group rounded-xl border border-slate-200 bg-white">
                       {isExpanded ? (
                         <>
-                              <div className="owner-submit-task-group-header flex items-end gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-1.5">
+                              <div className="owner-submit-task-group-header flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-200 bg-white px-4 py-3">
                             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-50 text-xs font-bold text-blue-700">
                               {String(taskIndex + 1).padStart(2, '0')}
                             </div>
-                            <div className="grid min-w-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[42fr_43fr]">
-                              <div>
-                                    <label className="mb-0.5 block text-xs font-semibold tracking-wide text-slate-500">重点工作名称</label>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                <label className="sr-only">重点工作名称</label>
                                 <input
                                   value={task.title}
                                   onChange={(e) => updateTaskDraft(taskIndex, 'title', e.target.value)}
                                   placeholder="请输入重点工作"
-                                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                  className="h-8 min-w-[180px] flex-1 border-0 bg-transparent px-0 text-base font-bold text-slate-900 outline-none placeholder:text-slate-400 focus:ring-0 sm:max-w-[360px] sm:flex-none"
                                 />
+                                <span className="owner-submit-task-status rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-600">方案编辑中</span>
                               </div>
-                              <div>
-                                    <label className="mb-0.5 block text-xs font-semibold tracking-wide text-slate-500">目标成果 / 验收标准</label>
+                              <div className="flex min-w-0 items-center gap-2">
+                                <label className="sr-only">目标成果 / 验收标准</label>
                                 <input
                                   value={task.description}
                                   onChange={(e) => updateTaskDraft(taskIndex, 'description', e.target.value)}
                                   placeholder="请输入完成准则"
-                                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none placeholder:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                  className="h-6 w-full border-0 bg-transparent px-0 text-xs text-slate-500 outline-none placeholder:text-slate-400 focus:ring-0"
                                 />
                               </div>
+                            </div>
+                            <div className="owner-submit-task-meta flex shrink-0 items-center gap-2 text-xs font-semibold text-slate-500">
+                              <span className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3">
+                                <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M8 12h8M12 8v8" /><path d="M7 3H5a2 2 0 0 0-2 2v4M17 3h2a2 2 0 0 1 2 2v4M7 21H5a2 2 0 0 1-2-2v-4M17 21h2a2 2 0 0 0 2-2v-4" /></svg>
+                                {task.subtasks.length} 个关键任务
+                              </span>
+                              <span className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3">
+                                <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></svg>
+                                {taskPeriod}
+                              </span>
                             </div>
                             <button type="button" onClick={() => collapseTask(taskIndex)} className="h-9 shrink-0 rounded-lg px-2.5 text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-700">收起</button>
                             <details className="relative shrink-0" onClick={(event) => event.stopPropagation()}>
@@ -1002,22 +1022,32 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100">
-                                {task.subtasks.map((subtask, subIndex) => (
-                                  <tr key={subIndex} className="group hover:bg-blue-50/40">
-                                    <td className="py-1.5 pl-4 pr-2">
-                                      <input value={subtask.title} onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'title', e.target.value)} placeholder="例如：任务名称" className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100" />
-                                    </td>
-                                    <td className="px-2 py-1.5 align-top"><AssigneePicker people={people} value={subtask.assigneeId} disabled={peopleLoading || Boolean(peopleError)} onChange={(value) => updateSubTaskAssignee(taskIndex, subIndex, value)} /></td>
-                                    <td className="px-2 py-1.5 align-top"><HelperPicker people={people} value={subtask.helperIds} excludedId={subtask.assigneeId} disabled={peopleLoading || Boolean(peopleError)} onChange={(personId) => toggleSubTaskHelper(taskIndex, subIndex, personId)} /></td>
-                                    <td className="px-2 py-1.5">
-                                      <input value={composeTaskPeriod(subtask.plan_start, subtask.plan_end)} onChange={(e) => updateSubTaskPeriod(taskIndex, subIndex, e.target.value)} placeholder="7.1 - 7.5" className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100" />
-                                    </td>
+                                    {task.subtasks.map((subtask, subIndex) => (
+                                      <tr key={subIndex} className="group hover:bg-blue-50/40">
+                                        <td className="py-1.5 pl-4 pr-2">
+                                          <div className="flex items-center gap-2">
+                                            <span className="owner-submit-subtask-drag-handle shrink-0 text-slate-400" aria-hidden="true">
+                                              <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor"><circle cx="5" cy="3" r="1"/><circle cx="11" cy="3" r="1"/><circle cx="5" cy="8" r="1"/><circle cx="11" cy="8" r="1"/><circle cx="5" cy="13" r="1"/><circle cx="11" cy="13" r="1"/></svg>
+                                            </span>
+                                            <input value={subtask.title} onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'title', e.target.value)} placeholder="例如：任务名称" className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100" />
+                                          </div>
+                                        </td>
+                                        <td className="px-2 py-1.5 align-top"><AssigneePicker people={people} value={subtask.assigneeId} disabled={peopleLoading || Boolean(peopleError)} onChange={(value) => updateSubTaskAssignee(taskIndex, subIndex, value)} /></td>
+                                        <td className="px-2 py-1.5 align-top"><HelperPicker people={people} value={subtask.helperIds} excludedId={subtask.assigneeId} disabled={peopleLoading || Boolean(peopleError)} onChange={(personId) => toggleSubTaskHelper(taskIndex, subIndex, personId)} /></td>
+                                        <td className="px-2 py-1.5">
+                                          <div className="relative">
+                                            <svg aria-hidden="true" viewBox="0 0 24 24" className="owner-submit-subtask-date-icon pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></svg>
+                                            <input value={composeTaskPeriod(subtask.plan_start, subtask.plan_end)} onChange={(e) => updateSubTaskPeriod(taskIndex, subIndex, e.target.value)} placeholder="7.1 - 7.5" className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 py-0 pl-8 pr-2.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100" />
+                                          </div>
+                                        </td>
                                     <td className="px-2 py-1.5">
                                       <input value={subtask.evaluation_standard} onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'evaluation_standard', e.target.value)} placeholder="填写验收标准或说明" className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100" />
                                     </td>
                                     <td className="px-2 py-1.5 text-right">
-                                      <button type="button" onClick={() => removeSubTaskDraft(taskIndex, subIndex)} disabled={task.subtasks.length <= 1} className="rounded px-1.5 py-1 text-[11px] text-slate-400 opacity-70 hover:bg-red-50 hover:text-red-500 hover:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-20">删除</button>
-                                    </td>
+                                          <button type="button" aria-label="删除关键任务" onClick={() => removeSubTaskDraft(taskIndex, subIndex)} disabled={task.subtasks.length <= 1} className="owner-submit-subtask-delete-icon inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 opacity-70 hover:bg-red-50 hover:text-red-500 hover:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-20">
+                                            <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 7h16M10 11v6M14 11v6M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
+                                          </button>
+                                        </td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -1028,14 +1058,24 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
                           </div>
                         </>
                       ) : (
-                        <div role="button" tabIndex={0} onClick={() => expandTask(taskIndex)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') expandTask(taskIndex) }} className="flex cursor-pointer items-center gap-3 px-4 py-3 hover:bg-slate-50">
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-50 text-xs font-bold text-blue-700">{String(taskIndex + 1).padStart(2, '0')}</div>
-                          <div className="min-w-0 flex-1 md:grid md:grid-cols-[42fr_43fr] md:gap-3">
-                            <p className="truncate text-sm font-semibold text-slate-800">{task.title.trim() || '未命名重点工作'}</p>
-                            <p className="truncate text-xs text-slate-500"><span className="text-slate-400">目标成果：</span>{task.description.trim() || '未填写目标成果'}</p>
-                          </div>
-                          <span className="shrink-0 text-xs text-slate-500">{task.subtasks.length} 个关键任务</span>
-                          <button type="button" onClick={(event) => { event.stopPropagation(); expandTask(taskIndex) }} className="h-8 shrink-0 rounded-lg px-2.5 text-xs font-semibold text-blue-600 hover:bg-blue-50">展开</button>
+                            <div role="button" tabIndex={0} onClick={() => expandTask(taskIndex)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') expandTask(taskIndex) }} className="flex cursor-pointer items-center gap-3 px-4 py-3 hover:bg-slate-50">
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-50 text-xs font-bold text-blue-700">{String(taskIndex + 1).padStart(2, '0')}</div>
+                              <div className="min-w-0 flex-1 md:grid md:grid-cols-[42fr_43fr] md:gap-3">
+                                <p className="truncate text-sm font-semibold text-slate-800">{task.title.trim() || '未命名重点工作'}</p>
+                                <p className="truncate text-xs text-slate-500"><span className="text-slate-400">目标成果：</span>{task.description.trim() || '未填写目标成果'}</p>
+                              </div>
+                              <div className="owner-submit-task-meta hidden shrink-0 items-center gap-2 text-xs font-semibold text-slate-500 md:flex">
+                                <span className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5">
+                                  <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M8 12h8M12 8v8" /><path d="M7 3H5a2 2 0 0 0-2 2v4M17 3h2a2 2 0 0 1 2 2v4M7 21H5a2 2 0 0 1-2-2v-4M17 21h2a2 2 0 0 0 2-2v-4" /></svg>
+                                  {task.subtasks.length} 个关键任务
+                                </span>
+                                <span className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5">
+                                  <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></svg>
+                                  {taskPeriod}
+                                </span>
+                              </div>
+                              <span className="shrink-0 text-xs text-slate-500 md:hidden">{task.subtasks.length} 个关键任务</span>
+                              <button type="button" onClick={(event) => { event.stopPropagation(); expandTask(taskIndex) }} className="h-8 shrink-0 rounded-lg px-2.5 text-xs font-semibold text-blue-600 hover:bg-blue-50">展开</button>
                           <details className="relative shrink-0" onClick={(event) => event.stopPropagation()}>
                             <summary aria-label={`重点工作 ${taskIndex + 1} 更多操作`} className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg text-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600">···</summary>
                             <div className="absolute right-0 top-9 z-20 w-32 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">

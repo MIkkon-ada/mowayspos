@@ -37,11 +37,11 @@ test('notes column receives a wide share without truncating its editor', () => {
 })
 
 test('expanded task header inputs use compact workbench styling', () => {
-  assert.match(source, /text-xs font-semibold tracking-wide text-slate-500/)
-  assert.match(source, /owner-submit-task-group-header[^\n]*py-1\.5/)
-  assert.equal((source.match(/mb-0\.5 block text-xs font-semibold tracking-wide text-slate-500/g) ?? []).length, 2)
-  assert.match(source, /placeholder="请输入重点工作"[\s\S]{0,360}h-10[\s\S]{0,160}font-semibold[\s\S]{0,220}focus:ring-2/)
-  assert.match(source, /placeholder="请输入完成准则"[\s\S]{0,360}h-10[\s\S]{0,220}focus:ring-2/)
+  assert.match(source, /owner-submit-task-group-header[^\n]*py-3/)
+  assert.equal((source.match(/<label className="sr-only">/g) ?? []).length, 2)
+  assert.match(source, /placeholder="[^\"]+"[\s\S]{0,360}sm:max-w-\[360px\][\s\S]{0,160}sm:flex-none/)
+  assert.match(source, /placeholder="请输入重点工作"[\s\S]{0,360}h-8[\s\S]{0,160}font-bold[\s\S]{0,220}focus:ring-0/)
+  assert.match(source, /placeholder="请输入完成准则"[\s\S]{0,360}h-6[\s\S]{0,220}focus:ring-0/)
 })
 
 test('workbench uses a single-column project summary and full-width plan', () => {
@@ -56,11 +56,29 @@ test('workbench uses a single-column project summary and full-width plan', () =>
 })
 
 test('project summary stays compact while preserving the horizontal three-field structure', () => {
-  assert.match(source, /owner-submit-project-summary[^\n]*py-2(?:\s|"|$)/)
+  assert.match(source, /owner-submit-project-summary[^\n]*py-3/)
   assert.match(source, /mb-1\.5[^>]*>项目资料/)
   assert.match(source, /md:grid-cols-\[minmax\(160px,0\.8fr\)_minmax\(260px,1fr\)_minmax\(360px,2fr\)\]/)
   assert.match(source, /rows=\{2\}/)
   assert.match(source, /<details className="group mt-1">/)
+})
+
+test('screenshot reference keeps the project summary display-first and task cards scanable', () => {
+  assert.match(source, /owner-submit-project-summary-display/)
+  assert.match(source, /owner-submit-project-period-display/)
+  assert.match(source, /owner-submit-task-status/)
+  assert.match(source, /owner-submit-task-meta/)
+  assert.match(source, /composeTaskPeriod\(task\.plan_start, task\.plan_end\)/)
+  assert.match(source, /task\.subtasks\.map\(\(subtask\) => composeTaskPeriod\(subtask\.plan_start, subtask\.plan_end\)\)\.find\(Boolean\)/)
+})
+
+test('screenshot reference adds presentation-only task table affordances without removing editors', () => {
+  assert.match(source, /owner-submit-subtask-drag-handle/)
+  assert.match(source, /owner-submit-subtask-date-icon/)
+  assert.match(source, /owner-submit-subtask-delete-icon/)
+  assert.match(source, /<AssigneePicker people=\{people\}/)
+  assert.match(source, /<HelperPicker people=\{people\}/)
+  assert.match(source, /owner-submit-subtask-table table-fixed min-w-\[980px\]/)
 })
 
 test('top add action stays primary while the list tail uses a weak full-width continue action', () => {

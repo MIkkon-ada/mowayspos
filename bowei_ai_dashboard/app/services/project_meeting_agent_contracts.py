@@ -107,13 +107,23 @@ class FieldProvenance(StrictModel):
         if self.source_type == "meeting_fact":
             if not self.source_fact_id or self.usage != "new":
                 raise ValueError("meeting_fact source requires source_fact_id and new usage")
+            if self.source_object is not None or self.source_field is not None:
+                raise ValueError("meeting_fact source must not include source_object or source_field")
         elif self.source_type == "project_baseline":
             if not self.source_object or not self.source_field or self.usage != "inherit":
                 raise ValueError(
                     "project_baseline source requires source_object, source_field, and inherit usage"
                 )
-        elif self.usage != "override":
-            raise ValueError("human_edit source requires override usage")
+            if self.source_fact_id is not None:
+                raise ValueError("project_baseline source must not include source_fact_id")
+        else:
+            if self.usage != "override":
+                raise ValueError("human_edit source requires override usage")
+            if any(
+                value is not None
+                for value in (self.source_fact_id, self.source_object, self.source_field)
+            ):
+                raise ValueError("human_edit source must not include source references")
         return self
 
 
@@ -272,6 +282,7 @@ class MeetingAgentFinal(StrictModel):
             *self.needs_confirmation,
         ]
         fact_ids = _unique_ids(all_facts, "fact_id")
+        meeting_fact_ids = _unique_ids(self.meeting_facts, "fact_id")
         match_ids = _unique_ids(self.project_matches, "match_id")
         delta_ids = _unique_ids(self.project_deltas, "delta_id")
         _unique_ids(self.proposed_changes, "change_id")
@@ -294,6 +305,8 @@ class MeetingAgentFinal(StrictModel):
         for match in self.project_matches:
             if match.fact_id not in fact_ids:
                 raise ValueError(f"project match references unknown fact_id: {match.fact_id}")
+            if match.fact_id not in meeting_fact_ids:
+                raise ValueError("project match must reference a normal meeting_facts fact_id")
 
         for delta in self.project_deltas:
             if delta.source_fact_id not in fact_ids:
@@ -310,6 +323,8 @@ class MeetingAgentFinal(StrictModel):
         for change in self.proposed_changes:
             if change.source_fact_id not in fact_ids:
                 raise ValueError(f"proposed change references unknown fact_id: {change.source_fact_id}")
+            if change.source_fact_id not in meeting_fact_ids:
+                raise ValueError("proposed change must reference a normal meeting_facts fact_id")
             match = match_ids.get(change.source_match_id)
             if match is None:
                 raise ValueError(
@@ -324,9 +339,24 @@ class MeetingAgentFinal(StrictModel):
                 raise ValueError("proposed change fact/match/delta references must share fact_id")
             if delta.source_match_id != change.source_match_id:
                 raise ValueError("proposed change match_id must match its delta source_match_id")
-            for provenance in change.field_sources.values():
+            for field_name, provenance in change.field_sources.items():
                 if provenance.source_type == "human_edit":
                     raise ValueError("human_edit provenance is not permitted in model output")
+                if provenance.source_type == "meeting_fact":
+                    source_fact = meeting_fact_ids.get(provenance.source_fact_id)
+                    if source_fact is None:
+                        raise ValueError(
+                            "proposed field provenance source_fact_id must reference a normal meeting_facts fact"
+                        )
+                    sourced_value = source_fact.fields.get(field_name)
+                    if sourced_value is None:
+                        raise ValueError(
+                            f"meeting fact does not contain proposed field: {field_name}"
+                        )
+                    if not sourced_value.evidence:
+                        raise ValueError(
+                            f"meeting fact field requires evidence: {field_name}"
+                        )
 
 
 def _unique_ids(items: list[Any], attribute: str) -> dict[str, Any]:

@@ -4,6 +4,7 @@ from pydantic import ValidationError
 from app.services.project_meeting_agent_contracts import (
     EvidenceSpan,
     FinalEnvelope,
+    FieldProvenance,
     MeetingAgentFinal,
     MeetingFact,
     MeetingInfo,
@@ -241,6 +242,14 @@ def test_analysis_contract_rejects_fact_ids_reused_across_analysis_collections(c
         MeetingAgentFinal.model_validate(payload)
 
 
+def test_analysis_contract_rejects_writable_chain_from_unmatched_fact():
+    payload = _analysis_final()
+    payload["unmatched_items"].append(payload["meeting_facts"].pop())
+
+    with pytest.raises(ValidationError, match="normal meeting_facts"):
+        MeetingAgentFinal.model_validate(payload)
+
+
 def test_analysis_contract_rejects_broken_delta_to_match_reference():
     payload = _analysis_final()
     payload["project_deltas"][0]["source_match_id"] = "M999"
@@ -278,6 +287,42 @@ def test_analysis_contract_rejects_field_provenance_for_different_known_fact():
 
     with pytest.raises(ValidationError, match="must match enclosing fact_id"):
         MeetingAgentFinal.model_validate(payload)
+
+
+def test_analysis_contract_rejects_meeting_fact_change_source_without_same_field():
+    payload = _analysis_final()
+    payload["meeting_facts"][0]["fields"] = {}
+
+    with pytest.raises(ValidationError, match="does not contain proposed field: status"):
+        MeetingAgentFinal.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "source_type": "meeting_fact",
+            "source_fact_id": "F001",
+            "source_object": "execution_schedule:30",
+            "usage": "new",
+        },
+        {
+            "source_type": "project_baseline",
+            "source_fact_id": "F001",
+            "source_object": "execution_schedule:30",
+            "source_field": "status",
+            "usage": "inherit",
+        },
+        {
+            "source_type": "human_edit",
+            "source_object": "execution_schedule:30",
+            "usage": "override",
+        },
+    ],
+)
+def test_field_provenance_rejects_irrelevant_source_references(payload):
+    with pytest.raises(ValidationError, match="must not include"):
+        FieldProvenance.model_validate(payload)
 
 
 @pytest.mark.parametrize(

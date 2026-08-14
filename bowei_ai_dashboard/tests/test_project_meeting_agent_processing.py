@@ -4,6 +4,7 @@ import asyncio
 import json
 from datetime import date
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from fastapi import BackgroundTasks, UploadFile
@@ -48,7 +49,21 @@ def _run(db: Session, *, status: str = "queued") -> models.ProjectMeetingRun:
         "project_id": 1,
         "project": {"id": 1, "name": "Agent project"},
         "members": [],
-        "workstreams": [],
+        "workstreams": [{
+            "id": 10,
+            "key_task": "Delivery",
+            "key_tasks": [{
+                "id": 20,
+                "title": "Customer list",
+                "status": "in_progress",
+                "execution_schedules": [{
+                    "id": 30,
+                    "title": "Customer list first batch",
+                    "status": "in_progress",
+                    "due_date": "2026-08-20",
+                }],
+            }],
+        }],
         "recent_progress": [],
         "previous_meetings": [],
         "history": {"is_first_meeting": True, "previous_meeting_ids": []},
@@ -59,7 +74,7 @@ def _run(db: Session, *, status: str = "queued") -> models.ProjectMeetingRun:
         project_id=1,
         document_source_id=2,
         snapshot_json=json.dumps(snapshot),
-        document_text="会议主题：本周项目推进\n会议结论：继续完成验收。",
+        document_text="客户清单已经完成，客户清单第二批需要创建。",
         status=status,
         stage="reading",
     )
@@ -77,6 +92,136 @@ def _final() -> MeetingAgentFinal:
         meeting_info_evidence={}, summary="", summary_evidence=[], agenda_items=[], decisions=[],
         completed_items=[], next_steps=[], risks=[], open_questions=[], task_updates=[],
     )
+
+
+def _span(document_text: str, quote: str) -> dict[str, int | str]:
+    start = document_text.index(quote)
+    return {"quote": quote, "char_start": start, "char_end": start + len(quote)}
+
+
+def _analysis_final(document_text: str, *, action: str = "update_execution_schedule", trusted: bool = True) -> MeetingAgentFinal:
+    payload = _final().model_dump(mode="json")
+    if action == "update_execution_schedule":
+        fact_type, fact_content, field_name, raw_text, value = "completion", "客户清单已经完成", "status", "已经完成", "completed"
+        match = {
+            "match_id": "M001", "fact_id": "F001", "target_type": "execution_schedule", "target_id": 30,
+            "workstream_id": 10, "key_task_id": 20, "confidence": 0.9, "reasons": ["title match"],
+            "project_evidence": [{"source_object": "execution_schedule:30", "field": "title", "value": "Customer list first batch"}],
+        }
+        delta_type = "PROGRESS_UPDATE"
+        target = {"project_id": 1, "workstream_id": 10, "key_task_id": 20, "execution_schedule_id": 30}
+        before = {"status": "in_progress"}
+    else:
+        fact_type, fact_content, field_name, raw_text, value = "action_item", "客户清单第二批", "title", "客户清单第二批", "客户清单第二批"
+        match = {
+            "match_id": "M001", "fact_id": "F001", "target_type": "key_task", "target_id": 20,
+            "workstream_id": 10, "key_task_id": 20, "confidence": 0.9, "reasons": ["parent match"],
+            "project_evidence": [{"source_object": "key_task:20", "field": "title", "value": "Customer list"}],
+        }
+        delta_type = "NEW_EXECUTION_SCHEDULE"
+        target = {"project_id": 1, "workstream_id": 10, "key_task_id": 20}
+        before = {}
+    fact = {
+        "fact_id": "F001", "fact_type": fact_type, "content": fact_content,
+        "fields": {
+            field_name: {
+                "value": value, "raw_text": raw_text, "evidence": [_span(document_text, raw_text)],
+                "provenance": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"},
+            }
+        },
+        "meeting_evidence": [_span(document_text, fact_content)], "confidence": 0.9, "needs_confirmation": False,
+    }
+    if not trusted:
+        match["target_id"] = 999
+    payload.update({
+        "meeting_facts": [fact],
+        "project_matches": [match],
+        "project_deltas": [{"delta_id": "D001", "source_fact_id": "F001", "source_match_id": "M001", "delta_type": delta_type, "reasoning": "baseline comparison"}],
+        "proposed_changes": [{
+            "change_id": "C001", "source_fact_id": "F001", "source_match_id": "M001", "source_delta_id": "D001",
+            "action": action, "target": target, "before": before, "proposed": {field_name: value},
+            "field_sources": {field_name: {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"}},
+            "requires_confirmation": True,
+        }],
+    })
+    return MeetingAgentFinal.model_validate(payload)
+
+
+def _agent_result(final: MeetingAgentFinal) -> MeetingAgentRunResult:
+    return MeetingAgentRunResult(
+        final=final, trace=[{"tool": "search_plan_nodes"}], raw_responses=["{}"],
+        invocation_log_ids=[17], events=[{"kind": "final"}], model_code="meeting-model", step_count=2,
+    )
+
+
+def test_meeting_change_proposal_lineage_schema_and_migration_are_declared():
+    column = models.MeetingChangeProposal.__table__.c.lineage_json
+    assert column.default.arg == "{}"
+    assert str(column.server_default.arg) == "{}"
+    migration = Path(__file__).parents[1] / "migrations" / "versions" / "d5e6f7a8b9c0_add_meeting_proposal_lineage.py"
+    assert migration.exists()
+    assert 'down_revision = "c4e5f6a7b8c9"' in migration.read_text(encoding="utf-8")
+
+
+def test_background_success_persists_trusted_update_lineage_and_immutable_result(db, monkeypatch):
+    run = _run(db)
+    import app.services.project_meeting_agent_processing as processing
+    monkeypatch.setattr(processing, "run_project_meeting_agent", lambda **_: _agent_result(_analysis_final(run.document_text)))
+
+    process_project_meeting_agent_run(run.id, session_factory=sessionmaker(bind=db.get_bind()))
+
+    db.expire_all()
+    persisted_run = db.get(models.ProjectMeetingRun, run.id)
+    change_set = db.query(models.MeetingChangeSet).one()
+    proposal = db.query(models.MeetingChangeProposal).one()
+    result = json.loads(persisted_run.result_json)
+    lineage = json.loads(proposal.lineage_json)
+    assert result == json.loads(change_set.result_json)
+    assert result["meeting_draft"]["summary"] == ""
+    assert result["meeting_facts"][0]["fact_id"] == "F001"
+    assert result["proposed_changes"][0]["change_id"] == "C001"
+    assert lineage["schema_version"] == 1
+    assert lineage["change_id"] == "C001"
+    assert lineage["source_fact_id"] == "F001"
+    assert lineage["source_match_id"] == "M001"
+    assert lineage["source_delta_id"] == "D001"
+    assert lineage["field_sources"]["status"]["source_type"] == "meeting_fact"
+    assert lineage["meeting_evidence"]["status"][0]["quote"] == "已经完成"
+    assert lineage["project_evidence"][0]["source_object"] == "execution_schedule:30"
+    assert lineage["delta"]["delta_id"] == "D001"
+    assert lineage["baseline_state"] == "existing_target"
+    assert lineage["before_baseline"] == {"status": "in_progress"}
+    assert lineage["owner_edit_history"] == []
+
+
+def test_background_success_persists_create_parent_baseline_without_target_baseline(db, monkeypatch):
+    run = _run(db)
+    import app.services.project_meeting_agent_processing as processing
+    monkeypatch.setattr(
+        processing,
+        "run_project_meeting_agent",
+        lambda **_: _agent_result(_analysis_final(run.document_text, action="create_execution_schedule")),
+    )
+
+    process_project_meeting_agent_run(run.id, session_factory=sessionmaker(bind=db.get_bind()))
+
+    proposal = db.query(models.MeetingChangeProposal).one()
+    lineage = json.loads(proposal.lineage_json)
+    assert lineage["baseline_state"] == "not_applicable_new_object"
+    assert lineage["before_baseline"] == {}
+    assert lineage["parent_baseline"]["key_task_id"] == 20
+    assert lineage["parent_baseline"]["key_task"]["title"] == "Customer list"
+    assert lineage["owner_edit_history"] == []
+
+
+def test_background_does_not_create_proposal_for_untrusted_analysis_change(db, monkeypatch):
+    run = _run(db)
+    import app.services.project_meeting_agent_processing as processing
+    monkeypatch.setattr(processing, "run_project_meeting_agent", lambda **_: _agent_result(_analysis_final(run.document_text, trusted=False)))
+
+    process_project_meeting_agent_run(run.id, session_factory=sessionmaker(bind=db.get_bind()))
+
+    assert db.query(models.MeetingChangeProposal).count() == 0
 
 
 def test_background_success_persists_agent_audit_then_waits_for_owner_review(db, monkeypatch):

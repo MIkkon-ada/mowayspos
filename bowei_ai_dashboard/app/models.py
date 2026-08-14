@@ -575,6 +575,7 @@ class MeetingChangeProposal(Base, TimestampMixin):
     reason = Column(Text, nullable=False, default="")
     confidence = Column(Float, nullable=False, default=0.0)
     validation_json = Column(Text, nullable=False, default="[]")
+    lineage_json = Column(Text, nullable=False, default="{}", server_default="{}")
     execution_status = Column(String(20), nullable=False, default="pending")
     executed_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True)
     executed_at = Column(DateTime, nullable=True)

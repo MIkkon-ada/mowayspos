@@ -80,10 +80,123 @@ def _names(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _analysis_index(normalized: dict[str, Any], name: str, identifier: str) -> dict[str, dict[str, Any]]:
+    items = normalized.get(name)
+    if not isinstance(items, list):
+        return {}
+    return {
+        item[identifier]: item
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get(identifier), str)
+    }
+
+
+def _frozen_parent_baseline(snapshot: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
+    for workstream in snapshot.get("workstreams", []):
+        if not isinstance(workstream, dict) or workstream.get("id") != target.get("workstream_id"):
+            continue
+        for key_task in workstream.get("key_tasks", []):
+            if isinstance(key_task, dict) and key_task.get("id") == target.get("key_task_id"):
+                return {
+                    "project_id": snapshot.get("project_id"),
+                    "workstream_id": workstream["id"],
+                    "key_task_id": key_task["id"],
+                    "key_task": json.loads(json.dumps(key_task, ensure_ascii=False)),
+                }
+    return {}
+
+
+def _frozen_target_schedule(snapshot: dict[str, Any], target: dict[str, Any]) -> dict[str, Any] | None:
+    parent = _frozen_parent_baseline(snapshot, target)
+    key_task = parent.get("key_task") if isinstance(parent.get("key_task"), dict) else {}
+    for schedule in key_task.get("execution_schedules", []):
+        if isinstance(schedule, dict) and schedule.get("id") == target.get("execution_schedule_id"):
+            return schedule
+    return None
+
+
+def _trusted_analysis_changes(normalized: dict[str, Any]) -> list[dict[str, Any]]:
+    changes = normalized.get("proposed_changes")
+    if not isinstance(changes, list):
+        return []
+    return [
+        change for change in changes
+        if isinstance(change, dict)
+        and isinstance(change.get("validation"), dict)
+        and change["validation"].get("state") == "ready"
+    ]
+
+
+def _proposal_lineage(
+    change: dict[str, Any],
+    *,
+    facts: dict[str, dict[str, Any]],
+    matches: dict[str, dict[str, Any]],
+    deltas: dict[str, dict[str, Any]],
+    snapshot: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], str, float] | None:
+    fact = facts.get(change.get("source_fact_id"))
+    match = matches.get(change.get("source_match_id"))
+    delta = deltas.get(change.get("source_delta_id"))
+    target = change.get("target") if isinstance(change.get("target"), dict) else {}
+    proposed = change.get("proposed") if isinstance(change.get("proposed"), dict) else {}
+    field_sources = change.get("field_sources") if isinstance(change.get("field_sources"), dict) else {}
+    if not fact or not match or not delta or not target or not proposed:
+        return None
+
+    meeting_evidence: dict[str, list[dict[str, Any]]] = {}
+    for field_name, source in field_sources.items():
+        if not isinstance(source, dict) or source.get("source_type") != "meeting_fact":
+            continue
+        field = (fact.get("fields") if isinstance(fact.get("fields"), dict) else {}).get(field_name)
+        evidence = field.get("evidence") if isinstance(field, dict) else None
+        if not isinstance(evidence, list) or not evidence:
+            return None
+        meeting_evidence[field_name] = evidence
+
+    parent_baseline = _frozen_parent_baseline(snapshot, target)
+    if not parent_baseline:
+        return None
+    if change.get("action") == "update_execution_schedule":
+        schedule = _frozen_target_schedule(snapshot, target)
+        if schedule is None:
+            return None
+        before_baseline = {field: schedule.get(field) for field in proposed}
+        baseline_state = "existing_target"
+    elif change.get("action") == "create_execution_schedule":
+        before_baseline = {}
+        baseline_state = "not_applicable_new_object"
+    else:
+        return None
+
+    evidence = [span for spans in meeting_evidence.values() for span in spans]
+    lineage = {
+        "schema_version": 1,
+        "action": change["action"],
+        "target": target,
+        "requires_confirmation": change.get("requires_confirmation"),
+        "change_id": change.get("change_id"),
+        "source_fact_id": change.get("source_fact_id"),
+        "source_match_id": change.get("source_match_id"),
+        "source_delta_id": change.get("source_delta_id"),
+        "field_sources": field_sources,
+        "meeting_evidence": meeting_evidence,
+        "project_evidence": match.get("project_evidence", []),
+        "delta": delta,
+        "before_baseline": before_baseline,
+        "baseline_state": baseline_state,
+        "parent_baseline": parent_baseline,
+        "owner_edit_history": [],
+    }
+    return lineage, evidence, str(delta.get("reasoning") or ""), float(match.get("confidence") or 0)
+
+
 def _create_review_draft(
     db: Session,
     run: models.ProjectMeetingRun,
     normalized: dict[str, Any],
+    *,
+    result_json: str,
 ) -> None:
     """Persist a reviewable meeting draft and proposals, never live plan changes."""
     draft = normalized.get("meeting_draft") if isinstance(normalized.get("meeting_draft"), dict) else {}
@@ -122,28 +235,37 @@ def _create_review_draft(
         created_by_person_id=run.created_by_person_id,
         transcript_hash=hashlib.sha256(run.document_text.encode("utf-8")).hexdigest(),
         snapshot_json=run.snapshot_json,
-        result_json=json.dumps(normalized, ensure_ascii=False),
+        result_json=result_json,
         status="draft",
     )
     db.add(change_set)
     db.flush()
-    for raw in normalized.get("execution_schedule_changes", []):
-        if not isinstance(raw, dict):
+    snapshot = _json_value(run.snapshot_json, {})
+    facts = _analysis_index(normalized, "meeting_facts", "fact_id")
+    matches = _analysis_index(normalized, "project_matches", "match_id")
+    deltas = _analysis_index(normalized, "project_deltas", "delta_id")
+    for change in _trusted_analysis_changes(normalized):
+        persisted = _proposal_lineage(
+            change, facts=facts, matches=matches, deltas=deltas, snapshot=snapshot,
+        )
+        if persisted is None:
             continue
-        target = raw.get("target") if isinstance(raw.get("target"), dict) else {}
+        lineage, evidence, reason, confidence = persisted
+        target = lineage["target"]
         db.add(models.MeetingChangeProposal(
             change_set_id=change_set.id,
-            action=str(raw.get("action") or ""),
+            action=str(change.get("action") or ""),
             target_type="execution_schedule",
             target_id=target.get("execution_schedule_id"),
             parent_workstream_id=target.get("workstream_id"),
             parent_subtask_id=target.get("key_task_id"),
-            before_json=json.dumps(raw.get("before", {}), ensure_ascii=False),
-            proposed_json=json.dumps(raw.get("proposed", {}), ensure_ascii=False),
-            evidence_json=json.dumps(raw.get("evidence", []), ensure_ascii=False),
-            reason=str(raw.get("reason") or ""),
-            confidence=float(raw.get("confidence") or 0),
-            validation_json=json.dumps(raw.get("validation", {}), ensure_ascii=False),
+            before_json=json.dumps(change.get("before", {}), ensure_ascii=False),
+            proposed_json=json.dumps(change.get("proposed", {}), ensure_ascii=False),
+            evidence_json=json.dumps(evidence, ensure_ascii=False),
+            reason=reason,
+            confidence=confidence,
+            validation_json=json.dumps(change.get("validation", {}), ensure_ascii=False),
+            lineage_json=json.dumps(lineage, ensure_ascii=False),
             execution_status="pending",
         ))
     db.add(models.MeetingReviewEvent(
@@ -206,7 +328,8 @@ def process_project_meeting_agent_run(run_id: int, *, session_factory=SessionLoc
         )
         run.stage = "validating"
         normalized = normalize_project_meeting_agent_result(agent_result.final, run.document_text, snapshot)
-        _create_review_draft(db, run, normalized)
+        result_json = json.dumps(normalized, ensure_ascii=False)
+        _create_review_draft(db, run, normalized, result_json=result_json)
         _persist_audit(
             run,
             step_count=agent_result.step_count,
@@ -216,7 +339,7 @@ def process_project_meeting_agent_run(run_id: int, *, session_factory=SessionLoc
             events=agent_result.events,
             raw_responses=agent_result.raw_responses,
         )
-        run.result_json = json.dumps(normalized, ensure_ascii=False)
+        run.result_json = result_json
         run.status = "pending_review"
         run.stage = "pending_review"
         run.error_code = ""

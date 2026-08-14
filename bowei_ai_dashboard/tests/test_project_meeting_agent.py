@@ -81,7 +81,7 @@ def valid_final(document_text: str) -> dict:
 def test_agent_executes_tool_then_returns_final(snapshot: dict, document_text: str, valid_final: dict):
     events = []
     replies = iter([
-        response({"type": "tool_call", "tool": "search_plan_nodes", "arguments": {"project_id": 1, "query": "minutes"}}, 11),
+        response({"type": "tool_call", "tool": "search_plan_nodes", "arguments": {"project_id": 1, "queries": [{"fact_id": "F001", "query": "minutes"}]}}, 11),
         response({"type": "final", "result": valid_final}, 12),
     ])
 
@@ -118,6 +118,15 @@ def test_agent_prompt_includes_the_exact_tool_and_final_envelope_shapes(document
     assert 'Write a non-empty summary when the Word has any agenda, decision, completion, risk, or action.' in prompt
     assert 'The Word label 整理人 maps only to meeting_info.organizer.' in prompt
     assert '"summary":"Brief factual summary grounded in Word","summary_evidence":[{"quote":"exact Word quote","char_start":0,"char_end":16}]' in prompt
+    assert '"meeting_facts"' in prompt
+    assert '"project_matches"' in prompt
+    assert '"project_deltas"' in prompt
+    assert '"proposed_changes"' in prompt
+    assert "Word-only Meeting Fact -> Project Match -> inference-only Delta -> confirmation-required Proposed Change" in prompt
+    assert "Project baseline is not current meeting evidence" in prompt
+    assert "Inference cannot create writable new values" in prompt
+    assert "explicit field_sources" in prompt
+    assert '"queries":[{"fact_id":"F001","query":""}]' in prompt
 
 
 def test_agent_retains_events_without_event_callback(snapshot: dict, document_text: str, valid_final: dict):
@@ -187,7 +196,7 @@ def test_project_meeting_agent_requires_a_plan_search_before_final(snapshot: dic
     prompts: list[str] = []
     replies = iter([
         response({"type": "final", "result": valid_final}, 23),
-        response({"type": "tool_call", "tool": "search_plan_nodes", "arguments": {"project_id": 1, "query": "minutes"}}, 24),
+        response({"type": "tool_call", "tool": "search_plan_nodes", "arguments": {"project_id": 1, "queries": [{"fact_id": "F001", "query": "minutes"}]}}, 24),
         response({"type": "final", "result": valid_final}, 25),
     ])
 
@@ -218,7 +227,7 @@ def test_agent_blocks_repeated_identical_tool_call(snapshot: dict):
 
 def test_agent_stops_at_six_steps(snapshot: dict):
     replies = iter([
-        response({"type": "tool_call", "tool": "search_plan_nodes", "arguments": {"project_id": 1, "query": str(index)}}, index)
+        response({"type": "tool_call", "tool": "search_plan_nodes", "arguments": {"project_id": 1, "queries": [{"fact_id": "F001", "query": str(index)}]}}, index)
         for index in range(1, 7)
     ])
 
@@ -231,7 +240,7 @@ def test_agent_stops_at_six_steps(snapshot: dict):
 def test_agent_reserves_the_last_step_for_a_final_after_five_tool_queries(snapshot: dict, document_text: str, valid_final: dict):
     prompts: list[str] = []
     replies = iter([
-        response({"type": "tool_call", "tool": "search_plan_nodes", "arguments": {"project_id": 1, "query": str(index)}}, index)
+        response({"type": "tool_call", "tool": "search_plan_nodes", "arguments": {"project_id": 1, "queries": [{"fact_id": "F001", "query": str(index)}]}}, index)
         for index in range(1, 6)
     ] + [response({"type": "final", "result": valid_final}, 6)])
 
@@ -275,3 +284,34 @@ def test_agent_wraps_provider_exception_and_retains_events(snapshot: dict):
     assert exc.value.raw_responses == [json.dumps({"type": "tool_call", "tool": "get_project_profile", "arguments": {"project_id": 1}})]
     assert exc.value.trace[0]["tool"] == "get_project_profile"
     assert [event["kind"] for event in exc.value.events] == ["model_response", "tool_result"]
+
+
+def test_agent_processes_seven_fact_queries_in_one_plan_lookup(snapshot: dict, document_text: str, valid_final: dict):
+    queries = [{"fact_id": f"F00{index}", "query": "minutes"} for index in range(1, 8)]
+    replies = iter([
+        response(
+            {
+                "type": "tool_call",
+                "tool": "search_plan_nodes",
+                "arguments": {"project_id": 1, "queries": queries},
+            },
+            61,
+        ),
+        response({"type": "final", "result": valid_final}, 62),
+    ])
+
+    result = run_project_meeting_agent(
+        1,
+        document_text,
+        snapshot,
+        ProjectMeetingAgentTools(snapshot),
+        lambda prompt: next(replies),
+        require_plan_lookup=True,
+    )
+
+    assert result.step_count == 2
+    assert len(result.trace) == 1
+    assert result.trace[0]["arguments"]["queries"] == queries
+    assert [item["fact_id"] for item in result.trace[0]["observation"]["results"]] == [
+        query["fact_id"] for query in queries
+    ]

@@ -60,7 +60,33 @@ class ProjectMeetingAgentTools:
         return bool(tokens & value_tokens)
 
     def _search_plan_nodes(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        query = str(arguments.get("query") or "")
+        if set(arguments) != {"project_id", "queries"}:
+            raise AgentToolError("search_plan_nodes requires exactly project_id and queries")
+        queries = arguments.get("queries")
+        if not isinstance(queries, list) or not queries:
+            raise AgentToolError("search_plan_nodes queries must be a non-empty list")
+
+        results: list[dict[str, Any]] = []
+        for item in queries:
+            if not isinstance(item, dict) or set(item) != {"fact_id", "query"}:
+                raise AgentToolError("search_plan_nodes queries require exactly fact_id and query")
+            fact_id = item.get("fact_id")
+            query = item.get("query")
+            if not self._is_fact_id(fact_id):
+                raise AgentToolError("search_plan_nodes fact_id must use a nonzero F001-compatible form")
+            if not isinstance(query, str):
+                raise AgentToolError("search_plan_nodes query must be a string")
+            results.append({"fact_id": fact_id, "candidates": self._plan_candidates(query)})
+        return {"results": results}
+
+    @staticmethod
+    def _is_fact_id(value: Any) -> bool:
+        if not isinstance(value, str) or not value.startswith("F"):
+            return False
+        suffix = value[1:]
+        return len(suffix) >= 3 and suffix.isdigit() and suffix.strip("0") != ""
+
+    def _plan_candidates(self, query: str) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
         for workstream in self._snapshot.get("workstreams", []):
             if not isinstance(workstream, dict):
@@ -78,22 +104,26 @@ class ProjectMeetingAgentTools:
                     continue
                 candidates.append(
                     {
+                        "target_type": "key_task",
+                        "target_id": key_task.get("id"),
+                        "title": key_task.get("title", ""),
                         "workstream_id": workstream.get("id"),
                         "workstream_name": workstream.get("key_task", ""),
-                        "workstream_status": workstream.get("status", ""),
-                        "key_task_id": key_task.get("id"),
-                        "key_task_name": key_task.get("title", ""),
-                        "key_task_status": key_task.get("status", ""),
-                        "execution_schedule_ids": [schedule.get("id") for schedule in schedules],
+                        "assignee": key_task.get("assignee", ""),
+                        "status": key_task.get("status", ""),
                         "execution_schedules": [
-                            {"id": schedule.get("id"), "title": schedule.get("title", ""), "status": schedule.get("status", "")}
+                            {
+                                "id": schedule.get("id"),
+                                "title": schedule.get("title", ""),
+                                "status": schedule.get("status", ""),
+                            }
                             for schedule in schedules
                         ],
                     }
                 )
                 if len(candidates) == 10:
-                    return {"candidates": candidates}
-        return {"candidates": candidates}
+                    return candidates
+        return candidates
 
     def _get_plan_node_detail(self, arguments: dict[str, Any]) -> dict[str, Any]:
         workstream_id = arguments.get("workstream_id")

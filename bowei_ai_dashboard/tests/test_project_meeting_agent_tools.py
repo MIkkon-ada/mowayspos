@@ -32,9 +32,16 @@ def snapshot() -> dict:
                     {
                         "id": 20,
                         "title": "Weekly delivery",
+                        "assignee": "Owner",
                         "status": "in_progress",
+                        "notes": "must not leak",
                         "execution_schedules": [
-                            {"id": 30, "title": "Finish acceptance checklist", "status": "in_progress"}
+                            {
+                                "id": 30,
+                                "title": "Finish acceptance checklist",
+                                "status": "in_progress",
+                                "risk": "must not leak",
+                            }
                         ],
                     }
                 ],
@@ -43,25 +50,91 @@ def snapshot() -> dict:
     }
 
 
-def test_search_plan_nodes_returns_key_task_and_execution_schedule_ids(snapshot: dict):
+def test_search_plan_nodes_returns_batch_candidates_in_fact_id_input_order(snapshot: dict):
     result = ProjectMeetingAgentTools(snapshot).execute(
-        "search_plan_nodes", {"project_id": 7, "query": "acceptance checklist"}
+        "search_plan_nodes",
+        {
+            "project_id": 7,
+            "queries": [
+                {"fact_id": "F002", "query": "not found"},
+                {"fact_id": "F001", "query": "acceptance checklist"},
+            ],
+        },
     )
 
-    assert result["candidates"] == [
-        {
-            "workstream_id": 10,
-            "workstream_name": "Delivery stream",
-            "workstream_status": "in_progress",
-            "key_task_id": 20,
-            "key_task_name": "Weekly delivery",
-            "key_task_status": "in_progress",
-            "execution_schedule_ids": [30],
-            "execution_schedules": [
-                {"id": 30, "title": "Finish acceptance checklist", "status": "in_progress"}
-            ],
-        }
-    ]
+    assert result == {
+        "results": [
+            {"fact_id": "F002", "candidates": []},
+            {
+                "fact_id": "F001",
+                "candidates": [
+                    {
+                        "target_type": "key_task",
+                        "target_id": 20,
+                        "title": "Weekly delivery",
+                        "workstream_id": 10,
+                        "workstream_name": "Delivery stream",
+                        "assignee": "Owner",
+                        "status": "in_progress",
+                        "execution_schedules": [
+                            {
+                                "id": 30,
+                                "title": "Finish acceptance checklist",
+                                "status": "in_progress",
+                            }
+                        ],
+                    }
+                ],
+            },
+        ]
+    }
+
+
+@pytest.mark.parametrize("fact_id", ["F000", "F00", "FABC", "F001x"])
+def test_search_plan_nodes_rejects_invalid_fact_id(snapshot: dict, fact_id: str):
+    with pytest.raises(AgentToolError, match="fact_id"):
+        ProjectMeetingAgentTools(snapshot).execute(
+            "search_plan_nodes",
+            {"project_id": 7, "queries": [{"fact_id": fact_id, "query": "acceptance"}]},
+        )
+
+
+def test_search_plan_nodes_requires_exact_batch_arguments(snapshot: dict):
+    tools = ProjectMeetingAgentTools(snapshot)
+
+    for arguments in (
+        {"project_id": 7, "query": "acceptance"},
+        {"project_id": 7, "queries": [], "extra": True},
+        {"project_id": 7, "queries": [{"fact_id": "F001"}]},
+    ):
+        with pytest.raises(AgentToolError, match="search_plan_nodes"):
+            tools.execute("search_plan_nodes", arguments)
+
+
+def test_search_plan_nodes_caps_each_fact_candidate_set_at_ten(snapshot: dict):
+    for index in range(11, 22):
+        snapshot["workstreams"].append(
+            {
+                "id": index,
+                "key_task": f"Delivery stream {index}",
+                "key_tasks": [
+                    {
+                        "id": index * 10,
+                        "title": f"Acceptance item {index}",
+                        "assignee": "Owner",
+                        "status": "pending",
+                        "execution_schedules": [],
+                    }
+                ],
+            }
+        )
+
+    result = ProjectMeetingAgentTools(snapshot).execute(
+        "search_plan_nodes",
+        {"project_id": 7, "queries": [{"fact_id": "F001", "query": "acceptance"}]},
+    )
+
+    assert len(result["results"][0]["candidates"]) == 10
 
 
 def test_first_meeting_has_no_previous_meetings(snapshot: dict):
@@ -125,11 +198,29 @@ def test_tools_freeze_input_snapshot_and_isolate_return_values(snapshot: dict):
 
     profile = tools.execute("get_project_profile", {"project_id": 7})
     members = tools.execute("list_project_members", {"project_id": 7})
-    matches = tools.execute("search_plan_nodes", {"project_id": 7, "query": "acceptance"})
+    matches = tools.execute(
+        "search_plan_nodes",
+        {"project_id": 7, "queries": [{"fact_id": "F001", "query": "acceptance"}]},
+    )
     profile["project"]["name"] = "Mutated return"
     members["members"][0]["name"] = "Mutated return"
-    matches["candidates"][0]["execution_schedules"][0]["title"] = "Mutated return"
+    candidate = matches["results"][0]["candidates"][0]
+    candidate["execution_schedules"][0]["title"] = "Mutated return"
+    assert set(candidate) == {
+        "target_type",
+        "target_id",
+        "title",
+        "workstream_id",
+        "workstream_name",
+        "assignee",
+        "status",
+        "execution_schedules",
+    }
+    assert set(candidate["execution_schedules"][0]) == {"id", "title", "status"}
 
     assert tools.execute("get_project_profile", {"project_id": 7})["project"]["name"] == "AI Upgrade"
     assert tools.execute("list_project_members", {"project_id": 7})["members"][0]["name"] == "Owner"
-    assert tools.execute("search_plan_nodes", {"project_id": 7, "query": "acceptance"})["candidates"][0]["execution_schedules"][0]["title"] == "Finish acceptance checklist"
+    assert tools.execute(
+        "search_plan_nodes",
+        {"project_id": 7, "queries": [{"fact_id": "F001", "query": "acceptance"}]},
+    )["results"][0]["candidates"][0]["execution_schedules"][0]["title"] == "Finish acceptance checklist"

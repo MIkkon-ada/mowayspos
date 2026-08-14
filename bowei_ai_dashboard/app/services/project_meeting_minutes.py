@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -554,6 +555,141 @@ def _normalize_agent_task_update(
     return proposal
 
 
+_STATUS_NORMALIZATIONS = {"已完成": "completed", "完成": "completed", "已经完成": "completed", "进行中": "in_progress", "正在推进": "in_progress"}
+_DATE_FIELD_NAMES = {"start_date", "due_date"}
+
+
+def _analysis_validation(errors: list[str]) -> dict[str, Any]:
+    return {"state": "ready" if not errors else "blocked", "errors": errors}
+
+
+def _analysis_snapshot_objects(snapshot: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]], dict[int, dict[str, Any]], dict[int, dict[str, Any]]]:
+    objects: dict[str, dict[str, Any]] = {}
+    workstreams: dict[int, dict[str, Any]] = {}
+    key_tasks: dict[int, dict[str, Any]] = {}
+    schedules: dict[int, dict[str, Any]] = {}
+    for workstream in snapshot.get("workstreams", []):
+        if not isinstance(workstream, dict) or not isinstance(workstream.get("id"), int):
+            continue
+        workstreams[workstream["id"]] = workstream
+        objects[f"workstream:{workstream['id']}"] = workstream
+        for key_task in workstream.get("key_tasks", []):
+            if not isinstance(key_task, dict) or not isinstance(key_task.get("id"), int):
+                continue
+            key_tasks[key_task["id"]] = key_task
+            objects[f"key_task:{key_task['id']}"] = key_task
+            for schedule in key_task.get("execution_schedules", []):
+                if isinstance(schedule, dict) and isinstance(schedule.get("id"), int):
+                    schedules[schedule["id"]] = schedule
+                    objects[f"execution_schedule:{schedule['id']}"] = schedule
+    return objects, workstreams, key_tasks, schedules
+
+
+def _normalize_analysis_field(field_name: str, sourced_value: Any, document_text: str | None) -> dict[str, Any]:
+    evidence_result = _normalize_agent_evidence(sourced_value.evidence, document_text)
+    errors = list(evidence_result["validation"]["errors"])
+    if not any(sourced_value.raw_text in span["quote"] for span in evidence_result["evidence"]):
+        errors.append("raw_text must be exactly covered by field-level Word evidence")
+    raw_text = sourced_value.raw_text
+    value = sourced_value.value
+    if field_name == "status":
+        expected = _STATUS_NORMALIZATIONS.get(raw_text, raw_text)
+        if value != expected:
+            errors.append("status value is not a permitted deterministic normalization of raw_text")
+    elif field_name in _DATE_FIELD_NAMES:
+        match = re.fullmatch(r"(\d{4})年(\d{1,2})月(\d{1,2})日", raw_text)
+        try:
+            expected = date.fromisoformat(raw_text).isoformat() if not match else date(int(match.group(1)), int(match.group(2)), int(match.group(3))).isoformat()
+        except ValueError:
+            expected = raw_text
+        if value != expected:
+            errors.append("date value is not a permitted deterministic normalization of raw_text")
+    elif value != raw_text:
+        errors.append("field value must conservatively equal raw_text")
+    return {"value": _json_value(value), "raw_text": raw_text, "evidence": evidence_result["evidence"], "provenance": sourced_value.provenance.model_dump(mode="json"), "validation": _analysis_validation(errors)}
+
+
+def _normalize_analysis_fact(item: Any, document_text: str | None) -> dict[str, Any]:
+    evidence_result = _normalize_agent_evidence(item.meeting_evidence, document_text)
+    fields = {name: _normalize_analysis_field(name, value, document_text) for name, value in item.fields.items()}
+    errors = list(evidence_result["validation"]["errors"])
+    if any(field["validation"]["state"] != "ready" for field in fields.values()):
+        errors.append("one or more fact fields failed field-level evidence validation")
+    return {"fact_id": item.fact_id, "fact_type": item.fact_type, "content": item.content, "fields": fields, "meeting_evidence": evidence_result["evidence"], "confidence": item.confidence, "needs_confirmation": item.needs_confirmation, "validation": _analysis_validation(errors)}
+
+
+def _normalize_analysis_match(item: Any, facts: dict[str, dict[str, Any]], snapshot: dict[str, Any]) -> dict[str, Any]:
+    objects, workstreams, key_tasks, schedules = _analysis_snapshot_objects(snapshot)
+    _, key_task_parents, schedule_parents, _ = _schedule_index(snapshot)
+    errors: list[str] = []
+    if item.fact_id not in facts or facts[item.fact_id]["validation"]["state"] != "ready":
+        errors.append("match fact_id is not a ready meeting fact")
+    target = {"target_type": item.target_type, "target_id": item.target_id, "workstream_id": item.workstream_id, "key_task_id": item.key_task_id}
+    if item.target_type == "execution_schedule":
+        schedule = schedules.get(item.target_id)
+        if schedule is None or schedule_parents.get(item.target_id) != (item.key_task_id, item.workstream_id):
+            errors.append("match target execution schedule is not in frozen snapshot hierarchy")
+    elif item.target_type == "key_task":
+        if item.target_id not in key_tasks or item.key_task_id != item.target_id or key_task_parents.get(item.target_id) != item.workstream_id:
+            errors.append("match target key task is not in frozen snapshot hierarchy")
+    elif item.target_type == "workstream" and (item.target_id not in workstreams or item.workstream_id != item.target_id):
+        errors.append("match target workstream is not in frozen snapshot hierarchy")
+    evidence: list[dict[str, Any]] = []
+    for proof in item.project_evidence:
+        source = objects.get(proof.source_object)
+        if source is None or proof.field not in source or _json_value(source[proof.field]) != _json_value(proof.value):
+            errors.append("project evidence must exactly reference a frozen snapshot field")
+        evidence.append(proof.model_dump(mode="json"))
+    return {"match_id": item.match_id, "fact_id": item.fact_id, "target": target, "confidence": item.confidence, "reasons": list(item.reasons), "project_evidence": evidence, "validation": _analysis_validation(errors)}
+
+
+def _normalize_analysis_delta(item: Any, facts: dict[str, dict[str, Any]], matches: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    errors: list[str] = []
+    if item.source_fact_id not in facts or facts[item.source_fact_id]["validation"]["state"] != "ready":
+        errors.append("delta source_fact_id is not a ready meeting fact")
+    if item.source_match_id and (item.source_match_id not in matches or matches[item.source_match_id]["validation"]["state"] != "ready"):
+        errors.append("delta source_match_id is not a ready project match")
+    if item.delta_type not in {"UNMATCHED", "AMBIGUOUS"} and not item.source_match_id:
+        errors.append("matched delta requires source_match_id")
+    return {"delta_id": item.delta_id, "source_fact_id": item.source_fact_id, "source_match_id": item.source_match_id, "delta_type": item.delta_type, "reasoning": item.reasoning, "validation": _analysis_validation(errors)}
+
+
+def _normalize_analysis_change(item: Any, facts: dict[str, dict[str, Any]], matches: dict[str, dict[str, Any]], deltas: dict[str, dict[str, Any]], snapshot: dict[str, Any]) -> dict[str, Any]:
+    objects, _, key_tasks, schedules = _analysis_snapshot_objects(snapshot)
+    _, key_task_parents, schedule_parents, _ = _schedule_index(snapshot)
+    errors: list[str] = []
+    fact = facts.get(item.source_fact_id)
+    match = matches.get(item.source_match_id)
+    delta = deltas.get(item.source_delta_id)
+    if not fact or fact["validation"]["state"] != "ready" or not match or match["validation"]["state"] != "ready" or not delta or delta["validation"]["state"] != "ready":
+        errors.append("proposed change requires ready fact, match, and delta")
+    if delta and delta["delta_type"] in {"UNMATCHED", "AMBIGUOUS"}:
+        errors.append("unmatched or ambiguous delta cannot create a writable proposal")
+    target = item.target.model_dump(mode="json", exclude_none=True)
+    if target.get("project_id") != snapshot.get("project_id"):
+        errors.append("proposal target project_id does not match frozen snapshot")
+    if item.action == "update_execution_schedule":
+        schedule = schedules.get(target.get("execution_schedule_id"))
+        if schedule is None or schedule_parents.get(target.get("execution_schedule_id")) != (target.get("key_task_id"), target.get("workstream_id")):
+            errors.append("update target execution_schedule_id is not in frozen snapshot")
+    elif target.get("key_task_id") not in key_tasks or key_task_parents.get(target.get("key_task_id")) != target.get("workstream_id"):
+        errors.append("create target key_task_id is not in frozen snapshot")
+    field_sources = {name: source.model_dump(mode="json") for name, source in item.field_sources.items()}
+    for field_name, source in item.field_sources.items():
+        if source.source_type == "meeting_fact":
+            source_fact = facts.get(source.source_fact_id or "")
+            field = (source_fact or {}).get("fields", {}).get(field_name)
+            if not source_fact or not field or field["validation"]["state"] != "ready" or item.proposed.get(field_name) != field.get("value"):
+                errors.append(f"meeting_fact field source is not supported for {field_name}")
+        elif source.source_type == "project_baseline":
+            source_object = objects.get(source.source_object or "")
+            if not source_object or source.source_field not in source_object or _json_value(source_object[source.source_field]) != _json_value(item.proposed.get(field_name)):
+                errors.append(f"project_baseline source is not an exact snapshot value for {field_name}")
+        else:
+            errors.append("human_edit is not valid in agent proposed changes")
+    return {"change_id": item.change_id, "source_fact_id": item.source_fact_id, "source_match_id": item.source_match_id, "source_delta_id": item.source_delta_id, "action": item.action, "target": target, "before": _json_value(item.before), "proposed": _json_value(item.proposed), "field_sources": field_sources, "requires_confirmation": item.requires_confirmation, "validation": _analysis_validation(errors)}
+
+
 def normalize_project_meeting_agent_result(
     final: MeetingAgentFinal,
     document_text: str | None,
@@ -574,6 +710,34 @@ def normalize_project_meeting_agent_result(
         for field_name, spans in final.meeting_info_evidence.items()
     }
     summary_evidence = _normalize_agent_evidence(final.summary_evidence, document_text)
+    meeting_facts = [_normalize_analysis_fact(item, document_text) for item in final.meeting_facts]
+    fact_index = {item["fact_id"]: item for item in meeting_facts}
+    project_matches = [_normalize_analysis_match(item, fact_index, snapshot) for item in final.project_matches]
+    match_index = {item["match_id"]: item for item in project_matches}
+    project_deltas = [_normalize_analysis_delta(item, fact_index, match_index) for item in final.project_deltas]
+    delta_index = {item["delta_id"]: item for item in project_deltas}
+    proposed_changes = [
+        _normalize_analysis_change(item, fact_index, match_index, delta_index, snapshot)
+        for item in final.proposed_changes
+    ]
+    legacy_changes = [
+        _normalize_agent_task_update(item, document_text, snapshot) for item in final.task_updates
+    ]
+    for change in proposed_changes:
+        if change["validation"]["state"] != "ready":
+            continue
+        fact = fact_index[change["source_fact_id"]]
+        evidence = [
+            span
+            for field in fact["fields"].values()
+            for span in field["evidence"]
+        ]
+        legacy_changes.append({
+            "action": change["action"], "target": change["target"], "before": change["before"],
+            "proposed": change["proposed"], "evidence": evidence,
+            "reason": delta_index[change["source_delta_id"]]["reasoning"], "confidence": 0,
+            "needs_confirmation": True, "validation": change["validation"],
+        })
 
     return {
         "meeting_draft": meeting_draft,
@@ -585,7 +749,9 @@ def normalize_project_meeting_agent_result(
         "next_stage_work": [_normalize_agent_fact(item, document_text) for item in final.next_steps],
         "risks": [_normalize_agent_fact(item, document_text) for item in final.risks],
         "open_questions": [_normalize_agent_fact(item, document_text) for item in final.open_questions],
-        "execution_schedule_changes": [
-            _normalize_agent_task_update(item, document_text, snapshot) for item in final.task_updates
-        ],
+        "execution_schedule_changes": legacy_changes,
+        "meeting_facts": meeting_facts,
+        "project_matches": project_matches,
+        "project_deltas": project_deltas,
+        "proposed_changes": proposed_changes,
     }

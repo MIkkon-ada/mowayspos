@@ -135,6 +135,24 @@ def test_normalize_rejects_snapshot_target_with_wrong_existing_parent():
     assert result["proposed_changes"][0]["validation"]["state"] == "blocked"
 
 
+def test_normalize_rejects_change_target_that_differs_from_matched_schedule():
+    snapshot = _snapshot()
+    snapshot["workstreams"][0]["key_tasks"][0]["execution_schedules"].append(
+        {"id": 31, "title": "客户清单第二批", "status": "in_progress"}
+    )
+    payload = _payload()
+    payload["proposed_changes"][0]["target"]["execution_schedule_id"] = 31
+
+    result = normalize_project_meeting_agent_result(MeetingAgentFinal.model_validate(payload), DOCUMENT, snapshot)
+
+    assert result["project_matches"][0]["validation"]["state"] == "ready"
+    assert result["proposed_changes"][0]["validation"]["state"] == "blocked"
+    assert any(
+        "does not match project match target" in error
+        for error in result["proposed_changes"][0]["validation"]["errors"]
+    )
+
+
 def test_ambiguous_delta_cannot_project_a_writable_legacy_change():
     payload = _payload()
     payload["project_deltas"][0]["delta_type"] = "AMBIGUOUS"

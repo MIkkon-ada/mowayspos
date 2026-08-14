@@ -654,6 +654,21 @@ def _normalize_analysis_delta(item: Any, facts: dict[str, dict[str, Any]], match
     return {"delta_id": item.delta_id, "source_fact_id": item.source_fact_id, "source_match_id": item.source_match_id, "delta_type": item.delta_type, "reasoning": item.reasoning, "validation": _analysis_validation(errors)}
 
 
+def _change_target_matches_project_match(item: Any, target: dict[str, Any], match: dict[str, Any]) -> bool:
+    match_target = match["target"]
+    if (
+        target.get("workstream_id") != match_target["workstream_id"]
+        or target.get("key_task_id") != match_target["key_task_id"]
+    ):
+        return False
+    if match_target["target_type"] == "execution_schedule":
+        return (
+            item.action == "update_execution_schedule"
+            and target.get("execution_schedule_id") == match_target["target_id"]
+        )
+    return True
+
+
 def _normalize_analysis_change(item: Any, facts: dict[str, dict[str, Any]], matches: dict[str, dict[str, Any]], deltas: dict[str, dict[str, Any]], snapshot: dict[str, Any]) -> dict[str, Any]:
     objects, _, key_tasks, schedules = _analysis_snapshot_objects(snapshot)
     _, key_task_parents, schedule_parents, _ = _schedule_index(snapshot)
@@ -668,6 +683,8 @@ def _normalize_analysis_change(item: Any, facts: dict[str, dict[str, Any]], matc
     target = item.target.model_dump(mode="json", exclude_none=True)
     if target.get("project_id") != snapshot.get("project_id"):
         errors.append("proposal target project_id does not match frozen snapshot")
+    if match and not _change_target_matches_project_match(item, target, match):
+        errors.append("proposal target does not match project match target")
     if item.action == "update_execution_schedule":
         schedule = schedules.get(target.get("execution_schedule_id"))
         if schedule is None or schedule_parents.get(target.get("execution_schedule_id")) != (target.get("key_task_id"), target.get("workstream_id")):

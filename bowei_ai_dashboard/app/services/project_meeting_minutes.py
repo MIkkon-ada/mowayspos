@@ -556,6 +556,7 @@ def _normalize_agent_task_update(
 
 
 _STATUS_NORMALIZATIONS = {"已完成": "completed", "完成": "completed", "已经完成": "completed", "进行中": "in_progress", "正在推进": "in_progress"}
+_ALLOWED_STATUS_VALUES = {"completed", "in_progress", "blocked", "not_started"}
 _DATE_FIELD_NAMES = {"start_date", "due_date"}
 
 
@@ -593,16 +594,26 @@ def _normalize_analysis_field(field_name: str, sourced_value: Any, document_text
     raw_text = sourced_value.raw_text
     value = sourced_value.value
     if field_name == "status":
-        expected = _STATUS_NORMALIZATIONS.get(raw_text, raw_text)
-        if value != expected:
+        expected = _STATUS_NORMALIZATIONS.get(raw_text)
+        if expected is None and raw_text in _ALLOWED_STATUS_VALUES:
+            expected = raw_text
+        if expected is None:
+            errors.append("status raw_text is not an allowed deterministic status")
+        elif value != expected:
             errors.append("status value is not a permitted deterministic normalization of raw_text")
     elif field_name in _DATE_FIELD_NAMES:
-        match = re.fullmatch(r"(\d{4})年(\d{1,2})月(\d{1,2})日", raw_text)
+        chinese_date = re.fullmatch(r"(\d{4})年(\d{1,2})月(\d{1,2})日", raw_text)
+        iso_date = re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw_text)
         try:
-            expected = date.fromisoformat(raw_text).isoformat() if not match else date(int(match.group(1)), int(match.group(2)), int(match.group(3))).isoformat()
+            expected = date.fromisoformat(raw_text).isoformat() if iso_date else (
+                date(int(chinese_date.group(1)), int(chinese_date.group(2)), int(chinese_date.group(3))).isoformat()
+                if chinese_date else None
+            )
         except ValueError:
-            expected = raw_text
-        if value != expected:
+            expected = None
+        if expected is None:
+            errors.append("date raw_text must use YYYY-MM-DD or YYYY年M月D日")
+        elif value != expected:
             errors.append("date value is not a permitted deterministic normalization of raw_text")
     elif value != raw_text:
         errors.append("field value must conservatively equal raw_text")
@@ -771,4 +782,6 @@ def normalize_project_meeting_agent_result(
         "project_matches": project_matches,
         "project_deltas": project_deltas,
         "proposed_changes": proposed_changes,
+        "unmatched_items": [_normalize_analysis_fact(item, document_text) for item in final.unmatched_items],
+        "needs_confirmation": [_normalize_analysis_fact(item, document_text) for item in final.needs_confirmation],
     }

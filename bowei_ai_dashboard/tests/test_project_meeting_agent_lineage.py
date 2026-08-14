@@ -6,7 +6,7 @@ from app.services.project_meeting_agent_contracts import MeetingAgentFinal
 from app.services.project_meeting_minutes import normalize_project_meeting_agent_result
 
 
-DOCUMENT = "客户清单已经完成，计划仍在进行中，截止日期为2026年8月20日，开始日期为2026-08-21。"
+DOCUMENT = "客户清单已经完成，计划仍在进行中，截止日期为2026年8月20日，开始日期为2026-08-21，尽快处理，下周完成。"
 
 
 def _span(quote: str) -> dict:
@@ -100,6 +100,62 @@ def test_normalize_uses_field_level_word_evidence_and_deterministic_status_date_
     assert fields["start_date"]["value"] == "2026-08-21"
     assert fields["assignee"]["validation"]["state"] == "blocked"
     assert "raw_text" in fields["assignee"]["validation"]["errors"][0]
+
+
+def test_normalize_blocks_unknown_status_from_writable_projection():
+    payload = _payload()
+    payload["meeting_facts"][0]["fields"]["status"] = {
+        "value": "尽快处理", "raw_text": "尽快处理", "evidence": [_span("尽快处理")],
+        "provenance": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"},
+    }
+    payload["proposed_changes"][0]["proposed"] = {"status": "尽快处理"}
+
+    result = _normalize(
+        meeting_facts=payload["meeting_facts"],
+        proposed_changes=payload["proposed_changes"],
+    )
+
+    assert result["meeting_facts"][0]["fields"]["status"]["validation"]["state"] == "blocked"
+    assert result["proposed_changes"][0]["validation"]["state"] == "blocked"
+    assert result["execution_schedule_changes"] == []
+
+
+def test_normalize_blocks_relative_due_date_from_writable_projection():
+    payload = _payload()
+    payload["meeting_facts"][0]["fields"]["due_date"] = {
+        "value": "下周", "raw_text": "下周", "evidence": [_span("下周")],
+        "provenance": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"},
+    }
+    payload["proposed_changes"][0]["proposed"] = {"due_date": "下周"}
+    payload["proposed_changes"][0]["field_sources"] = {
+        "due_date": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"}
+    }
+
+    result = _normalize(
+        meeting_facts=payload["meeting_facts"],
+        proposed_changes=payload["proposed_changes"],
+    )
+
+    assert result["meeting_facts"][0]["fields"]["due_date"]["validation"]["state"] == "blocked"
+    assert result["proposed_changes"][0]["validation"]["state"] == "blocked"
+    assert result["execution_schedule_changes"] == []
+
+
+def test_normalize_preserves_unmatched_and_needs_confirmation_analysis_facts():
+    payload = _payload()
+    unmatched = deepcopy(payload["meeting_facts"][0])
+    unmatched["fact_id"] = "F002"
+    unmatched["fields"]["status"]["provenance"]["source_fact_id"] = "F002"
+    confirmation = deepcopy(payload["meeting_facts"][0])
+    confirmation["fact_id"] = "F003"
+    confirmation["fields"]["status"]["provenance"]["source_fact_id"] = "F003"
+    confirmation["needs_confirmation"] = True
+
+    result = _normalize(unmatched_items=[unmatched], needs_confirmation=[confirmation])
+
+    assert [item["fact_id"] for item in result["unmatched_items"]] == ["F002"]
+    assert [item["fact_id"] for item in result["needs_confirmation"]] == ["F003"]
+    assert result["meeting_draft"]["summary"] == ""
 
 
 def test_normalize_allows_inference_delta_without_fabricated_word_reasoning():

@@ -60,7 +60,30 @@ def _base_prompt(
     requested_meeting_type: str,
 ) -> str:
     tool_names = ", ".join(ProjectMeetingAgentTools.TOOL_NAMES)
-    return f"""你是项目会议纪要分析 Agent，提示词版本：{PROMPT_VERSION}。
+    protocol_examples = """
+STRICT RESPONSE PROTOCOL (this overrides any older meeting-minutes JSON format):
+- Return exactly one JSON object, with no Markdown fences and no explanatory text.
+- A tool request must be exactly this shape:
+  {"type":"tool_call","tool":"get_project_profile","arguments":{"project_id":1}}
+- A completed analysis must be exactly this shape (include every listed result field):
+  {"type":"final","result":{"meeting_info":{"title":"","meeting_date":"","meeting_type":"","location":"","host":"","participants":[],"organizer":"","copied_to":[]},"meeting_info_evidence":{},"summary":"","summary_evidence":[],"agenda_items":[],"decisions":[],"completed_items":[],"next_steps":[],"risks":[],"open_questions":[],"task_updates":[]}}
+- meeting_info_evidence is a mapping from field name to an ARRAY of spans, never one span object:
+  {"meeting_date":[{"quote":"2026-07-27","char_start":0,"char_end":10}]}
+- Every item in agenda_items, decisions, completed_items, next_steps, risks, and open_questions has exactly this shape:
+  {"content":"Owner and due date may be included in this sentence.","evidence":[{"quote":"exact Word quote","char_start":0,"char_end":16}],"confidence":0.9,"needs_confirmation":false}
+- Do not add owner, due_date, assignee, deadline, or any other fields to a fact item.
+- task_updates is only for a safely matched execution schedule and has exactly this shape:
+  {"action":"update_execution_schedule","target":{"project_id":1,"workstream_id":10,"key_task_id":20,"execution_schedule_id":30},"before":{},"proposed":{},"evidence":[{"quote":"exact Word quote","char_start":0,"char_end":16}],"reason":"why the matching schedule changes","confidence":0.9,"needs_confirmation":false}
+- Do not put a fact-shaped action item in task_updates. If a plan node or schedule is not safely matched, put that action in open_questions with needs_confirmation true.
+- Write a non-empty summary when the Word has any agenda, decision, completion, risk, or action. Give summary_evidence as an array of exact Word spans.
+- Summary example: {"summary":"Brief factual summary grounded in Word","summary_evidence":[{"quote":"exact Word quote","char_start":0,"char_end":16}]}
+- The Word label 整理人 maps only to meeting_info.organizer. Do not substitute the host for organizer.
+- Do not use tool_call/tool_name/parameters/final wrapper keys. Do not use any field names other than the two envelope shapes above.
+- For every non-empty meeting field, fact, summary, or task update, include exact Word evidence with quote, char_start, and char_end.
+- Before final, call search_plan_nodes for the project. Use its returned IDs for any task update; if no plan node matches an action, put that action in open_questions instead.
+
+"""
+    return f"""{protocol_examples}你是项目会议纪要分析 Agent，提示词版本：{PROMPT_VERSION}。
 
 规则：
 1. Word 正文是唯一的会议事实来源。用户选择的会议类型只是上下文，不能覆盖与 Word 正文矛盾的事实。
@@ -118,6 +141,7 @@ def run_project_meeting_agent(
     provider: Callable[[str], AgentModelResponse],
     requested_meeting_type: str = "",
     on_event: Callable[[dict[str, Any]], None] | None = None,
+    require_plan_lookup: bool = False,
 ) -> MeetingAgentRunResult:
     """Run at most six model steps against the immutable project snapshot."""
     events: list[dict[str, Any]] = []
@@ -185,6 +209,19 @@ def run_project_meeting_agent(
             continue
 
         if isinstance(envelope, FinalEnvelope):
+            if require_plan_lookup and not any(item.get("tool") == "search_plan_nodes" for item in trace):
+                _emit(events, on_event, {
+                    "kind": "final_deferred",
+                    "step": step,
+                    "reason": "missing_plan_lookup",
+                    "model_code": response.model_code,
+                    "invocation_log_id": response.invocation_log_id,
+                })
+                prompt = (
+                    f"{base_prompt}\nYou must call search_plan_nodes before a final response. "
+                    "Return one valid tool_call envelope now; do not return final yet."
+                )
+                continue
             _emit(events, on_event, {
                 "kind": "final",
                 "step": step,
@@ -239,10 +276,26 @@ def run_project_meeting_agent(
             "model_code": response.model_code,
             "invocation_log_id": response.invocation_log_id,
         })
-        prompt = (
-            f"{base_prompt}\n工具调用轨迹（仅项目上下文，不是会议事实证据）：\n"
-            f"{json.dumps(trace, ensure_ascii=False)}\n请继续，仅返回一个合法 JSON 信封。"
-        )
+        if step == MAX_AGENT_STEPS - 1:
+            prompt = (
+                f"{base_prompt}\n工具调用轨迹（仅项目上下文，不是会议事实证据）：\n"
+                f"{json.dumps(trace, ensure_ascii=False)}\n"
+                "This was the last allowed tool query. You must return final now; "
+                "do not call another tool. Put any unmatched action in open_questions."
+            )
+        elif require_plan_lookup and envelope.tool == "search_plan_nodes":
+            prompt = (
+                f"{base_prompt}\n工具调用轨迹（仅项目上下文，不是会议事实证据）：\n"
+                f"{json.dumps(trace, ensure_ascii=False)}\n"
+                "Plan lookup requirement is fulfilled. Do not call search_plan_nodes again. "
+                "Return final now, unless one get_plan_node_detail call is essential to make a safe task update; "
+                "put every unmatched action in open_questions."
+            )
+        else:
+            prompt = (
+                f"{base_prompt}\n工具调用轨迹（仅项目上下文，不是会议事实证据）：\n"
+                f"{json.dumps(trace, ensure_ascii=False)}\n请继续，仅返回一个合法 JSON 信封。"
+            )
 
     raise MeetingAgentError(
         "step_limit_exceeded",

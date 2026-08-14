@@ -490,11 +490,18 @@ def _normalize_agent_evidence(
         payload = item.model_dump(mode="json")
         start = item.char_start
         end = item.char_end
-        if start < 0 or end <= start or end > len(document_text):
-            errors.append("evidence character range is outside document_text")
-            continue
-        if document_text[start:end] != item.quote:
-            errors.append("evidence quote does not exactly match document_text character range")
+        exact_at_offsets = 0 <= start < end <= len(document_text) and document_text[start:end] == item.quote
+        if not exact_at_offsets:
+            first_match = document_text.find(item.quote)
+            if first_match >= 0 and document_text.find(item.quote, first_match + 1) < 0:
+                payload["char_start"] = first_match
+                payload["char_end"] = first_match + len(item.quote)
+                normalized.append(payload)
+                continue
+            if start < 0 or end <= start or end > len(document_text):
+                errors.append("evidence character range is outside document_text")
+            else:
+                errors.append("evidence quote does not exactly match document_text character range")
             continue
         normalized.append(payload)
 

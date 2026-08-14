@@ -202,6 +202,7 @@ def process_project_meeting_agent_run(run_id: int, *, session_factory=SessionLoc
             provider=provider,
             requested_meeting_type=str(snapshot.get("requested_meeting_type") or ""),
             on_event=on_event,
+            require_plan_lookup=True,
         )
         run.stage = "validating"
         normalized = normalize_project_meeting_agent_result(agent_result.final, run.document_text, snapshot)

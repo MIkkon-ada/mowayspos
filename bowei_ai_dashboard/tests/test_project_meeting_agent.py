@@ -7,6 +7,7 @@ import pytest
 from app.services.project_meeting_agent import (
     AgentModelResponse,
     MeetingAgentError,
+    _base_prompt,
     _parse_envelope,
     run_project_meeting_agent,
 )
@@ -103,6 +104,22 @@ def test_agent_executes_tool_then_returns_final(snapshot: dict, document_text: s
     assert result.events == events
 
 
+def test_agent_prompt_includes_the_exact_tool_and_final_envelope_shapes(document_text: str):
+    prompt = _base_prompt(1, document_text, "regular")
+
+    assert '{"type":"tool_call","tool":"get_project_profile","arguments":{"project_id":1}}' in prompt
+    assert '{"type":"final","result":{' in prompt
+    assert 'Do not use tool_call/tool_name/parameters/final wrapper keys.' in prompt
+    assert '"meeting_date":[{"quote":"2026-07-27","char_start":0,"char_end":10}]' in prompt
+    assert '"content":"Owner and due date may be included in this sentence."' in prompt
+    assert 'Do not add owner, due_date, assignee, deadline, or any other fields to a fact item.' in prompt
+    assert '"action":"update_execution_schedule","target":{"project_id":1,"workstream_id":10,"key_task_id":20,"execution_schedule_id":30}' in prompt
+    assert 'Do not put a fact-shaped action item in task_updates.' in prompt
+    assert 'Write a non-empty summary when the Word has any agenda, decision, completion, risk, or action.' in prompt
+    assert 'The Word label 整理人 maps only to meeting_info.organizer.' in prompt
+    assert '"summary":"Brief factual summary grounded in Word","summary_evidence":[{"quote":"exact Word quote","char_start":0,"char_end":16}]' in prompt
+
+
 def test_agent_retains_events_without_event_callback(snapshot: dict, document_text: str, valid_final: dict):
     result = run_project_meeting_agent(
         project_id=1,
@@ -166,6 +183,29 @@ def test_agent_repairs_one_invalid_json_response(snapshot: dict, document_text: 
     assert result.invocation_log_ids == [21, 22]
 
 
+def test_project_meeting_agent_requires_a_plan_search_before_final(snapshot: dict, document_text: str, valid_final: dict):
+    prompts: list[str] = []
+    replies = iter([
+        response({"type": "final", "result": valid_final}, 23),
+        response({"type": "tool_call", "tool": "search_plan_nodes", "arguments": {"project_id": 1, "query": "minutes"}}, 24),
+        response({"type": "final", "result": valid_final}, 25),
+    ])
+
+    result = run_project_meeting_agent(
+        1,
+        document_text,
+        snapshot,
+        ProjectMeetingAgentTools(snapshot),
+        lambda prompt: (prompts.append(prompt), next(replies))[1],
+        require_plan_lookup=True,
+    )
+
+    assert result.invocation_log_ids == [23, 24, 25]
+    assert result.trace[0]["tool"] == "search_plan_nodes"
+    assert "must call search_plan_nodes before a final response" in prompts[1]
+    assert "Plan lookup requirement is fulfilled" in prompts[2]
+
+
 def test_agent_blocks_repeated_identical_tool_call(snapshot: dict):
     duplicate = {"type": "tool_call", "tool": "get_project_profile", "arguments": {"project_id": 1}}
     replies = iter([response(duplicate, 31), response(duplicate, 32)])
@@ -186,6 +226,25 @@ def test_agent_stops_at_six_steps(snapshot: dict):
         run_project_meeting_agent(1, "document", snapshot, ProjectMeetingAgentTools(snapshot), lambda prompt: next(replies))
 
     assert exc.value.code == "step_limit_exceeded"
+
+
+def test_agent_reserves_the_last_step_for_a_final_after_five_tool_queries(snapshot: dict, document_text: str, valid_final: dict):
+    prompts: list[str] = []
+    replies = iter([
+        response({"type": "tool_call", "tool": "search_plan_nodes", "arguments": {"project_id": 1, "query": str(index)}}, index)
+        for index in range(1, 6)
+    ] + [response({"type": "final", "result": valid_final}, 6)])
+
+    result = run_project_meeting_agent(
+        1,
+        document_text,
+        snapshot,
+        ProjectMeetingAgentTools(snapshot),
+        lambda prompt: (prompts.append(prompt), next(replies))[1],
+    )
+
+    assert result.step_count == 6
+    assert "must return final" in prompts[-1]
 
 
 def test_agent_rejects_a_second_invalid_response(snapshot: dict):

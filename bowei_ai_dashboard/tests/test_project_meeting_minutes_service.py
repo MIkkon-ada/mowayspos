@@ -400,7 +400,7 @@ def test_agent_normalization_returns_ready_validation_for_exact_meeting_metadata
     assert result["summary_evidence"]["validation"]["state"] == "ready"
 
 
-def test_agent_normalization_blocks_metadata_with_wrong_character_range(
+def test_agent_normalization_corrects_a_unique_quote_with_wrong_character_range(
     db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
 ):
     project, _ = project_plan
@@ -408,6 +408,22 @@ def test_agent_normalization_blocks_metadata_with_wrong_character_range(
     final = _agent_final(document_text)
     wrong = final.meeting_info_evidence["title"][0].model_copy(update={"char_start": 1, "char_end": 1 + len("AI Upgrade weekly meeting")})
     final = final.model_copy(update={"meeting_info_evidence": {**final.meeting_info_evidence, "title": [wrong]}})
+
+    result = normalize_project_meeting_agent_result(final, document_text, build_project_meeting_snapshot(project.id, db))
+
+    evidence = result["meeting_info_evidence"]["title"]
+    assert evidence["validation"]["state"] == "ready"
+    assert evidence["evidence"][0]["char_start"] == document_text.index("AI Upgrade weekly meeting")
+
+
+def test_agent_normalization_blocks_a_quote_that_is_not_in_the_document(
+    db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
+):
+    project, _ = project_plan
+    document_text = _agent_document_text()
+    final = _agent_final(document_text)
+    invalid = EvidenceSpan(quote="Missing title", char_start=0, char_end=len("Missing title"))
+    final = final.model_copy(update={"meeting_info_evidence": {**final.meeting_info_evidence, "title": [invalid]}})
 
     result = normalize_project_meeting_agent_result(final, document_text, build_project_meeting_snapshot(project.id, db))
 

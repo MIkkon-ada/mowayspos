@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -73,6 +74,85 @@ def _event_model_code(events: list[dict[str, Any]] | None) -> str:
     return ""
 
 
+def _names(value: Any) -> str:
+    if isinstance(value, list):
+        return "、".join(str(item).strip() for item in value if str(item).strip())
+    return str(value or "").strip()
+
+
+def _create_review_draft(
+    db: Session,
+    run: models.ProjectMeetingRun,
+    normalized: dict[str, Any],
+) -> None:
+    """Persist a reviewable meeting draft and proposals, never live plan changes."""
+    draft = normalized.get("meeting_draft") if isinstance(normalized.get("meeting_draft"), dict) else {}
+    source = db.get(models.MeetingDocumentSource, run.document_source_id)
+    meeting = models.Meeting(
+        project_id=run.project_id,
+        creator_person_id=run.created_by_person_id,
+        meeting_type=str(draft.get("meeting_type") or "").strip(),
+        title=str(draft.get("title") or (source.original_name if source else "会议纪要")).strip(),
+        meeting_date=str(draft.get("meeting_date") or "").strip(),
+        location=str(draft.get("location") or "").strip(),
+        host=str(draft.get("host") or "").strip(),
+        participants=_names(draft.get("participants")),
+        organizer=str(draft.get("organizer") or "").strip(),
+        copied_to=_names(draft.get("copied_to")),
+        agenda_items_json=json.dumps(normalized.get("agenda_items", []), ensure_ascii=False),
+        source_mode="ai_analysis",
+        transcript_text=run.document_text,
+        summary=str(draft.get("summary") or "").strip(),
+        task_list_json=json.dumps(normalized.get("next_stage_work", []), ensure_ascii=False),
+        decision_items_json=json.dumps(normalized.get("decisions", []), ensure_ascii=False),
+        risk_items_json=json.dumps(normalized.get("risks", []), ensure_ascii=False),
+        publish_status="draft",
+        document_source_id=run.document_source_id,
+        review_status="pending_review",
+        review_version=1,
+    )
+    db.add(meeting)
+    db.flush()
+    if source is not None:
+        source.meeting_id = meeting.id
+
+    change_set = models.MeetingChangeSet(
+        project_id=run.project_id,
+        meeting_id=meeting.id,
+        created_by_person_id=run.created_by_person_id,
+        transcript_hash=hashlib.sha256(run.document_text.encode("utf-8")).hexdigest(),
+        snapshot_json=run.snapshot_json,
+        result_json=json.dumps(normalized, ensure_ascii=False),
+        status="draft",
+    )
+    db.add(change_set)
+    db.flush()
+    for raw in normalized.get("execution_schedule_changes", []):
+        if not isinstance(raw, dict):
+            continue
+        target = raw.get("target") if isinstance(raw.get("target"), dict) else {}
+        db.add(models.MeetingChangeProposal(
+            change_set_id=change_set.id,
+            action=str(raw.get("action") or ""),
+            target_type="execution_schedule",
+            target_id=target.get("execution_schedule_id"),
+            parent_workstream_id=target.get("workstream_id"),
+            parent_subtask_id=target.get("key_task_id"),
+            before_json=json.dumps(raw.get("before", {}), ensure_ascii=False),
+            proposed_json=json.dumps(raw.get("proposed", {}), ensure_ascii=False),
+            evidence_json=json.dumps(raw.get("evidence", []), ensure_ascii=False),
+            reason=str(raw.get("reason") or ""),
+            confidence=float(raw.get("confidence") or 0),
+            validation_json=json.dumps(raw.get("validation", {}), ensure_ascii=False),
+            execution_status="pending",
+        ))
+    db.add(models.MeetingReviewEvent(
+        meeting_id=meeting.id,
+        action="submitted",
+        actor_person_id=run.created_by_person_id,
+    ))
+
+
 def process_project_meeting_agent_run(run_id: int, *, session_factory=SessionLocal) -> None:
     """Run one queued document in an independent database session.
 
@@ -125,6 +205,7 @@ def process_project_meeting_agent_run(run_id: int, *, session_factory=SessionLoc
         )
         run.stage = "validating"
         normalized = normalize_project_meeting_agent_result(agent_result.final, run.document_text, snapshot)
+        _create_review_draft(db, run, normalized)
         _persist_audit(
             run,
             step_count=agent_result.step_count,

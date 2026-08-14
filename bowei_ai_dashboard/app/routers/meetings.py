@@ -999,7 +999,9 @@ def _execute_project_meeting_schedule_changes(
         if proposal.target_id is not None:
             target["execution_schedule_id"] = proposal.target_id
         if proposal.parent_workstream_id is not None:
-            target["key_task_id"] = proposal.parent_workstream_id
+            target["workstream_id"] = proposal.parent_workstream_id
+        if proposal.parent_subtask_id is not None:
+            target["key_task_id"] = proposal.parent_subtask_id
         raw = {
             "action": proposal.action,
             "target": target,
@@ -1036,7 +1038,7 @@ def _execute_project_meeting_schedule_changes(
                     value = date.fromisoformat(value)
                 setattr(row, field, value)
         else:
-            subtask = db.get(models.SubTask, proposal.parent_workstream_id)
+            subtask = db.get(models.SubTask, proposal.parent_subtask_id)
             if not subtask:
                 raise HTTPException(409, "key task no longer exists")
             values = dict(proposed)

@@ -104,7 +104,12 @@ def test_background_success_persists_agent_audit_then_waits_for_owner_review(db,
     assert json.loads(run.raw_responses_json) == ["{}"]
     assert json.loads(run.tool_trace_json)["trace"] == [{"tool": "get_project_profile"}]
     assert json.loads(run.result_json)["meeting_draft"]["summary"] == ""
-    assert db.query(models.Meeting).count() == 0
+    meeting = db.query(models.Meeting).one()
+    assert meeting.source_mode == "ai_analysis"
+    assert meeting.review_status == "pending_review"
+    assert meeting.publish_status == "draft"
+    assert meeting.document_source_id == run.document_source_id
+    assert db.query(models.MeetingChangeSet).filter_by(meeting_id=meeting.id).count() == 1
 
 
 def test_background_agent_error_fails_without_fabricating_result(db, monkeypatch):

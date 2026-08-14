@@ -82,6 +82,7 @@ def test_previous_meeting_limit_is_capped_at_five(snapshot: dict):
 
 @pytest.mark.parametrize("name, arguments, message", [
     ("get_project_profile", {"project_id": 8}, "project boundary"),
+    ("list_project_members", {}, "project boundary"),
     ("not_a_tool", {"project_id": 7}, "unknown tool"),
 ])
 def test_execute_rejects_cross_project_and_unknown_tools(snapshot: dict, name: str, arguments: dict, message: str):
@@ -114,3 +115,21 @@ def test_plan_node_detail_preserves_parent_relationship_for_each_node_kind(snaps
     assert key_task["node_type"] == "key_task"
     assert key_task["workstream_id"] == 10
     assert key_task["key_task_id"] == 20
+
+
+def test_tools_freeze_input_snapshot_and_isolate_return_values(snapshot: dict):
+    tools = ProjectMeetingAgentTools(snapshot)
+    snapshot["project"]["name"] = "Mutated source"
+    snapshot["members"][0]["name"] = "Mutated member"
+    snapshot["workstreams"][0]["key_tasks"][0]["execution_schedules"][0]["title"] = "Mutated schedule"
+
+    profile = tools.execute("get_project_profile", {"project_id": 7})
+    members = tools.execute("list_project_members", {"project_id": 7})
+    matches = tools.execute("search_plan_nodes", {"project_id": 7, "query": "acceptance"})
+    profile["project"]["name"] = "Mutated return"
+    members["members"][0]["name"] = "Mutated return"
+    matches["candidates"][0]["execution_schedules"][0]["title"] = "Mutated return"
+
+    assert tools.execute("get_project_profile", {"project_id": 7})["project"]["name"] == "AI Upgrade"
+    assert tools.execute("list_project_members", {"project_id": 7})["members"][0]["name"] == "Owner"
+    assert tools.execute("search_plan_nodes", {"project_id": 7, "query": "acceptance"})["candidates"][0]["execution_schedules"][0]["title"] == "Finish acceptance checklist"

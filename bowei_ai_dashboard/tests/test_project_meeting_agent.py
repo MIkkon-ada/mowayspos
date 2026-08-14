@@ -96,6 +96,8 @@ def test_agent_executes_tool_then_returns_final(snapshot: dict, document_text: s
     assert result.final.meeting_info.meeting_date == "2026-07-27"
     assert result.invocation_log_ids == [11, 12]
     assert result.trace[0]["tool"] == "search_plan_nodes"
+    assert result.trace[0]["model_code"] == "fake-chat"
+    assert result.trace[0]["invocation_log_id"] == 11
     assert [event["kind"] for event in events] == ["model_response", "tool_result", "model_response", "final"]
 
 

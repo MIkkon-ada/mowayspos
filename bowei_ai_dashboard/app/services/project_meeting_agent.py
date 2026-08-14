@@ -195,6 +195,8 @@ def run_project_meeting_agent(
             "tool": envelope.tool,
             "arguments": envelope.arguments,
             "observation": observation,
+            "model_code": response.model_code,
+            "invocation_log_id": response.invocation_log_id,
         })
         _emit(on_event, {
             "kind": "tool_result",

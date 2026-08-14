@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { analyzeProgressReview, fetchMeetingRevisions, fetchMeetings, patchMeetingStatus, type MeetingRevisionItem } from '../api/meetings'
+import { analyzeProgressReview, fetchMeetingRevisions, fetchMeetings, fetchProjectMeetingReviewPackage, patchMeetingStatus, projectMeetingDocumentDownloadUrl, reviewProjectMeeting, updateMeeting, type MeetingRevisionItem, type ProjectMeetingRun } from '../api/meetings'
 import { useProject } from '../context/ProjectContext'
 import type { MeetingItem } from '../types'
 import { InfoRow, MeetingSection, renderJsonList } from '../features/meeting/meetingShared'
@@ -13,9 +13,10 @@ import { MeetingDetailWorkspace } from '../features/meeting/MeetingDetailWorkspa
 import { STATUS_CONFIG, TYPE_STYLE, fmtTime, getStatus, typeLabel, type PublishStatus } from '../features/meeting/meetingUtils'
 import { getProjectDisplayName } from '../domain/projectDisplay'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
+import { ProjectMeetingReviewWorkspace } from '../features/meeting/ProjectMeetingReviewWorkspace'
 
 export function MeetingPage() {
-  const { currentProjectId, projects } = useProject()
+  const { currentProjectId, projects, currentUser, currentProjectRoles } = useProject()
   const navigate = useNavigate()
   const { meetingId: pathMeetingId } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -40,6 +41,7 @@ export function MeetingPage() {
   const [revisions, setRevisions] = useState<MeetingRevisionItem[]>([])
   const [selectedRevision, setSelectedRevision] = useState<MeetingRevisionItem | null>(null)
   const [progressReviewRefresh, setProgressReviewRefresh] = useState(0)
+  const [projectMeetingReview, setProjectMeetingReview] = useState<ProjectMeetingRun | null>(null)
 
   const currentProject = projects.find((p) => p.id === currentProjectId) ?? null
   const effectiveProject = projects.find((p) => p.id === effectiveProjectId) ?? null
@@ -98,6 +100,19 @@ export function MeetingPage() {
     return () => {
       cancelled = true
     }
+  }, [selected?.id])
+
+  useEffect(() => {
+    const sourceId = Number((selected as (MeetingItem & { document_source_id?: number | null }) | null)?.document_source_id ?? 0)
+    if (!selected || !sourceId) {
+      setProjectMeetingReview(null)
+      return
+    }
+    let cancelled = false
+    fetchProjectMeetingReviewPackage(selected.id)
+      .then((pkg) => { if (!cancelled) setProjectMeetingReview(pkg) })
+      .catch(() => { if (!cancelled) setProjectMeetingReview(null) })
+    return () => { cancelled = true }
   }, [selected?.id])
 
   useEffect(() => {
@@ -169,6 +184,153 @@ export function MeetingPage() {
   const statusCfg = STATUS_CONFIG[selStatus]
   const projectMemberCount = effectiveProject ? Object.values(effectiveProject.member_counts ?? {}).reduce((sum, count) => sum + count, 0) : 0
   const projectDate = (value?: string) => value ? value.slice(0, 10).replace(/-/g, '/') : '-'
+  const meetingEditor = effectiveProjectId && !pending_kickoff && (showNewModal || editingItem)
+    ? <NewMeetingModal
+        projectId={effectiveProjectId}
+        defaultMeetingType={editingItem ? undefined : urlMeetingType}
+        editItem={editingItem ?? undefined}
+        onClose={() => {
+          setShowNewModal(false)
+          setEditingItem(null)
+        }}
+        onCreated={handleCreated}
+      />
+    : null
+
+  if (meetingEditor) return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      {meetingEditor}
+    </div>
+  )
+
+  if (selected && projectMeetingReview) {
+    const snapshot = projectMeetingReview.snapshot
+    const project = snapshot.project
+    const workstreams = snapshot.workstreams ?? []
+    const keyTasks = workstreams.flatMap((workstream) => (workstream.key_tasks ?? []).map((task) => ({
+      id: task.id,
+      workstreamId: workstream.id,
+      title: task.title,
+      status: task.status,
+      progress: '',
+    })))
+    const scheduleChanges = projectMeetingReview.review_package?.proposals ?? projectMeetingReview.result.execution_schedule_changes ?? []
+    const meetingDraft = projectMeetingReview.meeting ?? selected
+    const isOwner = Boolean(currentUser?.is_tech_admin || currentProjectRoles.includes('owner'))
+    return (
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <main className="flex-1 overflow-y-auto">
+          <ProjectMeetingReviewWorkspace
+            projectContext={{
+              projectId: effectiveProjectId ?? project?.id ?? 0,
+              projectName: project?.name ?? effectiveProject?.name ?? '',
+              projectCode: project?.code ?? '',
+              members: (snapshot.members ?? []).map((member) => ({ id: member.person_id, name: member.name, role: member.role })),
+              workstreams: workstreams.map((workstream) => ({ id: workstream.id, title: workstream.key_task, status: workstream.status })),
+              keyTasks,
+            }}
+            meetingDraft={{
+              id: meetingDraft.id,
+              project_id: meetingDraft.project_id,
+              title: meetingDraft.title ?? '',
+              meeting_type: meetingDraft.meeting_type ?? '',
+              meeting_date: meetingDraft.meeting_date ?? '',
+              location: meetingDraft.location ?? '',
+              host: meetingDraft.host ?? '',
+              participants: meetingDraft.participants ?? '',
+              organizer: meetingDraft.organizer ?? '',
+              copied_to: meetingDraft.copied_to ?? '',
+              summary: meetingDraft.summary ?? '',
+              publish_status: meetingDraft.publish_status ?? 'draft',
+              decisions: projectMeetingReview.result.decisions ?? [],
+              actions: [...(projectMeetingReview.result.completed_items ?? []), ...(projectMeetingReview.result.next_stage_work ?? [])],
+              risks: projectMeetingReview.result.risks ?? [],
+              sourceFilename: projectMeetingReview.document?.original_name,
+            }}
+            meetingInfoEvidence={projectMeetingReview.result.meeting_info_evidence ?? {}}
+            summaryEvidence={projectMeetingReview.result.summary_evidence}
+            openQuestions={projectMeetingReview.result.open_questions ?? []}
+            agentAudit={projectMeetingReview.audit}
+            scheduleChanges={scheduleChanges.map((change, index) => {
+              const agentChange = projectMeetingReview.result.execution_schedule_changes?.[index]
+              const workstreamId = change.parent_workstream_id ?? change.target?.workstream_id ?? agentChange?.parent_workstream_id ?? agentChange?.target?.workstream_id ?? null
+              const parentSubtaskId = change.parent_subtask_id ?? change.target?.key_task_id ?? agentChange?.parent_subtask_id ?? agentChange?.target?.key_task_id ?? null
+              return {
+                id: change.id,
+                scheduleId: change.target_id,
+                workstreamId,
+                parentSubtaskId,
+                keyTaskId: parentSubtaskId ?? 0,
+                workstreamTitle: workstreams.find((workstream) => workstream.id === workstreamId)?.key_task ?? '未匹配重点工作',
+                keyTaskTitle: keyTasks.find((task) => task.id === parentSubtaskId)?.title ?? '未匹配关键任务',
+                title: String(change.proposed.title ?? change.action),
+                before: change.before,
+                proposed: change.proposed,
+                evidence: change.evidence,
+                reason: change.reason,
+                confidence: change.confidence,
+                needsConfirmation: Boolean(change.needs_confirmation ?? agentChange?.needs_confirmation),
+                validationState: change.validation.state,
+                validationErrors: change.validation.errors,
+              }
+            })}
+            isOwner={isOwner}
+            onSaveDraft={async (draft) => {
+              setActionLoading(true)
+              try {
+                const updated = await updateMeeting(selected.id, {
+                  project_id: Number(draft.project_id ?? selected.project_id ?? effectiveProjectId),
+                  title: draft.title ?? '',
+                  meeting_type: draft.meeting_type ?? '',
+                  meeting_date: draft.meeting_date ?? '',
+                  location: draft.location ?? '',
+                  host: draft.host ?? '',
+                  participants: draft.participants ?? '',
+                  organizer: draft.organizer ?? '',
+                  copied_to: draft.copied_to ?? '',
+                  agenda_items_json: selected.agenda_items_json ?? '[]',
+                  prior_action_items_json: selected.prior_action_items_json ?? '[]',
+                  source_mode: selected.source_mode ?? 'ai_analysis',
+                  summary: draft.summary ?? '',
+                  task_list_json: selected.task_list_json ?? '[]',
+                  decision_items_json: selected.decision_items_json ?? '[]',
+                  risk_items_json: selected.risk_items_json ?? '[]',
+                  transcript_text: String(selected.transcript_text ?? ''),
+                })
+                setSelected(updated)
+                setMeetings((current) => current.map((item) => item.id === updated.id ? updated : item))
+                toast.success('负责人编辑已保存，尚未回填任何子计划')
+              } catch {
+                toast.error('保存负责人编辑失败，请稍后重试')
+              } finally {
+                setActionLoading(false)
+              }
+            }}
+            onApprove={async (proposalIds) => {
+              setActionLoading(true)
+              try {
+                const updated = await reviewProjectMeeting(selected.id, { action: 'approve', proposal_ids: proposalIds })
+                setSelected(updated)
+                setProjectMeetingReview(null)
+                toast.success('会议纪要已审核，选中的执行安排已回写')
+              } catch { toast.error('审核失败，请检查权限或提案状态') } finally { setActionLoading(false) }
+            }}
+            onReturn={async (reason) => {
+              setActionLoading(true)
+              try {
+                const updated = await reviewProjectMeeting(selected.id, { action: 'return', reason })
+                setSelected(updated)
+                setProjectMeetingReview(null)
+                toast.success('会议纪要已退回，并记录退回原因')
+              } catch { toast.error('退回失败，请稍后重试') } finally { setActionLoading(false) }
+            }}
+            onDownload={() => { window.open(projectMeetingDocumentDownloadUrl(selected.id), '_blank', 'noopener,noreferrer') }}
+            busy={actionLoading}
+          />
+        </main>
+      </div>
+    )
+  }
 
   if (selected) return (
     <div className="flex flex-1 flex-col overflow-hidden meeting-list-view">
@@ -193,7 +355,6 @@ export function MeetingPage() {
           onStatusChange={(status) => { void handleStatusChange(status) }}
         />
       </main>
-      {editingItem && effectiveProjectId && <NewMeetingModal projectId={effectiveProjectId} editItem={editingItem} onClose={() => setEditingItem(null)} onCreated={handleCreated} />}
     </div>
   )
 
@@ -636,8 +797,6 @@ export function MeetingPage() {
         )}
       </main>
 
-          {showNewModal && effectiveProjectId && !pending_kickoff && <NewMeetingModal projectId={effectiveProjectId} defaultMeetingType={urlMeetingType} onClose={() => setShowNewModal(false)} onCreated={handleCreated} />}
-      {editingItem && effectiveProjectId && <NewMeetingModal projectId={effectiveProjectId} editItem={editingItem} onClose={() => setEditingItem(null)} onCreated={handleCreated} />}
     </div>
   )
 }

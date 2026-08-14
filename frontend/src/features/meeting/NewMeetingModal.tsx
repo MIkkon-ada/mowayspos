@@ -1,13 +1,15 @@
 import { useMemo, useRef, useState } from 'react'
 import {
   analyzeMeeting,
+  createProjectMeetingDocumentRun,
+  fetchProjectMeetingDocumentRun,
+  pollProjectMeetingDocumentRun,
   addMeetingSkillSnapshot,
   answerMeetingSkillQuestions,
   createMeeting,
   extractMeetingDocumentText,
   preflightMeetingSkill,
   resumeMeetingSkillRun,
-  transcribeAudio,
   type MeetingSkillRun,
   type StandardMeetingMinutes,
   updateMeeting,
@@ -75,21 +77,10 @@ function emptyForm(defaultMeetingType: string): ReviewForm {
 
 export function combineAnalysisSources({
   documentText,
-  supplementalText,
-  audioText,
 }: {
   documentText: string
-  supplementalText: string
-  audioText: string
 }): string {
-  return [
-    ['会议文档', documentText],
-    ['补充原文', supplementalText],
-    ['音频转写', audioText],
-  ]
-    .filter(([, value]) => value.trim())
-    .map(([label, value]) => `【${label}】\n${value.trim()}`)
-    .join('\n\n')
+  return documentText.trim()
 }
 
 function SourceStatus({ text, emptyLabel }: { text: string; emptyLabel: string }) {
@@ -156,17 +147,13 @@ export function NewMeetingModal({
   const [savedMeeting, setSavedMeeting] = useState<MeetingItem | null>(null)
   const [reviewMeetingId, setReviewMeetingId] = useState<number | null>(null)
   const [documentName, setDocumentName] = useState('')
+  const [documentFile, setDocumentFile] = useState<File | null>(null)
   const [documentText, setDocumentText] = useState('')
-  const [supplementalText, setSupplementalText] = useState('')
-  const [audioFile, setAudioFile] = useState<File | null>(null)
-  const [audioText, setAudioText] = useState('')
   const [documentReferenceKind, setDocumentReferenceKind] = useState('meeting_document')
   const [skillRun, setSkillRun] = useState<MeetingSkillRun | null>(null)
   const [clarificationValues, setClarificationValues] = useState<Record<number, string>>({})
   const [documentUploading, setDocumentUploading] = useState(false)
-  const [audioUploading, setAudioUploading] = useState(false)
   const documentRef = useRef<HTMLInputElement>(null)
-  const audioRef = useRef<HTMLInputElement>(null)
   const [form, setForm] = useState<ReviewForm>(() => {
     if (editItem) {
       return {
@@ -194,15 +181,13 @@ export function NewMeetingModal({
   })
 
   const analysisText = useMemo(
-    () => combineAnalysisSources({ documentText, supplementalText, audioText }),
-    [documentText, supplementalText, audioText],
+    () => combineAnalysisSources({ documentText }),
+    [documentText],
   )
-  const sourceCount = Number(Boolean(documentText.trim())) + Number(Boolean(supplementalText.trim())) + Number(Boolean(audioText.trim()))
+  const sourceCount = Number(Boolean(documentText.trim()))
   const skillReferenceFiles = useMemo(() => [
     ...(documentText.trim() ? [{ source_id: `document:${documentName || 'uploaded'}`, kind: documentReferenceKind, filename: documentName }] : []),
-    ...(supplementalText.trim() ? [{ source_id: 'supplemental-text', kind: 'supplemental_text', filename: '' }] : []),
-    ...(audioText.trim() ? [{ source_id: audioFile ? `audio:${audioFile.name}` : 'audio-transcript', kind: 'audio_transcript', filename: audioFile?.name || '' }] : []),
-  ], [audioFile, audioText, documentName, documentReferenceKind, documentText, supplementalText])
+  ], [documentName, documentReferenceKind, documentText])
 
   function setField(key: keyof ReviewForm, value: string) {
     setForm((previous) => ({ ...previous, [key]: value }))
@@ -213,6 +198,7 @@ export function NewMeetingModal({
     setError('')
     try {
       const result = await extractMeetingDocumentText(projectId, file)
+      setDocumentFile(file)
       setDocumentName(result.filename)
       setDocumentText(result.text)
       if (result.standard_minutes?.is_standard_minutes) {
@@ -234,26 +220,11 @@ export function NewMeetingModal({
           source_mode: 'standard_minutes',
           transcript_text: `【会议文档】\n${result.text}`,
         }))
-        setStep('review')
       }
     } catch (cause: unknown) {
       setError(`文档读取失败：${cause instanceof Error ? cause.message : String(cause)}`)
     } finally {
       setDocumentUploading(false)
-    }
-  }
-
-  async function handleUploadAudio() {
-    if (!audioFile) return
-    setAudioUploading(true)
-    setError('')
-    try {
-      const result = await transcribeAudio(audioFile)
-      setAudioText(result.text)
-    } catch (cause: unknown) {
-      setError(`转录失败：${cause instanceof Error ? cause.message : String(cause)}`)
-    } finally {
-      setAudioUploading(false)
     }
   }
 
@@ -282,29 +253,40 @@ export function NewMeetingModal({
   }
 
   async function handleAnalyze() {
-    if (!analysisText.trim()) {
-      setError('请至少添加一份会议材料后再生成草稿')
+    if (!documentText.trim() || !documentName) {
+      setError('请先上传一份会议纪要 Word 文档')
       return
     }
     setError('')
-    setAnalysisId(null)
     setStep('analyzing')
-    setStatusMsg('正在检查材料完整性与需要确认的事实…')
+    setStatusMsg('正在结合项目工作推进表分析会议纪要，并生成待审核草稿…')
     try {
-      const run = await preflightMeetingSkill({
-        project_id: projectId,
-        meeting_type: form.meeting_type,
-        transcript_text: analysisText,
-        reference_files: skillReferenceFiles,
-      })
-      setSkillRun(run)
-      if (run.status === 'waiting_for_answers') {
-        setStep('clarifying')
+      if (!documentFile) {
+        setError('请重新选择会议纪要 Word 文档')
+        setStep('input')
         return
       }
-      await generateAfterPreflight(run)
+      const run = await createProjectMeetingDocumentRun(projectId, documentFile, form.meeting_type)
+      setStatusMsg(`Agent 正在分析（${run.stage || 'reading'}）…`)
+      const status = await pollProjectMeetingDocumentRun(run.id, {
+        onStatus: (next) => {
+          setStatusMsg(`Agent 正在${next.stage || next.status}，已完成 ${next.step_count} 步项目上下文查询…`)
+        },
+      })
+      if (status.status === 'failed') {
+        setError(`会议纪要 Agent 分析失败${status.error_code ? `（${status.error_code}）` : ''}：${status.error_message || '请检查模型配置后重试'}`)
+        setStep('input')
+        return
+      }
+      const completedRun = await fetchProjectMeetingDocumentRun(run.id)
+      if (!completedRun.meeting) {
+        setError('会议纪要 Agent 已完成，但未生成可审核的会议草稿')
+        setStep('input')
+        return
+      }
+      onCreated(completedRun.meeting)
     } catch (cause: unknown) {
-      setError(`预检或 AI 分析失败：${cause instanceof Error ? cause.message : String(cause)}`)
+      setError(`会议纪要分析失败：${cause instanceof Error ? cause.message : String(cause)}`)
       setStep('input')
     }
   }
@@ -418,8 +400,8 @@ export function NewMeetingModal({
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-[#F5F8FC]" style={{ fontFamily: 'Inter, sans-serif' }}>
-        <header className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-8 py-4">
+          <div className="meeting-workbench-shell flex min-h-0 flex-1 flex-col overflow-hidden bg-[#F5F8FC]" style={{ fontFamily: 'Inter, sans-serif' }}>
+            <header className="flex min-h-[72px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 py-3 lg:px-7">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-sky-500 text-lg text-white">▤</div>
             <div>
@@ -430,8 +412,8 @@ export function NewMeetingModal({
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-800">关闭</button>
         </header>
 
-        <div className="shrink-0 border-b border-slate-200 bg-white px-8">
-          <div className="mx-auto flex max-w-[1180px] items-center gap-2 py-3">
+            <div className="shrink-0 border-b border-slate-200 bg-white px-5 lg:px-7">
+              <div className="mx-auto flex max-w-[1280px] items-center gap-2 py-2.5">
             {steps.map((item, index) => {
               const active = currentIdx === index
               const done = currentIdx > index
@@ -446,7 +428,7 @@ export function NewMeetingModal({
           </div>
         </div>
 
-        <main className="flex-1 overflow-y-auto">
+            <main className="meeting-workbench-main min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
           {step === 'input' && (
             <div className="mx-auto max-w-[1180px] space-y-7 px-8 py-8 pb-32">
               <section>
@@ -500,23 +482,12 @@ export function NewMeetingModal({
                 </div>
                 <div className="mt-5 grid gap-4 lg:grid-cols-3">
                   <div className="rounded-xl border border-dashed border-sky-200 bg-sky-50/50 p-4">
-                    <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">上传会议文档</h3><p className="mt-1 text-xs leading-5 text-slate-500">支持 Word（.docx）和 TXT，读取文字后参与 AI 分析。</p></div><SourceStatus text={documentText} emptyLabel="未上传" /></div>
+                    <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">上传会议纪要 Word</h3><p className="mt-1 text-xs leading-5 text-slate-500">仅支持已整理的 Word（.docx）会议纪要；本流程只读取文档内容。</p></div><SourceStatus text={documentText} emptyLabel="未上传" /></div>
                     {documentName && <p className="mt-3 truncate text-xs text-slate-600">{documentName}</p>}
-                    <button type="button" onClick={() => documentRef.current?.click()} disabled={documentUploading} className="mt-4 rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50">{documentUploading ? '读取中…' : documentText ? '更换文档' : '选择 Word / TXT'}</button>
-                    <input ref={documentRef} type="file" accept=".docx,.xlsx,.txt" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleDocumentSelected(file); event.currentTarget.value = '' }} />
+                    <button type="button" onClick={() => documentRef.current?.click()} disabled={documentUploading} className="mt-4 rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50">{documentUploading ? '读取中…' : documentText ? '更换文档' : '选择 Word'}</button>
+                    <input ref={documentRef} type="file" accept=".docx" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleDocumentSelected(file); event.currentTarget.value = '' }} />
                   </div>
 
-                  <div className="rounded-xl border border-slate-200 p-4">
-                    <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">补充原文</h3><p className="mt-1 text-xs leading-5 text-slate-500">可粘贴聊天记录、手写整理或对文档的补充说明。</p></div><SourceStatus text={supplementalText} emptyLabel="可选" /></div>
-                    <textarea className="mt-3 min-h-28 w-full resize-y rounded-lg border border-slate-200 p-3 text-sm leading-6 text-slate-700 outline-none focus:border-sky-400" value={supplementalText} onChange={(event) => setSupplementalText(event.target.value)} placeholder="粘贴需要补充分析的会议原文" />
-                  </div>
-
-                  <div className="rounded-xl border border-slate-200 p-4">
-                    <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">上传录音（可选）</h3><p className="mt-1 text-xs leading-5 text-slate-500">先转写为文字，再与其他材料一同分析。</p></div><SourceStatus text={audioText} emptyLabel="未上传" /></div>
-                    {audioFile && <p className="mt-3 truncate text-xs text-slate-600">{audioFile.name}</p>}
-                    <div className="mt-4 flex gap-2"><button type="button" onClick={() => audioRef.current?.click()} className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50">选择录音</button>{audioFile && <button type="button" onClick={() => void handleUploadAudio()} disabled={audioUploading} className="rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">{audioUploading ? '转写中…' : '开始转写'}</button>}</div>
-                    <input ref={audioRef} type="file" accept="audio/*,.mp3,.wav,.m4a,.webm,.flac,.aac,.ogg" className="hidden" onChange={(event) => { setAudioFile(event.target.files?.[0] ?? null); setAudioText(''); event.currentTarget.value = '' }} />
-                  </div>
                 </div>
               </section>
               {error && <ErrorBar msg={error} />}
@@ -585,14 +556,14 @@ export function NewMeetingModal({
         {step === 'clarifying' && (
           <footer className="flex shrink-0 items-center justify-between border-t border-slate-200 bg-white px-8 py-4 shadow-[0_-6px_18px_rgba(15,23,42,0.04)]">
             <button onClick={() => setStep('input')} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">返回修改材料</button>
-            <button onClick={() => void handleClarificationContinue()} disabled={documentUploading || audioUploading} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40">确认并继续</button>
+            <button onClick={() => void handleClarificationContinue()} disabled={documentUploading} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40">确认并继续</button>
           </footer>
         )}
 
         {step !== 'analyzing' && step !== 'clarifying' && (
           <footer className="flex shrink-0 items-center justify-between border-t border-slate-200 bg-white px-8 py-4 shadow-[0_-6px_18px_rgba(15,23,42,0.04)]">
             {step === 'review' ? <button onClick={() => (isEdit ? onClose() : setStep('input'))} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">{isEdit ? '取消' : '返回修改'}</button> : <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">取消</button>}
-            {step === 'input' ? <button onClick={() => void handleAnalyze()} disabled={!analysisText.trim() || documentUploading || audioUploading} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40">AI 生成草稿</button> : <button onClick={() => void handleSave()} disabled={saving} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">{saving ? '保存中…' : isEdit ? '保存修改' : '保存草稿'}</button>}
+            {step === 'input' ? <button onClick={() => void handleAnalyze()} disabled={!analysisText.trim() || documentUploading} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40">AI 生成草稿</button> : <button onClick={() => void handleSave()} disabled={saving} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">{saving ? '保存中…' : isEdit ? '保存修改' : '保存草稿'}</button>}
           </footer>
         )}
       </div>

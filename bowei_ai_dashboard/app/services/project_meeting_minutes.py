@@ -10,6 +10,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .. import models
+from .project_meeting_agent_contracts import EvidenceSpan, MeetingAgentFinal, MeetingFact, TaskUpdate
 
 
 _SCHEDULE_FIELDS = {
@@ -463,3 +464,121 @@ def normalize_project_meeting_result(
             validate_execution_schedule_proposal(item, snapshot, document_text) for item in raw_changes
         ]
     return normalized
+
+
+def _normalize_agent_evidence(
+    evidence: list[EvidenceSpan], document_text: str | None
+) -> dict[str, Any]:
+    """Verify the agent's quoted character ranges against the frozen Word text."""
+    errors: list[str] = []
+    normalized: list[dict[str, Any]] = []
+    if not isinstance(document_text, str) or not document_text:
+        return {
+            "evidence": [],
+            "validation": {"state": "blocked", "errors": ["document_text is required to validate evidence"]},
+        }
+    if not evidence:
+        return {
+            "evidence": [],
+            "validation": {"state": "blocked", "errors": ["evidence must contain at least one exact Word span"]},
+        }
+
+    for item in evidence:
+        if not isinstance(item, EvidenceSpan):
+            errors.append("evidence must contain EvidenceSpan objects")
+            continue
+        payload = item.model_dump(mode="json")
+        start = item.char_start
+        end = item.char_end
+        if start < 0 or end <= start or end > len(document_text):
+            errors.append("evidence character range is outside document_text")
+            continue
+        if document_text[start:end] != item.quote:
+            errors.append("evidence quote does not exactly match document_text character range")
+            continue
+        normalized.append(payload)
+
+    return {
+        "evidence": normalized,
+        "validation": {"state": "ready" if not errors else "blocked", "errors": errors},
+    }
+
+
+def _normalize_agent_fact(item: MeetingFact, document_text: str | None) -> dict[str, Any]:
+    evidence_result = _normalize_agent_evidence(item.evidence, document_text)
+    errors = list(evidence_result["validation"]["errors"])
+    if item.needs_confirmation:
+        errors.append("fact needs_confirmation requires owner review")
+    return {
+        "content": item.content,
+        "confidence": item.confidence,
+        "needs_confirmation": item.needs_confirmation,
+        "evidence": evidence_result["evidence"],
+        "validation": {"state": "ready" if not errors else "blocked", "errors": errors},
+    }
+
+
+def _normalize_agent_task_update(
+    item: TaskUpdate,
+    document_text: str | None,
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    evidence_result = _normalize_agent_evidence(item.evidence, document_text)
+    proposal = validate_execution_schedule_proposal(
+        {
+            "action": item.action,
+            "target": item.target.model_dump(mode="json", exclude_none=True),
+            "before": item.before,
+            "proposed": item.proposed,
+            "evidence": [span.quote for span in item.evidence],
+            "reason": item.reason,
+            "confidence": item.confidence,
+        },
+        snapshot,
+        document_text,
+    )
+    errors = list(proposal["validation"]["errors"])
+    errors.extend(evidence_result["validation"]["errors"])
+    if item.needs_confirmation:
+        errors.append("task update needs_confirmation requires owner review")
+    proposal["evidence"] = evidence_result["evidence"]
+    proposal["needs_confirmation"] = item.needs_confirmation
+    proposal["validation"] = {"state": "ready" if not errors else "blocked", "errors": errors}
+    return proposal
+
+
+def normalize_project_meeting_agent_result(
+    final: MeetingAgentFinal,
+    document_text: str | None,
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize a typed Agent result without weakening Word-evidence safeguards.
+
+    This intentionally sits beside (rather than replacing) the legacy JSON
+    normalizer so existing meeting flows keep their current compatibility.
+    """
+    if not isinstance(final, MeetingAgentFinal):
+        raise TypeError("final must be a MeetingAgentFinal")
+
+    meeting_draft = final.meeting_info.model_dump(mode="json")
+    meeting_draft["summary"] = final.summary
+    meeting_info_evidence = {
+        field_name: _normalize_agent_evidence(spans, document_text)
+        for field_name, spans in final.meeting_info_evidence.items()
+    }
+    summary_evidence = _normalize_agent_evidence(final.summary_evidence, document_text)
+
+    return {
+        "meeting_draft": meeting_draft,
+        "meeting_info_evidence": meeting_info_evidence,
+        "summary_evidence": summary_evidence,
+        "agenda_items": [_normalize_agent_fact(item, document_text) for item in final.agenda_items],
+        "decisions": [_normalize_agent_fact(item, document_text) for item in final.decisions],
+        "completed_items": [_normalize_agent_fact(item, document_text) for item in final.completed_items],
+        "next_stage_work": [_normalize_agent_fact(item, document_text) for item in final.next_steps],
+        "risks": [_normalize_agent_fact(item, document_text) for item in final.risks],
+        "open_questions": [_normalize_agent_fact(item, document_text) for item in final.open_questions],
+        "execution_schedule_changes": [
+            _normalize_agent_task_update(item, document_text, snapshot) for item in final.task_updates
+        ],
+    }

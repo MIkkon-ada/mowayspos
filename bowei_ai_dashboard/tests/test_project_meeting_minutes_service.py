@@ -18,8 +18,17 @@ from app.services.meeting_document_storage import (
 import app.services.meeting_document_storage as meeting_document_storage
 from app.services.project_meeting_minutes import (
     build_project_meeting_snapshot,
+    normalize_project_meeting_agent_result,
     normalize_project_meeting_result,
     validate_execution_schedule_proposal,
+)
+from app.services.project_meeting_agent_contracts import (
+    EvidenceSpan,
+    MeetingAgentFinal,
+    MeetingFact,
+    MeetingInfo,
+    TaskTarget,
+    TaskUpdate,
 )
 
 
@@ -319,6 +328,139 @@ def test_normalized_result_blocks_fact_without_document_evidence(
     assert result["facts"][0]["validation"]["state"] == "ready"
     assert result["facts"][1]["validation"]["state"] == "blocked"
     assert any("evidence" in error for error in result["facts"][1]["validation"]["errors"])
+
+
+def _agent_evidence(document_text: str, quote: str) -> EvidenceSpan:
+    start = document_text.index(quote)
+    return EvidenceSpan(quote=quote, char_start=start, char_end=start + len(quote))
+
+
+def _agent_final(document_text: str, **overrides) -> MeetingAgentFinal:
+    meeting_info = MeetingInfo(
+        title="AI Upgrade weekly meeting",
+        meeting_date="2026-08-14",
+        meeting_type="weekly meeting",
+        location="online",
+        host="Owner",
+        participants=["Owner"],
+        organizer="Owner",
+        copied_to=["Project team"],
+    )
+    evidence = {
+        field: [_agent_evidence(document_text, str(value))]
+        for field, value in {
+            "title": meeting_info.title,
+            "meeting_date": meeting_info.meeting_date,
+            "meeting_type": meeting_info.meeting_type,
+            "location": meeting_info.location,
+            "host": meeting_info.host,
+            "participants": meeting_info.participants[0],
+            "organizer": meeting_info.organizer,
+            "copied_to": meeting_info.copied_to[0],
+        }.items()
+    }
+    payload = {
+        "meeting_info": meeting_info,
+        "meeting_info_evidence": evidence,
+        "summary": "Acceptance checklist is approved",
+        "summary_evidence": [_agent_evidence(document_text, "Acceptance checklist is approved")],
+        "agenda_items": [],
+        "decisions": [],
+        "completed_items": [],
+        "next_steps": [],
+        "risks": [],
+        "open_questions": [],
+        "task_updates": [],
+    }
+    payload.update(overrides)
+    return MeetingAgentFinal(**payload)
+
+
+def _agent_document_text() -> str:
+    return (
+        "AI Upgrade weekly meeting\n2026-08-14\nweekly meeting\nonline\n"
+        "Owner\nProject team\nAcceptance checklist is approved\n"
+        "Move acceptance schedule to complete"
+    )
+
+
+def test_agent_normalization_returns_ready_validation_for_exact_meeting_metadata_evidence(
+    db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
+):
+    project, _ = project_plan
+    document_text = _agent_document_text()
+
+    result = normalize_project_meeting_agent_result(
+        _agent_final(document_text), document_text, build_project_meeting_snapshot(project.id, db)
+    )
+
+    assert result["meeting_draft"]["title"] == "AI Upgrade weekly meeting"
+    assert result["meeting_info_evidence"]["title"]["validation"]["state"] == "ready"
+    assert result["meeting_info_evidence"]["meeting_date"]["validation"]["state"] == "ready"
+    assert result["summary_evidence"]["validation"]["state"] == "ready"
+
+
+def test_agent_normalization_blocks_metadata_with_wrong_character_range(
+    db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
+):
+    project, _ = project_plan
+    document_text = _agent_document_text()
+    final = _agent_final(document_text)
+    wrong = final.meeting_info_evidence["title"][0].model_copy(update={"char_start": 1, "char_end": 1 + len("AI Upgrade weekly meeting")})
+    final = final.model_copy(update={"meeting_info_evidence": {**final.meeting_info_evidence, "title": [wrong]}})
+
+    result = normalize_project_meeting_agent_result(final, document_text, build_project_meeting_snapshot(project.id, db))
+
+    assert result["meeting_info_evidence"]["title"]["validation"]["state"] == "blocked"
+    assert any("quote" in error for error in result["meeting_info_evidence"]["title"]["validation"]["errors"])
+
+
+def test_agent_normalization_blocks_task_update_without_exact_evidence(
+    db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
+):
+    project, schedule = project_plan
+    document_text = _agent_document_text()
+    update = TaskUpdate(
+        action="update_execution_schedule",
+        target=TaskTarget(project_id=project.id, workstream_id=10, key_task_id=20, execution_schedule_id=schedule.id),
+        before={"status": "in_progress"},
+        proposed={"status": "completed"},
+        evidence=[EvidenceSpan(quote="Not present", char_start=0, char_end=11)],
+        reason="Meeting confirms completion",
+        confidence=0.9,
+        needs_confirmation=False,
+    )
+
+    result = normalize_project_meeting_agent_result(
+        _agent_final(document_text, task_updates=[update]), document_text, build_project_meeting_snapshot(project.id, db)
+    )
+
+    assert result["execution_schedule_changes"][0]["validation"]["state"] == "blocked"
+    assert any("quote" in error for error in result["execution_schedule_changes"][0]["validation"]["errors"])
+
+
+def test_agent_normalization_blocks_task_update_with_mismatched_workstream_parent(
+    db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
+):
+    project, schedule = project_plan
+    document_text = _agent_document_text()
+    update = TaskUpdate(
+        action="update_execution_schedule",
+        target=TaskTarget(project_id=project.id, workstream_id=999, key_task_id=20, execution_schedule_id=schedule.id),
+        before={"status": "in_progress"},
+        proposed={"status": "completed"},
+        evidence=[_agent_evidence(document_text, "Move acceptance schedule to complete")],
+        reason="Meeting confirms completion",
+        confidence=0.9,
+        needs_confirmation=False,
+    )
+
+    result = normalize_project_meeting_agent_result(
+        _agent_final(document_text, task_updates=[update]), document_text, build_project_meeting_snapshot(project.id, db)
+    )
+
+    assert result["execution_schedule_changes"][0]["validation"]["state"] == "blocked"
+    assert any("workstream_id" in error for error in result["execution_schedule_changes"][0]["validation"]["errors"])
 
 
 def test_meeting_document_storage_hashes_reads_and_rejects_unsafe_inputs(tmp_path, monkeypatch):

@@ -82,6 +82,221 @@ def _task_update(**overrides) -> dict:
     return update
 
 
+def _analysis_payload() -> dict:
+    return {
+        "meeting_facts": [
+            {
+                "fact_id": "F001",
+                "fact_type": "completion",
+                "content": "客户清单第一版已经完成",
+                "fields": {
+                    "status": {
+                        "value": "completed",
+                        "raw_text": "已经完成",
+                        "evidence": [_evidence()],
+                        "provenance": {
+                            "source_type": "meeting_fact",
+                            "source_fact_id": "F001",
+                            "usage": "new",
+                        },
+                    }
+                },
+                "meeting_evidence": [_evidence()],
+                "confidence": 0.9,
+                "needs_confirmation": False,
+            }
+        ],
+        "project_matches": [
+            {
+                "match_id": "M001",
+                "fact_id": "F001",
+                "target_type": "execution_schedule",
+                "target_id": 30,
+                "workstream_id": 10,
+                "key_task_id": 20,
+                "confidence": 0.95,
+                "reasons": ["标题一致"],
+                "project_evidence": [
+                    {
+                        "source_object": "execution_schedule:30",
+                        "field": "title",
+                        "value": "客户清单第一版",
+                    }
+                ],
+            }
+        ],
+        "project_deltas": [
+            {
+                "delta_id": "D001",
+                "source_fact_id": "F001",
+                "source_match_id": "M001",
+                "delta_type": "PROGRESS_UPDATE",
+                "reasoning": "会议确认完成，项目基线仍为进行中",
+            }
+        ],
+        "proposed_changes": [
+            {
+                "change_id": "C001",
+                "source_fact_id": "F001",
+                "source_match_id": "M001",
+                "source_delta_id": "D001",
+                "action": "update_execution_schedule",
+                "target": {
+                    "project_id": 1,
+                    "workstream_id": 10,
+                    "key_task_id": 20,
+                    "execution_schedule_id": 30,
+                },
+                "before": {},
+                "proposed": {"status": "completed"},
+                "field_sources": {
+                    "status": {
+                        "source_type": "meeting_fact",
+                        "source_fact_id": "F001",
+                        "usage": "new",
+                    }
+                },
+                "requires_confirmation": True,
+            }
+        ],
+        "unmatched_items": [],
+        "needs_confirmation": [],
+    }
+
+
+def _analysis_final(**overrides) -> dict:
+    analysis = _analysis_payload()
+    analysis.update(overrides)
+    return _final_result(**analysis)
+
+
+def test_analysis_contract_accepts_complete_fact_match_delta_change_lineage():
+    final = MeetingAgentFinal.model_validate(_analysis_final())
+
+    assert final.meeting_facts[0].fact_id == "F001"
+    assert final.proposed_changes[0].change_id == "C001"
+
+
+@pytest.mark.parametrize("prefix", ["F", "M", "D", "C"])
+def test_analysis_contract_accepts_three_digit_nonzero_stable_ids(prefix):
+    payload = _analysis_final()
+    identifiers = {
+        "F": ("meeting_facts", "fact_id"),
+        "M": ("project_matches", "match_id"),
+        "D": ("project_deltas", "delta_id"),
+        "C": ("proposed_changes", "change_id"),
+    }
+    collection, field = identifiers[prefix]
+    payload[collection][0][field] = f"{prefix}001"
+
+    assert MeetingAgentFinal.model_validate(payload)
+
+
+@pytest.mark.parametrize("prefix", ["F", "M", "D", "C"])
+def test_analysis_contract_rejects_all_zero_stable_ids(prefix):
+    payload = _analysis_final()
+    identifiers = {
+        "F": ("meeting_facts", "fact_id"),
+        "M": ("project_matches", "match_id"),
+        "D": ("project_deltas", "delta_id"),
+        "C": ("proposed_changes", "change_id"),
+    }
+    collection, field = identifiers[prefix]
+    payload[collection][0][field] = f"{prefix}000"
+
+    with pytest.raises(ValidationError, match=field):
+        MeetingAgentFinal.model_validate(payload)
+
+
+def test_analysis_contract_rejects_duplicate_fact_ids():
+    payload = _analysis_final()
+    payload["meeting_facts"].append(payload["meeting_facts"][0].copy())
+
+    with pytest.raises(ValidationError, match="duplicate fact_id"):
+        MeetingAgentFinal.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("source_type", "source_fields", "usage", "message"),
+    [
+        ("meeting_fact", {"source_fact_id": "F001"}, "inherit", "meeting_fact source"),
+        (
+            "project_baseline",
+            {"source_object": "execution_schedule:30", "source_field": "status"},
+            "new",
+            "project_baseline source",
+        ),
+        ("human_edit", {}, "new", "human_edit source"),
+    ],
+)
+def test_field_provenance_rejects_invalid_usage(source_type, source_fields, usage, message):
+    payload = _analysis_final()
+    source = {
+        "source_type": source_type,
+        "usage": usage,
+        **source_fields,
+    }
+    payload["meeting_facts"][0]["fields"]["status"]["provenance"] = source
+
+    with pytest.raises(ValidationError, match=message):
+        MeetingAgentFinal.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("raw_text", ""), ("evidence", [])],
+)
+def test_sourced_value_requires_raw_word_expression_and_field_evidence(field, value):
+    payload = _analysis_final()
+    payload["meeting_facts"][0]["fields"]["status"][field] = value
+
+    with pytest.raises(ValidationError, match=field):
+        MeetingAgentFinal.model_validate(payload)
+
+
+def test_analysis_contract_rejects_missing_or_extra_proposed_field_provenance():
+    payload = _analysis_final()
+    payload["proposed_changes"][0]["field_sources"] = {}
+
+    with pytest.raises(ValidationError, match="field_sources"):
+        MeetingAgentFinal.model_validate(payload)
+
+    payload = _analysis_final()
+    payload["proposed_changes"][0]["field_sources"]["assignee"] = {
+        "source_type": "meeting_fact",
+        "source_fact_id": "F001",
+        "usage": "new",
+    }
+    with pytest.raises(ValidationError, match="field_sources"):
+        MeetingAgentFinal.model_validate(payload)
+
+
+def test_analysis_contract_rejects_invalid_relationships_and_model_human_edits():
+    payload = _analysis_final()
+    payload["project_matches"][0]["fact_id"] = "F999"
+    with pytest.raises(ValidationError, match="unknown fact_id"):
+        MeetingAgentFinal.model_validate(payload)
+
+    payload = _analysis_final()
+    payload["proposed_changes"][0]["field_sources"]["status"] = {
+        "source_type": "human_edit",
+        "usage": "override",
+    }
+    with pytest.raises(ValidationError, match="human_edit"):
+        MeetingAgentFinal.model_validate(payload)
+
+
+def test_analysis_contract_rejects_inference_as_writable_source():
+    payload = _analysis_final()
+    payload["proposed_changes"][0]["field_sources"]["status"] = {
+        "source_type": "inference",
+        "usage": "new",
+    }
+
+    with pytest.raises(ValidationError, match="source_type"):
+        MeetingAgentFinal.model_validate(payload)
+
+
 def test_strict_models_forbid_unknown_json_fields():
     with pytest.raises(ValidationError):
         EvidenceSpan.model_validate({**_evidence(), "source": "word"})

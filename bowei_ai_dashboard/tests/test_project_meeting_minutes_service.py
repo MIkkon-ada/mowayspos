@@ -170,7 +170,7 @@ def test_snapshot_includes_only_current_project_progress_and_published_history(
 
     snapshot = build_project_meeting_snapshot(project.id, db)
 
-    assert snapshot["history"] == {"is_first_meeting": False, "previous_meeting_ids": [101, 102]}
+    assert snapshot["history"] == {"is_first_meeting": False, "previous_meeting_ids": [101]}
     assert [item["execution_schedule_id"] for item in snapshot["recent_progress"]] == [schedule.id]
     assert snapshot["previous_meetings"] == [
         {
@@ -182,6 +182,22 @@ def test_snapshot_includes_only_current_project_progress_and_published_history(
             "actions": [{"content": "Action"}],
         }
     ]
+
+
+def test_snapshot_ignores_draft_and_returned_meetings_when_identifying_first_meeting(
+    db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
+):
+    project, _ = project_plan
+    db.add_all([
+        models.Meeting(id=111, project_id=project.id, title="Draft", publish_status="draft", review_status="pending_review"),
+        models.Meeting(id=112, project_id=project.id, title="Returned", publish_status="draft", review_status="returned"),
+    ])
+    db.commit()
+
+    snapshot = build_project_meeting_snapshot(project.id, db)
+
+    assert snapshot["history"] == {"is_first_meeting": True, "previous_meeting_ids": []}
+    assert snapshot["previous_meetings"] == []
 
 
 def test_schedule_proposal_accepts_only_contiguous_document_evidence(
@@ -206,6 +222,8 @@ def test_schedule_proposal_accepts_only_contiguous_document_evidence(
 
     assert proposal["validation"]["state"] == "ready"
     assert proposal["target"]["execution_schedule_id"] == schedule.id
+    assert proposal["target"]["key_task_id"] == 20
+    assert proposal["target"]["workstream_id"] == 10
     assert proposal["before"]["status"] == "in_progress"
 
     fabricated = validate_execution_schedule_proposal(
@@ -223,6 +241,60 @@ def test_schedule_proposal_accepts_only_contiguous_document_evidence(
 
     assert fabricated["validation"]["state"] == "blocked"
     assert any("evidence" in error for error in fabricated["validation"]["errors"])
+
+
+@pytest.mark.parametrize("target, expected_error", [
+    ({"key_task_id": 999}, "key_task_id"),
+    ({"subtask_id": 999}, "key_task_id"),
+    ({"workstream_id": 999}, "workstream_id"),
+])
+def test_update_schedule_proposal_blocks_mismatched_explicit_parent_ids(
+    db: Session,
+    project_plan: tuple[models.Project, models.ExecutionSchedule],
+    target: dict,
+    expected_error: str,
+):
+    project, schedule = project_plan
+    snapshot = build_project_meeting_snapshot(project.id, db)
+    proposal = validate_execution_schedule_proposal(
+        raw={
+            "action": "update_execution_schedule",
+            "target": {"project_id": project.id, "execution_schedule_id": schedule.id, **target},
+            "proposed": {"status": "completed"},
+            "evidence": ["Acceptance checklist approved"],
+            "reason": "The meeting explicitly confirms approval.",
+            "confidence": 0.9,
+        },
+        snapshot=snapshot,
+        document_text="Acceptance checklist approved",
+    )
+
+    assert proposal["validation"]["state"] == "blocked"
+    assert any(expected_error in error for error in proposal["validation"]["errors"])
+
+
+def test_create_schedule_proposal_blocks_mismatched_explicit_workstream_id(
+    db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
+):
+    project, _ = project_plan
+    snapshot = build_project_meeting_snapshot(project.id, db)
+    proposal = validate_execution_schedule_proposal(
+        raw={
+            "action": "create_execution_schedule",
+            "target": {"project_id": project.id, "key_task_id": 20, "workstream_id": 999},
+            "proposed": {"plan_type": "week", "title": "New approved task"},
+            "evidence": ["Create a new approved task"],
+            "reason": "The meeting explicitly requests it.",
+            "confidence": 0.9,
+        },
+        snapshot=snapshot,
+        document_text="Create a new approved task",
+    )
+
+    assert proposal["target"]["key_task_id"] == 20
+    assert proposal["target"]["workstream_id"] == 10
+    assert proposal["validation"]["state"] == "blocked"
+    assert any("workstream_id" in error for error in proposal["validation"]["errors"])
 
 
 def test_normalized_result_blocks_fact_without_document_evidence(

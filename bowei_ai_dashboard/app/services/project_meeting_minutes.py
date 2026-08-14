@@ -188,14 +188,16 @@ def build_project_meeting_snapshot(project_id: int, db: Session) -> dict[str, An
             }
         )
 
+    valid_history = db.query(models.Meeting).filter(
+        models.Meeting.project_id == project_id,
+        or_(
+            models.Meeting.publish_status == "published",
+            models.Meeting.review_status == "approved",
+        ),
+    )
     previous_meeting_ids = [
         meeting_id
-        for (meeting_id,) in (
-            db.query(models.Meeting.id)
-            .filter(models.Meeting.project_id == project_id)
-            .order_by(models.Meeting.id.asc())
-            .all()
-        )
+        for (meeting_id,) in valid_history.with_entities(models.Meeting.id).order_by(models.Meeting.id.asc()).all()
     ]
     recent_progress_rows = (
         db.query(models.ExecutionSchedule, models.SubTask)
@@ -222,14 +224,7 @@ def build_project_meeting_snapshot(project_id: int, db: Session) -> dict[str, An
         for schedule, key_task in recent_progress_rows
     ]
     previous_meeting_rows = (
-        db.query(models.Meeting)
-        .filter(
-            models.Meeting.project_id == project_id,
-            or_(
-                models.Meeting.publish_status == "published",
-                models.Meeting.review_status == "approved",
-            ),
-        )
+        valid_history
         .order_by(models.Meeting.meeting_date.desc(), models.Meeting.id.desc())
         .limit(5)
         .all()
@@ -291,9 +286,12 @@ def _document_evidence(evidence: Any, document_text: str | None) -> tuple[list[s
     return normalized, errors
 
 
-def _schedule_index(snapshot: dict[str, Any]) -> tuple[dict[int, dict[str, Any]], set[int], set[int]]:
+def _schedule_index(
+    snapshot: dict[str, Any],
+) -> tuple[dict[int, dict[str, Any]], dict[int, int | None], dict[int, tuple[int, int | None]], set[int]]:
     schedules: dict[int, dict[str, Any]] = {}
-    key_task_ids: set[int] = set()
+    key_task_parents: dict[int, int | None] = {}
+    schedule_parents: dict[int, tuple[int, int | None]] = {}
     member_ids = {
         int(item["person_id"])
         for item in snapshot.get("members", [])
@@ -302,14 +300,17 @@ def _schedule_index(snapshot: dict[str, Any]) -> tuple[dict[int, dict[str, Any]]
     for workstream in snapshot.get("workstreams", []):
         if not isinstance(workstream, dict):
             continue
+        workstream_id = workstream.get("id") if isinstance(workstream.get("id"), int) else None
         for key_task in workstream.get("key_tasks", []):
             if not isinstance(key_task, dict) or not isinstance(key_task.get("id"), int):
                 continue
-            key_task_ids.add(key_task["id"])
+            key_task_id = key_task["id"]
+            key_task_parents[key_task_id] = workstream_id
             for schedule in key_task.get("execution_schedules", []):
                 if isinstance(schedule, dict) and isinstance(schedule.get("id"), int):
                     schedules[schedule["id"]] = schedule
-    return schedules, key_task_ids, member_ids
+                    schedule_parents[schedule["id"]] = (key_task_id, workstream_id)
+    return schedules, key_task_parents, schedule_parents, member_ids
 
 
 def validate_execution_schedule_proposal(
@@ -329,7 +330,7 @@ def validate_execution_schedule_proposal(
     if target_raw.get("project_id") is not None and target_raw.get("project_id") != snapshot.get("project_id"):
         errors.append("target project_id does not match snapshot")
 
-    schedules, key_task_ids, member_ids = _schedule_index(snapshot)
+    schedules, key_task_parents, schedule_parents, member_ids = _schedule_index(snapshot)
     schedule_id = target_raw.get("execution_schedule_id")
     key_task_id = target_raw.get("key_task_id", target_raw.get("subtask_id"))
     schedule = None
@@ -338,24 +339,30 @@ def validate_execution_schedule_proposal(
             errors.append("target execution_schedule_id is not present in snapshot")
         else:
             schedule = schedules[schedule_id]
+            actual_key_task_id, actual_workstream_id = schedule_parents[schedule_id]
             target["execution_schedule_id"] = schedule_id
-            target["key_task_id"] = next(
-                (
-                    key_task["id"]
-                    for workstream in snapshot.get("workstreams", [])
-                    if isinstance(workstream, dict)
-                    for key_task in workstream.get("key_tasks", [])
-                    if isinstance(key_task, dict)
-                    for candidate in key_task.get("execution_schedules", [])
-                    if isinstance(candidate, dict) and candidate.get("id") == schedule_id
-                ),
-                None,
-            )
+            target["key_task_id"] = actual_key_task_id
+            target["workstream_id"] = actual_workstream_id
+            for parent_field in ("key_task_id", "subtask_id"):
+                if parent_field in target_raw and target_raw[parent_field] != actual_key_task_id:
+                    errors.append(f"target {parent_field} does not match execution schedule parent key_task_id")
+            if "workstream_id" in target_raw and target_raw["workstream_id"] != actual_workstream_id:
+                errors.append("target workstream_id does not match execution schedule parent workstream_id")
     elif action == "create_execution_schedule":
-        if not isinstance(key_task_id, int) or key_task_id not in key_task_ids:
+        if (
+            "key_task_id" in target_raw
+            and "subtask_id" in target_raw
+            and target_raw["key_task_id"] != target_raw["subtask_id"]
+        ):
+            errors.append("target key_task_id and subtask_id must match")
+        if not isinstance(key_task_id, int) or key_task_id not in key_task_parents:
             errors.append("create_execution_schedule requires an existing key_task_id")
         else:
             target["key_task_id"] = key_task_id
+            actual_workstream_id = key_task_parents[key_task_id]
+            target["workstream_id"] = actual_workstream_id
+            if "workstream_id" in target_raw and target_raw["workstream_id"] != actual_workstream_id:
+                errors.append("target workstream_id does not match key_task parent workstream_id")
 
     proposed_raw = raw.get("proposed") if isinstance(raw.get("proposed"), dict) else {}
     if not isinstance(raw.get("proposed"), dict):

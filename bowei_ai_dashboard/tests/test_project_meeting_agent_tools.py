@@ -111,6 +111,28 @@ def test_search_plan_nodes_requires_exact_batch_arguments(snapshot: dict):
             tools.execute("search_plan_nodes", arguments)
 
 
+def test_search_plan_nodes_rejects_empty_query_and_duplicate_fact_id(snapshot: dict):
+    tools = ProjectMeetingAgentTools(snapshot)
+
+    with pytest.raises(AgentToolError, match="query"):
+        tools.execute(
+            "search_plan_nodes",
+            {"project_id": 7, "queries": [{"fact_id": "F001", "query": "   "}]},
+        )
+
+    with pytest.raises(AgentToolError, match="duplicate fact_id"):
+        tools.execute(
+            "search_plan_nodes",
+            {
+                "project_id": 7,
+                "queries": [
+                    {"fact_id": "F001", "query": "acceptance"},
+                    {"fact_id": "F001", "query": "delivery"},
+                ],
+            },
+        )
+
+
 def test_search_plan_nodes_caps_each_fact_candidate_set_at_ten(snapshot: dict):
     for index in range(11, 22):
         snapshot["workstreams"].append(
@@ -188,6 +210,76 @@ def test_plan_node_detail_preserves_parent_relationship_for_each_node_kind(snaps
     assert key_task["node_type"] == "key_task"
     assert key_task["workstream_id"] == 10
     assert key_task["key_task_id"] == 20
+
+
+def test_plan_node_detail_returns_only_sanitized_matching_and_baseline_fields(snapshot: dict):
+    workstream = snapshot["workstreams"][0]
+    workstream.update(
+        {
+            "owner": "Program owner",
+            "plan_time": "2026-Q3",
+            "completion_standard": "Delivery accepted",
+            "secret": "must not leak",
+        }
+    )
+    key_task = workstream["key_tasks"][0]
+    key_task.update(
+        {
+            "plan_time": "2026-08-20",
+            "completion_criteria": "Checklist approved",
+            "progress_note": "Half done",
+            "secret": "must not leak",
+        }
+    )
+    schedule = key_task["execution_schedules"][0]
+    schedule.update(
+        {
+            "due_date": "2026-08-20",
+            "assignee": "Owner",
+            "completion_criteria": "Checklist approved",
+            "progress_note": "Half done",
+            "secret": "must not leak",
+        }
+    )
+
+    detail = ProjectMeetingAgentTools(snapshot).execute(
+        "get_plan_node_detail",
+        {"project_id": 7, "execution_schedule_id": 30},
+    )
+
+    assert set(detail) == {
+        "node_type",
+        "workstream_id",
+        "workstream",
+        "key_task_id",
+        "key_task",
+        "execution_schedules",
+    }
+    assert set(detail["workstream"]) == {
+        "id",
+        "title",
+        "assignee",
+        "status",
+        "plan_time",
+        "completion_criteria",
+        "current_progress",
+    }
+    assert set(detail["key_task"]) == set(detail["workstream"])
+    assert set(detail["execution_schedules"][0]) == set(detail["workstream"])
+    assert detail["execution_schedules"] == [
+        {
+            "id": 30,
+            "title": "Finish acceptance checklist",
+            "assignee": "Owner",
+            "status": "in_progress",
+            "plan_time": "2026-08-20",
+            "completion_criteria": "Checklist approved",
+            "current_progress": "Half done",
+        }
+    ]
+    assert "secret" not in repr(detail)
+    assert "notes" not in repr(detail)
+    assert "risk" not in repr(detail)
 
 
 def test_tools_freeze_input_snapshot_and_isolate_return_values(snapshot: dict):

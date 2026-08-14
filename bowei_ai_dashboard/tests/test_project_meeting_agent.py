@@ -126,7 +126,7 @@ def test_agent_prompt_includes_the_exact_tool_and_final_envelope_shapes(document
     assert "Project baseline is not current meeting evidence" in prompt
     assert "Inference cannot create writable new values" in prompt
     assert "explicit field_sources" in prompt
-    assert '"queries":[{"fact_id":"F001","query":""}]' in prompt
+    assert '"queries":[{"fact_id":"F001","query":"focused task title"}]' in prompt
 
 
 def test_agent_retains_events_without_event_callback(snapshot: dict, document_text: str, valid_final: dict):

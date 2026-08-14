@@ -67,6 +67,7 @@ class ProjectMeetingAgentTools:
             raise AgentToolError("search_plan_nodes queries must be a non-empty list")
 
         results: list[dict[str, Any]] = []
+        seen_fact_ids: set[str] = set()
         for item in queries:
             if not isinstance(item, dict) or set(item) != {"fact_id", "query"}:
                 raise AgentToolError("search_plan_nodes queries require exactly fact_id and query")
@@ -74,8 +75,11 @@ class ProjectMeetingAgentTools:
             query = item.get("query")
             if not self._is_fact_id(fact_id):
                 raise AgentToolError("search_plan_nodes fact_id must use a nonzero F001-compatible form")
-            if not isinstance(query, str):
-                raise AgentToolError("search_plan_nodes query must be a string")
+            if fact_id in seen_fact_ids:
+                raise AgentToolError("search_plan_nodes queries must not contain duplicate fact_id values")
+            if not isinstance(query, str) or not query.strip():
+                raise AgentToolError("search_plan_nodes query must be a non-empty string")
+            seen_fact_ids.add(fact_id)
             results.append({"fact_id": fact_id, "candidates": self._plan_candidates(query)})
         return {"results": results}
 
@@ -125,6 +129,19 @@ class ProjectMeetingAgentTools:
                     return candidates
         return candidates
 
+    @staticmethod
+    def _node_summary(node: dict[str, Any], *, title_field: str, assignee_field: str = "assignee") -> dict[str, Any]:
+        """Return the small, stable subset needed for matching and baseline review."""
+        return {
+            "id": node.get("id"),
+            "title": node.get(title_field, ""),
+            "assignee": node.get(assignee_field, ""),
+            "status": node.get("status", ""),
+            "plan_time": node.get("plan_time") or node.get("due_date") or node.get("plan_month") or "",
+            "completion_criteria": node.get("completion_criteria") or node.get("completion_standard") or "",
+            "current_progress": node.get("progress_note", ""),
+        }
+
     def _get_plan_node_detail(self, arguments: dict[str, Any]) -> dict[str, Any]:
         workstream_id = arguments.get("workstream_id")
         key_task_id = arguments.get("key_task_id")
@@ -140,7 +157,11 @@ class ProjectMeetingAgentTools:
                 return {
                     "node_type": "workstream",
                     "workstream_id": workstream.get("id"),
-                    "workstream": workstream,
+                    "workstream": self._node_summary(
+                        workstream,
+                        title_field="key_task",
+                        assignee_field="owner",
+                    ),
                     "key_task_id": None,
                     "key_task": None,
                     "execution_schedules": [],
@@ -159,10 +180,17 @@ class ProjectMeetingAgentTools:
                 return {
                     "node_type": "execution_schedule" if schedule_id is not None else "key_task",
                     "workstream_id": workstream.get("id"),
-                    "workstream": workstream,
+                    "workstream": self._node_summary(
+                        workstream,
+                        title_field="key_task",
+                        assignee_field="owner",
+                    ),
                     "key_task_id": key_task.get("id"),
-                    "key_task": key_task,
-                    "execution_schedules": matching_schedules,
+                    "key_task": self._node_summary(key_task, title_field="title"),
+                    "execution_schedules": [
+                        self._node_summary(schedule, title_field="title")
+                        for schedule in matching_schedules
+                    ],
                 }
         raise AgentToolError("plan node not found in project snapshot")
 

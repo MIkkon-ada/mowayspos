@@ -84,7 +84,7 @@ STRICT RESPONSE PROTOCOL (this overrides any older meeting-minutes JSON format):
 - Project baseline is not current meeting evidence. It may only support a project match or baseline comparison.
 - Inference cannot create writable new values. A Proposed Change must use explicit field_sources for every proposed field and requires_confirmation=true.
 - Extract every Word-only Meeting Fact before matching. Then call search_plan_nodes once with one batch covering all facts:
-  {"type":"tool_call","tool":"search_plan_nodes","arguments":{"project_id":1,"queries":[{"fact_id":"F001","query":""}]}}
+  {"type":"tool_call","tool":"search_plan_nodes","arguments":{"project_id":1,"queries":[{"fact_id":"F001","query":"focused task title"}]}}
 - Batch all fact queries in that single search call. Never omit a fact merely because the meeting has more than six facts; the six-step limit is a model-step limit, not a fact limit.
 - Before final, call search_plan_nodes for the project using the batch protocol. Use its returned IDs for any task update; if no plan node matches an action, put that action in open_questions instead.
 

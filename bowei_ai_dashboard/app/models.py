@@ -154,6 +154,14 @@ class ProjectMeetingRun(Base, TimestampMixin):
     status = Column(String(24), nullable=False, default="analyzing", index=True)
     error_message = Column(Text, nullable=False, default="")
     created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    stage = Column(String(32), nullable=False, default="created", server_default="created", index=True)
+    step_count = Column(Integer, nullable=False, default=0, server_default="0")
+    prompt_version = Column(String(64), nullable=False, default="", server_default="")
+    model_code = Column(String(96), nullable=False, default="", server_default="")
+    invocation_log_ids_json = Column(Text, nullable=False, default="[]", server_default="[]")
+    tool_trace_json = Column(Text, nullable=False, default="[]", server_default="[]")
+    raw_responses_json = Column(Text, nullable=False, default="[]", server_default="[]")
+    error_code = Column(String(64), nullable=False, default="", server_default="", index=True)
 
 
 class MeetingReviewEvent(Base, TimestampMixin):
@@ -560,6 +568,7 @@ class MeetingChangeProposal(Base, TimestampMixin):
     target_type = Column(String(20), nullable=False)
     target_id = Column(Integer, nullable=True)
     parent_workstream_id = Column(Integer, ForeignKey("tasks.id"), nullable=True)
+    parent_subtask_id = Column(Integer, ForeignKey("subtasks.id"), nullable=True, index=True)
     before_json = Column(Text, nullable=False, default="{}")
     proposed_json = Column(Text, nullable=False, default="{}")
     evidence_json = Column(Text, nullable=False, default="[]")

@@ -7,6 +7,7 @@ import pytest
 from app.services.project_meeting_agent import (
     AgentModelResponse,
     MeetingAgentError,
+    _parse_envelope,
     run_project_meeting_agent,
 )
 from app.services.project_meeting_agent_tools import ProjectMeetingAgentTools
@@ -113,6 +114,48 @@ def test_agent_retains_events_without_event_callback(snapshot: dict, document_te
 
     assert [event["kind"] for event in result.events] == ["model_response", "final"]
     assert result.events[0]["invocation_log_id"] == 13
+
+
+def test_agent_isolates_internal_events_from_callback_mutation(snapshot: dict, document_text: str, valid_final: dict):
+    received_events = []
+
+    def mutate_callback(event: dict) -> None:
+        received_events.append(event)
+        event["kind"] = "tampered"
+        event["extra"] = "callback-only"
+
+    result = run_project_meeting_agent(
+        project_id=1,
+        document_text=document_text,
+        snapshot=snapshot,
+        tools=ProjectMeetingAgentTools(snapshot),
+        provider=lambda prompt: response({"type": "final", "result": valid_final}, 14),
+        on_event=mutate_callback,
+    )
+
+    assert received_events[0]["kind"] == "tampered"
+    assert result.events[0] == {
+        "kind": "model_response",
+        "step": 1,
+        "model_code": "fake-chat",
+        "invocation_log_id": 14,
+    }
+
+
+def test_agent_strictly_rejects_non_standard_json_constants(snapshot: dict):
+    for constant in ("NaN", "Infinity", "-Infinity"):
+        with pytest.raises(ValueError, match=f"non-standard JSON constant: {constant}"):
+            _parse_envelope(f'{{"type": {constant}}}')
+
+    replies = iter([
+        AgentModelResponse('{"type": NaN}', "fake-chat", 15),
+        AgentModelResponse('{"type": -Infinity}', "fake-chat", 16),
+    ])
+
+    with pytest.raises(MeetingAgentError) as exc:
+        run_project_meeting_agent(1, "document", snapshot, ProjectMeetingAgentTools(snapshot), lambda prompt: next(replies))
+
+    assert exc.value.code == "invalid_model_output"
 
 
 def test_agent_repairs_one_invalid_json_response(snapshot: dict, document_text: str, valid_final: dict):

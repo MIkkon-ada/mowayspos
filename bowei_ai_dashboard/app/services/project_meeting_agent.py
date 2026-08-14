@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -78,9 +79,12 @@ Word 正文（证据偏移以此文本为准）：
 
 
 def _parse_envelope(text: str) -> ToolCallEnvelope | FinalEnvelope:
+    def reject_non_standard_constant(constant: str) -> None:
+        raise ValueError(f"non-standard JSON constant: {constant}")
+
     try:
-        payload = json.loads(text)
-    except (TypeError, json.JSONDecodeError) as exc:
+        payload = json.loads(text, parse_constant=reject_non_standard_constant)
+    except (TypeError, ValueError) as exc:
         raise ValueError(f"response is not valid JSON: {exc.msg if isinstance(exc, json.JSONDecodeError) else exc}") from exc
     if not isinstance(payload, dict):
         raise ValueError("response JSON must be an object")
@@ -100,9 +104,10 @@ def _emit(
     on_event: Callable[[dict[str, Any]], None] | None,
     event: dict[str, Any],
 ) -> None:
-    events.append(event)
+    stored_event = deepcopy(event)
+    events.append(stored_event)
     if on_event is not None:
-        on_event(event)
+        on_event(deepcopy(stored_event))
 
 
 def run_project_meeting_agent(

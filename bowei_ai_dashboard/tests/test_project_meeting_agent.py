@@ -99,6 +99,20 @@ def test_agent_executes_tool_then_returns_final(snapshot: dict, document_text: s
     assert result.trace[0]["model_code"] == "fake-chat"
     assert result.trace[0]["invocation_log_id"] == 11
     assert [event["kind"] for event in events] == ["model_response", "tool_result", "model_response", "final"]
+    assert result.events == events
+
+
+def test_agent_retains_events_without_event_callback(snapshot: dict, document_text: str, valid_final: dict):
+    result = run_project_meeting_agent(
+        project_id=1,
+        document_text=document_text,
+        snapshot=snapshot,
+        tools=ProjectMeetingAgentTools(snapshot),
+        provider=lambda prompt: response({"type": "final", "result": valid_final}, 13),
+    )
+
+    assert [event["kind"] for event in result.events] == ["model_response", "final"]
+    assert result.events[0]["invocation_log_id"] == 13
 
 
 def test_agent_repairs_one_invalid_json_response(snapshot: dict, document_text: str, valid_final: dict):
@@ -138,3 +152,24 @@ def test_agent_rejects_a_second_invalid_response(snapshot: dict):
         run_project_meeting_agent(1, "document", snapshot, ProjectMeetingAgentTools(snapshot), lambda prompt: next(replies))
 
     assert exc.value.code == "invalid_model_output"
+
+
+def test_agent_wraps_provider_exception_and_retains_events(snapshot: dict):
+    replies = iter([
+        response({"type": "tool_call", "tool": "get_project_profile", "arguments": {"project_id": 1}}, 51),
+    ])
+
+    def provider(prompt: str) -> AgentModelResponse:
+        first = next(replies, None)
+        if first is not None:
+            return first
+        raise RuntimeError("model service unavailable")
+
+    with pytest.raises(MeetingAgentError) as exc:
+        run_project_meeting_agent(1, "document", snapshot, ProjectMeetingAgentTools(snapshot), provider)
+
+    assert exc.value.code == "provider_error"
+    assert exc.value.invocation_log_ids == [51]
+    assert exc.value.raw_responses == [json.dumps({"type": "tool_call", "tool": "get_project_profile", "arguments": {"project_id": 1}})]
+    assert exc.value.trace[0]["tool"] == "get_project_profile"
+    assert [event["kind"] for event in exc.value.events] == ["model_response", "tool_result"]

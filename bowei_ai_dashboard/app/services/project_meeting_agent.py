@@ -29,6 +29,7 @@ class MeetingAgentRunResult:
     trace: list[dict[str, Any]]
     raw_responses: list[str]
     invocation_log_ids: list[int]
+    events: list[dict[str, Any]]
     model_code: str
     step_count: int
 
@@ -42,12 +43,14 @@ class MeetingAgentError(RuntimeError):
         trace: list[dict[str, Any]] | None = None,
         raw_responses: list[str] | None = None,
         invocation_log_ids: list[int] | None = None,
+        events: list[dict[str, Any]] | None = None,
     ):
         super().__init__(message)
         self.code = code
         self.trace = list(trace or [])
         self.raw_responses = list(raw_responses or [])
         self.invocation_log_ids = list(invocation_log_ids or [])
+        self.events = list(events or [])
 
 
 def _base_prompt(
@@ -92,7 +95,12 @@ def _parse_envelope(text: str) -> ToolCallEnvelope | FinalEnvelope:
     raise ValueError("response type must be tool_call or final")
 
 
-def _emit(on_event: Callable[[dict[str, Any]], None] | None, event: dict[str, Any]) -> None:
+def _emit(
+    events: list[dict[str, Any]],
+    on_event: Callable[[dict[str, Any]], None] | None,
+    event: dict[str, Any],
+) -> None:
+    events.append(event)
     if on_event is not None:
         on_event(event)
 
@@ -107,8 +115,13 @@ def run_project_meeting_agent(
     on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> MeetingAgentRunResult:
     """Run at most six model steps against the immutable project snapshot."""
+    events: list[dict[str, Any]] = []
     if project_id != snapshot.get("project_id"):
-        raise MeetingAgentError("project_boundary", "project_id does not match frozen snapshot")
+        raise MeetingAgentError(
+            "project_boundary",
+            "project_id does not match frozen snapshot",
+            events=events,
+        )
 
     trace: list[dict[str, Any]] = []
     raw_responses: list[str] = []
@@ -119,7 +132,17 @@ def run_project_meeting_agent(
     prompt = base_prompt
 
     for step in range(1, MAX_AGENT_STEPS + 1):
-        response = provider(prompt)
+        try:
+            response = provider(prompt)
+        except Exception as exc:
+            raise MeetingAgentError(
+                "provider_error",
+                f"provider invocation failed: {exc}",
+                trace=trace,
+                raw_responses=raw_responses,
+                invocation_log_ids=invocation_log_ids,
+                events=events,
+            ) from exc
         if not isinstance(response, AgentModelResponse):
             raise MeetingAgentError(
                 "provider_error",
@@ -127,10 +150,11 @@ def run_project_meeting_agent(
                 trace=trace,
                 raw_responses=raw_responses,
                 invocation_log_ids=invocation_log_ids,
+                events=events,
             )
         raw_responses.append(response.text)
         invocation_log_ids.append(response.invocation_log_id)
-        _emit(on_event, {
+        _emit(events, on_event, {
             "kind": "model_response",
             "step": step,
             "model_code": response.model_code,
@@ -146,6 +170,7 @@ def run_project_meeting_agent(
                     trace=trace,
                     raw_responses=raw_responses,
                     invocation_log_ids=invocation_log_ids,
+                    events=events,
                 ) from exc
             repair_used = True
             prompt = (
@@ -155,7 +180,7 @@ def run_project_meeting_agent(
             continue
 
         if isinstance(envelope, FinalEnvelope):
-            _emit(on_event, {
+            _emit(events, on_event, {
                 "kind": "final",
                 "step": step,
                 "model_code": response.model_code,
@@ -166,6 +191,7 @@ def run_project_meeting_agent(
                 trace=trace,
                 raw_responses=raw_responses,
                 invocation_log_ids=invocation_log_ids,
+                events=events,
                 model_code=response.model_code,
                 step_count=step,
             )
@@ -178,6 +204,7 @@ def run_project_meeting_agent(
                 trace=trace,
                 raw_responses=raw_responses,
                 invocation_log_ids=invocation_log_ids,
+                events=events,
             )
         seen_tool_calls.add(signature)
         try:
@@ -189,6 +216,7 @@ def run_project_meeting_agent(
                 trace=trace,
                 raw_responses=raw_responses,
                 invocation_log_ids=invocation_log_ids,
+                events=events,
             ) from exc
         trace.append({
             "step": step,
@@ -198,7 +226,7 @@ def run_project_meeting_agent(
             "model_code": response.model_code,
             "invocation_log_id": response.invocation_log_id,
         })
-        _emit(on_event, {
+        _emit(events, on_event, {
             "kind": "tool_result",
             "step": step,
             "tool": envelope.tool,
@@ -217,4 +245,5 @@ def run_project_meeting_agent(
         trace=trace,
         raw_responses=raw_responses,
         invocation_log_ids=invocation_log_ids,
+        events=events,
     )

@@ -875,7 +875,12 @@ def _validate_project_meeting_lineage(
             parent.get("project_id") == change_set.project_id and parent.get("workstream_id") == target.get("workstream_id") and parent.get("key_task_id") == target.get("key_task_id"),
             "create parent baseline is invalid",
         )
-        live_key_task = db.get(models.SubTask, target["key_task_id"])
+        live_key_task = (
+            db.query(models.SubTask)
+            .filter(models.SubTask.id == target["key_task_id"])
+            .with_for_update()
+            .first()
+        )
         live_workstream = db.get(models.Task, live_key_task.task_id) if live_key_task else None
         baseline_key_task = parent.get("key_task") if isinstance(parent.get("key_task"), dict) else {}
         _require_lineage(
@@ -890,6 +895,7 @@ def _validate_project_meeting_lineage(
         duplicate = (
             db.query(models.ExecutionSchedule)
             .filter_by(subtask_id=live_key_task.id, is_deleted=False)
+            .with_for_update()
             .all()
         )
         _require_lineage(
@@ -1287,7 +1293,12 @@ def _apply_validated_proposal(
     elif proposal.action in {"create_execution_schedule", "update_execution_schedule"}:
         proposed = _json_object(proposal.proposed_json)
         if proposal.action == "create_execution_schedule":
-            subtask = db.get(models.SubTask, proposal.parent_workstream_id)
+            parent_key_task_id = (
+                proposal.parent_subtask_id
+                if _project_meeting_lineage(proposal) is not None
+                else proposal.parent_workstream_id
+            )
+            subtask = db.get(models.SubTask, parent_key_task_id)
             if not subtask:
                 raise HTTPException(409, "key task no longer exists")
             values = dict(proposed)

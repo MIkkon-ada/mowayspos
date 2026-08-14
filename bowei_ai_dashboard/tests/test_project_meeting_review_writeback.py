@@ -6,6 +6,7 @@ from datetime import date
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
+from sqlalchemy.orm import Query
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -275,6 +276,26 @@ def test_create_duplicate_schedule_marks_conflict(db):
     with pytest.raises(HTTPException, match="conflict"):
         _execute_change_set(meeting=meeting, proposal_ids=[proposal.id], actor="owner", db=db)
     assert db.get(models.MeetingChangeProposal, proposal.id).execution_status == "conflict"
+
+
+def test_lineage_create_locks_parent_before_duplicate_check_and_create(db, monkeypatch):
+    meeting, _, proposal, _ = _seed(
+        db,
+        action="create_execution_schedule",
+        proposed={"title": "Second customer batch", "plan_type": "week"},
+    )
+    locked_entities = []
+    original_with_for_update = Query.with_for_update
+
+    def record_with_for_update(query, *args, **kwargs):
+        locked_entities.append(query.column_descriptions[0].get("entity"))
+        return original_with_for_update(query, *args, **kwargs)
+
+    monkeypatch.setattr(Query, "with_for_update", record_with_for_update)
+    _execute_change_set(meeting=meeting, proposal_ids=[proposal.id], actor="owner", db=db)
+
+    assert locked_entities.index(models.SubTask) < locked_entities.index(models.ExecutionSchedule)
+    assert db.query(models.ExecutionSchedule).filter_by(subtask_id=20, title="Second customer batch").count() == 1
 
 
 def test_owner_only_patch_records_edit_history_in_review_payload(db):

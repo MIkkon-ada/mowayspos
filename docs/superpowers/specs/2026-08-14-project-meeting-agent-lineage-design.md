@@ -58,6 +58,7 @@ project node.
 
 Existing display fields continue to use Word evidence and are serialized in
 the existing result shape, so old meeting records remain readable.
+The analysis layer augments rather than replaces those display fields.
 
 ## Snapshot tools
 
@@ -87,6 +88,11 @@ Normalization treats the model output as untrusted.
 - Proposed values with no source, an invalid source ID, or an inferred-only
   source are blocked.
 
+When a proposed field inherits a baseline value, its lineage records
+`source_type: project_baseline`, the exact `source_object` and `source_field`,
+and `usage: inherit`.  Only an explicitly allowed inherited field can use this
+path; it is never represented as a value newly agreed in the meeting.
+
 The existing generic legacy normalizer is retained for old meeting flows.
 
 ## Persistence and compatibility
@@ -113,9 +119,13 @@ meeting with a reason, or leave a proposal unapplied.  The review surface adds
 an expandable trace; it does not become a new workflow.
 
 Before a selected proposal writes, the server revalidates its lineage and
-snapshot boundary and compares the proposal's stored `before` baseline with
-the live target.  If the target changed after analysis, the proposal is marked
-`conflict` / `stale` and the write is refused.  No silent overwrite is allowed.
+snapshot boundary.  An UPDATE must target the exact snapshot object and its
+stored `before` baseline must still equal the live target.  A CREATE must
+target a parent contained in the snapshot; the parent must still be valid and
+unchanged in the fields that govern creation, and an equivalent live child
+must not already exist.  If either operation becomes stale or conflicts, the
+proposal is marked `conflict` / `stale` and the write is refused.  No silent
+overwrite or duplicate creation is allowed.
 
 ## Test acceptance
 

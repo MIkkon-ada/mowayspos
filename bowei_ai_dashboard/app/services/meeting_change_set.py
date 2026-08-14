@@ -835,8 +835,18 @@ def _validate_project_meeting_lineage(
         _require_lineage(proposal.target_id == schedule_id and schedule_id in schedules, "update target is outside frozen schedule snapshot")
         _, _, frozen_schedule = schedules[schedule_id]
         before_baseline = lineage.get("before_baseline") if isinstance(lineage.get("before_baseline"), dict) else {}
+        proposal_before = _json_object(proposal.before_json)
         _require_lineage(lineage.get("baseline_state") == "existing_target", "update baseline state is invalid")
-        _require_lineage(all(field in before_baseline and field in frozen_schedule and before_baseline[field] == frozen_schedule[field] for field in proposed), "update baseline is not frozen target baseline")
+        _require_lineage(
+            all(
+                field in proposal_before
+                and field in before_baseline
+                and field in frozen_schedule
+                and proposal_before[field] == before_baseline[field] == frozen_schedule[field]
+                for field in proposed
+            ),
+            "update proposal baseline is not the frozen target baseline",
+        )
         row = db.query(models.ExecutionSchedule).filter_by(id=schedule_id).with_for_update().first()
         live_key_task = db.get(models.SubTask, row.subtask_id) if row else None
         live_workstream = db.get(models.Task, live_key_task.task_id) if live_key_task else None

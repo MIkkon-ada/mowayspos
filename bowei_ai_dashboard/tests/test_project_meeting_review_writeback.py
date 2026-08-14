@@ -222,6 +222,18 @@ def test_update_touched_live_field_change_marks_conflict_without_write(db):
     assert db.get(models.ExecutionSchedule, 30).status == "changed"
 
 
+def test_update_before_json_must_match_lineage_and_frozen_baseline(db):
+    meeting, _, proposal, _ = _seed(db)
+    proposal.before_json = json.dumps({"status": "not_started"})
+    db.commit()
+
+    with pytest.raises(HTTPException, match="conflict"):
+        _execute_change_set(meeting=meeting, proposal_ids=[proposal.id], actor="owner", db=db)
+
+    assert db.get(models.MeetingChangeProposal, proposal.id).execution_status == "conflict"
+    assert db.get(models.ExecutionSchedule, 30).status == "in_progress"
+
+
 def test_create_conflicts_on_changed_parent_or_duplicate_schedule(db):
     meeting, _, proposal, _ = _seed(db, action="create_execution_schedule", proposed={"title": "Second customer batch", "plan_type": "week"})
     db.get(models.SubTask, 20).status = "completed"

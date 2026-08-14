@@ -69,8 +69,8 @@ class TaskUpdate(StrictModel):
             raise ValueError("update_execution_schedule requires execution_schedule_id")
         if self.action == "create_execution_schedule" and schedule_id is not None:
             raise ValueError("create_execution_schedule forbids execution_schedule_id")
-        if not self.needs_confirmation and not self.evidence:
-            raise ValueError("executable task updates require evidence")
+        if not self.evidence:
+            raise ValueError("all task updates require evidence")
         return self
 
 

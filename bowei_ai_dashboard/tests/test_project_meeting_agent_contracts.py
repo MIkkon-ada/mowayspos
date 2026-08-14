@@ -171,14 +171,14 @@ def test_task_update_only_allows_execution_schedule_actions_and_matching_targets
     assert created.target.execution_schedule_id is None
 
 
-def test_executable_task_update_requires_evidence():
+def test_all_task_updates_require_evidence_even_when_confirmation_is_needed():
     with pytest.raises(ValidationError):
         TaskUpdate.model_validate(_task_update(evidence=[]))
 
-    pending = TaskUpdate.model_validate(
-        _task_update(evidence=[], needs_confirmation=True)
-    )
-    assert pending.needs_confirmation is True
+    with pytest.raises(ValidationError):
+        TaskUpdate.model_validate(
+            _task_update(evidence=[], needs_confirmation=True)
+        )
 
 
 @pytest.mark.parametrize(

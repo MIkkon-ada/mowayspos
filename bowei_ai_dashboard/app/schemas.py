@@ -704,8 +704,8 @@ class MeetingStatusPatch(BaseModel):
 
 class MeetingChangeProposalPatch(BaseModel):
     proposed: dict[str, Any]
-    evidence: list[str]
-    reason: str
+    evidence: list[str] = Field(default_factory=list)
+    reason: str = ""
 
 
 class MeetingChangeSetExecutePayload(BaseModel):

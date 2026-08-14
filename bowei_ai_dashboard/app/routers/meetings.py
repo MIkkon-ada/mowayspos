@@ -39,6 +39,7 @@ from ..services.kickoff_writeback import confirm_kickoff_start
 from ..services.meeting_change_set import (
     build_meeting_plan_snapshot,
     edit_meeting_change_proposal,
+    edit_project_meeting_lineage_proposal,
     execute_meeting_change_set,
     validate_meeting_change_proposal,
 )
@@ -502,6 +503,7 @@ def _meeting_change_proposal_payload(
     project_id: int,
 ) -> dict:
     validation = _json_value(row.validation_json, {"state": "blocked", "errors": []})
+    lineage = _json_value(row.lineage_json, {})
     target = {"project_id": project_id}
     if row.target_type == "workstream" and row.target_id is not None:
         target["workstream_id"] = row.target_id
@@ -528,6 +530,8 @@ def _meeting_change_proposal_payload(
         "executed_by_person_id": row.executed_by_person_id,
         "executed_at": row.executed_at,
         "result_target_id": row.result_target_id,
+        "lineage": lineage,
+        "conflict_reason": validation.get("errors", []) if row.execution_status == "conflict" else [],
     }
 
 
@@ -1625,15 +1629,31 @@ def patch_meeting_change_proposal(
     )
     if not proposal:
         raise HTTPException(404, "meeting change proposal not found")
-    edit_meeting_change_proposal(
-        proposal=proposal,
-        change_set=change_set,
-        transcript_text=meeting.transcript_text or "",
-        proposed=payload.proposed,
-        evidence=payload.evidence,
-        reason=payload.reason,
-        db=db,
-    )
+    if _json_value(proposal.lineage_json, {}):
+        require_project_role(
+            current_user,
+            change_set.project_id,
+            [PROJECT_ROLE_OWNER_KEY],
+            db,
+        )
+        edit_project_meeting_lineage_proposal(
+            proposal=proposal,
+            change_set=change_set,
+            meeting=meeting,
+            actor=current_user,
+            proposed_updates=payload.proposed,
+            db=db,
+        )
+    else:
+        edit_meeting_change_proposal(
+            proposal=proposal,
+            change_set=change_set,
+            transcript_text=meeting.transcript_text or "",
+            proposed=payload.proposed,
+            evidence=payload.evidence,
+            reason=payload.reason,
+            db=db,
+        )
     db.commit()
     db.refresh(proposal)
     return _meeting_change_proposal_payload(proposal, change_set.project_id)

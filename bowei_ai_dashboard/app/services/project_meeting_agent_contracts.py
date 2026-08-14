@@ -343,6 +343,10 @@ class MeetingAgentFinal(StrictModel):
                 if provenance.source_type == "human_edit":
                     raise ValueError("human_edit provenance is not permitted in model output")
                 if provenance.source_type == "meeting_fact":
+                    if provenance.source_fact_id != change.source_fact_id:
+                        raise ValueError(
+                            "meeting_fact provenance source_fact_id must match proposed change source_fact_id"
+                        )
                     source_fact = meeting_fact_ids.get(provenance.source_fact_id)
                     if source_fact is None:
                         raise ValueError(

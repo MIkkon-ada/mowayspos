@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import pytest
 from pydantic import ValidationError
 
@@ -294,6 +296,18 @@ def test_analysis_contract_rejects_meeting_fact_change_source_without_same_field
     payload["meeting_facts"][0]["fields"] = {}
 
     with pytest.raises(ValidationError, match="does not contain proposed field: status"):
+        MeetingAgentFinal.model_validate(payload)
+
+
+def test_analysis_contract_rejects_proposed_field_from_different_fact_than_change():
+    payload = _analysis_final()
+    second_fact = deepcopy(payload["meeting_facts"][0])
+    second_fact["fact_id"] = "F002"
+    second_fact["fields"]["status"]["provenance"]["source_fact_id"] = "F002"
+    payload["meeting_facts"].append(second_fact)
+    payload["proposed_changes"][0]["field_sources"]["status"]["source_fact_id"] = "F002"
+
+    with pytest.raises(ValidationError, match="must match proposed change source_fact_id"):
         MeetingAgentFinal.model_validate(payload)
 
 

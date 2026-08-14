@@ -234,6 +234,33 @@ def test_update_before_json_must_match_lineage_and_frozen_baseline(db):
     assert db.get(models.ExecutionSchedule, 30).status == "in_progress"
 
 
+def test_execution_schedule_status_validation_accepts_chinese_task_statuses_and_rejects_unknown():
+    snapshot = {
+        "project_id": 1,
+        "workstreams": [{
+            "subtasks": [{
+                "id": 20,
+                "execution_schedules": [{"id": 30, "status": "进行中"}],
+            }],
+        }],
+    }
+    raw = {
+        "action": "update_execution_schedule",
+        "target": {"project_id": 1, "execution_schedule_id": 30},
+        "proposed": {"status": "已完成"},
+        "evidence": ["会议确认"],
+        "reason": "会议确认状态更新",
+        "confidence": 0.9,
+    }
+    accepted = meeting_change_set.validate_execution_schedule_proposal(raw, snapshot, "会议确认")
+    assert accepted["validation"]["state"] == "ready"
+
+    raw["proposed"] = {"status": "未知状态"}
+    rejected = meeting_change_set.validate_execution_schedule_proposal(raw, snapshot, "会议确认")
+    assert rejected["validation"]["state"] == "blocked"
+    assert "proposed.status is not an allowed execution schedule status" in rejected["validation"]["errors"]
+
+
 def test_create_conflicts_on_changed_parent_or_duplicate_schedule(db):
     meeting, _, proposal, _ = _seed(db, action="create_execution_schedule", proposed={"title": "Second customer batch", "plan_type": "week"})
     db.get(models.SubTask, 20).status = "completed"

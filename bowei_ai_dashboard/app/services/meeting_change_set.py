@@ -80,7 +80,14 @@ EXECUTION_SCHEDULE_FIELD_LIMITS = {
     "delay_reason": 2000,
 }
 
-EXECUTION_SCHEDULE_STATUS_VALUES = {"寰呭紑濮?", "杩涜涓?", "宸插畬鎴?", "宸插彇娑?"}
+EXECUTION_SCHEDULE_STATUS_VALUES = {
+    TS.S_NOT_STARTED,
+    TS.S_IN_PROGRESS,
+    TS.S_COMPLETED,
+    TS.S_DELAYED,
+    TS.S_PAUSED,
+    TS.S_ARCHIVED,
+}
 
 WORKSTREAM_FIELD_LIMITS = {
     "key_task": 200,

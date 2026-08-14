@@ -224,6 +224,34 @@ def test_background_does_not_create_proposal_for_untrusted_analysis_change(db, m
     assert db.query(models.MeetingChangeProposal).count() == 0
 
 
+def test_background_does_not_create_proposal_for_unknown_execution_schedule_field(db, monkeypatch):
+    run = _run(db)
+    import app.services.project_meeting_agent_processing as processing
+    payload = _analysis_final(run.document_text).model_dump(mode="json")
+    payload["meeting_facts"][0]["fields"] = {
+        "lifecycle_status": {
+            "value": "已经完成", "raw_text": "已经完成", "evidence": [_span(run.document_text, "已经完成")],
+            "provenance": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"},
+        }
+    }
+    payload["proposed_changes"][0]["proposed"] = {"lifecycle_status": "已经完成"}
+    payload["proposed_changes"][0]["field_sources"] = {
+        "lifecycle_status": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"}
+    }
+    monkeypatch.setattr(
+        processing,
+        "run_project_meeting_agent",
+        lambda **_: _agent_result(MeetingAgentFinal.model_validate(payload)),
+    )
+
+    process_project_meeting_agent_run(run.id, session_factory=sessionmaker(bind=db.get_bind()))
+
+    db.expire_all()
+    persisted_run = db.get(models.ProjectMeetingRun, run.id)
+    assert json.loads(persisted_run.result_json)["proposed_changes"][0]["validation"]["state"] == "blocked"
+    assert db.query(models.MeetingChangeProposal).count() == 0
+
+
 def test_background_success_persists_agent_audit_then_waits_for_owner_review(db, monkeypatch):
     run = _run(db)
     import app.services.project_meeting_agent_processing as processing

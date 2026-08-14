@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .project_meeting_agent_contracts import EvidenceSpan, MeetingAgentFinal, MeetingFact, TaskUpdate
+from .meeting_change_set import EXECUTION_SCHEDULE_FIELDS
 
 
 _SCHEDULE_FIELDS = {
@@ -39,6 +40,7 @@ _SCHEDULE_FIELD_LIMITS = {
     "assignee": 50,
     "status": 20,
 }
+_WRITABLE_EXECUTION_SCHEDULE_FIELDS = frozenset(EXECUTION_SCHEDULE_FIELDS)
 _FACT_COLLECTIONS = (
     "facts",
     "completed_items",
@@ -702,6 +704,9 @@ def _normalize_analysis_change(item: Any, facts: dict[str, dict[str, Any]], matc
             errors.append("update target execution_schedule_id is not in frozen snapshot")
     elif target.get("key_task_id") not in key_tasks or key_task_parents.get(target.get("key_task_id")) != target.get("workstream_id"):
         errors.append("create target key_task_id is not in frozen snapshot")
+    unsupported_fields = sorted(set(item.proposed) - _WRITABLE_EXECUTION_SCHEDULE_FIELDS)
+    if unsupported_fields:
+        errors.append("proposed contains unsupported execution schedule fields: " + ", ".join(unsupported_fields))
     field_sources = {name: source.model_dump(mode="json") for name, source in item.field_sources.items()}
     for field_name, source in item.field_sources.items():
         if source.source_type == "meeting_fact":

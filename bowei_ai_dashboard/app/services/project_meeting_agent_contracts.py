@@ -266,15 +266,30 @@ class MeetingAgentFinal(StrictModel):
         return self
 
     def _validate_analysis_lineage(self):
-        fact_ids = _unique_ids(self.meeting_facts, "fact_id")
+        all_facts = [
+            *self.meeting_facts,
+            *self.unmatched_items,
+            *self.needs_confirmation,
+        ]
+        fact_ids = _unique_ids(all_facts, "fact_id")
         match_ids = _unique_ids(self.project_matches, "match_id")
         delta_ids = _unique_ids(self.project_deltas, "delta_id")
         _unique_ids(self.proposed_changes, "change_id")
 
-        for fact in self.meeting_facts:
+        for fact in all_facts:
             for sourced_value in fact.fields.values():
-                if sourced_value.provenance.source_type == "human_edit":
+                provenance = sourced_value.provenance
+                if provenance.source_type == "human_edit":
                     raise ValueError("human_edit provenance is not permitted in model output")
+                if provenance.source_type == "meeting_fact":
+                    if provenance.source_fact_id not in fact_ids:
+                        raise ValueError(
+                            "field provenance source_fact_id must reference a known meeting fact"
+                        )
+                    if provenance.source_fact_id != fact.fact_id:
+                        raise ValueError(
+                            "field provenance source_fact_id must match enclosing fact_id"
+                        )
 
         for match in self.project_matches:
             if match.fact_id not in fact_ids:

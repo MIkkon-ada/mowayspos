@@ -217,6 +217,70 @@ def test_analysis_contract_rejects_duplicate_fact_ids():
 
 
 @pytest.mark.parametrize(
+    ("collection", "identifier"),
+    [
+        ("project_matches", "match_id"),
+        ("project_deltas", "delta_id"),
+        ("proposed_changes", "change_id"),
+    ],
+)
+def test_analysis_contract_rejects_duplicate_lineage_ids(collection, identifier):
+    payload = _analysis_final()
+    payload[collection].append(payload[collection][0].copy())
+
+    with pytest.raises(ValidationError, match=f"duplicate {identifier}"):
+        MeetingAgentFinal.model_validate(payload)
+
+
+@pytest.mark.parametrize("collection", ["unmatched_items", "needs_confirmation"])
+def test_analysis_contract_rejects_fact_ids_reused_across_analysis_collections(collection):
+    payload = _analysis_final()
+    payload[collection].append(payload["meeting_facts"][0].copy())
+
+    with pytest.raises(ValidationError, match="duplicate fact_id"):
+        MeetingAgentFinal.model_validate(payload)
+
+
+def test_analysis_contract_rejects_broken_delta_to_match_reference():
+    payload = _analysis_final()
+    payload["project_deltas"][0]["source_match_id"] = "M999"
+
+    with pytest.raises(ValidationError, match="unknown match_id"):
+        MeetingAgentFinal.model_validate(payload)
+
+
+def test_analysis_contract_rejects_broken_change_to_delta_reference():
+    payload = _analysis_final()
+    payload["proposed_changes"][0]["source_delta_id"] = "D999"
+
+    with pytest.raises(ValidationError, match="unknown delta_id"):
+        MeetingAgentFinal.model_validate(payload)
+
+
+@pytest.mark.parametrize("source_fact_id", ["F999", "F000"])
+def test_analysis_contract_rejects_field_provenance_for_unknown_fact(source_fact_id):
+    payload = _analysis_final()
+    payload["meeting_facts"][0]["fields"]["status"]["provenance"]["source_fact_id"] = (
+        source_fact_id
+    )
+
+    with pytest.raises(ValidationError, match="field provenance source_fact_id"):
+        MeetingAgentFinal.model_validate(payload)
+
+
+def test_analysis_contract_rejects_field_provenance_for_different_known_fact():
+    payload = _analysis_final()
+    second_fact = payload["meeting_facts"][0].copy()
+    second_fact["fact_id"] = "F002"
+    second_fact["fields"]["status"]["provenance"]["source_fact_id"] = "F002"
+    payload["meeting_facts"].append(second_fact)
+    payload["meeting_facts"][0]["fields"]["status"]["provenance"]["source_fact_id"] = "F002"
+
+    with pytest.raises(ValidationError, match="must match enclosing fact_id"):
+        MeetingAgentFinal.model_validate(payload)
+
+
+@pytest.mark.parametrize(
     ("source_type", "source_fields", "usage", "message"),
     [
         ("meeting_fact", {"source_fact_id": "F001"}, "inherit", "meeting_fact source"),

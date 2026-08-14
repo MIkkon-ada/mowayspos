@@ -2,9 +2,13 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
+from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
@@ -38,10 +42,23 @@ from ..services.meeting_change_set import (
     execute_meeting_change_set,
     validate_meeting_change_proposal,
 )
+from ..services.project_meeting_minutes import (
+    build_project_meeting_snapshot,
+    validate_execution_schedule_proposal as validate_project_schedule_proposal,
+)
+from ..services.project_meeting_agent_processing import (
+    process_project_meeting_agent_run,
+    project_meeting_run_status_payload,
+)
+from ..services.meeting_document_storage import (
+    MeetingDocumentStorageError,
+    download_meeting_document_path,
+    save_meeting_document,
+)
+from ..services.meeting_minutes_export import build_meeting_minutes_docx
 from ..services.meeting_revisions import append_meeting_revision
 from ..services.meeting_traceability import normalize_action_items
 from ..services.meeting_document_text import MeetingDocumentTextError, extract_meeting_document_text
-from ..services.standard_meeting_minutes import parse_standard_meeting_minutes
 from ..services.meeting_skill_clarification import (
     BlockingClarificationsError,
     append_input_snapshot,
@@ -490,6 +507,8 @@ def _meeting_change_proposal_payload(
         target["workstream_id"] = row.target_id
     if row.target_type == "subtask" and row.target_id is not None:
         target["subtask_id"] = row.target_id
+    if row.target_type == "execution_schedule" and row.target_id is not None:
+        target["execution_schedule_id"] = row.target_id
     if row.parent_workstream_id is not None:
         target["parent_workstream_id"] = row.parent_workstream_id
     return {
@@ -539,6 +558,10 @@ def _proposal_target_columns(proposal: dict) -> tuple[str, int | None, int | Non
         return "subtask", target.get("subtask_id"), target.get("parent_workstream_id")
     if action == "create_subtask":
         return "subtask", None, target.get("parent_workstream_id")
+    if action == "update_execution_schedule":
+        return "execution_schedule", target.get("execution_schedule_id"), target.get("subtask_id")
+    if action == "create_execution_schedule":
+        return "execution_schedule", None, target.get("subtask_id")
     return "workstream", None, None
 
 
@@ -730,8 +753,352 @@ async def extract_document_text(
     return {
         "filename": filename,
         "text": text,
-        "standard_minutes": parse_standard_meeting_minutes(filename, content),
+        # New project meeting documents are interpreted only by the Agent.
+        # Preserve the response key so older clients do not fail during rollout.
+        "standard_minutes": None,
     }
+
+
+def _project_meeting_document_root() -> Path:
+    configured = os.getenv("PROJECT_MEETING_DOCUMENT_ROOT", "").strip()
+    root = Path(configured) if configured else Path(__file__).resolve().parents[2] / "data" / "meeting_documents"
+    root.mkdir(parents=True, exist_ok=True)
+    return root.resolve()
+
+
+def _project_meeting_payload(run: models.ProjectMeetingRun, db: Session) -> dict:
+    source = db.get(models.MeetingDocumentSource, run.document_source_id)
+    meeting = db.query(models.Meeting).filter(models.Meeting.document_source_id == run.document_source_id).first()
+    change_set = (
+        db.query(models.MeetingChangeSet).filter_by(meeting_id=meeting.id).first()
+        if meeting else None
+    )
+    result = _json_value(run.result_json, {})
+    return {
+        "id": run.id,
+        "project_id": run.project_id,
+        "status": run.status,
+        "stage": run.stage,
+        "step_count": run.step_count,
+        "error_code": run.error_code or "",
+        "error_message": run.error_message or "",
+        "document": {
+            "id": source.id if source else None,
+            "original_name": source.original_name if source else "",
+            "mime_type": source.mime_type if source else "",
+            "size_bytes": source.size_bytes if source else 0,
+            "content_hash": source.content_hash if source else "",
+        },
+        "meeting_id": meeting.id if meeting else None,
+        "meeting": crud.to_dict(meeting) if meeting else None,
+        "snapshot": _json_value(run.snapshot_json, {}),
+        "result": result,
+        "review_package": _meeting_change_set_payload(change_set, db) if change_set else None,
+    }
+
+
+def _project_meeting_change_set(
+    project_id: int,
+    meeting_id: int,
+    created_by_person_id: int | None,
+    document_text: str,
+    snapshot: dict,
+    result: dict,
+    db: Session,
+) -> models.MeetingChangeSet:
+    change_set = models.MeetingChangeSet(
+        project_id=project_id,
+        meeting_id=meeting_id,
+        created_by_person_id=created_by_person_id,
+        transcript_hash=hashlib.sha256(document_text.encode("utf-8")).hexdigest(),
+        snapshot_json=json.dumps(snapshot, ensure_ascii=False),
+        result_json=json.dumps(result, ensure_ascii=False),
+        status="draft",
+    )
+    db.add(change_set)
+    db.flush()
+    for raw in result.get("execution_schedule_changes", []):
+        if not isinstance(raw, dict):
+            continue
+        target = raw.get("target") if isinstance(raw.get("target"), dict) else {}
+        action = raw.get("action") or ""
+        if action not in {"update_execution_schedule", "create_execution_schedule"}:
+            continue
+        db.add(models.MeetingChangeProposal(
+            change_set_id=change_set.id,
+            action=action,
+            target_type="execution_schedule",
+            target_id=target.get("execution_schedule_id"),
+            parent_workstream_id=target.get("key_task_id", target.get("subtask_id")),
+            before_json=json.dumps(raw.get("before", {}), ensure_ascii=False),
+            proposed_json=json.dumps(raw.get("proposed", {}), ensure_ascii=False),
+            evidence_json=json.dumps(raw.get("evidence", []), ensure_ascii=False),
+            reason=str(raw.get("reason") or ""),
+            confidence=float(raw.get("confidence") or 0),
+            validation_json=json.dumps(raw.get("validation", {}), ensure_ascii=False),
+            execution_status="pending",
+        ))
+    db.flush()
+    return change_set
+
+
+@router.post("/document-runs")
+async def create_project_meeting_document_run(
+    background_tasks: BackgroundTasks,
+    project_id: int = Form(...),
+    meeting_type: str = Form(""),
+    file: UploadFile = File(...),
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    if not db.get(models.Project, project_id):
+        raise HTTPException(404, "project not found")
+    require_project_access(current_user, project_id, db)
+    content = await file.read()
+    try:
+        saved = save_meeting_document(_project_meeting_document_root(), project_id, file.filename or "", content)
+        document_text = extract_meeting_document_text(file.filename or "", content)
+    except (MeetingDocumentStorageError, MeetingDocumentTextError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    account = db.query(models.Account).filter_by(username=current_user).first()
+    snapshot = build_project_meeting_snapshot(project_id, db)
+    snapshot["requested_meeting_type"] = str(meeting_type or "").strip()
+    source = models.MeetingDocumentSource(
+        project_id=project_id,
+        original_name=saved["original_name"],
+        storage_key=saved["storage_key"],
+        mime_type=saved["mime_type"],
+        size_bytes=saved["size_bytes"],
+        content_hash=saved["content_hash"],
+        uploaded_by_person_id=account.person_id if account else None,
+    )
+    db.add(source)
+    db.flush()
+    run = models.ProjectMeetingRun(
+        project_id=project_id,
+        document_source_id=source.id,
+        snapshot_json=json.dumps(snapshot, ensure_ascii=False),
+        document_text=document_text,
+        status="queued",
+        stage="reading",
+        created_by_person_id=account.person_id if account else None,
+    )
+    db.add(run)
+    db.flush()
+
+    db.commit()
+    db.refresh(run)
+    background_tasks.add_task(process_project_meeting_agent_run, run.id)
+    return _project_meeting_payload(run, db)
+
+
+@router.get("/document-runs/{run_id}")
+def get_project_meeting_document_run(run_id: int, current_user: str = Depends(get_current_user_name), db: Session = Depends(get_db)):
+    current_user = require_login(current_user, db)
+    run = db.get(models.ProjectMeetingRun, run_id)
+    if not run:
+        raise HTTPException(404, "meeting document run not found")
+    require_project_access(current_user, run.project_id, db)
+    return _project_meeting_payload(run, db)
+
+
+@router.get("/document-runs/{run_id}/status")
+def get_project_meeting_document_run_status(run_id: int, current_user: str = Depends(get_current_user_name), db: Session = Depends(get_db)):
+    current_user = require_login(current_user, db)
+    run = db.get(models.ProjectMeetingRun, run_id)
+    if not run:
+        raise HTTPException(404, "meeting document run not found")
+    require_project_access(current_user, run.project_id, db)
+    return project_meeting_run_status_payload(run)
+
+
+@router.get("/{meeting_id}/review-package")
+def get_project_meeting_review_package(meeting_id: int, current_user: str = Depends(get_current_user_name), db: Session = Depends(get_db)):
+    current_user = require_login(current_user, db)
+    row = _meeting_for_read(meeting_id, current_user, db)
+    if not row.document_source_id:
+        raise HTTPException(404, "project meeting document run not found")
+    source = db.get(models.MeetingDocumentSource, row.document_source_id)
+    run = db.query(models.ProjectMeetingRun).filter_by(document_source_id=row.document_source_id).order_by(models.ProjectMeetingRun.id.desc()).first()
+    if not source or not run:
+        raise HTTPException(404, "project meeting document run not found")
+    return _project_meeting_payload(run, db)
+
+
+@router.get("/{meeting_id}/document-download")
+def download_project_meeting_document(meeting_id: int, current_user: str = Depends(get_current_user_name), db: Session = Depends(get_db)):
+    current_user = require_login(current_user, db)
+    row = _meeting_for_read(meeting_id, current_user, db)
+    source = db.get(models.MeetingDocumentSource, row.document_source_id) if row.document_source_id else None
+    if not source:
+        raise HTTPException(404, "meeting document not found")
+    try:
+        path = download_meeting_document_path(_project_meeting_document_root(), source.storage_key)
+    except MeetingDocumentStorageError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return FileResponse(path, media_type=source.mime_type, filename=source.original_name)
+
+
+@router.get("/{meeting_id}/document-export")
+def export_project_meeting_minutes(meeting_id: int, current_user: str = Depends(get_current_user_name), db: Session = Depends(get_db)):
+    current_user = require_login(current_user, db)
+    meeting = _meeting_for_read(meeting_id, current_user, db)
+    source = db.get(models.MeetingDocumentSource, meeting.document_source_id) if meeting.document_source_id else None
+    content = build_meeting_minutes_docx(meeting, source_name=source.original_name if source else "")
+    filename = f"{(meeting.title or '项目会议纪要').strip()}-会议纪要.docx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+def _project_meeting_snapshot_schedule(snapshot: dict, schedule_id: int) -> dict | None:
+    for workstream in snapshot.get("workstreams", []):
+        for key_task in workstream.get("key_tasks", []) if isinstance(workstream, dict) else []:
+            for schedule in key_task.get("execution_schedules", []) if isinstance(key_task, dict) else []:
+                if isinstance(schedule, dict) and schedule.get("id") == schedule_id:
+                    return schedule
+    return None
+
+
+def _execute_project_meeting_schedule_changes(
+    meeting: models.Meeting,
+    proposal_ids: list[int],
+    actor: str,
+    db: Session,
+) -> list[models.MeetingChangeProposal]:
+    run = (
+        db.query(models.ProjectMeetingRun)
+        .filter(models.ProjectMeetingRun.document_source_id == meeting.document_source_id)
+        .order_by(models.ProjectMeetingRun.id.desc())
+        .first()
+    )
+    change_set = db.query(models.MeetingChangeSet).filter_by(meeting_id=meeting.id).first()
+    if not run or not change_set:
+        raise HTTPException(404, "project meeting review package not found")
+    if not proposal_ids:
+        return []
+    proposals = (
+        db.query(models.MeetingChangeProposal)
+        .filter(
+            models.MeetingChangeProposal.change_set_id == change_set.id,
+            models.MeetingChangeProposal.id.in_(proposal_ids),
+        )
+        .all()
+    )
+    if len(proposals) != len(set(proposal_ids)):
+        raise HTTPException(409, "selected proposal does not belong to meeting")
+    snapshot = _json_value(run.snapshot_json, {})
+    for proposal in proposals:
+        if proposal.execution_status != "pending":
+            raise HTTPException(409, "selected proposal is not pending")
+        target = {"project_id": meeting.project_id}
+        if proposal.target_id is not None:
+            target["execution_schedule_id"] = proposal.target_id
+        if proposal.parent_workstream_id is not None:
+            target["key_task_id"] = proposal.parent_workstream_id
+        raw = {
+            "action": proposal.action,
+            "target": target,
+            "proposed": _json_value(proposal.proposed_json, {}),
+            "evidence": _json_value(proposal.evidence_json, []),
+            "reason": proposal.reason,
+            "confidence": proposal.confidence,
+        }
+        validated = validate_project_schedule_proposal(raw, snapshot, run.document_text or "")
+        if validated["validation"]["state"] != "ready":
+            raise HTTPException(409, "selected proposal failed revalidation")
+        if proposal.action == "update_execution_schedule":
+            live = db.get(models.ExecutionSchedule, proposal.target_id)
+            if not live or live.is_deleted:
+                raise HTTPException(409, "execution schedule target is stale or deleted")
+            before = validated.get("before", {})
+            current = {
+                field: (
+                    getattr(live, field).isoformat() if field in {"start_date", "due_date"} and getattr(live, field) else getattr(live, field, None)
+                )
+                for field in before
+            }
+            if current != before:
+                raise HTTPException(409, "execution schedule target changed after analysis")
+    account = db.query(models.Account).filter_by(username=actor).first()
+    executed: list[models.MeetingChangeProposal] = []
+    from datetime import date
+    for proposal in proposals:
+        proposed = _json_value(proposal.proposed_json, {})
+        if proposal.action == "update_execution_schedule":
+            row = db.get(models.ExecutionSchedule, proposal.target_id)
+            for field, value in proposed.items():
+                if field in {"start_date", "due_date"} and value:
+                    value = date.fromisoformat(value)
+                setattr(row, field, value)
+        else:
+            subtask = db.get(models.SubTask, proposal.parent_workstream_id)
+            if not subtask:
+                raise HTTPException(409, "key task no longer exists")
+            values = dict(proposed)
+            for field in {"start_date", "due_date"}:
+                if values.get(field):
+                    values[field] = date.fromisoformat(values[field])
+            row = models.ExecutionSchedule(
+                subtask_id=subtask.id,
+                created_by=actor,
+                updated_by=actor,
+                **values,
+            )
+            db.add(row)
+            db.flush()
+        proposal.result_target_id = row.id
+        proposal.execution_status = "executed"
+        proposal.executed_by_person_id = account.person_id if account else None
+        proposal.executed_at = utc_now()
+        executed.append(proposal)
+    change_set.status = "executed" if executed else change_set.status
+    return executed
+
+
+@router.post("/{meeting_id}/review")
+def review_project_meeting(
+    meeting_id: int,
+    payload: schemas.ProjectMeetingReviewPayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    meeting = _meeting_for_read(meeting_id, current_user, db)
+    if not meeting.project_id or not meeting.document_source_id:
+        raise HTTPException(409, "only project document meetings support this review flow")
+    require_project_role(current_user, meeting.project_id, [PROJECT_ROLE_OWNER_KEY], db)
+    if meeting.review_status not in {"pending_review", "returned"}:
+        raise HTTPException(409, "meeting is not awaiting owner review")
+    account = db.query(models.Account).filter_by(username=current_user).first()
+    if payload.action == "return":
+        meeting.review_status = "returned"
+        meeting.publish_status = "draft"
+        db.add(models.MeetingReviewEvent(
+            meeting_id=meeting.id,
+            action="returned",
+            actor_person_id=account.person_id if account else None,
+            reason=payload.reason,
+            selected_proposal_ids_json="[]",
+        ))
+    else:
+        _execute_project_meeting_schedule_changes(meeting, payload.proposal_ids, current_user, db)
+        meeting.review_status = "approved"
+        meeting.publish_status = "published"
+        meeting.review_version = (meeting.review_version or 0) + 1
+        db.add(models.MeetingReviewEvent(
+            meeting_id=meeting.id,
+            action="approved",
+            actor_person_id=account.person_id if account else None,
+            selected_proposal_ids_json=json.dumps(payload.proposal_ids),
+        ))
+    db.commit()
+    db.refresh(meeting)
+    return crud.to_dict(meeting)
 
 
 def _project_member_names(project_id: int | None, db: Session) -> set[str]:

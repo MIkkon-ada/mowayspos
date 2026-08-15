@@ -128,6 +128,8 @@ def test_agent_prompt_includes_the_exact_tool_and_final_envelope_shapes(document
     assert '"match_id":"M001","fact_id":"F001"' in prompt
     assert '"delta_id":"D001","source_fact_id":"F001","source_match_id":"M001"' in prompt
     assert '"change_id":"C001","source_fact_id":"F001","source_match_id":"M001","source_delta_id":"D001"' in prompt
+    assert 'Never put an ID string such as "F001" in unmatched_items or needs_confirmation.' in prompt
+    assert 'Move the complete fact object out of meeting_facts before placing it in unmatched_items or needs_confirmation.' in prompt
     assert "Word-only Meeting Fact -> Project Match -> inference-only Delta -> confirmation-required Proposed Change" in prompt
     assert "Project baseline is not current meeting evidence" in prompt
     assert "Inference cannot create writable new values" in prompt

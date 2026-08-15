@@ -298,6 +298,29 @@ def test_lineage_create_locks_parent_before_duplicate_check_and_create(db, monke
     assert db.query(models.ExecutionSchedule).filter_by(subtask_id=20, title="Second customer batch").count() == 1
 
 
+def test_lineage_create_rejects_proposal_parent_that_differs_from_locked_target(db):
+    meeting, _, proposal, _ = _seed(
+        db,
+        action="create_execution_schedule",
+        proposed={"title": "Second customer batch", "plan_type": "week"},
+    )
+    db.add(models.SubTask(
+        id=21,
+        task_id=10,
+        title="Different key task",
+        assignee="Owner",
+        status="in_progress",
+    ))
+    proposal.parent_subtask_id = 21
+    db.commit()
+
+    with pytest.raises(HTTPException, match="conflict"):
+        _execute_change_set(meeting=meeting, proposal_ids=[proposal.id], actor="owner", db=db)
+
+    assert db.get(models.MeetingChangeProposal, proposal.id).execution_status == "conflict"
+    assert db.query(models.ExecutionSchedule).filter_by(title="Second customer batch").count() == 0
+
+
 def test_owner_only_patch_records_edit_history_in_review_payload(db):
     meeting, change_set, proposal, _ = _seed(db)
     response = patch_meeting_change_proposal(

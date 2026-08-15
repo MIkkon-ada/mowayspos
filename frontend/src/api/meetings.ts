@@ -258,6 +258,44 @@ export function extractMeetingDocumentText(
   return apiUpload<{ filename: string; text: string; standard_minutes?: StandardMeetingMinutes }>(`/api/meetings/extract-document-text?project_id=${projectId}`, fd)
 }
 
+export type ProjectMeetingFieldSource = {
+  source_type: 'meeting_fact' | 'project_baseline' | 'human_edit'
+  source_fact_id?: string
+  source_object?: string
+  source_field?: string
+  usage: 'new' | 'inherit' | 'override'
+}
+
+export type ProjectMeetingProposalLineage = {
+  schema_version: 1
+  change_id: string
+  action: 'update_execution_schedule' | 'create_execution_schedule'
+  target: {
+    project_id: number
+    workstream_id: number
+    key_task_id: number
+    execution_schedule_id?: number
+  }
+  requires_confirmation: true
+  source_fact_id: string
+  source_match_id?: string
+  source_delta_id: string
+  field_sources: Record<string, ProjectMeetingFieldSource>
+  meeting_evidence: Record<string, ProjectMeetingEvidenceSpan[]>
+  project_evidence: Array<{ source_object: string; field: string; value: unknown }>
+  delta: { delta_id?: string; delta_type: string; reasoning: string }
+  baseline_state: 'existing_target' | 'not_applicable_new_object'
+  before_baseline: Record<string, unknown>
+  parent_baseline: Record<string, unknown>
+  owner_edit_history: Array<{
+    field: string
+    before: unknown
+    after: unknown
+    editor_person_id: number
+    edited_at: string
+  }>
+}
+
 export type ProjectMeetingScheduleChange = {
   id: number
   action: 'update_execution_schedule' | 'create_execution_schedule'
@@ -277,7 +315,9 @@ export type ProjectMeetingScheduleChange = {
   confidence: number
   validation: { state: 'ready' | 'blocked'; errors: string[] }
   needs_confirmation?: boolean
-  execution_status: 'pending' | 'executed'
+  execution_status: 'pending' | 'executed' | 'conflict'
+  lineage?: ProjectMeetingProposalLineage
+  conflict_reason?: string[]
 }
 
 export type ProjectMeetingEvidenceSpan = {

@@ -153,12 +153,16 @@ def test_agent_audit_migration_has_the_expected_linear_revision_chain():
     assert callable(migration.downgrade)
 
 
-def test_agent_audit_migration_is_the_only_alembic_head():
+def test_migration_chain_has_one_head_and_contains_agent_audit_and_lineage():
     app_root = Path(__file__).resolve().parents[1]
     config = Config(str(app_root / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["c4e5f6a7b8c9"]
+    heads = script.get_heads()
+    revisions = {revision.revision for revision in script.walk_revisions()}
+    assert len(heads) == 1
+    assert AGENT_AUDIT_REVISION in revisions
+    assert "d5e6f7a8b9c0" in revisions
 
 
 def test_agent_audit_migration_operations_are_parseable():

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import type { MeetingItem } from '../../types'
-import type { ProjectMeetingAgentAudit, ProjectMeetingAgentFact, ProjectMeetingEvidence, ProjectMeetingEvidenceSpan } from '../../api/meetings'
+import type { ProjectMeetingAgentAudit, ProjectMeetingAgentFact, ProjectMeetingEvidence, ProjectMeetingEvidenceSpan, ProjectMeetingProposalLineage } from '../../api/meetings'
 
 export type ProjectMeetingContext = {
   projectId: number
@@ -38,6 +38,9 @@ export type ExecutionScheduleChange = {
   needsConfirmation?: boolean
   validationState?: 'ready' | 'needs_review' | 'blocked'
   validationErrors?: string[]
+  executionStatus?: 'pending' | 'executed' | 'conflict'
+  conflictReason?: string[]
+  lineage?: ProjectMeetingProposalLineage
 }
 
 export type ProjectMeetingReviewWorkspaceProps = {
@@ -94,6 +97,22 @@ function FactSection({ title, items, emptyLabel = '暂无内容' }: { title: str
   </section>
 }
 
+function LineageTrace({ change }: { change: ExecutionScheduleChange }) {
+  const lineage = change.lineage
+  if (!lineage) return null
+  const meetingQuotes = Object.values(lineage.meeting_evidence ?? {}).flatMap((spans) => spans.map((span) => span.quote)).filter(Boolean)
+  return <details className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">
+    <summary className="cursor-pointer font-semibold text-slate-700">查看分析与来源追溯</summary>
+    <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+      <section><h4 className="font-semibold text-slate-700">会议事实</h4><p className="mt-1">{lineage.source_fact_id}</p><p className="mt-1 text-slate-500">{meetingQuotes.length ? meetingQuotes.join('；') : '无字段级会议证据'}</p></section>
+      <section><h4 className="font-semibold text-slate-700">项目匹配</h4><p className="mt-1">{lineage.source_match_id || '未匹配'}</p><p className="mt-1 text-slate-500">{lineage.project_evidence?.length ? displayValue(lineage.project_evidence) : '无项目基线证据'}</p></section>
+      <section><h4 className="font-semibold text-slate-700">项目基线</h4><p className="mt-1">{lineage.baseline_state}</p><p className="mt-1 text-slate-500">{displayValue(Object.keys(lineage.before_baseline ?? {}).length ? lineage.before_baseline : lineage.parent_baseline)}</p></section>
+      <section><h4 className="font-semibold text-slate-700">AI 判断</h4><p className="mt-1">{lineage.delta?.delta_type || '—'}</p><p className="mt-1 text-slate-500">{lineage.delta?.reasoning || '—'}</p></section>
+      <section><h4 className="font-semibold text-slate-700">建议修改</h4><p className="mt-1">{displayValue(change.proposed)}</p><p className="mt-1 text-slate-500">字段来源：{displayValue(lineage.field_sources)}</p>{lineage.owner_edit_history?.length ? <p className="mt-1 text-amber-700">负责人编辑：{displayValue(lineage.owner_edit_history)}</p> : null}</section>
+    </div>
+  </details>
+}
+
 export function ProjectMeetingReviewWorkspace({
   projectContext, meetingDraft, meetingInfoEvidence, summaryEvidence, openQuestions, agentAudit, scheduleChanges,
   isOwner, busy = false, error = '', message = '', onSaveDraft, onApprove, onReturn, onDownload,
@@ -103,7 +122,7 @@ export function ProjectMeetingReviewWorkspace({
   const [editableDraft, setEditableDraft] = useState<ProjectMeetingDraft>(meetingDraft)
 
   const toggleScheduleChange = (change: ExecutionScheduleChange) => {
-    if (change.validationState === 'blocked' || change.needsConfirmation) return
+    if (change.validationState === 'blocked' || change.needsConfirmation || change.executionStatus === 'conflict') return
     setSelectedScheduleChangeIds((current) => {
       const next = new Set(current)
       if (next.has(change.id)) next.delete(change.id)
@@ -151,7 +170,7 @@ export function ProjectMeetingReviewWorkspace({
 
     <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-label="执行安排变更建议">
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-base font-semibold text-slate-900">执行安排变更建议</h2><p className="mt-1 text-sm text-slate-500">只会回填负责人勾选且可核验的建议；待确认或受阻建议不可选择。</p></div><span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">已选 {selectedScheduleChangeIds.size} / {scheduleChanges.length}</span></div>
-      <div className="mt-4 space-y-3">{scheduleChanges.length ? scheduleChanges.map((change) => { const blocked = change.validationState === 'blocked' || change.needsConfirmation; return <article key={change.id} className={`rounded-xl border p-4 ${blocked ? 'border-rose-200 bg-rose-50/40' : 'border-slate-200 bg-slate-50/60'}`}><div className="flex items-start gap-3"><input type="checkbox" checked={selectedScheduleChangeIds.has(change.id)} onChange={() => toggleScheduleChange(change)} disabled={!isOwner || busy || blocked} className="mt-1 h-4 w-4 rounded border-slate-300 text-sky-600" aria-label={`选择执行安排变更 ${change.id}`} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-slate-800">{change.title}</h3>{blocked && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">{change.needsConfirmation ? '待确认，不可回填' : '无法回填'}</span>}</div><p className="mt-1 text-xs text-slate-500">父工作流：{change.workstreamTitle || '未匹配'} · 关键任务：{change.keyTaskTitle || '未匹配'} · 子计划 #{change.parentSubtaskId ?? change.keyTaskId}</p><div className="mt-3 grid gap-3 md:grid-cols-2 text-xs leading-5"><div className="rounded-lg border border-slate-200 bg-white p-3"><div className="font-semibold text-slate-500">当前执行安排</div><p className="mt-1 text-slate-600">{displayValue(change.before)}</p></div><div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3"><div className="font-semibold text-sky-700">会议建议</div><p className="mt-1 text-slate-700">{displayValue(change.proposed)}</p></div></div><EvidenceBlock evidence={change.evidence} />{change.validationErrors?.length ? <p className="mt-2 text-xs text-rose-600">{change.validationErrors.join('；')}</p> : null}</div></div></article> }) : <p className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-400">本次会议没有执行安排变更建议</p>}</div>
+      <div className="mt-4 space-y-3">{scheduleChanges.length ? scheduleChanges.map((change) => { const blocked = change.validationState === 'blocked' || change.needsConfirmation || change.executionStatus === 'conflict'; return <article key={change.id} className={`rounded-xl border p-4 ${blocked ? 'border-rose-200 bg-rose-50/40' : 'border-slate-200 bg-slate-50/60'}`}><div className="flex items-start gap-3"><input type="checkbox" checked={selectedScheduleChangeIds.has(change.id)} onChange={() => toggleScheduleChange(change)} disabled={!isOwner || busy || blocked} className="mt-1 h-4 w-4 rounded border-slate-300 text-sky-600" aria-label={`选择执行安排变更 ${change.id}`} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-slate-800">{change.title}</h3>{blocked && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">{change.executionStatus === 'conflict' ? '数据已变化，不可回填' : change.needsConfirmation ? '待确认，不可回填' : '无法回填'}</span>}</div><p className="mt-1 text-xs text-slate-500">父工作流：{change.workstreamTitle || '未匹配'} · 关键任务：{change.keyTaskTitle || '未匹配'} · 子计划 #{change.parentSubtaskId ?? change.keyTaskId}</p><div className="mt-3 grid gap-3 md:grid-cols-2 text-xs leading-5"><div className="rounded-lg border border-slate-200 bg-white p-3"><div className="font-semibold text-slate-500">当前执行安排</div><p className="mt-1 text-slate-600">{displayValue(change.before)}</p></div><div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3"><div className="font-semibold text-sky-700">会议建议</div><p className="mt-1 text-slate-700">{displayValue(change.proposed)}</p></div></div><EvidenceBlock evidence={change.evidence} />{change.validationErrors?.length ? <p className="mt-2 text-xs text-rose-600">{change.validationErrors.join('；')}</p> : null}{change.conflictReason?.length ? <p className="mt-2 text-xs text-rose-700">冲突原因：{change.conflictReason.join('；')}</p> : null}<LineageTrace change={change} /></div></div></article> }) : <p className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-400">本次会议没有执行安排变更建议</p>}</div>
     </section>
 
     <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-label="负责人审核操作"><h2 className="text-base font-semibold text-slate-900">负责人审核</h2><p className="mt-1 text-sm text-slate-500">批准时仅提交已选择建议的 ID；未经勾选的建议不会回填。</p><div className="mt-4 flex flex-wrap gap-3"><button type="button" onClick={handleApprove} disabled={!isOwner || busy} className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">项目负责人批准</button><button type="button" onClick={() => void onDownload()} disabled={busy} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 disabled:opacity-50">再次下载会议纪要</button></div><form className="mt-5 max-w-2xl" onSubmit={handleReturn}><label htmlFor="project-meeting-return-reason" className="block text-sm font-semibold text-slate-700">退回原因<span className="text-rose-500">*</span></label><textarea id="project-meeting-return-reason" aria-label="退回原因" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} disabled={!isOwner || busy} rows={3} className="mt-2 w-full resize-y rounded-lg border border-slate-200 px-3 py-2.5 text-sm leading-6 text-slate-700 disabled:bg-slate-50" placeholder="请说明需要补充或修改的内容" /><button type="submit" disabled={!isOwner || busy || !returnReason.trim()} className="mt-3 rounded-lg border border-rose-200 bg-white px-4 py-2.5 text-sm font-semibold text-rose-600 disabled:opacity-50">填写原因并退回</button></form></section>

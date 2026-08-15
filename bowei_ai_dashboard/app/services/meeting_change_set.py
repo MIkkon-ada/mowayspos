@@ -870,6 +870,10 @@ def _validate_project_meeting_lineage(
     elif proposal.action == "create_execution_schedule":
         _require_lineage(proposal.target_id is None and lineage.get("baseline_state") == "not_applicable_new_object", "create baseline state is invalid")
         _require_lineage(not lineage.get("before_baseline"), "create proposal must not have target baseline")
+        _require_lineage(
+            proposal.parent_subtask_id == target.get("key_task_id"),
+            "create proposal parent differs from lineage target",
+        )
         parent = lineage.get("parent_baseline") if isinstance(lineage.get("parent_baseline"), dict) else {}
         _require_lineage(
             parent.get("project_id") == change_set.project_id and parent.get("workstream_id") == target.get("workstream_id") and parent.get("key_task_id") == target.get("key_task_id"),
@@ -1293,11 +1297,9 @@ def _apply_validated_proposal(
     elif proposal.action in {"create_execution_schedule", "update_execution_schedule"}:
         proposed = _json_object(proposal.proposed_json)
         if proposal.action == "create_execution_schedule":
-            parent_key_task_id = (
-                proposal.parent_subtask_id
-                if _project_meeting_lineage(proposal) is not None
-                else proposal.parent_workstream_id
-            )
+            lineage = _project_meeting_lineage(proposal)
+            target = lineage.get("target") if isinstance(lineage, dict) and isinstance(lineage.get("target"), dict) else {}
+            parent_key_task_id = target.get("key_task_id") if lineage is not None else proposal.parent_workstream_id
             subtask = db.get(models.SubTask, parent_key_task_id)
             if not subtask:
                 raise HTTPException(409, "key task no longer exists")

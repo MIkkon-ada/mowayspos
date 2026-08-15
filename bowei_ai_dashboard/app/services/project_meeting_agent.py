@@ -81,6 +81,14 @@ STRICT RESPONSE PROTOCOL (this overrides any older meeting-minutes JSON format):
 - Do not use tool_call/tool_name/parameters/final wrapper keys. Do not use any field names other than the two envelope shapes above.
 - For every non-empty meeting field, fact, summary, or task update, include exact Word evidence with quote, char_start, and char_end.
 - ANALYSIS LAYERS: Word-only Meeting Fact -> Project Match -> inference-only Delta -> confirmation-required Proposed Change.
+- The four analysis arrays are mandatory analysis-layer data, not optional legacy fields. For every Word action, progress, completion, risk, output, scope item, or decision considered for project linkage, emit one F-series fact in exactly ONE of meeting_facts, unmatched_items, or needs_confirmation. Do not put a plain legacy MeetingFact object in those arrays.
+- A fact with no safe project match goes to unmatched_items; an ambiguous match goes to needs_confirmation. Only a fact in meeting_facts may be referenced by a Project Match. An F ID must appear in only one of those three arrays.
+- Use these exact analysis object shapes (replace example values with evidence-grounded values; never omit required keys):
+  meeting_facts item: {"fact_id":"F001","fact_type":"action_item","content":"Prepare customer shortlist","fields":{"status":{"value":"in_progress","raw_text":"正在推进","evidence":[{"quote":"正在推进","char_start":0,"char_end":4}],"provenance":{"source_type":"meeting_fact","source_fact_id":"F001","usage":"new"}}},"meeting_evidence":[{"quote":"正在推进","char_start":0,"char_end":4}],"confidence":0.9,"needs_confirmation":false}
+  project_matches item: {"match_id":"M001","fact_id":"F001","target_type":"key_task","target_id":20,"workstream_id":10,"key_task_id":20,"confidence":0.9,"reasons":["title and intent match"],"project_evidence":[{"source_object":"key_task","field":"title","value":"Customer shortlist"}]}
+  project_deltas item: {"delta_id":"D001","source_fact_id":"F001","source_match_id":"M001","delta_type":"PROGRESS_UPDATE","reasoning":"Word states current progress"}
+  proposed_changes item: {"change_id":"C001","source_fact_id":"F001","source_match_id":"M001","source_delta_id":"D001","action":"update_execution_schedule","target":{"project_id":1,"workstream_id":10,"key_task_id":20,"execution_schedule_id":30},"before":{"status":"pending"},"proposed":{"status":"in_progress"},"field_sources":{"status":{"source_type":"meeting_fact","source_fact_id":"F001","usage":"new"}},"requires_confirmation":true}
+- If a fact has no structured business field, emit fields as {} and do not create a Proposed Change. A Proposed Change is allowed only when every proposed field has field_sources and each meeting_fact field source names the same F-series fact containing that field-level Word evidence.
 - Project baseline is not current meeting evidence. It may only support a project match or baseline comparison.
 - Inference cannot create writable new values. A Proposed Change must use explicit field_sources for every proposed field and requires_confirmation=true.
 - Extract every Word-only Meeting Fact before matching. Then call search_plan_nodes once with one batch covering all facts:
@@ -208,9 +216,16 @@ def run_project_meeting_agent(
                     events=events,
                 ) from exc
             repair_used = True
+            repair_instruction = (
+                "A project plan lookup has already completed. "
+                "Return a final envelope only; do not call any tool."
+                if require_plan_lookup and any(item.get("tool") == "search_plan_nodes" for item in trace)
+                else "Return only one valid tool_call or final JSON object."
+            )
             prompt = (
                 f"{base_prompt}\n上一条模型回复不符合严格 JSON 信封，原因：{exc}。\n"
                 f"无效回复：{response.text}\n请仅返回一个合法 tool_call 或 final JSON 对象。"
+                f"\n{repair_instruction}"
             )
             continue
 

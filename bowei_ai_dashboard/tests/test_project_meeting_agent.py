@@ -122,6 +122,12 @@ def test_agent_prompt_includes_the_exact_tool_and_final_envelope_shapes(document
     assert '"project_matches"' in prompt
     assert '"project_deltas"' in prompt
     assert '"proposed_changes"' in prompt
+    assert '"fact_id":"F001","fact_type":"action_item"' in prompt
+    assert '"raw_text":"正在推进"' in prompt
+    assert '"source_type":"meeting_fact","source_fact_id":"F001","usage":"new"' in prompt
+    assert '"match_id":"M001","fact_id":"F001"' in prompt
+    assert '"delta_id":"D001","source_fact_id":"F001","source_match_id":"M001"' in prompt
+    assert '"change_id":"C001","source_fact_id":"F001","source_match_id":"M001","source_delta_id":"D001"' in prompt
     assert "Word-only Meeting Fact -> Project Match -> inference-only Delta -> confirmation-required Proposed Change" in prompt
     assert "Project baseline is not current meeting evidence" in prompt
     assert "Inference cannot create writable new values" in prompt
@@ -190,6 +196,43 @@ def test_agent_repairs_one_invalid_json_response(snapshot: dict, document_text: 
     result = run_project_meeting_agent(1, document_text, snapshot, ProjectMeetingAgentTools(snapshot), lambda prompt: next(replies))
 
     assert result.invocation_log_ids == [21, 22]
+
+
+def test_agent_repair_after_plan_lookup_requires_final_without_another_tool_call(
+    snapshot: dict,
+    document_text: str,
+    valid_final: dict,
+):
+    prompts: list[str] = []
+    replies = iter([
+        response(
+            {
+                "type": "tool_call",
+                "tool": "search_plan_nodes",
+                "arguments": {"project_id": 1, "queries": [{"fact_id": "F001", "query": "minutes"}]},
+            },
+            26,
+        ),
+        AgentModelResponse(
+            json.dumps({"type": "final", "result": valid_final}) + " trailing text",
+            "fake-chat",
+            27,
+        ),
+        response({"type": "final", "result": valid_final}, 28),
+    ])
+
+    result = run_project_meeting_agent(
+        1,
+        document_text,
+        snapshot,
+        ProjectMeetingAgentTools(snapshot),
+        lambda prompt: (prompts.append(prompt), next(replies))[1],
+        require_plan_lookup=True,
+    )
+
+    assert result.invocation_log_ids == [26, 27, 28]
+    assert len(result.trace) == 1
+    assert "Return a final envelope only; do not call any tool." in prompts[2]
 
 
 def test_project_meeting_agent_requires_a_plan_search_before_final(snapshot: dict, document_text: str, valid_final: dict):

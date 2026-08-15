@@ -272,6 +272,9 @@ export function MeetingPage() {
                 needsConfirmation: Boolean(change.needs_confirmation ?? agentChange?.needs_confirmation),
                 validationState: change.validation.state,
                 validationErrors: change.validation.errors,
+                executionStatus: change.execution_status,
+                conflictReason: change.conflict_reason,
+                lineage: change.lineage,
               }
             })}
             isOwner={isOwner}

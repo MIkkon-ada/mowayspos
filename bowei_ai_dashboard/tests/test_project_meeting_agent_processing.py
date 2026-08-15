@@ -192,6 +192,8 @@ def test_background_success_persists_trusted_update_lineage_and_immutable_result
     assert lineage["baseline_state"] == "existing_target"
     assert lineage["before_baseline"] == {"status": "in_progress"}
     assert lineage["owner_edit_history"] == []
+    assert db.query(models.MeetingChangeProposal).count() == 1
+    assert db.query(models.ExecutionSchedule).count() == 0
 
 
 def test_background_success_persists_create_parent_baseline_without_target_baseline(db, monkeypatch):

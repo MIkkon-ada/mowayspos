@@ -233,3 +233,106 @@ def test_baseline_provenance_must_exactly_reference_snapshot_field():
     invalid["field_sources"]["due_date"]["source_field"] = "status"
     result = _normalize(proposed_changes=[invalid])
     assert result["proposed_changes"][0]["validation"]["state"] == "blocked"
+
+
+def test_high_confidence_fact_match_creates_review_only_schedule_proposal():
+    result = _normalize()
+
+    fact = result["meeting_facts"][0]
+    match = result["project_matches"][0]
+    delta = result["project_deltas"][0]
+    change = result["proposed_changes"][0]
+    assert fact["fact_id"] == "F001"
+    assert fact["fields"]["status"]["evidence"][0]["quote"] == "已经完成"
+    assert match["match_id"] == "M001" and match["fact_id"] == fact["fact_id"]
+    assert match["project_evidence"][0] == {
+        "source_object": "execution_schedule:30",
+        "field": "title",
+        "value": "客户清单第一版",
+    }
+    assert delta["source_fact_id"] == fact["fact_id"]
+    assert delta["source_match_id"] == match["match_id"]
+    assert change["source_delta_id"] == delta["delta_id"]
+    assert change["requires_confirmation"] is True
+    assert result["execution_schedule_changes"][0]["validation"]["state"] == "ready"
+
+
+def test_similar_nonidentical_candidate_becomes_ambiguous_confirmation_item():
+    payload = _payload()
+    payload["project_matches"][0]["confidence"] = 0.55
+    payload["project_matches"][0]["reasons"] = ["标题相似但并不完全一致"]
+    payload["project_deltas"][0]["delta_type"] = "AMBIGUOUS"
+    payload["meeting_facts"][0]["needs_confirmation"] = True
+
+    result = _normalize(
+        meeting_facts=payload["meeting_facts"],
+        project_matches=payload["project_matches"],
+        project_deltas=payload["project_deltas"],
+        proposed_changes=[],
+    )
+
+    assert result["meeting_facts"][0]["fact_id"] == "F001"
+    assert result["project_matches"][0]["fact_id"] == "F001"
+    assert result["project_deltas"][0]["delta_type"] == "AMBIGUOUS"
+    assert result["meeting_facts"][0]["needs_confirmation"] is True
+    assert result["proposed_changes"] == []
+    assert result["execution_schedule_changes"] == []
+
+
+def test_baseline_assignee_can_match_but_cannot_become_meeting_fact():
+    snapshot = _snapshot()
+    snapshot["workstreams"][0]["key_tasks"][0]["execution_schedules"][0]["assignee"] = "张三"
+    payload = _payload()
+    payload["project_matches"][0]["project_evidence"].append({
+        "source_object": "execution_schedule:30",
+        "field": "assignee",
+        "value": "张三",
+    })
+
+    result = normalize_project_meeting_agent_result(MeetingAgentFinal.model_validate(payload), DOCUMENT, snapshot)
+
+    assert "assignee" not in result["meeting_facts"][0]["fields"]
+    assert result["project_matches"][0]["project_evidence"][-1]["value"] == "张三"
+    assert result["proposed_changes"][0]["requires_confirmation"] is True
+
+
+def test_overdue_baseline_plus_continuing_meeting_fact_creates_inference_delta_only():
+    snapshot = _snapshot()
+    snapshot["workstreams"][0]["key_tasks"][0]["execution_schedules"][0]["due_date"] = "2026-08-01"
+    payload = _payload()
+    payload["meeting_facts"][0] = {
+        "fact_id": "F001",
+        "fact_type": "progress",
+        "content": "计划仍在进行中",
+        "fields": {
+            "status": {
+                "value": "in_progress",
+                "raw_text": "进行中",
+                "evidence": [_span("进行中")],
+                "provenance": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"},
+            }
+        },
+        "meeting_evidence": [_span("计划仍在进行中")],
+        "confidence": 0.9,
+        "needs_confirmation": False,
+    }
+    payload["project_matches"][0]["project_evidence"] = [{
+        "source_object": "execution_schedule:30",
+        "field": "due_date",
+        "value": "2026-08-01",
+    }]
+    payload["project_deltas"][0]["delta_type"] = "SCHEDULE_CHANGE"
+    payload["project_deltas"][0]["reasoning"] = "冻结截止日期已过，但会议仅说明仍在推进"
+
+    result = normalize_project_meeting_agent_result(
+        MeetingAgentFinal.model_validate(payload | {"proposed_changes": []}),
+        DOCUMENT,
+        snapshot,
+    )
+
+    assert result["meeting_facts"][0]["meeting_evidence"][0]["quote"] == "计划仍在进行中"
+    assert result["project_matches"][0]["project_evidence"][0]["field"] == "due_date"
+    assert result["project_deltas"][0]["delta_type"] == "SCHEDULE_CHANGE"
+    assert result["project_deltas"][0]["reasoning"] == "冻结截止日期已过，但会议仅说明仍在推进"
+    assert result["proposed_changes"] == []
+    assert result["execution_schedule_changes"] == []

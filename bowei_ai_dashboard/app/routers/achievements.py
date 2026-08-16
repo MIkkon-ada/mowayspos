@@ -14,6 +14,8 @@ from ..permissions import (
 from ..services.notify import person_id_for_name as _pid_for_name
 from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
+from ..services.key_task_execution import record_execution_event
+from ..time_utils import utc_now
 
 router = APIRouter(prefix="/api/achievements", tags=["achievements"])
 
@@ -115,6 +117,26 @@ def create_achievement(
     db.add(row)
     db.flush()
     crud.log(db, current_user, "achievement_create", "achievement", row.id, {}, crud.to_dict(row))
+    if row.related_subtask_id is not None:
+        account = db.query(models.Account).filter(models.Account.username == current_user).first()
+        now = utc_now()
+        record_execution_event(
+            db,
+            project_id=project_id,
+            key_task_id=row.related_subtask_id,
+            event_type="achievement_created",
+            source_type="achievement",
+            source_id=row.id,
+            dedupe_key=f"achievement:{row.id}:created",
+            actor_person_id=account.person_id if account else None,
+            actor_name=current_user,
+            occurred_at=row.created_at or now,
+            confirmed_at=now,
+            effective_at=now,
+            affects_current_progress=False,
+            progress_summary=row.name,
+            display_payload={"achievement_id": row.id, "version": row.version},
+        )
     db.commit()
     db.refresh(row)
     return crud.to_dict(row)

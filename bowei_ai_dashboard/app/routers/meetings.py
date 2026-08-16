@@ -76,6 +76,7 @@ from ..services.meeting_progress_review import (
     normalize_review_candidates,
     parse_named_reports,
 )
+from ..services.key_task_execution import record_execution_event
 from ..time_utils import utc_now
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
@@ -1489,6 +1490,7 @@ def confirm_progress_review(
     task_updated = False
     subtask = db.get(models.SubTask, review.baseline_subtask_id) if review.baseline_subtask_id else None
     parent = db.get(models.Task, subtask.task_id) if subtask else None
+    before_status = subtask.status if subtask else None
     if review.baseline_subtask_id and (not subtask or not parent or parent.project_id != project_id):
         raise HTTPException(409, "review target subtask is not part of this project")
 
@@ -1520,6 +1522,36 @@ def confirm_progress_review(
     review.review_status = "accepted"
     review.reviewer_person_id = account.person_id if account else None
     review.reviewed_at = utc_now()
+    if subtask and parent and project_id is not None:
+        summary = (review.report_text or review.evidence_quote or "").strip()
+        affects_current_progress = bool(
+            summary and review.status not in {"not_mentioned", "unknown", ""}
+        )
+        record_execution_event(
+            db,
+            project_id=project_id,
+            key_task_id=subtask.id,
+            event_type="meeting_confirmation",
+            source_type="meeting_progress_review",
+            source_id=review.id,
+            dedupe_key=f"meeting_progress_review:{review.id}:confirmed",
+            actor_person_id=review.reviewer_person_id,
+            actor_name=context.get("name") or current_user,
+            occurred_at=meeting.created_at or review.created_at or review.reviewed_at,
+            confirmed_at=review.reviewed_at,
+            effective_at=review.reviewed_at,
+            affects_current_progress=affects_current_progress,
+            status_before=before_status,
+            status_after=subtask.status,
+            progress_summary=summary,
+            next_step=None,
+            display_payload={
+                "meeting_id": meeting.id,
+                "meeting_title": meeting.title,
+                "evidence_quote": review.evidence_quote,
+                "review_comment": review.review_comment,
+            },
+        )
     db.commit()
     db.refresh(review)
     result = crud.to_dict(review)

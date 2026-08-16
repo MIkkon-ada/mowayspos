@@ -30,6 +30,7 @@ from ..time_utils import utc_now
 from ..services.notify import person_id_for_name as _pid_for_name
 from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
+from ..services.key_task_execution import record_execution_event
 
 router = APIRouter(prefix="/api/issues", tags=["issues"])
 _CLOSED_STATUSES = {"已关闭", "已决策", "已解决", "关闭"}
@@ -273,6 +274,26 @@ def create_issue(
     db.add(row)
     db.flush()
     crud.log(db, current_user, "issue_create", "issue", row.id, {}, crud.to_dict(row))
+    if row.related_subtask_id is not None:
+        account = db.query(models.Account).filter(models.Account.username == current_user).first()
+        now = utc_now()
+        record_execution_event(
+            db,
+            project_id=project_id,
+            key_task_id=row.related_subtask_id,
+            event_type="issue_created",
+            source_type="issue",
+            source_id=row.id,
+            dedupe_key=f"issue:{row.id}:created",
+            actor_person_id=account.person_id if account else None,
+            actor_name=context.get("name") or current_user,
+            occurred_at=row.created_at or now,
+            confirmed_at=now,
+            effective_at=now,
+            affects_current_progress=False,
+            progress_summary=row.description,
+            display_payload={"issue_id": row.id, "priority": row.priority},
+        )
 
     # 通知项目负责人/统筹人
     from ..services.notify import send as _notify, person_name_for_account, person_id_for_account, project_owner_ids
@@ -377,6 +398,27 @@ def update_issue(
     _sync_issue_closed_at(row)
     row.edit_count = (row.edit_count or 0) + 1
     crud.log(db, current_user, "issue_update", "issue", row.id, before, payload.model_dump(), project_id=project_id)
+    event_project_id = row.project_id or project_id
+    if row.related_subtask_id is not None and event_project_id is not None:
+        account = db.query(models.Account).filter(models.Account.username == current_user).first()
+        now = utc_now()
+        record_execution_event(
+            db,
+            project_id=event_project_id,
+            key_task_id=row.related_subtask_id,
+            event_type="issue_updated",
+            source_type="issue",
+            source_id=row.id,
+            dedupe_key=f"issue:{row.id}:update:{row.edit_count}",
+            actor_person_id=account.person_id if account else None,
+            actor_name=context.get("name") or current_user,
+            occurred_at=now,
+            confirmed_at=now,
+            effective_at=now,
+            affects_current_progress=False,
+            progress_summary=row.description,
+            display_payload={"issue_id": row.id, "status": row.status, "priority": row.priority},
+        )
     db.commit()
     return crud.to_dict(row)
 

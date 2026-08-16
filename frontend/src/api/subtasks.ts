@@ -14,9 +14,15 @@ export type SubTaskPayload = {
   title: string
   assignee: string
   plan_time: string
+  start_date?: string | null
   status: string
   completion_criteria: string
   notes: string
+  collaborator_ids?: number[]
+  due_kind?: 'exact' | 'fuzzy' | 'unknown'
+  due_date?: string | null
+  due_label?: string | null
+  due_reference_date?: string | null
 }
 
 /** alias：SubTaskPayload 即 KeyTaskPayload */

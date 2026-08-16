@@ -17,13 +17,18 @@ export type MonthlyPlan = {
   display_status: MonthPlanDisplayStatus
   is_overdue: boolean
   start_date: string | null
+  due_kind?: 'exact' | 'fuzzy' | 'unknown'
   due_date: string | null
+  due_label?: string | null
+  due_reference_date?: string | null
   completion_criteria: string
   progress_note: string
   risk_dependency: string
   actual_output: string
   delay_reason: string
   sort_order: number
+  is_archived?: boolean
+  latest_progress?: string | null
 }
 
 export type MonthlyPlanPayload = Omit<MonthlyPlan,

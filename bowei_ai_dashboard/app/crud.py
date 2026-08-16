@@ -68,8 +68,7 @@ def log(
     project_id: int | None = None,
     note: str = "",
 ):
-    db.add(
-        models.OperationLog(
+    row = models.OperationLog(
             project_id=project_id,
             operator=operator,
             action=action,
@@ -79,7 +78,8 @@ def log(
             before_json=json.dumps(before or {}, ensure_ascii=False),
             after_json=json.dumps(after or {}, ensure_ascii=False),
         )
-    )
+    db.add(row)
+    return row
 
 
 def update_model(obj, data: dict):

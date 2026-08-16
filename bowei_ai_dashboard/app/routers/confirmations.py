@@ -26,6 +26,7 @@ from ..permissions import (
 from ..time_utils import utc_now
 from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
+from ..services.key_task_execution import normalize_text_list, record_execution_event
 from ..services import policy as P
 from ..services import workflow as W
 from ..services import escalation as ESC
@@ -1483,6 +1484,130 @@ def confirm(
     row.confirm_status = SS.S_CONFIRMED
     row.confirmed_by = payload.operator
     row.confirmed_at = utc_now()
+
+    # Build confirmed execution events only after the authoritative writeback above.
+    # A submission may update several Key Tasks, so submission-level lineage stays
+    # nullable unless exactly one Key Task can be determined without guessing.
+    event_specs: dict[int, dict] = {}
+    if write_mode == "task_reports":
+        for report in data.get("task_reports") or []:
+            if not isinstance(report, dict):
+                continue
+            matched_id = report.get("matched_subtask_id")
+            if not matched_id:
+                continue
+            subtask = db.get(models.SubTask, int(matched_id))
+            if not subtask or subtask.is_deleted:
+                continue
+            completed = normalize_text_list(report.get("completed") or report.get("completed_items"))
+            next_steps = normalize_text_list(report.get("next_steps"))
+            summary = "；".join(completed)
+            if not summary and report.get("result_type") == RT.TYPE_SUBTASK_COMPLETE:
+                summary = "关键任务已确认完成"
+            event_specs[subtask.id] = {
+                "summary": summary,
+                "next_step": "；".join(next_steps),
+                "status_after": subtask.status,
+            }
+    else:
+        candidate_ids = []
+        if data.get("result_type") == RT.TYPE_SUBTASK_STATUS_UPDATE and data.get("subtask_id"):
+            candidate_ids.append(int(data["subtask_id"]))
+        if write_mode == "subtask_update" and target_subtask_id:
+            candidate_ids.append(int(target_subtask_id))
+        for subtask in db.query(models.SubTask).filter(models.SubTask.source_submission_id == row.id).all():
+            candidate_ids.append(subtask.id)
+        completed = normalize_text_list(data.get("completed_items"))
+        next_steps = normalize_text_list(data.get("next_steps"))
+        for subtask_id in set(candidate_ids):
+            subtask = db.get(models.SubTask, subtask_id)
+            if subtask and not subtask.is_deleted:
+                event_specs[subtask_id] = {
+                    "summary": "；".join(completed),
+                    "next_step": "；".join(next_steps),
+                    "status_after": subtask.status,
+                }
+
+    if len(event_specs) == 1:
+        row.related_subtask_id = next(iter(event_specs))
+
+    for subtask_id, event_data in event_specs.items():
+        subtask = db.get(models.SubTask, subtask_id)
+        parent = db.get(models.Task, subtask.task_id) if subtask else None
+        if not subtask or not parent or not parent.project_id:
+            continue
+        summary = event_data["summary"]
+        next_step = event_data["next_step"]
+        affects_current_progress = bool(summary or next_step)
+        record_execution_event(
+            db,
+            project_id=parent.project_id,
+            key_task_id=subtask.id,
+            event_type="work_submission",
+            source_type="update_submission",
+            source_id=row.id,
+            dedupe_key=f"update_submission:{row.id}:key-task:{subtask.id}",
+            actor_person_id=row.submitter_id,
+            actor_name=row.submitter or payload.operator,
+            occurred_at=row.created_at or now,
+            confirmed_at=row.confirmed_at,
+            effective_at=row.confirmed_at,
+            affects_current_progress=affects_current_progress,
+            status_after=event_data["status_after"],
+            progress_summary=summary,
+            next_step=next_step,
+            display_payload={"submission_title": row.title},
+        )
+
+    db.flush()
+    for achievement in db.query(models.Achievement).filter(
+        models.Achievement.source_submission_id == row.id,
+        models.Achievement.related_subtask_id.is_not(None),
+    ).all():
+        event_project_id = achievement.project_id or effective_project_id
+        if event_project_id is None:
+            continue
+        record_execution_event(
+            db,
+            project_id=event_project_id,
+            key_task_id=achievement.related_subtask_id,
+            event_type="achievement_created",
+            source_type="achievement",
+            source_id=achievement.id,
+            dedupe_key=f"achievement:{achievement.id}:created",
+            actor_person_id=row.submitter_id,
+            actor_name=row.submitter or payload.operator,
+            occurred_at=achievement.created_at or now,
+            confirmed_at=row.confirmed_at,
+            effective_at=row.confirmed_at,
+            affects_current_progress=False,
+            progress_summary=achievement.name,
+            display_payload={"achievement_id": achievement.id, "name": achievement.name},
+        )
+    for issue in db.query(models.Issue).filter(
+        models.Issue.source_submission_id == row.id,
+        models.Issue.related_subtask_id.is_not(None),
+    ).all():
+        event_project_id = issue.project_id or effective_project_id
+        if event_project_id is None:
+            continue
+        record_execution_event(
+            db,
+            project_id=event_project_id,
+            key_task_id=issue.related_subtask_id,
+            event_type="issue_created",
+            source_type="issue",
+            source_id=issue.id,
+            dedupe_key=f"issue:{issue.id}:created",
+            actor_person_id=row.submitter_id,
+            actor_name=row.submitter or payload.operator,
+            occurred_at=issue.created_at or now,
+            confirmed_at=row.confirmed_at,
+            effective_at=row.confirmed_at,
+            affects_current_progress=False,
+            progress_summary=issue.description,
+            display_payload={"issue_id": issue.id, "priority": issue.priority},
+        )
 
     if task_id:
         task_log_after = {

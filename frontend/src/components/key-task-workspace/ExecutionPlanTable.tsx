@@ -1,0 +1,11 @@
+import type { ExecutionPlan, KeyTaskWorkspace } from '../../api/keyTaskWorkspace'
+import { formatPlanTime, statusTone } from './workspaceFormat'
+
+export function ExecutionPlanTable({ plans, summary, onOpen }: { plans: ExecutionPlan[]; summary: KeyTaskWorkspace['plan_summary']; onOpen: (plan: ExecutionPlan) => void }) {
+  return <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm" aria-label="任务计划">
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="border-l-4 border-blue-600 pl-3 text-lg font-semibold text-slate-900">任务计划</h2><p className="text-sm text-slate-500">共{summary.total}项　已完成{summary.completed}　进行中{summary.in_progress}　未开始{summary.not_started}</p></div>
+    <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200"><table className="min-w-[920px] w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr><th className="px-4 py-3 font-medium">状态</th><th className="px-4 py-3 font-medium">计划事项</th><th className="px-4 py-3 font-medium">负责人</th><th className="px-4 py-3 font-medium">协助人</th><th className="px-4 py-3 font-medium">计划时间</th><th className="px-4 py-3 font-medium">最新进展</th></tr></thead><tbody>
+      {plans.length === 0 ? <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">尚未创建任务计划</td></tr> : plans.map((plan) => <tr key={plan.id} tabIndex={0} onClick={() => onOpen(plan)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpen(plan) } }} className="cursor-pointer border-t border-slate-100 text-slate-700 hover:bg-blue-50/50 focus:bg-blue-50/50 focus:outline-none"><td className="px-4 py-3"><span className={`rounded px-2 py-1 text-xs font-medium ${statusTone(plan.status)}`}>{plan.status || '未开始'}</span></td><td className="px-4 py-3 font-medium text-slate-900">{plan.title}</td><td className="px-4 py-3">{plan.assignee || '未指定'}</td><td className="px-4 py-3">{plan.collaborators.length ? plan.collaborators.join('、') : '—'}</td><td className="px-4 py-3 whitespace-nowrap">{formatPlanTime(plan)}</td><td className="max-w-xs truncate px-4 py-3">{plan.latest_progress || plan.progress_note || '暂无正式更新'}</td></tr>)}
+    </tbody></table></div>
+  </section>
+}

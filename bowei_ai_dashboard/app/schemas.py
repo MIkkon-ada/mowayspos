@@ -741,21 +741,58 @@ class KickoffStartConfirmPayload(BaseModel):
     review_comment: str = ""
 
 
+DueKind = Literal["exact", "fuzzy", "unknown"]
+
+
+def _validate_due_semantics(model):
+    kind = model.due_kind
+    label = (model.due_label or "").strip() or None
+    if kind is None:
+        kind = "exact" if model.due_date else ("fuzzy" if label else "unknown")
+    model.due_kind = kind
+    model.due_label = label
+    if kind == "exact":
+        if model.due_date is None:
+            raise ValueError("精确期限必须填写截止日期")
+        if label is not None:
+            raise ValueError("精确期限不能同时填写模糊期限")
+    elif kind == "fuzzy":
+        if model.due_date is not None:
+            raise ValueError("模糊期限不能保存为精确截止日期")
+        if label is None:
+            raise ValueError("模糊期限必须保留用户原始语义")
+        if label == "暂未确定":
+            raise ValueError("暂未确定不能作为日期语义保存")
+    else:
+        if model.due_date is not None or label is not None or model.due_reference_date is not None:
+            raise ValueError("未确定期限不能保存截止日期或显示语义")
+    start_date = getattr(model, "start_date", None)
+    if start_date and model.due_date and model.due_date < start_date:
+        raise ValueError("截止日期不得早于开始日期")
+    return model
+
+
 class ExecutionSchedulePayload(BaseModel):
     plan_type: Literal["week", "month"]
     title: str = Field(..., min_length=1, max_length=200)
-    start_date: date
-    due_date: date
+    start_date: date | None = None
+    due_kind: DueKind | None = None
+    due_date: date | None = None
+    due_label: str | None = Field(default=None, max_length=100)
+    due_reference_date: date | None = None
     assignee_id: int | None = None
     assignee: str = Field(default="", max_length=50)
+    collaborator_ids: list[int] = Field(default_factory=list)
     status: Literal["待开始", "进行中", "已完成", "已取消"] = "待开始"
     reminder_policy: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_date_range(self):
-        if self.due_date < self.start_date:
-            raise ValueError("截止日期不得早于开始日期")
-        return self
+        if self.assignee_id is not None and self.assignee_id in self.collaborator_ids:
+            raise ValueError("执行负责人不能同时作为协同人")
+        if len(self.collaborator_ids) != len(set(self.collaborator_ids)):
+            raise ValueError("协同人不能重复")
+        return _validate_due_semantics(self)
 
 
 MonthPlanStatus = Literal["未开始", "进行中", "暂缓", "已完成", "已取消"]
@@ -769,13 +806,17 @@ class MonthPlanCreatePayload(BaseModel):
     collaborator_ids: list[int] = Field(default_factory=list)
     status: MonthPlanStatus = "未开始"
     start_date: date | None = None
+    due_kind: DueKind | None = None
     due_date: date | None = None
+    due_label: str | None = Field(default=None, max_length=100)
+    due_reference_date: date | None = None
     completion_criteria: str = ""
     progress_note: str = ""
     risk_dependency: str = ""
     actual_output: str = ""
     delay_reason: str = ""
     sort_order: int = 0
+    is_archived: bool = False
 
     @field_validator("title", "expected_output")
     @classmethod
@@ -787,17 +828,13 @@ class MonthPlanCreatePayload(BaseModel):
 
     @model_validator(mode="after")
     def validate_month_plan(self):
-        if bool(self.start_date) != bool(self.due_date):
-            raise ValueError("开始日期和截止日期需同时填写")
-        if self.start_date and self.due_date and self.due_date < self.start_date:
-            raise ValueError("截止日期不得早于开始日期")
         if self.status == "已完成" and not self.actual_output.strip():
             raise ValueError("已完成的月计划必须填写实际产出")
         if self.assignee_id in self.collaborator_ids:
             raise ValueError("执行负责人不能同时作为协作人")
         if len(self.collaborator_ids) != len(set(self.collaborator_ids)):
             raise ValueError("协作人不能重复")
-        return self
+        return _validate_due_semantics(self)
 
 
 class MonthPlanUpdatePayload(BaseModel):
@@ -808,23 +845,55 @@ class MonthPlanUpdatePayload(BaseModel):
     collaborator_ids: list[int] | None = None
     status: MonthPlanStatus | None = None
     start_date: date | None = None
+    due_kind: DueKind | None = None
     due_date: date | None = None
+    due_label: str | None = Field(default=None, max_length=100)
+    due_reference_date: date | None = None
     completion_criteria: str | None = None
     progress_note: str | None = None
     risk_dependency: str | None = None
     actual_output: str | None = None
     delay_reason: str | None = None
     sort_order: int | None = None
+    is_archived: bool | None = None
 
 
 class SubTaskPayload(BaseModel):
     """关键任务(KeyTask)创建/更新参数 — 对应物理表 subtasks"""
     title: str = Field(..., max_length=200)
     assignee: str = Field(..., max_length=50)
+    collaborator_ids: list[int] = Field(default_factory=list)
     plan_time: str = Field("", max_length=50)
+    start_date: date | None = None
+    due_kind: DueKind | None = None
+    due_date: date | None = None
+    due_label: str | None = Field(default=None, max_length=100)
+    due_reference_date: date | None = None
     status: str = Field("未开始", max_length=20)
     completion_criteria: str = ""
     notes: str = ""
+
+    @model_validator(mode="after")
+    def validate_key_task(self):
+        if len(self.collaborator_ids) != len(set(self.collaborator_ids)):
+            raise ValueError("协同人不能重复")
+        return _validate_due_semantics(self)
+
+
+class KeyTaskCompletionRequest(BaseModel):
+    note: str = Field(default="", max_length=500)
+
+
+class KeyTaskReopenRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def reason_cannot_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("重新打开原因不能为空")
+        return value
 
 # alias：SubTaskPayload 即 KeyTaskPayload
 KeyTaskPayload = SubTaskPayload

@@ -791,7 +791,14 @@ class SubTask(Base, TimestampMixin):
     title = Column(String(200), nullable=False)
     assignee = Column(String(50), nullable=False, index=True)
     assignee_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    collaborator_ids = Column(JSON, nullable=False, default=list, server_default="[]")
     plan_time = Column(String(20), default="")
+    # Structured execution dates coexist with the legacy plan_time display text.
+    start_date = Column(Date, nullable=True, index=True)
+    due_kind = Column(String(10), nullable=False, default="unknown", server_default="unknown", index=True)
+    due_date = Column(Date, nullable=True, index=True)
+    due_label = Column(String(100), nullable=True)
+    due_reference_date = Column(Date, nullable=True, index=True)
     status = Column(String(20), default="未开始", index=True)
     completion_criteria = Column(Text, default="")
     notes = Column(Text, default="")
@@ -838,6 +845,9 @@ class ExecutionSchedule(Base, TimestampMixin):
     title = Column(String(200), nullable=False)
     start_date = Column(Date, nullable=True, index=True)
     due_date = Column(Date, nullable=True, index=True)
+    due_kind = Column(String(10), nullable=False, default="unknown", server_default="unknown", index=True)
+    due_label = Column(String(100), nullable=True)
+    due_reference_date = Column(Date, nullable=True, index=True)
     assignee = Column(String(50), nullable=False, default="")
     assignee_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
     status = Column(String(20), nullable=False, default="待开始", index=True)
@@ -853,6 +863,52 @@ class ExecutionSchedule(Base, TimestampMixin):
     created_by = Column(String(50), nullable=False, default="")
     updated_by = Column(String(50), nullable=False, default="")
     is_deleted = Column(Boolean, nullable=False, default=False, index=True)
+    is_archived = Column(Boolean, nullable=False, default=False, server_default=false(), index=True)
+
+
+class KeyTaskExecutionEvent(Base):
+    """Append-only projection for the confirmed Key Task execution timeline."""
+
+    __tablename__ = "key_task_execution_events"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="uq_key_task_execution_event_dedupe_key"),
+        Index(
+            "ix_key_task_execution_events_current_progress",
+            "key_task_id",
+            "authority",
+            "affects_current_progress",
+            "effective_at",
+            "id",
+        ),
+        Index(
+            "ix_key_task_execution_events_timeline",
+            "key_task_id",
+            "occurred_at",
+            "id",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    key_task_id = Column(Integer, ForeignKey("subtasks.id"), nullable=False, index=True)
+    execution_plan_id = Column(Integer, ForeignKey("execution_schedules.id"), nullable=True, index=True)
+    event_type = Column(String(50), nullable=False, index=True)
+    source_type = Column(String(50), nullable=False, index=True)
+    source_id = Column(Integer, nullable=False, index=True)
+    dedupe_key = Column(String(200), nullable=False)
+    actor_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    actor_name_snapshot = Column(String(100), nullable=False, default="", server_default="")
+    occurred_at = Column(DateTime, nullable=False, index=True)
+    confirmed_at = Column(DateTime, nullable=False, index=True)
+    effective_at = Column(DateTime, nullable=False, index=True)
+    affects_current_progress = Column(Boolean, nullable=False, default=False, server_default=false(), index=True)
+    status_before = Column(String(40), nullable=True)
+    status_after = Column(String(40), nullable=True)
+    progress_summary = Column(Text, nullable=True)
+    next_step = Column(Text, nullable=True)
+    display_payload_json = Column(Text, nullable=True)
+    authority = Column(String(30), nullable=False, default="confirmed", server_default="confirmed", index=True)
+    created_at = Column(DateTime, nullable=False, default=now, index=True)
 
 
 class ExecutionScheduleReminder(Base, TimestampMixin):

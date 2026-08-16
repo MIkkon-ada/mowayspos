@@ -373,7 +373,14 @@ export type SubTaskItem = {
   title: string
   assignee: string
   assignee_id?: number | null
+  collaborator_ids?: number[]
+  collaborators?: string[]
   plan_time: string
+  start_date?: string | null
+  due_kind?: 'exact' | 'fuzzy' | 'unknown'
+  due_date?: string | null
+  due_label?: string | null
+  due_reference_date?: string | null
   status: string
   completion_criteria?: string
   notes?: string

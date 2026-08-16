@@ -219,8 +219,8 @@ def test_related_task_id_still_points_to_parent_task():
     assert issue.related_subtask_id == team["subtask"].id
 
 
-def test_update_submissions_related_subtask_id_not_written():
-    """本轮不写 update_submissions.related_subtask_id."""
+def test_update_submissions_related_subtask_id_written_when_assignment_is_unambiguous():
+    """单一 Key Task 确认回填时补齐 update_submissions.related_subtask_id。"""
     db = _make_session()
     team = _seed_execution_team(db)
 
@@ -246,7 +246,7 @@ def test_update_submissions_related_subtask_id_not_written():
             current_user="owner", db=db)
 
     row = db.get(models.UpdateSubmission, submission_id)
-    assert row.related_subtask_id is None
+    assert row.related_subtask_id == team["subtask"].id
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -609,8 +609,8 @@ def test_confirmed_issue_read_includes_related_subtask_id():
 # 结构测试
 # ═══════════════════════════════════════════════════════════════════
 
-def test_confirmations_py_does_not_write_update_submissions_related_subtask_id():
-    """confirmations.py 不写 update_submissions.related_subtask_id."""
+def test_confirmations_py_only_writes_deterministic_update_submission_lineage():
+    """confirmations.py 只在单一 Key Task 可确定时写入 lineage。"""
     import ast
     from pathlib import Path
 
@@ -645,10 +645,7 @@ def test_confirmations_py_does_not_write_update_submissions_related_subtask_id()
 
     v = RowSubtaskIdVisitor()
     v.visit(tree)
-    # N4-P2-E 严格禁止写 row.related_subtask_id
-    assert v.assignments == [], (
-        f"confirmations.py must not write row.related_subtask_id, found: {v.assignments}"
-    )
+    assert len(v.assignments) == 1, v.assignments
 
 
 def test_no_new_migration():

@@ -17,7 +17,7 @@ test('shared key task workspace owns both detail entry points', () => {
   assert.match(workspace, /ExecutionTimeline/)
   assert.match(personal, /KeyTaskExecutionWorkspace/)
   assert.match(management, /KeyTaskExecutionWorkspace/)
-  assert.match(page, /SHOW_EXECUTION_DETAIL = true/)
+  assert.match(page, /viewMode === 'execution' && selectedSubTask/)
 })
 
 test('execution plan table has approved columns, row click, and no operation column', () => {

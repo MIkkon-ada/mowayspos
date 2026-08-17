@@ -320,7 +320,7 @@ test('V2 table is a compact data table without a fake empty spreadsheet canvas',
 
   assert.match(css, /\.v2-sheet-frame/)
   assert.doesNotMatch(css, /\.v2-task-card__index/)
-  assert.match(css, /width:\s*1180px/)
+  assert.match(css, /width:\s*1110px/)
   assert.match(source, /<col style=\{\{ width: 300 \}\} \/>/)
   assert.match(source, /<col style=\{\{ width: 360 \}\} \/>/)
   assert.match(source, /<col style=\{\{ width: 80 \}\} \/>/)

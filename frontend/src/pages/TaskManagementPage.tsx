@@ -127,6 +127,8 @@ const TASK_PROJECT_CONTEXT_REQUIRED_MESSAGE = '请先选择项目后查看工作
 const TASK_PROJECT_CONTEXT_EMPTY_MESSAGE = '当前没有可查看的项目工作推进表'
 const TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE = '当前入口缺少项目上下文，请从项目进入工作推进表，或先选择项目。'
 const TASK_PROJECT_PERMISSION_DENIED_MESSAGE = '你没有权限查看该项目工作推进表。'
+// Key Task rows open the shared execution workspace used by “我的任务”.
+const SHOW_EXECUTION_DETAIL = true
 function avatarColor(name: string) {
   let h = 0
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff
@@ -556,7 +558,7 @@ export function TaskManagementPage() {
   }
 
   function focusSubTask(st: SubTaskItem, opts?: { keepTask?: boolean }) {
-    setViewMode('execution')
+    if (SHOW_EXECUTION_DETAIL) setViewMode('execution')
     ensureProjectMembersLoaded(projectForSubTask(resolvedTaskProjects, tasks, st)?.id)
     setSelectedSubTask(null)
     setSubDetailLoading(true)
@@ -958,13 +960,15 @@ function handleFormSave(payload: TaskPayload) {
           >
             表格视图
           </button>
-          <button
-            type="button"
-            onClick={() => setViewMode('execution')}
-            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'execution' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-          >
-            执行详情
-          </button>
+          {SHOW_EXECUTION_DETAIL && (
+            <button
+              type="button"
+              onClick={() => setViewMode('execution')}
+              className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'execution' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              执行详情
+            </button>
+          )}
         </div>
 
         {/* Filters */}
@@ -1058,7 +1062,7 @@ function handleFormSave(payload: TaskPayload) {
       </header>}
 
       {/* Main */}
-      {viewMode === 'execution' && selectedSubTask ? (
+      {SHOW_EXECUTION_DETAIL && viewMode === 'execution' && selectedSubTask ? (
         <KeyTaskExecutionDetailView
           project={focusedProject ?? focusedSubTaskProject}
           task={tasks.find((task) => task.id === selectedSubTask.task_id) ?? null}

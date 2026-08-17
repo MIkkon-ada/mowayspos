@@ -154,6 +154,36 @@ function toPayloadDraft(tasks: LocalTaskDraft[]): ProjectWorkProgressTaskDraft[]
     .filter((task) => task.title)
 }
 
+type PickerMenuPosition = {
+  top?: number
+  bottom?: number
+  left: number
+  width: number
+  maxHeight: number
+}
+
+function getPickerMenuPosition(rect: DOMRect, minWidth: number): PickerMenuPosition {
+  const viewportMargin = 12
+  const gap = 6
+  const viewportHeight = window.innerHeight
+  const viewportWidth = window.innerWidth
+  const spaceBelow = Math.max(0, viewportHeight - rect.bottom - viewportMargin)
+  const spaceAbove = Math.max(0, rect.top - viewportMargin)
+  const opensAbove = spaceBelow < 220 && spaceAbove > spaceBelow
+  const availableSpace = opensAbove ? spaceAbove : spaceBelow
+  const maxHeight = Math.max(96, Math.min(320, availableSpace))
+  const width = Math.min(Math.max(rect.width, minWidth), Math.max(160, viewportWidth - viewportMargin * 2))
+  const left = Math.min(Math.max(viewportMargin, rect.left), Math.max(viewportMargin, viewportWidth - width - viewportMargin))
+
+  return {
+    top: opensAbove ? undefined : rect.bottom + gap,
+    bottom: opensAbove ? viewportHeight - rect.top + gap : undefined,
+    left,
+    width,
+    maxHeight,
+  }
+}
+
 function AssigneePicker({
   people,
   value,
@@ -167,7 +197,7 @@ function AssigneePicker({
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null)
+  const [menuPosition, setMenuPosition] = useState<PickerMenuPosition | null>(null)
   const anchorRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const selected = people.find((person) => person.id === value)
@@ -197,7 +227,7 @@ function AssigneePicker({
     }
     const rect = anchorRef.current?.getBoundingClientRect()
     if (!rect) return
-    setMenuPosition({ top: rect.bottom + 6, left: rect.left, width: Math.max(rect.width, 240) })
+    setMenuPosition(getPickerMenuPosition(rect, 240))
     setOpen(true)
   }
 
@@ -213,13 +243,24 @@ function AssigneePicker({
         className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-left text-xs font-semibold text-slate-700 outline-none transition-colors hover:border-blue-300 hover:bg-white focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
       >
         <span className="truncate">{selected?.name ?? '请选择负责人'}</span>
-        <span className={`text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}>⌄</span>
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`shrink-0 h-4 w-4 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
+        >
+          <path d="m4 6 4 4 4-4" />
+        </svg>
       </button>
       {open && menuPosition && createPortal(
         <div
           ref={menuRef}
-          className="fixed z-[100] overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]"
-          style={{ top: menuPosition.top, left: menuPosition.left, width: menuPosition.width }}
+          className="fixed z-[100] flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]"
+          style={{ top: menuPosition.top, bottom: menuPosition.bottom, left: menuPosition.left, width: menuPosition.width, maxHeight: menuPosition.maxHeight }}
           role="listbox"
         >
           <input
@@ -229,7 +270,7 @@ function AssigneePicker({
             placeholder="搜索姓名或部门"
             className="mb-2 h-8 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs text-slate-700 outline-none focus:border-blue-400 focus:bg-white"
           />
-          <div className="max-h-52 space-y-0.5 overflow-y-auto">
+          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
             <button
               type="button"
               onClick={() => { onChange(''); setOpen(false); setQuery('') }}
@@ -272,7 +313,7 @@ function HelperPicker({
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; width: number } | null>(null)
+  const [menuPosition, setMenuPosition] = useState<PickerMenuPosition | null>(null)
   const anchorRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const selectedPeople = people.filter((person) => value.includes(person.id))
@@ -303,7 +344,7 @@ function HelperPicker({
     }
     const rect = anchorRef.current?.getBoundingClientRect()
     if (!rect) return
-    setMenuPosition({ top: rect.bottom + 6, left: rect.left, width: Math.max(rect.width, 260) })
+    setMenuPosition(getPickerMenuPosition(rect, 240))
     setOpen(true)
   }
 
@@ -321,13 +362,24 @@ function HelperPicker({
         <span className="min-w-0 truncate">
           {selectedPeople.length > 0 ? selectedPeople.map((person) => person.name).join('、') : '请选择协助人'}
         </span>
-        <span className={`shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}>⌄</span>
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`shrink-0 h-4 w-4 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
+        >
+          <path d="m4 6 4 4 4-4" />
+        </svg>
       </button>
       {open && menuPosition && createPortal(
         <div
           ref={menuRef}
-          className="fixed z-[100] overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]"
-          style={{ top: menuPosition.top, left: menuPosition.left, width: menuPosition.width }}
+          className="fixed z-[100] flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]"
+          style={{ top: menuPosition.top, bottom: menuPosition.bottom, left: menuPosition.left, width: menuPosition.width, maxHeight: menuPosition.maxHeight }}
           role="listbox"
           aria-multiselectable="true"
         >
@@ -350,7 +402,7 @@ function HelperPicker({
               </button>
             )}
           </div>
-          <div className="max-h-52 space-y-0.5 overflow-y-auto">
+          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
             {filtered.map((person) => {
               const checked = value.includes(person.id)
               return (
@@ -377,7 +429,7 @@ function HelperPicker({
   )
 }
 
-export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
+export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
   const [people, setPeople] = useState<Person[]>([])
   const [peopleLoading, setPeopleLoading] = useState(true)
   const [peopleError, setPeopleError] = useState('')
@@ -778,14 +830,7 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 sm:p-5"
-      onClick={() => !fillLoading && onClose()}
-    >
-      <div
-        className="owner-submit-workbench-shell flex w-full max-w-[1400px] min-h-[min(640px,calc(100vh-48px))] max-h-[calc(100vh-48px)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-slate-900 shadow-[0_18px_50px_rgba(15,23,42,0.16)]"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <section className="owner-submit-workbench-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-slate-900 shadow-[0_18px_50px_rgba(15,23,42,0.16)]">
         <header className="owner-submit-workbench-header flex min-h-[72px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 py-3 sm:px-7">
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2.5">
@@ -802,10 +847,13 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
             type="button"
             onClick={onClose}
             disabled={fillLoading}
-            className="ml-4 rounded-full px-3 py-2 text-xl leading-none text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
-            aria-label="关闭"
+            className="ml-4 inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+            aria-label="返回项目详情"
           >
-            ×
+            <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+            </svg>
+            返回项目详情
           </button>
         </header>
 
@@ -1114,7 +1162,6 @@ export function OwnerSubmitModal({ project, onClose, onSuccess }: Props) {
             {fillLoading ? '提交中…' : '提交立项审核'}
           </button>
         </footer>
-      </div>
-    </div>
+      </section>
   )
 }

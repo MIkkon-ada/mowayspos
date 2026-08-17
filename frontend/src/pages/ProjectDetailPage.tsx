@@ -175,9 +175,7 @@ export default function ProjectDetailPage() {
           onEdit={() => navigate(`/home/projects?edit=${project.id}`)}
           onDispatch={() => void handleDispatch()}
           dispatching={dispatching}
-          onOwnerSubmit={() => {
-            // TODO: owner submit logic - needs OwnerFillProject modal
-          }}
+          onOwnerSubmit={() => navigate(`/home/projects/${project.id}/owner-submit`)}
           onOpenApprovalMaterials={() => {
             setApprovalMaterialsProject(project)
           }}

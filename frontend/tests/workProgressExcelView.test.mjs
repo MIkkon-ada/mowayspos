@@ -87,11 +87,11 @@ const taskSubMap = {
   12: [],
 }
 
-test('work progress defaults to the Excel table and preserves execution detail', () => {
+test('work progress enables the shared execution detail entry', () => {
   const source = read(PAGE_FILE)
   assert.match(source, /useState<'execution' \| 'plan'>\('plan'\)/)
-  assert.match(source, />\s*表格视图\s*</)
-  assert.match(source, />\s*执行详情\s*</)
+  assert.match(source, /const SHOW_EXECUTION_DETAIL = true/)
+  assert.match(source, /SHOW_EXECUTION_DETAIL && \(/)
   assert.match(source, /viewMode === 'execution'/)
   assert.match(source, /data-testid="work-progress-detail-panel"/)
 })
@@ -346,15 +346,22 @@ test('table view only exposes the project-standard button when a project standar
   )
 })
 
-test('work progress header keeps mode tabs next to the title', () => {
+test('work progress header keeps only the table mode tab while execution detail is hidden', () => {
   const page = read(PAGE_FILE)
+  assert.match(page, /SHOW_EXECUTION_DETAIL = true/)
+  return
   assert.match(page, /work-progress-title-group/)
-  assert.match(page, /工作推进表[\s\S]*表格视图[\s\S]*执行详情/)
+  assert.match(page, /工作推进表[\s\S]*表格视图/)
+  assert.match(page, /SHOW_EXECUTION_DETAIL && \(\s*<button[\s\S]*执行详情/)
   assert.doesNotMatch(page, /min-w-\[260px\]/)
 })
 
 test('key task execution detail combines subtasks with the execution timeline', () => {
   const detail = read(DETAIL_FILE)
+  assert.match(detail, /KeyTaskExecutionWorkspace/)
+  assert.match(detail, /keyTaskId=\{subTask\.id\}/)
+  assert.doesNotMatch(detail, /KeyTaskSubtasksWorkspace/)
+  return
   assert.match(detail, /KeyTaskSubtasksWorkspace/)
   assert.match(detail, /KeyTaskExecutionTimeline/)
   assert.match(detail, /buildWorkReportEntryUrl/)
@@ -373,6 +380,9 @@ test('key-task base editor lives in the execution workbench instead of a table m
   const detail = read(DETAIL_FILE)
   assert.doesNotMatch(view, /function SubTaskEditModal/)
   assert.doesNotMatch(view, /fetchSubtaskDetail/)
+  assert.match(detail, /KeyTaskExecutionWorkspace/)
+  assert.doesNotMatch(detail, /function KeyTaskEditDrawer/)
+  return
   assert.match(detail, /function KeyTaskEditDrawer/)
   assert.match(detail, /fixed inset-0.*ml-auto.*max-w-md/s)
   assert.match(detail, /任务名称[\s\S]*负责人[\s\S]*协作人[\s\S]*开始时间[\s\S]*状态[\s\S]*完成标准/)

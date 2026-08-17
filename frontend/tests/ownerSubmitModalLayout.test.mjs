@@ -30,6 +30,20 @@ test('picker scrolling does not close the option list', () => {
   assert.match(source, /menuRef\.current\?\.contains\(event\.target as Node\)/)
 })
 
+test('picker menus flip upward and stay inside the viewport when the bottom area is short', () => {
+  assert.match(source, /function getPickerMenuPosition\(/)
+  assert.match(source, /spaceBelow/)
+  assert.match(source, /spaceAbove/)
+  assert.match(source, /bottom: menuPosition\.bottom/)
+  assert.match(source, /maxHeight: menuPosition\.maxHeight/)
+  assert.match(source, /min-h-0 flex-1[^"]*overflow-y-auto/)
+})
+
+test('picker triggers use a stable SVG chevron instead of a font glyph', () => {
+  assert.equal((source.match(/<svg[^>]+className=\{`shrink-0 h-4 w-4/g) ?? []).length, 2)
+  assert.doesNotMatch(source, /rotate-180[^>]*>⌄</)
+})
+
 test('notes column receives a wide share without truncating its editor', () => {
   assert.match(source, /table-fixed/)
   assert.match(source, /w-\[24%\][^\n]*验收标准 \/ 备注/)
@@ -47,8 +61,8 @@ test('expanded task header inputs use compact workbench styling', () => {
 })
 
 test('workbench uses a single-column project summary and full-width plan', () => {
-  assert.match(workbenchShellClassName, /w-full/)
-  assert.match(workbenchShellClassName, /max-w-\[1400px\]/)
+  assert.match(workbenchShellClassName, /min-h-0/)
+  assert.match(workbenchShellClassName, /flex-1/)
   assert.match(source, /填写项目方案 — \{project\.name\}/)
   assert.match(source, /完善项目计划内容，确认后提交企业教练审核/)
   assert.match(source, /owner-submit-project-summary/)
@@ -58,9 +72,9 @@ test('workbench uses a single-column project summary and full-width plan', () =>
   assert.doesNotMatch(source, /disabled[\s\S]{0,120}value=\{project\.name\}/)
 })
 
-test('workbench shell sizes to content with a viewport-safe main scroll boundary', () => {
-  assert.match(workbenchShellClassName, /min-h-\[min\(640px,calc\(100vh-48px\)\)\]/)
-  assert.match(workbenchShellClassName, /max-h-\[calc\(100vh-48px\)\]/)
+test('workbench is page-local while retaining a scrollable main boundary', () => {
+  assert.doesNotMatch(source, /fixed inset-0/)
+  assert.doesNotMatch(workbenchShellClassName, /max-h-\[calc\(100vh-48px\)\]/)
   assert.doesNotMatch(workbenchShellClassName, /h-\[94vh\]/)
   assert.match(workbenchMainClassName, /min-h-0/)
   assert.match(workbenchMainClassName, /flex-1/)

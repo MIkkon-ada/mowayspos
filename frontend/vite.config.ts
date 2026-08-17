@@ -5,11 +5,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: '127.0.0.1',
-    port: 6001,
+    port: 6004,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8008',
-        changeOrigin: true,
+        // Local development uses the isolated safe backend launcher.
+        target: 'http://127.0.0.1:8011',
+        changeOrigin: false,
         ws: true,
       },
     },

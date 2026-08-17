@@ -32,6 +32,13 @@ test('key task header keeps owner, collaborators, and plan time on one aligned m
   }
 })
 
+test('workspace keeps its history scrollable inside the fixed application shell', () => {
+  const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
+
+  assert.match(workspace, /<main className="min-h-0 flex-1 overflow-y-auto bg-slate-50">/)
+  assert.doesNotMatch(workspace, /<main className="min-h-full bg-slate-50">/)
+})
+
 test('execution plan table has approved columns, row click, and no operation column', () => {
   const table = read('src/components/key-task-workspace/ExecutionPlanTable.tsx')
   for (const label of ['任务计划', '状态', '计划事项', '负责人', '协助人', '计划时间', '最新进展']) {

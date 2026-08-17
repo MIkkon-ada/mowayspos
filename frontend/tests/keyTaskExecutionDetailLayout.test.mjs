@@ -11,7 +11,7 @@ test('task-management keeps the shared key-task execution workspace behind its t
   const page = read('src/pages/TaskManagementPage.tsx')
   assert.match(detail, /KeyTaskExecutionWorkspace/)
   assert.match(detail, /keyTaskId=\{subTask\.id\}/)
-  assert.match(page, /SHOW_EXECUTION_DETAIL = false/)
+  assert.match(page, /SHOW_EXECUTION_DETAIL = true/)
   assert.match(page, /viewMode === 'execution' && selectedSubTask/)
   assert.match(page, /KeyTaskExecutionDetailView/)
 })

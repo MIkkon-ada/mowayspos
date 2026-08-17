@@ -127,8 +127,8 @@ const TASK_PROJECT_CONTEXT_REQUIRED_MESSAGE = '请先选择项目后查看工作
 const TASK_PROJECT_CONTEXT_EMPTY_MESSAGE = '当前没有可查看的项目工作推进表'
 const TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE = '当前入口缺少项目上下文，请从项目进入工作推进表，或先选择项目。'
 const TASK_PROJECT_PERMISSION_DENIED_MESSAGE = '你没有权限查看该项目工作推进表。'
-// Temporary switch: keep the shared execution workspace code available without exposing this entry.
-const SHOW_EXECUTION_DETAIL = false
+// The execution workspace is the default Key Task detail entry.
+const SHOW_EXECUTION_DETAIL = true
 function avatarColor(name: string) {
   let h = 0
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff

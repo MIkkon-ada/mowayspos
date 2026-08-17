@@ -108,7 +108,6 @@ def parse_standard_meeting_minutes(filename: str, content: bytes) -> dict[str, o
         agenda_lines
         and summary_lines
         and current_action_items
-        and prior_action_items
         and all(required_basic_fields)
         and organizer
         and copied_to

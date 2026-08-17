@@ -61,6 +61,11 @@ playwright-report/
 test-results/
 coverage/
 .pytest_cache/
+bowei_ai_dashboard/.pytest_tmp_*/
+
+# Runtime meeting attachments are stored outside Git.
+bowei_ai_dashboard/data/meeting_documents/
+*.docx
 
 # Local screenshots / temporary images
 *.png

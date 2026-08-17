@@ -80,10 +80,18 @@ class OpenAICompatibleChatAdapter:
             from openai import OpenAI
 
             client = OpenAI(api_key=api_key, base_url=model.base_url, timeout=timeout_seconds)
-            response = client.chat.completions.create(
-                model=model.model_name,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            request = {
+                "model": model.model_name,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            try:
+                config = json.loads(model.config_json or "{}")
+            except json.JSONDecodeError:
+                config = {}
+            max_output_tokens = config.get("max_output_tokens") if isinstance(config, dict) else None
+            if isinstance(max_output_tokens, int) and not isinstance(max_output_tokens, bool) and max_output_tokens > 0:
+                request["max_tokens"] = max_output_tokens
+            response = client.chat.completions.create(**request)
             return str(response.choices[0].message.content or "")
         except AIUpstreamError:
             raise

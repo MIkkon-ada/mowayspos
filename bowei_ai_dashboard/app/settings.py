@@ -7,6 +7,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv as _load_dotenv
+
 _DEFAULT_COOKIE_NAME = "bowei_session"
 _DEFAULT_COOKIE_SAMESITE = "lax"
 _DEFAULT_SESSION_TTL_DAYS = 7
@@ -23,6 +25,12 @@ _PASSWORDS_FILE = Path(__file__).resolve().parent.parent / "passwords.json"
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSEY = {"0", "false", "no", "off"}
 _SAMESITE_VALUES = {"lax", "strict", "none"}
+
+
+def load_local_env(path: Path | None = None) -> None:
+    """Load the local development env file without overriding real process env."""
+    env_path = path or Path(__file__).resolve().parents[1] / ".env"
+    _load_dotenv(dotenv_path=env_path, override=False)
 
 
 def parse_bool(raw: str | None, default: bool | None = None) -> bool:
@@ -136,6 +144,11 @@ class RuntimeSettings:
             and self.wecom_secret
             and self.wecom_redirect_uri
         )
+
+    @property
+    def wecom_directory_enabled(self) -> bool:
+        """企业微信通讯录同步是否可用；不依赖扫码登录回调地址。"""
+        return bool(self.wecom_corpid and self.wecom_secret)
 
 
 @dataclass(frozen=True)

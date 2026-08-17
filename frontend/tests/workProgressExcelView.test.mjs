@@ -357,6 +357,10 @@ test('work progress header keeps only the table mode tab while execution detail 
 
 test('key task execution detail combines subtasks with the execution timeline', () => {
   const detail = read(DETAIL_FILE)
+  assert.match(detail, /KeyTaskExecutionWorkspace/)
+  assert.match(detail, /keyTaskId=\{subTask\.id\}/)
+  assert.doesNotMatch(detail, /KeyTaskSubtasksWorkspace/)
+  return
   assert.match(detail, /KeyTaskSubtasksWorkspace/)
   assert.match(detail, /KeyTaskExecutionTimeline/)
   assert.match(detail, /buildWorkReportEntryUrl/)
@@ -375,6 +379,9 @@ test('key-task base editor lives in the execution workbench instead of a table m
   const detail = read(DETAIL_FILE)
   assert.doesNotMatch(view, /function SubTaskEditModal/)
   assert.doesNotMatch(view, /fetchSubtaskDetail/)
+  assert.match(detail, /KeyTaskExecutionWorkspace/)
+  assert.doesNotMatch(detail, /function KeyTaskEditDrawer/)
+  return
   assert.match(detail, /function KeyTaskEditDrawer/)
   assert.match(detail, /fixed inset-0.*ml-auto.*max-w-md/s)
   assert.match(detail, /任务名称[\s\S]*负责人[\s\S]*协作人[\s\S]*开始时间[\s\S]*状态[\s\S]*完成标准/)

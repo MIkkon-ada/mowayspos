@@ -6,11 +6,12 @@ import path from 'node:path'
 const root = path.resolve(import.meta.dirname, '..')
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 
-test('task-management detail enters the shared key-task execution workspace', () => {
+test('task-management keeps the shared key-task execution workspace behind its temporary entry switch', () => {
   const detail = read('src/components/task-management/KeyTaskExecutionDetailView.tsx')
   const page = read('src/pages/TaskManagementPage.tsx')
   assert.match(detail, /KeyTaskExecutionWorkspace/)
   assert.match(detail, /keyTaskId=\{subTask\.id\}/)
+  assert.match(page, /SHOW_EXECUTION_DETAIL = false/)
   assert.match(page, /viewMode === 'execution' && selectedSubTask/)
   assert.match(page, /KeyTaskExecutionDetailView/)
 })

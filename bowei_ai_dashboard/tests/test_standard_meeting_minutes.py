@@ -78,6 +78,53 @@ def test_returns_nonstandard_mode_when_required_sections_are_absent():
     assert parse_standard_meeting_minutes("notes.docx", output.getvalue())["is_standard_minutes"] is False
 
 
+def test_accepts_first_meeting_without_prior_action_items():
+    document = Document()
+    document.add_paragraph("博维管理咨询 AI升级与项目管理周会 会议纪要")
+    info = document.add_table(rows=0, cols=2)
+    for key, value in (
+        ("会议时间", "2026-07-27（周一）"),
+        ("会议地点", "线下会议室+腾讯会议（线上）"),
+        ("会议类型", "AI升级与项目管理专题（第一次会议）"),
+        ("会议主持人", "杨宇帆"),
+        ("与会者", "刘万超、邹奇敏、温会林"),
+    ):
+        cells = info.add_row().cells
+        cells[0].text = key
+        cells[1].text = value
+    document.add_paragraph("一、会议议程")
+    document.add_paragraph("1、梳理项目经理工作流程")
+    document.add_paragraph("二、会议小结与决议")
+    document.add_paragraph("本次会议明确项目推进方式")
+    document.add_paragraph("三、待办事项跟踪")
+    document.add_paragraph("（一）本周待办事项")
+    current = document.add_table(rows=1, cols=6)
+    for cell, value in zip(
+        current.rows[0].cells,
+        ["编号", "会议安排事项", "负责人", "追踪人", "完成时限", "来源/备注"],
+    ):
+        cell.text = value
+    for cell, value in zip(
+        current.add_row().cells,
+        ["本周-01", "完成流程梳理", "温会林", "", "2026-08-03", "本周新增"],
+    ):
+        cell.text = value
+    footer = document.add_table(rows=1, cols=4)
+    for cell, value in zip(footer.rows[0].cells, ["整理人", "吴肖", "抄送", "AI升级计划项目组成员"]):
+        cell.text = value
+    output = BytesIO()
+    document.save(output)
+
+    parsed = parse_standard_meeting_minutes("first-meeting.docx", output.getvalue())
+
+    assert parsed["is_standard_minutes"] is True
+    assert parsed["meeting_date"] == "2026-07-27"
+    assert parsed["location"] == "线下会议室+腾讯会议（线上）"
+    assert parsed["host"] == "杨宇帆"
+    assert parsed["participants"] == "刘万超、邹奇敏、温会林"
+    assert parsed["prior_action_items"] == []
+
+
 def test_rejects_a_partial_word_file_that_omits_required_standard_sections():
     document = Document()
     document.add_paragraph("AI项目落地周会 会议纪要")

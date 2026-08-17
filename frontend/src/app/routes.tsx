@@ -30,6 +30,7 @@ const SetupPage = lazy(() => import('../pages/SetupPage').then((m) => ({ default
 const ChangePasswordPage = lazy(() => import('../pages/ChangePasswordPage').then((m) => ({ default: m.ChangePasswordPage })))
 const ProjectManagementPage = lazy(() => import('../pages/ProjectManagementPage').then((m) => ({ default: m.ProjectManagementPage })))
 const ProjectDetailPage = lazy(() => import('../pages/ProjectDetailPage').then((m) => ({ default: m.default })))
+const ProjectOwnerSubmitPage = lazy(() => import('../pages/ProjectOwnerSubmitPage').then((m) => ({ default: m.ProjectOwnerSubmitPage })))
 const ProjectArchivePage = lazy(() => import('../pages/ProjectArchivePage').then((m) => ({ default: m.ProjectArchivePage })))
 const NoAccessPage = lazy(() => import('../pages/NoAccessPage').then((m) => ({ default: m.NoAccessPage })))
 const ClientPortalPlaceholderPage = lazy(() => import('../pages/ClientPortalPlaceholderPage').then((m) => ({ default: m.ClientPortalPlaceholderPage })))
@@ -192,6 +193,14 @@ export function AppRoutes() {
           <Route
             path="projects/:projectId/archive"
             element={<ProjectArchivePage />}
+          />
+          <Route
+            path="projects/:projectId/owner-submit"
+            element={
+              <RequireCapability mode="project_view">
+                <ProjectOwnerSubmitPage />
+              </RequireCapability>
+            }
           />
           <Route
             path="projects/:projectId"

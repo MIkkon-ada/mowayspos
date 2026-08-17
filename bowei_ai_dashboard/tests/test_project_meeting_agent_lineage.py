@@ -1,0 +1,338 @@
+from __future__ import annotations
+
+from copy import deepcopy
+
+from app.services.project_meeting_agent_contracts import MeetingAgentFinal
+from app.services.project_meeting_minutes import normalize_project_meeting_agent_result
+
+
+DOCUMENT = "客户清单已经完成，计划仍在进行中，截止日期为2026年8月20日，开始日期为2026-08-21，尽快处理，下周完成。"
+
+
+def _span(quote: str) -> dict:
+    start = DOCUMENT.index(quote)
+    return {"quote": quote, "char_start": start, "char_end": start + len(quote)}
+
+
+def _snapshot() -> dict:
+    return {
+        "project_id": 1,
+        "members": [],
+        "workstreams": [
+            {
+                "id": 10,
+                "key_task": "交付",
+                "key_tasks": [
+                    {
+                        "id": 20,
+                        "title": "客户清单",
+                        "status": "in_progress",
+                        "execution_schedules": [
+                            {"id": 30, "title": "客户清单第一版", "status": "in_progress", "due_date": "2026-08-20"}
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _payload(**overrides) -> dict:
+    fact = {
+        "fact_id": "F001", "fact_type": "completion", "content": "客户清单已经完成",
+        "fields": {
+            "status": {
+                "value": "completed", "raw_text": "已经完成", "evidence": [_span("已经完成")],
+                "provenance": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"},
+            }
+        },
+        "meeting_evidence": [_span("客户清单已经完成")], "confidence": 0.9, "needs_confirmation": False,
+    }
+    match = {
+        "match_id": "M001", "fact_id": "F001", "target_type": "execution_schedule", "target_id": 30,
+        "workstream_id": 10, "key_task_id": 20, "confidence": 0.9, "reasons": ["标题匹配"],
+        "project_evidence": [{"source_object": "execution_schedule:30", "field": "title", "value": "客户清单第一版"}],
+    }
+    delta = {"delta_id": "D001", "source_fact_id": "F001", "source_match_id": "M001", "delta_type": "PROGRESS_UPDATE", "reasoning": "项目基线仍为进行中"}
+    change = {
+        "change_id": "C001", "source_fact_id": "F001", "source_match_id": "M001", "source_delta_id": "D001",
+        "action": "update_execution_schedule", "target": {"project_id": 1, "workstream_id": 10, "key_task_id": 20, "execution_schedule_id": 30},
+        "before": {"status": "in_progress"}, "proposed": {"status": "completed"},
+        "field_sources": {"status": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"}},
+        "requires_confirmation": True,
+    }
+    payload = {
+        "meeting_info": {"title": "", "meeting_date": "", "meeting_type": "", "location": "", "host": "", "participants": [], "organizer": "", "copied_to": []},
+        "meeting_info_evidence": {}, "summary": "", "summary_evidence": [], "agenda_items": [], "decisions": [],
+        "completed_items": [], "next_steps": [], "risks": [], "open_questions": [], "task_updates": [],
+        "meeting_facts": [fact], "project_matches": [match], "project_deltas": [delta], "proposed_changes": [change],
+        "unmatched_items": [], "needs_confirmation": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _normalize(**overrides) -> dict:
+    return normalize_project_meeting_agent_result(MeetingAgentFinal.model_validate(_payload(**overrides)), DOCUMENT, _snapshot())
+
+
+def test_normalize_uses_field_level_word_evidence_and_deterministic_status_date_rules():
+    payload = _payload()
+    fact = payload["meeting_facts"][0]
+    fact["fields"]["due_date"] = {
+        "value": "2026-08-20", "raw_text": "2026年8月20日", "evidence": [_span("2026年8月20日")],
+        "provenance": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"},
+    }
+    fact["fields"]["assignee"] = {
+        "value": "张三", "raw_text": "张三", "evidence": [_span("已经完成")],
+        "provenance": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"},
+    }
+    fact["fields"]["start_date"] = {
+        "value": "2026-08-21", "raw_text": "2026-08-21", "evidence": [_span("2026-08-21")],
+        "provenance": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"},
+    }
+
+    result = _normalize(meeting_facts=payload["meeting_facts"])
+
+    fields = result["meeting_facts"][0]["fields"]
+    assert fields["status"]["value"] == "completed"
+    assert fields["due_date"]["value"] == "2026-08-20"
+    assert fields["start_date"]["value"] == "2026-08-21"
+    assert fields["assignee"]["validation"]["state"] == "blocked"
+    assert "raw_text" in fields["assignee"]["validation"]["errors"][0]
+
+
+def test_normalize_blocks_unknown_status_from_writable_projection():
+    payload = _payload()
+    payload["meeting_facts"][0]["fields"]["status"] = {
+        "value": "尽快处理", "raw_text": "尽快处理", "evidence": [_span("尽快处理")],
+        "provenance": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"},
+    }
+    payload["proposed_changes"][0]["proposed"] = {"status": "尽快处理"}
+
+    result = _normalize(
+        meeting_facts=payload["meeting_facts"],
+        proposed_changes=payload["proposed_changes"],
+    )
+
+    assert result["meeting_facts"][0]["fields"]["status"]["validation"]["state"] == "blocked"
+    assert result["proposed_changes"][0]["validation"]["state"] == "blocked"
+    assert result["execution_schedule_changes"] == []
+
+
+def test_normalize_blocks_relative_due_date_from_writable_projection():
+    payload = _payload()
+    payload["meeting_facts"][0]["fields"]["due_date"] = {
+        "value": "下周", "raw_text": "下周", "evidence": [_span("下周")],
+        "provenance": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"},
+    }
+    payload["proposed_changes"][0]["proposed"] = {"due_date": "下周"}
+    payload["proposed_changes"][0]["field_sources"] = {
+        "due_date": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"}
+    }
+
+    result = _normalize(
+        meeting_facts=payload["meeting_facts"],
+        proposed_changes=payload["proposed_changes"],
+    )
+
+    assert result["meeting_facts"][0]["fields"]["due_date"]["validation"]["state"] == "blocked"
+    assert result["proposed_changes"][0]["validation"]["state"] == "blocked"
+    assert result["execution_schedule_changes"] == []
+
+
+def test_normalize_preserves_unmatched_and_needs_confirmation_analysis_facts():
+    payload = _payload()
+    unmatched = deepcopy(payload["meeting_facts"][0])
+    unmatched["fact_id"] = "F002"
+    unmatched["fields"]["status"]["provenance"]["source_fact_id"] = "F002"
+    confirmation = deepcopy(payload["meeting_facts"][0])
+    confirmation["fact_id"] = "F003"
+    confirmation["fields"]["status"]["provenance"]["source_fact_id"] = "F003"
+    confirmation["needs_confirmation"] = True
+
+    result = _normalize(unmatched_items=[unmatched], needs_confirmation=[confirmation])
+
+    assert [item["fact_id"] for item in result["unmatched_items"]] == ["F002"]
+    assert [item["fact_id"] for item in result["needs_confirmation"]] == ["F003"]
+    assert result["meeting_draft"]["summary"] == ""
+
+
+def test_normalize_allows_inference_delta_without_fabricated_word_reasoning():
+    result = _normalize()
+
+    assert result["project_deltas"][0]["validation"]["state"] == "ready"
+    assert result["project_deltas"][0]["reasoning"] == "项目基线仍为进行中"
+    assert result["execution_schedule_changes"][0]["validation"]["state"] == "ready"
+
+
+def test_normalize_rejects_snapshot_external_targets_and_project_evidence():
+    payload = _payload()
+    payload["project_matches"][0]["target_id"] = 999
+    result = _normalize(project_matches=payload["project_matches"])
+    assert result["project_matches"][0]["validation"]["state"] == "blocked"
+
+    payload = _payload()
+    payload["project_matches"][0]["project_evidence"][0]["value"] = "伪造标题"
+    result = _normalize(project_matches=payload["project_matches"])
+    assert result["project_matches"][0]["validation"]["state"] == "blocked"
+
+
+def test_normalize_rejects_snapshot_target_with_wrong_existing_parent():
+    snapshot = _snapshot()
+    snapshot["workstreams"].append({"id": 11, "key_task": "其他工作", "key_tasks": [{"id": 21, "title": "其他任务", "execution_schedules": []}]})
+    payload = _payload()
+    payload["project_matches"][0]["workstream_id"] = 11
+    payload["proposed_changes"][0]["target"]["workstream_id"] = 11
+
+    result = normalize_project_meeting_agent_result(MeetingAgentFinal.model_validate(payload), DOCUMENT, snapshot)
+
+    assert result["project_matches"][0]["validation"]["state"] == "blocked"
+    assert result["proposed_changes"][0]["validation"]["state"] == "blocked"
+
+
+def test_normalize_rejects_change_target_that_differs_from_matched_schedule():
+    snapshot = _snapshot()
+    snapshot["workstreams"][0]["key_tasks"][0]["execution_schedules"].append(
+        {"id": 31, "title": "客户清单第二批", "status": "in_progress"}
+    )
+    payload = _payload()
+    payload["proposed_changes"][0]["target"]["execution_schedule_id"] = 31
+
+    result = normalize_project_meeting_agent_result(MeetingAgentFinal.model_validate(payload), DOCUMENT, snapshot)
+
+    assert result["project_matches"][0]["validation"]["state"] == "ready"
+    assert result["proposed_changes"][0]["validation"]["state"] == "blocked"
+    assert any(
+        "does not match project match target" in error
+        for error in result["proposed_changes"][0]["validation"]["errors"]
+    )
+
+
+def test_ambiguous_delta_cannot_project_a_writable_legacy_change():
+    payload = _payload()
+    payload["project_deltas"][0]["delta_type"] = "AMBIGUOUS"
+
+    result = _normalize(project_deltas=payload["project_deltas"])
+
+    assert result["proposed_changes"][0]["validation"]["state"] == "blocked"
+    assert result["execution_schedule_changes"] == []
+
+
+def test_baseline_provenance_must_exactly_reference_snapshot_field():
+    payload = _payload()
+    change = payload["proposed_changes"][0]
+    change["proposed"] = {"due_date": "2026-08-20"}
+    change["field_sources"] = {
+        "due_date": {"source_type": "project_baseline", "source_object": "execution_schedule:30", "source_field": "due_date", "usage": "inherit"}
+    }
+    result = _normalize(proposed_changes=[change])
+    assert result["proposed_changes"][0]["validation"]["state"] == "ready"
+
+    invalid = deepcopy(change)
+    invalid["field_sources"]["due_date"]["source_field"] = "status"
+    result = _normalize(proposed_changes=[invalid])
+    assert result["proposed_changes"][0]["validation"]["state"] == "blocked"
+
+
+def test_high_confidence_fact_match_creates_review_only_schedule_proposal():
+    result = _normalize()
+
+    fact = result["meeting_facts"][0]
+    match = result["project_matches"][0]
+    delta = result["project_deltas"][0]
+    change = result["proposed_changes"][0]
+    assert fact["fact_id"] == "F001"
+    assert fact["fields"]["status"]["evidence"][0]["quote"] == "已经完成"
+    assert match["match_id"] == "M001" and match["fact_id"] == fact["fact_id"]
+    assert match["project_evidence"][0] == {
+        "source_object": "execution_schedule:30",
+        "field": "title",
+        "value": "客户清单第一版",
+    }
+    assert delta["source_fact_id"] == fact["fact_id"]
+    assert delta["source_match_id"] == match["match_id"]
+    assert change["source_delta_id"] == delta["delta_id"]
+    assert change["requires_confirmation"] is True
+    assert result["execution_schedule_changes"][0]["validation"]["state"] == "ready"
+
+
+def test_similar_nonidentical_candidate_becomes_ambiguous_confirmation_item():
+    payload = _payload()
+    payload["project_matches"][0]["confidence"] = 0.55
+    payload["project_matches"][0]["reasons"] = ["标题相似但并不完全一致"]
+    payload["project_deltas"][0]["delta_type"] = "AMBIGUOUS"
+    payload["meeting_facts"][0]["needs_confirmation"] = True
+
+    result = _normalize(
+        meeting_facts=payload["meeting_facts"],
+        project_matches=payload["project_matches"],
+        project_deltas=payload["project_deltas"],
+        proposed_changes=[],
+    )
+
+    assert result["meeting_facts"][0]["fact_id"] == "F001"
+    assert result["project_matches"][0]["fact_id"] == "F001"
+    assert result["project_deltas"][0]["delta_type"] == "AMBIGUOUS"
+    assert result["meeting_facts"][0]["needs_confirmation"] is True
+    assert result["proposed_changes"] == []
+    assert result["execution_schedule_changes"] == []
+
+
+def test_baseline_assignee_can_match_but_cannot_become_meeting_fact():
+    snapshot = _snapshot()
+    snapshot["workstreams"][0]["key_tasks"][0]["execution_schedules"][0]["assignee"] = "张三"
+    payload = _payload()
+    payload["project_matches"][0]["project_evidence"].append({
+        "source_object": "execution_schedule:30",
+        "field": "assignee",
+        "value": "张三",
+    })
+
+    result = normalize_project_meeting_agent_result(MeetingAgentFinal.model_validate(payload), DOCUMENT, snapshot)
+
+    assert "assignee" not in result["meeting_facts"][0]["fields"]
+    assert result["project_matches"][0]["project_evidence"][-1]["value"] == "张三"
+    assert result["proposed_changes"][0]["requires_confirmation"] is True
+
+
+def test_overdue_baseline_plus_continuing_meeting_fact_creates_inference_delta_only():
+    snapshot = _snapshot()
+    snapshot["workstreams"][0]["key_tasks"][0]["execution_schedules"][0]["due_date"] = "2026-08-01"
+    payload = _payload()
+    payload["meeting_facts"][0] = {
+        "fact_id": "F001",
+        "fact_type": "progress",
+        "content": "计划仍在进行中",
+        "fields": {
+            "status": {
+                "value": "in_progress",
+                "raw_text": "进行中",
+                "evidence": [_span("进行中")],
+                "provenance": {"source_type": "meeting_fact", "source_fact_id": "F001", "usage": "new"},
+            }
+        },
+        "meeting_evidence": [_span("计划仍在进行中")],
+        "confidence": 0.9,
+        "needs_confirmation": False,
+    }
+    payload["project_matches"][0]["project_evidence"] = [{
+        "source_object": "execution_schedule:30",
+        "field": "due_date",
+        "value": "2026-08-01",
+    }]
+    payload["project_deltas"][0]["delta_type"] = "SCHEDULE_CHANGE"
+    payload["project_deltas"][0]["reasoning"] = "冻结截止日期已过，但会议仅说明仍在推进"
+
+    result = normalize_project_meeting_agent_result(
+        MeetingAgentFinal.model_validate(payload | {"proposed_changes": []}),
+        DOCUMENT,
+        snapshot,
+    )
+
+    assert result["meeting_facts"][0]["meeting_evidence"][0]["quote"] == "计划仍在进行中"
+    assert result["project_matches"][0]["project_evidence"][0]["field"] == "due_date"
+    assert result["project_deltas"][0]["delta_type"] == "SCHEDULE_CHANGE"
+    assert result["project_deltas"][0]["reasoning"] == "冻结截止日期已过，但会议仅说明仍在推进"
+    assert result["proposed_changes"] == []
+    assert result["execution_schedule_changes"] == []

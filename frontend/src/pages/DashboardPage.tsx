@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getOverview, exportWeeklyReport } from '../api/dashboard'
 import { ApiError } from '../api/client'
-import { OwnerSubmitModal } from '../features/settings/OwnerSubmitModal'
 import { toast } from '../utils/toast'
 import { useProject } from '../context/ProjectContext'
 import {
@@ -331,13 +330,9 @@ export function DashboardPage() {
     return () => document.removeEventListener('mousedown', handler)
   }, [showNotif])
 
-  // 负责人填报状态
-  const [showFillModal, setShowFillModal] = useState(false)
-  const [selectedFillProject, setSelectedFillProject] = useState<Project | null>(null)
-
   function openFillModal(project?: Project | null) {
-    setSelectedFillProject(project ?? null)
-    setShowFillModal(true)
+    const target = project ?? dashboardProject
+    if (target) navigate(`/home/projects/${target.id}/owner-submit`)
   }
 
   const now = new Date()
@@ -904,18 +899,6 @@ export function DashboardPage() {
         </>}
       </main>
 
-      {/* 负责人填报弹窗（复用 OwnerSubmitModal） */}
-      {showFillModal && (selectedFillProject ?? dashboardProject) && (
-        <OwnerSubmitModal
-          project={(selectedFillProject ?? dashboardProject) as Project}
-          onClose={() => { setShowFillModal(false); setSelectedFillProject(null) }}
-          onSuccess={(result) => {
-            setShowFillModal(false)
-            setSelectedFillProject(null)
-            if (!result.submitted_for_review) window.location.reload()
-          }}
-        />
-      )}
     </div>
   )
 }

@@ -176,7 +176,7 @@ test('data hook queries each active project with the fixed current user name', (
   assert.doesNotMatch(hook, /fetchSubtasksByAssignee\([^,]+,\s*null\)/)
 })
 
-test('task detail opens as a full page instead of the old right drawer', () => {
+test('task detail delegates to the shared key-task execution workspace', () => {
   const hook = read('src/features/my-tasks/useMyTasks.ts')
   const page = read('src/pages/MyTasksPage.tsx')
   const detail = read('src/pages/MyTaskDetailPage.tsx')
@@ -184,8 +184,9 @@ test('task detail opens as a full page instead of the old right drawer', () => {
   assert.doesNotMatch(page, /fetchSubtaskDetail/)
   assert.doesNotMatch(page, /MyTaskDetailDrawer|selectedRow|setSelectedRow/)
   assert.match(page, /navigate\(`\/member\/tasks\/\$\{row\.id\}/)
-  assert.match(detail, /fetchSubtaskDetail\(taskId, scopedProjectId\)/)
-  assert.doesNotMatch(detail, /patchSubTaskStatus|updateSubTask|deleteSubTask|createUpdate/)
+  assert.match(detail, /KeyTaskExecutionWorkspace/)
+  assert.match(detail, /keyTaskId=\{taskId\}/)
+  assert.doesNotMatch(detail, /fetchSubtaskDetail|patchSubTaskStatus|updateSubTask|deleteSubTask|createUpdate/)
 })
 
 test('my task detail requests retain the selected project scope and display context', () => {
@@ -197,15 +198,13 @@ test('my task detail requests retain the selected project scope and display cont
   assert.match(page, /state:\s*\{[\s\S]*projectId: row\.projectId[\s\S]*projectName: row\.projectName[\s\S]*workstreamName: row\.workstreamName/)
 })
 
-test('my task detail reports API failures accurately and lets the user retry', () => {
+test('my task detail preserves route scope for the shared workspace', () => {
   const detail = read('src/pages/MyTaskDetailPage.tsx')
 
   assert.match(detail, /useLocation/)
-  assert.match(detail, /fetchSubtaskDetail\(taskId, scopedProjectId\)/)
-  assert.match(detail, /error instanceof ApiError/)
-  assert.match(detail, /重新加载/)
-  assert.doesNotMatch(detail, /'未关联项目'/)
-  assert.doesNotMatch(detail, /'未关联重点工作'/)
+  assert.match(detail, /useSearchParams/)
+  assert.match(detail, /projectId=\{resolvedProjectId\}/)
+  assert.match(detail, /onBack=\{\(\) => navigate\('\/member\/tasks'\)\}/)
 })
 
 test('table keeps the exact personal-task columns and no unsupported metrics', () => {
@@ -253,20 +252,10 @@ test('task overflow menu is controlled and closes outside its trigger', () => {
   assert.match(table, /!menuRoot\.contains\(event\.target as Node\)/)
 })
 
-test('task detail page shows structure, deadline, closed-loop timeline, outcomes and issues', () => {
+test('my task detail uses the shared execution workspace instead of a second detail composition', () => {
   const detail = read('src/pages/MyTaskDetailPage.tsx')
-  const css = read('src/features/my-tasks/myTasks.css')
-  for (const token of ['my-task-detail-page', 'my-task-structure-card', 'my-task-structure-chain', 'my-task-structure-node', 'my-task-structure-deadline', 'my-task-loop-timeline', 'my-task-assets-card', 'my-task-issues-card']) {
-    assert.match(detail, new RegExp(token))
-  }
-  for (const label of ['任务结构', '项目', '重点工作', '关键任务', '截止日期', '闭环过程线', '提交内容', '处理结果', '成果', '问题']) {
-    assert.match(detail, new RegExp(label))
-  }
-  assert.doesNotMatch(detail, /负责人|贡献者/)
-  assert.match(css, /\.my-task-loop-card\s*\{[\s\S]*?font-size:\s*13px/s)
-  assert.match(css, /\.my-task-structure-chain\s*\{[\s\S]*?font-size:\s*13px/s)
-  assert.match(css, /\.my-task-structure-node::before\s*\{[\s\S]*?content:\s*''/s)
-  assert.match(css, /\.my-task-structure-index\s*\{[\s\S]*?border-radius:\s*50%/s)
+  assert.match(detail, /<KeyTaskExecutionWorkspace/)
+  assert.doesNotMatch(detail, /my-task-detail-page|my-task-loop-timeline|my-task-assets-card|my-task-issues-card/)
 })
 
 test('overflow menu opens upward only when the viewport lacks lower space', async () => {

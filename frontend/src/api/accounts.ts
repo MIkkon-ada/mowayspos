@@ -75,6 +75,43 @@ export function batchBindWecom(items: WecomBatchBindItem[]): Promise<AccountItem
   return apiPost<AccountItem[]>('/api/accounts/wecom-bind-batch', { items })
 }
 
+export type WecomDirectoryPreviewItem = {
+  userid: string
+  name: string
+  department_ids: number[]
+  department_path: string
+  position: string
+  matched_person_id: number | null
+  matched_person_name: string
+  match_type: 'exact' | 'name_suggestion' | 'new' | 'conflict'
+  needs_confirmation: boolean
+  current_department: string
+  current_position_title: string
+  department_source: 'wecom' | 'local'
+  position_source: 'wecom' | 'local'
+  wecom_department: string
+  wecom_position_title: string
+}
+
+export type WecomDirectoryPreview = {
+  items: WecomDirectoryPreviewItem[]
+  summary: { total: number; exact: number; needs_confirmation: number; new: number; conflict: number }
+}
+
+export function fetchWecomDirectory(): Promise<WecomDirectoryPreview> {
+  return apiGet<WecomDirectoryPreview>('/api/accounts/wecom-directory')
+}
+
+export type WecomDirectorySyncItem = {
+  wecom_userid: string
+  person_id?: number | null
+  create_person?: boolean
+}
+
+export function syncWecomDirectory(items: WecomDirectorySyncItem[]): Promise<{ synced: number; items: Array<{ person_id: number; person_name: string; wecom_userid: string }> }> {
+  return apiPost('/api/accounts/wecom-directory/sync', { items })
+}
+
 export function changeMyPassword(oldPassword: string, newPassword: string): Promise<{ ok: boolean }> {
   return apiPost<{ ok: boolean }>('/api/auth/change-password', {
     old_password: oldPassword,

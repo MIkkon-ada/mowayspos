@@ -56,6 +56,8 @@ python -m venv .venv
 - `LLM_API_KEY=...`
 - `LLM_BASE_URL=...`
 - `LLM_MODEL=...`
+- `WECOM_CORPID=...` 与 `WECOM_SECRET=...`（需要企业微信通讯录同步时）
+- `WECOM_AGENT_ID=...` 与 `WECOM_REDIRECT_URI=...`（需要企业微信扫码登录或消息推送时）
 
 启动服务：
 

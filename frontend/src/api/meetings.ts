@@ -258,6 +258,190 @@ export function extractMeetingDocumentText(
   return apiUpload<{ filename: string; text: string; standard_minutes?: StandardMeetingMinutes }>(`/api/meetings/extract-document-text?project_id=${projectId}`, fd)
 }
 
+export type ProjectMeetingFieldSource = {
+  source_type: 'meeting_fact' | 'project_baseline' | 'human_edit'
+  source_fact_id?: string
+  source_object?: string
+  source_field?: string
+  usage: 'new' | 'inherit' | 'override'
+}
+
+export type ProjectMeetingProposalLineage = {
+  schema_version: 1
+  change_id: string
+  action: 'update_execution_schedule' | 'create_execution_schedule'
+  target: {
+    project_id: number
+    workstream_id: number
+    key_task_id: number
+    execution_schedule_id?: number
+  }
+  requires_confirmation: true
+  source_fact_id: string
+  source_match_id?: string
+  source_delta_id: string
+  field_sources: Record<string, ProjectMeetingFieldSource>
+  meeting_evidence: Record<string, ProjectMeetingEvidenceSpan[]>
+  project_evidence: Array<{ source_object: string; field: string; value: unknown }>
+  delta: { delta_id?: string; delta_type: string; reasoning: string }
+  baseline_state: 'existing_target' | 'not_applicable_new_object'
+  before_baseline: Record<string, unknown>
+  parent_baseline: Record<string, unknown>
+  owner_edit_history: Array<{
+    field: string
+    before: unknown
+    after: unknown
+    editor_person_id: number
+    edited_at: string
+  }>
+}
+
+export type ProjectMeetingScheduleChange = {
+  id: number
+  action: 'update_execution_schedule' | 'create_execution_schedule'
+  target_id: number | null
+  parent_workstream_id: number | null
+  parent_subtask_id?: number | null
+  target?: {
+    project_id: number
+    workstream_id?: number
+    key_task_id?: number
+    execution_schedule_id?: number
+  }
+  before: Record<string, unknown>
+  proposed: Record<string, unknown>
+  evidence: Array<string | ProjectMeetingEvidenceSpan>
+  reason: string
+  confidence: number
+  validation: { state: 'ready' | 'blocked'; errors: string[] }
+  needs_confirmation?: boolean
+  execution_status: 'pending' | 'executed' | 'conflict'
+  lineage?: ProjectMeetingProposalLineage
+  conflict_reason?: string[]
+}
+
+export type ProjectMeetingEvidenceSpan = {
+  quote: string
+  char_start?: number
+  char_end?: number
+}
+
+export type ProjectMeetingEvidence = {
+  evidence: ProjectMeetingEvidenceSpan[]
+  validation: { state: 'ready' | 'blocked'; errors: string[] }
+}
+
+export type ProjectMeetingAgentFact = {
+  content: string
+  confidence?: number
+  needs_confirmation?: boolean
+  evidence: ProjectMeetingEvidenceSpan[]
+  validation: { state: 'ready' | 'blocked'; errors: string[] }
+}
+
+export type ProjectMeetingAgentAudit = {
+  model_code: string
+  invocation_log_ids: number[]
+  event_count: number
+  tool_call_count: number
+}
+
+export type ProjectMeetingRunStatus = {
+  id: number
+  project_id: number
+  status: 'queued' | 'analyzing' | 'pending_review' | 'failed' | string
+  stage: string
+  step_count: number
+  error_code: string
+  error_message: string
+  tool_trace?: unknown
+  audit: ProjectMeetingAgentAudit
+}
+
+export type ProjectMeetingRun = {
+  id: number
+  project_id: number
+  status: string
+  stage: string
+  step_count: number
+  error_code: string
+  error_message: string
+  tool_trace?: unknown
+  audit?: ProjectMeetingAgentAudit
+  meeting_id: number | null
+  meeting: MeetingItem | null
+  document?: { id?: number | null; original_name?: string; mime_type?: string; size_bytes?: number; content_hash?: string }
+  snapshot: {
+    project?: { id: number; name: string; code?: string }
+    members?: Array<{ person_id?: number; name: string; role?: string }>
+    workstreams?: Array<{ id: number; key_task: string; status?: string; key_tasks?: Array<{ id: number; title: string; status?: string; execution_schedules?: unknown[] }> }>
+    history?: { is_first_meeting: boolean; previous_meeting_ids: number[] }
+  }
+  result: {
+    meeting_draft?: Record<string, unknown>
+    meeting_info_evidence?: Record<string, ProjectMeetingEvidence>
+    summary_evidence?: ProjectMeetingEvidence
+    agenda_items?: ProjectMeetingAgentFact[]
+    decisions?: ProjectMeetingAgentFact[]
+    completed_items?: ProjectMeetingAgentFact[]
+    next_stage_work?: ProjectMeetingAgentFact[]
+    risks?: ProjectMeetingAgentFact[]
+    open_questions?: ProjectMeetingAgentFact[]
+    execution_schedule_changes?: ProjectMeetingScheduleChange[]
+  }
+  review_package?: { proposals: ProjectMeetingScheduleChange[] } | null
+}
+
+export function createProjectMeetingDocumentRun(projectId: number, file: File, meetingType = ''): Promise<ProjectMeetingRun> {
+  const form = new FormData()
+  form.append('project_id', String(projectId))
+  form.append('meeting_type', meetingType)
+  form.append('file', file, file.name)
+  return apiUpload<ProjectMeetingRun>('/api/meetings/document-runs', form)
+}
+
+export function fetchProjectMeetingDocumentRun(runId: number): Promise<ProjectMeetingRun> {
+  return apiGet<ProjectMeetingRun>(`/api/meetings/document-runs/${runId}`)
+}
+
+export function fetchProjectMeetingDocumentRunStatus(runId: number): Promise<ProjectMeetingRunStatus> {
+  return apiGet<ProjectMeetingRunStatus>(`/api/meetings/document-runs/${runId}/status`)
+}
+
+export async function pollProjectMeetingDocumentRun(
+  runId: number,
+  options: {
+    intervalMs?: number
+    maxAttempts?: number
+    onStatus?: (status: ProjectMeetingRunStatus) => void
+  } = {},
+): Promise<ProjectMeetingRunStatus> {
+  const intervalMs = options.intervalMs ?? 1000
+  const maxAttempts = options.maxAttempts ?? 120
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const status = await fetchProjectMeetingDocumentRunStatus(runId)
+    options.onStatus?.(status)
+    if (status.status === 'pending_review' || status.status === 'failed') return status
+    await new Promise<void>((resolve) => window.setTimeout(resolve, intervalMs))
+  }
+  throw new Error('会议纪要 Agent 分析超时，请稍后在会议列表查看结果')
+}
+
+export function fetchProjectMeetingReviewPackage(meetingId: number): Promise<ProjectMeetingRun> {
+  return apiGet<ProjectMeetingRun>(`/api/meetings/${meetingId}/review-package`)
+}
+
+export function reviewProjectMeeting(
+  meetingId: number,
+  payload: { action: 'publish' | 'apply_changes' | 'return'; reason?: string; proposal_ids?: number[] },
+): Promise<MeetingItem> {
+  return apiPost<MeetingItem>(`/api/meetings/${meetingId}/review`, payload)
+}
+
+export function projectMeetingDocumentDownloadUrl(meetingId: number): string {
+  return `/api/meetings/${meetingId}/document-export`
+}
+
 export type StandardMeetingMinutes = {
   is_standard_minutes: boolean
   title?: string

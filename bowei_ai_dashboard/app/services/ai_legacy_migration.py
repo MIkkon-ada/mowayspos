@@ -197,7 +197,7 @@ def import_legacy_llm_config(
     default_provider = str(config.get("default_provider") or "").strip().lower()
     primary_chat = chat_models.get(default_provider)
     if primary_chat is None and chat_models:
-        primary_chat = next(chat_models.values())
+        primary_chat = next(iter(chat_models.values()))
 
     for capability_key in (
         Capability.MEETING_ANALYSIS,

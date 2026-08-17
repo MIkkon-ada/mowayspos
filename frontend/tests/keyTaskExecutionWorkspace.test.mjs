@@ -33,6 +33,13 @@ test('key task header keeps owner, collaborators, and plan time on one aligned m
   }
 })
 
+test('key task header does not present a placeholder more-actions menu', () => {
+  const header = read('src/components/key-task-workspace/KeyTaskHeader.tsx')
+
+  assert.doesNotMatch(header, />更多操作</)
+  assert.doesNotMatch(header, /尚无有效任务计划；不会自动完成。/)
+})
+
 test('workspace keeps its history scrollable inside the fixed application shell', () => {
   const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
 

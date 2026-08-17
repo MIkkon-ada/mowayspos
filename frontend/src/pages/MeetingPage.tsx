@@ -206,6 +206,10 @@ export function MeetingPage() {
   if (selected && projectMeetingReview) {
     const snapshot = projectMeetingReview.snapshot
     const project = snapshot.project
+    const requestedMeetingType = String((snapshot as { requested_meeting_type?: unknown }).requested_meeting_type ?? '').trim()
+    const reviewMeetingType = ['regular', 'special', 'kickoff', 'communication', 'review', 'retrospective'].includes(requestedMeetingType)
+      ? requestedMeetingType
+      : (projectMeetingReview.meeting?.meeting_type ?? selected.meeting_type ?? '')
     const workstreams = snapshot.workstreams ?? []
     const keyTasks = workstreams.flatMap((workstream) => (workstream.key_tasks ?? []).map((task) => ({
       id: task.id,
@@ -215,7 +219,7 @@ export function MeetingPage() {
       progress: '',
     })))
     const scheduleChanges = projectMeetingReview.review_package?.proposals ?? projectMeetingReview.result.execution_schedule_changes ?? []
-    const meetingDraft = projectMeetingReview.meeting ?? selected
+    const meetingDraft = selected
     const isOwner = Boolean(currentUser?.is_tech_admin || currentProjectRoles.includes('owner'))
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
@@ -233,7 +237,7 @@ export function MeetingPage() {
               id: meetingDraft.id,
               project_id: meetingDraft.project_id,
               title: meetingDraft.title ?? '',
-              meeting_type: meetingDraft.meeting_type ?? '',
+              meeting_type: reviewMeetingType,
               meeting_date: meetingDraft.meeting_date ?? '',
               location: meetingDraft.location ?? '',
               host: meetingDraft.host ?? '',
@@ -309,14 +313,25 @@ export function MeetingPage() {
                 setActionLoading(false)
               }
             }}
-            onApprove={async (proposalIds) => {
+            onPublish={async () => {
               setActionLoading(true)
               try {
-                const updated = await reviewProjectMeeting(selected.id, { action: 'approve', proposal_ids: proposalIds })
+                const updated = await reviewProjectMeeting(selected.id, { action: 'publish' })
                 setSelected(updated)
-                setProjectMeetingReview(null)
-                toast.success('会议纪要已审核，选中的执行安排已回写')
-              } catch { toast.error('审核失败，请检查权限或提案状态') } finally { setActionLoading(false) }
+                setMeetings((current) => current.map((item) => item.id === updated.id ? updated : item))
+                toast.success('会议纪要已发布，项目计划尚未变更')
+              } catch { toast.error('发布失败，请检查审核状态或权限') } finally { setActionLoading(false) }
+            }}
+            onApplyChanges={async (proposalIds) => {
+              setActionLoading(true)
+              try {
+                const updated = await reviewProjectMeeting(selected.id, { action: 'apply_changes', proposal_ids: proposalIds })
+                setSelected(updated)
+                setMeetings((current) => current.map((item) => item.id === updated.id ? updated : item))
+                const refreshed = await fetchProjectMeetingReviewPackage(updated.id).catch(() => null)
+                if (refreshed) setProjectMeetingReview(refreshed)
+                toast.success('已回填选中的执行安排变更')
+              } catch { toast.error('回填失败，项目计划未变更；请检查提案状态或数据冲突') } finally { setActionLoading(false) }
             }}
             onReturn={async (reason) => {
               setActionLoading(true)
@@ -725,14 +740,14 @@ export function MeetingPage() {
           ) : (
           <>
           <div className="overflow-x-auto">
-            <table className="w-full table-fixed text-sm">
+            <table className="min-w-[1040px] w-full table-fixed text-sm">
               <colgroup>
-                <col style={{ width: '34%' }} />
-                <col style={{ width: '12%' }} />
-                <col style={{ width: '15%' }} />
-                <col style={{ width: '12%' }} />
-                <col style={{ width: '17%' }} />
-                <col style={{ width: '10%' }} />
+                <col style={{ width: '330px' }} />
+                <col style={{ width: '220px' }} />
+                <col style={{ width: '150px' }} />
+                <col style={{ width: '110px' }} />
+                <col style={{ width: '150px' }} />
+                <col style={{ width: '120px' }} />
               </colgroup>
               <thead>
                 <tr className="border-b" style={{ borderColor: '#E9EFF6' }}>
@@ -759,9 +774,12 @@ export function MeetingPage() {
                           </div>
                         </div>
                       </td>
-                      <td className="whitespace-nowrap px-5 py-3.5 align-middle">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${TYPE_STYLE[typeLabel(m.meeting_type)] ?? 'bg-slate-100 text-slate-600'}`}>
-                          {typeLabel(m.meeting_type)}
+                      <td className="px-5 py-3.5 align-middle">
+                        <span
+                          className={`inline-flex max-w-full min-w-0 items-center rounded-md px-2 py-0.5 text-xs font-medium ${TYPE_STYLE[typeLabel(m.meeting_type)] ?? 'bg-slate-100 text-slate-600'}`}
+                          title={typeLabel(m.meeting_type)}
+                        >
+                          <span className="truncate">{typeLabel(m.meeting_type)}</span>
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-5 py-3.5 align-middle text-slate-700">{fmtTime(m.meeting_date)}</td>

@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app import models
 from app.database import Base
 from app import schemas
-from app.routers.meetings import patch_meeting_change_proposal
+from app.routers.meetings import patch_meeting_change_proposal, review_project_meeting
 from app.services import meeting_change_set
 
 
@@ -149,7 +149,14 @@ def _seed(
         models.ExecutionSchedule(id=30, subtask_id=20, plan_type="week", plan_month="2026-08", title="First customer batch", start_date=date(2026, 8, 1), due_date=date(2026, 8, 10), status="in_progress", created_by="owner", updated_by="owner"),
         models.MeetingDocumentSource(id=2, project_id=1, original_name="weekly.docx", storage_key="1/weekly.docx", mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", size_bytes=1, content_hash="a" * 64),
         models.ProjectMeetingRun(id=3, project_id=1, document_source_id=2, snapshot_json=json.dumps(snapshot), result_json=json.dumps(result), document_text="completed", status="pending_review"),
-        models.Meeting(id=1, project_id=1, title="Weekly", publish_status="published", document_source_id=2),
+        models.Meeting(
+            id=1,
+            project_id=1,
+            title="Weekly",
+            publish_status="draft",
+            review_status="pending_review",
+            document_source_id=2,
+        ),
     ])
     db.flush()
     change_set = models.MeetingChangeSet(id=4, project_id=1, meeting_id=1, snapshot_json=json.dumps(snapshot), result_json=json.dumps(result), status="draft")
@@ -159,12 +166,64 @@ def _seed(
         id=5, change_set_id=4, action=action, target_type="execution_schedule",
         target_id=30 if action.startswith("update") else None, parent_workstream_id=10, parent_subtask_id=20,
         before_json=json.dumps({field: _snapshot_value(snapshot, field) for field in proposed} if action.startswith("update") else {}),
-        proposed_json=json.dumps(proposed), evidence_json="[]", reason="baseline", confidence=0.9,
+        proposed_json=json.dumps(proposed), evidence_json=json.dumps(["completed"]), reason="baseline", confidence=0.9,
         validation_json=json.dumps({"state": "ready", "errors": []}), lineage_json=json.dumps(_lineage(action, proposed, target, snapshot)), execution_status="pending",
     )
     db.add(proposal)
     db.commit()
     return db.get(models.Meeting, 1), change_set, proposal, db.get(models.ProjectMeetingRun, 3)
+
+
+def test_publish_meeting_does_not_write_selected_schedule_changes(db):
+    meeting, _, proposal, _ = _seed(db)
+
+    result = review_project_meeting(
+        meeting.id,
+        schemas.ProjectMeetingReviewPayload(action="publish"),
+        current_user="owner",
+        db=db,
+    )
+
+    assert result["publish_status"] == "published"
+    assert result["review_status"] == "approved"
+    assert db.get(models.ExecutionSchedule, 30).status == "in_progress"
+    assert db.get(models.MeetingChangeProposal, proposal.id).execution_status == "pending"
+    assert db.query(models.MeetingReviewEvent).filter_by(meeting_id=meeting.id, action="published").count() == 1
+
+
+def test_apply_changes_requires_published_meeting_then_writes_selected_change(db):
+    meeting, _, proposal, _ = _seed(db)
+
+    with pytest.raises(HTTPException, match="published"):
+        review_project_meeting(
+            meeting.id,
+            schemas.ProjectMeetingReviewPayload(action="apply_changes", proposal_ids=[proposal.id]),
+            current_user="owner",
+            db=db,
+        )
+
+    review_project_meeting(
+        meeting.id,
+        schemas.ProjectMeetingReviewPayload(action="publish"),
+        current_user="owner",
+        db=db,
+    )
+    result = review_project_meeting(
+        meeting.id,
+        schemas.ProjectMeetingReviewPayload(action="apply_changes", proposal_ids=[proposal.id]),
+        current_user="owner",
+        db=db,
+    )
+
+    assert result["publish_status"] == "published"
+    assert db.get(models.ExecutionSchedule, 30).status == "completed"
+    assert db.get(models.MeetingChangeProposal, proposal.id).execution_status == "executed"
+    assert db.query(models.MeetingReviewEvent).filter_by(meeting_id=meeting.id, action="changes_applied").count() == 1
+
+
+def test_apply_changes_payload_requires_selected_proposals():
+    with pytest.raises(ValueError, match="proposal_ids"):
+        schemas.ProjectMeetingReviewPayload(action="apply_changes")
 
 
 def test_owner_edit_preserves_immutable_result_and_allows_lineage_writeback(db):

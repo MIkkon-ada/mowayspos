@@ -196,6 +196,30 @@ def test_background_success_persists_trusted_update_lineage_and_immutable_result
     assert db.query(models.ExecutionSchedule).count() == 0
 
 
+def test_standard_meeting_category_is_persisted_without_rewriting_word_result(db, monkeypatch):
+    run = _run(db)
+    snapshot = json.loads(run.snapshot_json)
+    snapshot["requested_meeting_type"] = "special"
+    run.snapshot_json = json.dumps(snapshot)
+    run.document_text += " Word 原文专题名称"
+    db.commit()
+
+    final_payload = _analysis_final(run.document_text).model_dump(mode="json")
+    final_payload["meeting_info"]["meeting_type"] = "Word 原文专题名称"
+    final_payload["meeting_info_evidence"]["meeting_type"] = [_span(run.document_text, "Word 原文专题名称")]
+    final = MeetingAgentFinal.model_validate(final_payload)
+    import app.services.project_meeting_agent_processing as processing
+    monkeypatch.setattr(processing, "run_project_meeting_agent", lambda **_: _agent_result(final))
+
+    process_project_meeting_agent_run(run.id, session_factory=sessionmaker(bind=db.get_bind()))
+
+    db.expire_all()
+    meeting = db.query(models.Meeting).one()
+    persisted_run = db.get(models.ProjectMeetingRun, run.id)
+    assert meeting.meeting_type == "special"
+    assert json.loads(persisted_run.result_json)["meeting_draft"]["meeting_type"] == "Word 原文专题名称"
+
+
 def test_background_success_persists_create_parent_baseline_without_target_baseline(db, monkeypatch):
     run = _run(db)
     import app.services.project_meeting_agent_processing as processing

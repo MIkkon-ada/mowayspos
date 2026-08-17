@@ -517,7 +517,7 @@ class MeetingPayload(BaseModel):
 
 
 class ProjectMeetingReviewPayload(BaseModel):
-    action: Literal["approve", "return"]
+    action: Literal["publish", "apply_changes", "return"]
     reason: str = ""
     proposal_ids: list[int] = Field(default_factory=list)
 
@@ -530,6 +530,10 @@ class ProjectMeetingReviewPayload(BaseModel):
             raise ValueError("proposal_ids must contain positive integers")
         if len(set(self.proposal_ids)) != len(self.proposal_ids):
             raise ValueError("proposal_ids must be unique")
+        if self.action == "apply_changes" and not self.proposal_ids:
+            raise ValueError("proposal_ids are required when applying changes")
+        if self.action in {"publish", "return"} and self.proposal_ids:
+            raise ValueError("proposal_ids are only allowed when applying changes")
         return self
 
 

@@ -433,7 +433,7 @@ export function fetchProjectMeetingReviewPackage(meetingId: number): Promise<Pro
 
 export function reviewProjectMeeting(
   meetingId: number,
-  payload: { action: 'approve' | 'return'; reason?: string; proposal_ids?: number[] },
+  payload: { action: 'publish' | 'apply_changes' | 'return'; reason?: string; proposal_ids?: number[] },
 ): Promise<MeetingItem> {
   return apiPost<MeetingItem>(`/api/meetings/${meetingId}/review`, payload)
 }

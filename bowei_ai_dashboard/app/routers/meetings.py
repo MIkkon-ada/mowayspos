@@ -1079,10 +1079,10 @@ def review_project_meeting(
     if not meeting.project_id or not meeting.document_source_id:
         raise HTTPException(409, "only project document meetings support this review flow")
     require_project_role(current_user, meeting.project_id, [PROJECT_ROLE_OWNER_KEY], db)
-    if meeting.review_status not in {"pending_review", "returned"}:
-        raise HTTPException(409, "meeting is not awaiting owner review")
     account = db.query(models.Account).filter_by(username=current_user).first()
     if payload.action == "return":
+        if meeting.review_status not in {"pending_review", "returned"}:
+            raise HTTPException(409, "meeting is not awaiting owner review")
         meeting.review_status = "returned"
         meeting.publish_status = "draft"
         db.add(models.MeetingReviewEvent(
@@ -1092,14 +1092,25 @@ def review_project_meeting(
             reason=payload.reason,
             selected_proposal_ids_json="[]",
         ))
-    else:
-        _execute_project_meeting_schedule_changes(meeting, payload.proposal_ids, current_user, db)
+    elif payload.action == "publish":
+        if meeting.review_status not in {"pending_review", "returned"}:
+            raise HTTPException(409, "meeting is not awaiting owner review")
         meeting.review_status = "approved"
         meeting.publish_status = "published"
         meeting.review_version = (meeting.review_version or 0) + 1
         db.add(models.MeetingReviewEvent(
             meeting_id=meeting.id,
-            action="approved",
+            action="published",
+            actor_person_id=account.person_id if account else None,
+            selected_proposal_ids_json="[]",
+        ))
+    else:
+        if meeting.review_status != "approved" or meeting.publish_status != "published":
+            raise HTTPException(409, "meeting must be published before applying changes")
+        _execute_project_meeting_schedule_changes(meeting, payload.proposal_ids, current_user, db)
+        db.add(models.MeetingReviewEvent(
+            meeting_id=meeting.id,
+            action="changes_applied",
             actor_person_id=account.person_id if account else None,
             selected_proposal_ids_json=json.dumps(payload.proposal_ids),
         ))

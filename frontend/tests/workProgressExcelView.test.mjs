@@ -87,11 +87,11 @@ const taskSubMap = {
   12: [],
 }
 
-test('work progress defaults to the Excel table and preserves execution detail', () => {
+test('work progress temporarily hides the shared execution detail entry', () => {
   const source = read(PAGE_FILE)
   assert.match(source, /useState<'execution' \| 'plan'>\('plan'\)/)
-  assert.match(source, />\s*表格视图\s*</)
-  assert.match(source, />\s*执行详情\s*</)
+  assert.match(source, /const SHOW_EXECUTION_DETAIL = false/)
+  assert.match(source, /SHOW_EXECUTION_DETAIL && \(/)
   assert.match(source, /viewMode === 'execution'/)
   assert.match(source, /data-testid="work-progress-detail-panel"/)
 })
@@ -346,10 +346,12 @@ test('table view only exposes the project-standard button when a project standar
   )
 })
 
-test('work progress header keeps mode tabs next to the title', () => {
+test('work progress header keeps only the table mode tab while execution detail is hidden', () => {
   const page = read(PAGE_FILE)
+  assert.match(page, /SHOW_EXECUTION_DETAIL = false/)
   assert.match(page, /work-progress-title-group/)
-  assert.match(page, /工作推进表[\s\S]*表格视图[\s\S]*执行详情/)
+  assert.match(page, /工作推进表[\s\S]*表格视图/)
+  assert.match(page, /SHOW_EXECUTION_DETAIL && \(\s*<button[\s\S]*执行详情/)
   assert.doesNotMatch(page, /min-w-\[260px\]/)
 })
 

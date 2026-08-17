@@ -246,8 +246,10 @@ export function MeetingPage() {
               copied_to: meetingDraft.copied_to ?? '',
               summary: meetingDraft.summary ?? '',
               publish_status: meetingDraft.publish_status ?? 'draft',
+              agendaItems: projectMeetingReview.result.agenda_items ?? [],
               decisions: projectMeetingReview.result.decisions ?? [],
-              actions: [...(projectMeetingReview.result.completed_items ?? []), ...(projectMeetingReview.result.next_stage_work ?? [])],
+              completedItems: projectMeetingReview.result.completed_items ?? [],
+              nextStageWork: projectMeetingReview.result.next_stage_work ?? [],
               risks: projectMeetingReview.result.risks ?? [],
               sourceFilename: projectMeetingReview.document?.original_name,
             }}

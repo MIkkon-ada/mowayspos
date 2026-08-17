@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import type { MeetingItem } from '../../types'
 import type { ProjectMeetingAgentAudit, ProjectMeetingAgentFact, ProjectMeetingEvidence, ProjectMeetingEvidenceSpan, ProjectMeetingProposalLineage } from '../../api/meetings'
 import { TYPE_STYLE, typeLabel } from './meetingUtils'
+import { FormalProjectMeetingMinutes } from './FormalProjectMeetingMinutes'
 
 export type ProjectMeetingContext = {
   projectId: number
@@ -16,8 +17,10 @@ export type ProjectMeetingDraft = Pick<
   MeetingItem,
   'id' | 'project_id' | 'title' | 'meeting_type' | 'meeting_date' | 'location' | 'host' | 'participants' | 'organizer' | 'copied_to' | 'summary' | 'publish_status'
 > & {
+  agendaItems: ProjectMeetingAgentFact[]
   decisions: ProjectMeetingAgentFact[]
-  actions: ProjectMeetingAgentFact[]
+  completedItems: ProjectMeetingAgentFact[]
+  nextStageWork: ProjectMeetingAgentFact[]
   risks: ProjectMeetingAgentFact[]
   sourceFilename?: string
 }
@@ -62,11 +65,6 @@ export type ProjectMeetingReviewWorkspaceProps = {
   onReturn: (reason: string) => void | Promise<void>
   onDownload: () => void | Promise<void>
 }
-
-const fieldLabels: Array<[keyof ProjectMeetingDraft, string]> = [
-  ['meeting_date', '会议日期'], ['location', '会议地点'],
-  ['host', '主持人'], ['participants', '参会人员'],
-]
 
 function displayValue(value: unknown): string {
   if (value === null || value === undefined || value === '') return '—'
@@ -175,11 +173,9 @@ export function ProjectMeetingReviewWorkspace({
       {error && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
     </header>
 
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-label="会议纪要草稿">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-base font-semibold text-slate-900">会议纪要草稿</h2><p className="mt-1 text-sm text-slate-500">核对纪要内容；如需核验，可展开每项的原文依据。</p></div><button type="button" onClick={() => void onSaveDraft(editableDraft)} disabled={!isOwner || busy} className="rounded-lg border border-sky-200 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50">保存修改</button></div>
-      <div className="mt-4 grid gap-4 md:grid-cols-2">{fieldLabels.map(([field, label]) => <label key={field} className="block text-sm font-medium text-slate-700">{label}<input value={String(editableDraft[field] ?? '')} onChange={(event) => setEditableDraft((current) => ({ ...current, [field]: event.target.value }))} disabled={!isOwner || busy} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal text-slate-700 disabled:bg-slate-50" /> <EvidenceBlock evidence={meetingInfoEvidence[String(field)]} /></label>)}</div>
-      <label className="mt-4 block text-sm font-medium text-slate-700">会议总结<textarea value={editableDraft.summary || ''} onChange={(event) => setEditableDraft((current) => ({ ...current, summary: event.target.value }))} disabled={!isOwner || busy} rows={5} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal leading-6 text-slate-700 disabled:bg-slate-50" /><EvidenceBlock evidence={summaryEvidence} /></label>
-      <div className="mt-5 grid gap-4 lg:grid-cols-3"><FactSection title="会议决定" items={editableDraft.decisions} /><FactSection title="本周已完成 / 行动项" items={editableDraft.actions} /><FactSection title="风险与待确认" items={editableDraft.risks} /></div>
+    <section aria-label="会议纪要草稿">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-base font-semibold text-slate-900">{isPublished ? '正式会议纪要' : '会议纪要草稿'}</h2><p className="mt-1 text-sm text-slate-500">{isPublished ? '发布内容以正式纪要格式留档；原文依据仅在需要核验时展开。' : '核对纪要内容；如需核验，可展开每项的原文依据。'}</p></div>{!isPublished ? <button type="button" onClick={() => void onSaveDraft(editableDraft)} disabled={!isOwner || busy} className="rounded-lg border border-sky-200 px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50">保存修改</button> : null}</div>
+      <FormalProjectMeetingMinutes draft={editableDraft} meetingInfoEvidence={meetingInfoEvidence} summaryEvidence={summaryEvidence} editable={!isPublished && isOwner} disabled={busy} onChange={(field, value) => setEditableDraft((current) => ({ ...current, [field]: value }))} />
     </section>
 
     {openQuestions.length ? <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-label="待确认问题"><h2 className="text-base font-semibold text-slate-900">待确认问题</h2><FactSection title="需要负责人确认后才能入库的事项" items={openQuestions} /></section> : null}

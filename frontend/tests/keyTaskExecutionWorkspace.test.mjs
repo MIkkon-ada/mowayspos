@@ -20,6 +20,18 @@ test('shared key task workspace owns both detail entry points', () => {
   assert.match(page, /viewMode === 'execution' && selectedSubTask/)
 })
 
+test('key task header keeps owner, collaborators, and plan time on one aligned metadata rail', () => {
+  const header = read('src/components/key-task-workspace/KeyTaskHeader.tsx')
+
+  assert.match(header, /function MetaItem/)
+  assert.match(header, /aria-label="关键任务元信息"/)
+  assert.match(header, /grid items-center gap-3/)
+  assert.match(header, /min-h-8/)
+  for (const label of ['负责人', '协同人', '计划时间']) {
+    assert.match(header, new RegExp(`label=\{?['\"]?${label}`))
+  }
+})
+
 test('execution plan table has approved columns, row click, and no operation column', () => {
   const table = read('src/components/key-task-workspace/ExecutionPlanTable.tsx')
   for (const label of ['任务计划', '状态', '计划事项', '负责人', '协助人', '计划时间', '最新进展']) {

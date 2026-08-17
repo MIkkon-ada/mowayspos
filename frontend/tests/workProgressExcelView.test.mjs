@@ -87,10 +87,10 @@ const taskSubMap = {
   12: [],
 }
 
-test('work progress temporarily hides the shared execution detail entry', () => {
+test('work progress exposes the shared execution detail entry', () => {
   const source = read(PAGE_FILE)
   assert.match(source, /useState<'execution' \| 'plan'>\('plan'\)/)
-  assert.match(source, /const SHOW_EXECUTION_DETAIL = false/)
+  assert.match(source, /const SHOW_EXECUTION_DETAIL = true/)
   assert.match(source, /SHOW_EXECUTION_DETAIL && \(/)
   assert.match(source, /viewMode === 'execution'/)
   assert.match(source, /data-testid="work-progress-detail-panel"/)
@@ -322,7 +322,7 @@ test('V2 table is a compact data table without a fake empty spreadsheet canvas',
   assert.doesNotMatch(css, /\.v2-task-card__index/)
   assert.match(css, /width:\s*1180px/)
   assert.match(source, /<col style=\{\{ width: 300 \}\} \/>/)
-  assert.match(source, /<col style=\{\{ width: 430 \}\} \/>/)
+  assert.match(source, /<col style=\{\{ width: 360 \}\} \/>/)
   assert.match(source, /<col style=\{\{ width: 80 \}\} \/>/)
   assert.match(source, /<col style=\{\{ width: 155 \}\} \/>/)
   assert.doesNotMatch(css, /repeating-linear-gradient/)
@@ -346,9 +346,9 @@ test('table view only exposes the project-standard button when a project standar
   )
 })
 
-test('work progress header keeps only the table mode tab while execution detail is hidden', () => {
+test('work progress header keeps the execution-detail tab available', () => {
   const page = read(PAGE_FILE)
-  assert.match(page, /SHOW_EXECUTION_DETAIL = false/)
+  assert.match(page, /SHOW_EXECUTION_DETAIL = true/)
   assert.match(page, /work-progress-title-group/)
   assert.match(page, /工作推进表[\s\S]*表格视图/)
   assert.match(page, /SHOW_EXECUTION_DETAIL && \(\s*<button[\s\S]*执行详情/)

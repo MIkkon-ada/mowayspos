@@ -471,6 +471,29 @@ def test_confirmed_meeting_fact_requires_evidence():
     assert pending.needs_confirmation is True
 
 
+def test_action_fact_structured_columns_must_be_grounded_in_its_evidence():
+    evidence = [EvidenceSpan(quote="温会林完成计划分解，期限2026-08-03", char_start=0, char_end=20)]
+    fact = MeetingFact(
+        content="完成计划分解",
+        owner="温会林",
+        due_date="2026-08-03",
+        evidence=evidence,
+        confidence=0.9,
+        needs_confirmation=False,
+    )
+    assert fact.owner == "温会林"
+    assert fact.due_date == "2026-08-03"
+
+    with pytest.raises(ValidationError):
+        MeetingFact(
+            content="完成计划分解",
+            owner="未在原文出现的人",
+            evidence=evidence,
+            confidence=0.9,
+            needs_confirmation=False,
+        )
+
+
 def test_task_target_requires_positive_identifiers_and_forbids_unknown_shape():
     assert TaskTarget.model_validate(_task_target()).key_task_id == 3
 

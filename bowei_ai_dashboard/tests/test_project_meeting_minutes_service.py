@@ -400,6 +400,38 @@ def test_agent_normalization_returns_ready_validation_for_exact_meeting_metadata
     assert result["summary_evidence"]["validation"]["state"] == "ready"
 
 
+def test_agent_normalization_preserves_evidence_grounded_action_columns(
+    db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
+):
+    project, _ = project_plan
+    document_text = _agent_document_text() + "\nOwner: Move acceptance schedule to complete by 2026-08-14"
+    action_quote = "Owner: Move acceptance schedule to complete by 2026-08-14"
+    action = MeetingFact(
+        content="Move acceptance schedule to complete",
+        owner="Owner",
+        due_date="2026-08-14",
+        evidence=[_agent_evidence(document_text, action_quote)],
+        confidence=0.9,
+        needs_confirmation=False,
+    )
+    final = _agent_final(document_text, next_steps=[action])
+
+    result = normalize_project_meeting_agent_result(
+        final, document_text, build_project_meeting_snapshot(project.id, db)
+    )
+
+    assert result["next_stage_work"] == [{
+        "content": "Move acceptance schedule to complete",
+        "owner": "Owner",
+        "tracker": "",
+        "due_date": "2026-08-14",
+        "confidence": 0.9,
+        "needs_confirmation": False,
+        "evidence": [{"quote": action_quote, "char_start": document_text.index(action_quote), "char_end": len(document_text)}],
+        "validation": {"state": "ready", "errors": []},
+    }]
+
+
 def test_agent_normalization_corrects_a_unique_quote_with_wrong_character_range(
     db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
 ):

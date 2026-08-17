@@ -53,6 +53,9 @@ class MeetingInfo(StrictModel):
 
 class MeetingFact(StrictModel):
     content: str = Field(min_length=1)
+    owner: str = ""
+    tracker: str = ""
+    due_date: str = ""
     evidence: list[EvidenceSpan]
     confidence: float = Field(ge=0, le=1)
     needs_confirmation: bool
@@ -61,6 +64,11 @@ class MeetingFact(StrictModel):
     def require_evidence_for_confirmed_fact(self):
         if not self.needs_confirmation and not self.evidence:
             raise ValueError("confirmed facts require evidence")
+        evidence_text = "\n".join(span.quote for span in self.evidence)
+        for field_name in ("owner", "tracker", "due_date"):
+            value = getattr(self, field_name).strip()
+            if value and value not in evidence_text:
+                raise ValueError(f"meeting fact {field_name} must appear in its evidence")
         return self
 
 

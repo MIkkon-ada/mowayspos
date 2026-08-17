@@ -70,8 +70,8 @@ STRICT RESPONSE PROTOCOL (this overrides any older meeting-minutes JSON format):
 - meeting_info_evidence is a mapping from field name to an ARRAY of spans, never one span object:
   {"meeting_date":[{"quote":"2026-07-27","char_start":0,"char_end":10}]}
 - Every item in agenda_items, decisions, completed_items, next_steps, risks, and open_questions has exactly this shape:
-  {"content":"Owner and due date may be included in this sentence.","evidence":[{"quote":"exact Word quote","char_start":0,"char_end":16}],"confidence":0.9,"needs_confirmation":false}
-- Do not add owner, due_date, assignee, deadline, or any other fields to a fact item.
+  {"content":"Action description","owner":"","tracker":"","due_date":"","evidence":[{"quote":"exact Word quote","char_start":0,"char_end":16}],"confidence":0.9,"needs_confirmation":false}
+- Action-only facts may include owner, tracker, and due_date only when each value is explicitly stated in Word evidence. Keep an unavailable field as an empty string; never infer it from the project plan. For agenda, decision, completion, risk, and open-question facts, leave all three fields empty.
 - task_updates is only for a safely matched execution schedule and has exactly this shape:
   {"action":"update_execution_schedule","target":{"project_id":1,"workstream_id":10,"key_task_id":20,"execution_schedule_id":30},"before":{},"proposed":{},"evidence":[{"quote":"exact Word quote","char_start":0,"char_end":16}],"reason":"why the matching schedule changes","confidence":0.9,"needs_confirmation":false}
 - Do not put a fact-shaped action item in task_updates. If a plan node or schedule is not safely matched, put that action in open_questions with needs_confirmation true.

@@ -333,6 +333,9 @@ export type ProjectMeetingEvidence = {
 
 export type ProjectMeetingAgentFact = {
   content: string
+  owner?: string
+  tracker?: string
+  due_date?: string
   confidence?: number
   needs_confirmation?: boolean
   evidence: ProjectMeetingEvidenceSpan[]

@@ -521,6 +521,9 @@ def _normalize_agent_fact(item: MeetingFact, document_text: str | None) -> dict[
         errors.append("fact needs_confirmation requires owner review")
     return {
         "content": item.content,
+        "owner": item.owner,
+        "tracker": item.tracker,
+        "due_date": item.due_date,
         "confidence": item.confidence,
         "needs_confirmation": item.needs_confirmation,
         "evidence": evidence_result["evidence"],

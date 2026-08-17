@@ -50,6 +50,7 @@ function MetaCell({ label, value, evidence, editable, disabled, onChange }: { la
 }
 
 export function FormalProjectMeetingMinutes({ draft, meetingInfoEvidence, summaryEvidence, editable, disabled = false, onChange }: FormalProjectMeetingMinutesProps) {
+  const hasStructuredActionFields = draft.nextStageWork.some((item) => Boolean(item.owner || item.tracker || item.due_date))
   return <article className="rounded-2xl border border-slate-200 bg-white px-5 py-7 shadow-sm sm:px-8" aria-label="正式会议纪要">
     <header className="border-b border-slate-200 pb-5 text-center">
       <p className="text-xs tracking-[0.18em] text-slate-400">内部留档 · 项目会议纪要</p>
@@ -79,7 +80,7 @@ export function FormalProjectMeetingMinutes({ draft, meetingInfoEvidence, summar
 
     <section className="mt-8 border-t border-dashed border-slate-200 pt-7">
       <h3 className="text-base font-semibold text-slate-900">三、待办事项跟踪</h3>
-      {draft.nextStageWork.length ? <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200"><table className="min-w-[820px] w-full text-left text-sm"><thead className="bg-slate-50 text-xs font-medium text-slate-500"><tr>{['编号', '会议安排事项', '负责人', '追踪人', '完成时限', '来源/备注'].map((label) => <th key={label} className="whitespace-nowrap px-4 py-3">{label}</th>)}</tr></thead><tbody>{draft.nextStageWork.map((item, index) => <tr key={`${item.content}-${index}`} className="border-t border-slate-100 align-top text-slate-700"><td className="px-4 py-3">本周-{String(index + 1).padStart(2, '0')}</td><td className="min-w-[300px] px-4 py-3 leading-6">{item.content}<EvidenceBlock evidence={item.evidence} /></td><td className="px-4 py-3">—</td><td className="px-4 py-3">—</td><td className="px-4 py-3">—</td><td className="px-4 py-3">{item.needs_confirmation ? '待负责人确认' : '—'}</td></tr>)}</tbody></table></div> : <p className="mt-3 text-sm text-slate-400">暂无明确待办事项</p>}
+      {!draft.nextStageWork.length ? <p className="mt-3 text-sm text-slate-400">暂无明确待办事项</p> : hasStructuredActionFields ? <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200"><table className="min-w-[820px] w-full text-left text-sm"><thead className="bg-slate-50 text-xs font-medium text-slate-500"><tr>{['编号', '会议安排事项', '负责人', '追踪人', '完成时限', '来源/备注'].map((label) => <th key={label} className="whitespace-nowrap px-4 py-3">{label}</th>)}</tr></thead><tbody>{draft.nextStageWork.map((item, index) => <tr key={`${item.content}-${index}`} className="border-t border-slate-100 align-top text-slate-700"><td className="px-4 py-3">本周-{String(index + 1).padStart(2, '0')}</td><td className="min-w-[300px] px-4 py-3 leading-6">{item.content}<EvidenceBlock evidence={item.evidence} /></td><td className="px-4 py-3">{item.owner || '—'}</td><td className="px-4 py-3">{item.tracker || '—'}</td><td className="px-4 py-3">{item.due_date || '—'}</td><td className="px-4 py-3">{item.needs_confirmation ? '待负责人确认' : '会议原文'}</td></tr>)}</tbody></table></div> : <><p className="mt-3 text-sm text-slate-500">历史纪要尚未保留结构化负责人和期限，以下按原文待办列示。</p><FactList items={draft.nextStageWork} emptyLabel="" /></>}
     </section>
 
     {draft.risks.length ? <section className="mt-8 border-t border-dashed border-slate-200 pt-7">

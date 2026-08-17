@@ -111,8 +111,8 @@ def test_agent_prompt_includes_the_exact_tool_and_final_envelope_shapes(document
     assert '{"type":"final","result":{' in prompt
     assert 'Do not use tool_call/tool_name/parameters/final wrapper keys.' in prompt
     assert '"meeting_date":[{"quote":"2026-07-27","char_start":0,"char_end":10}]' in prompt
-    assert '"content":"Owner and due date may be included in this sentence."' in prompt
-    assert 'Do not add owner, due_date, assignee, deadline, or any other fields to a fact item.' in prompt
+    assert '"content":"Action description","owner":"","tracker":"","due_date":""' in prompt
+    assert 'Action-only facts may include owner, tracker, and due_date only when each value is explicitly stated in Word evidence.' in prompt
     assert '"action":"update_execution_schedule","target":{"project_id":1,"workstream_id":10,"key_task_id":20,"execution_schedule_id":30}' in prompt
     assert 'Do not put a fact-shaped action item in task_updates.' in prompt
     assert 'Write a non-empty summary when the Word has any agenda, decision, completion, risk, or action.' in prompt

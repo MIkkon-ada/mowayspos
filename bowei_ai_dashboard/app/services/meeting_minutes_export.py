@@ -151,6 +151,10 @@ def _add_action_table(document: Document, rows: list[tuple[str, str, str, str, s
             _set_cell_text(cell, value)
 
 
+def _has_structured_action_fields(rows: list[tuple[str, str, str, str, str, str]]) -> bool:
+    return any(value != "—" for row in rows for value in row[2:5])
+
+
 def build_meeting_minutes_docx(meeting: models.Meeting, *, source_name: str = "") -> bytes:
     """Produce the published minutes; source_name is retained for API compatibility."""
     document = Document()
@@ -195,7 +199,12 @@ def build_meeting_minutes_docx(meeting: models.Meeting, *, source_name: str = ""
         document.add_paragraph("暂无会议小结与决议")
 
     _add_heading(document, "三、待办事项跟踪")
-    _add_action_table(document, _action_rows(meeting.task_list_json))
+    action_rows = _action_rows(meeting.task_list_json)
+    if action_rows and not _has_structured_action_fields(action_rows):
+        document.add_paragraph("历史纪要未保留结构化负责人和期限，以下按原文待办列示。")
+        _add_fact_list(document, [row[1] for row in action_rows])
+    else:
+        _add_action_table(document, action_rows)
     risks = _json_list(meeting.risk_items_json)
     if risks:
         _add_heading(document, "四、风险与待确认")

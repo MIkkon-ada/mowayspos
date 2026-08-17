@@ -23,6 +23,7 @@ describe('project meeting review workspace', () => {
     expect(minutesSource).toContain('三、待办事项跟踪')
     expect(minutesSource).toContain('会议安排事项')
     expect(minutesSource).toContain('{draft.risks.length ?')
+    expect(minutesSource).toContain('hasStructuredActionFields')
   })
 
   it('separates publishing minutes from applying selected plan changes', () => {

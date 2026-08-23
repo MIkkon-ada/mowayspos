@@ -18,7 +18,7 @@ export function ArchiveMeetingSection({ projectId, meetings, error }: { projectI
               const decisions = parseMeetingDecisions(meeting)
               return (
                 <article key={meeting.id} className="archive-meeting-row">
-                  <div className="archive-meeting-row__date"><strong>{formatArchiveDate(meeting.meeting_date)}</strong><span>{meeting.meeting_type || '项目会议'}</span></div>
+                  <div className="archive-meeting-row__date"><strong>{formatArchiveDate(meeting.meeting_date)}</strong><span>项目会议</span></div>
                   <div className="archive-meeting-row__main">
                     <div className="archive-meeting-row__heading"><h3>{meeting.title || `会议 #${meeting.id}`}</h3><span>{meeting.publish_status || '未发布'}</span></div>
                     <p><strong>主持人：</strong>{meeting.host || '未记录'}</p>

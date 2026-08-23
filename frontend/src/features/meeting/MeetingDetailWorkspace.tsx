@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import type { MeetingItem } from '../../types'
-import { STATUS_CONFIG, fmtTime, getStatus, typeLabel, type PublishStatus } from './meetingUtils'
+import { STATUS_CONFIG, fmtTime, getStatus, type PublishStatus } from './meetingUtils'
 
 type DetailTab = 'minutes' | 'todos' | 'tracking' | 'resources'
 type DecisionSection = { title: string; bullets: string[] }
@@ -141,7 +141,6 @@ export function MeetingDetailWorkspace({
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="truncate text-2xl font-semibold text-slate-800">{meeting.title || '未命名会议'}</h1>
               <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusConfig.cls}`}>{statusConfig.label}</span>
-              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-600">{typeLabel(meeting.meeting_type)}</span>
             </div>
             <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-500">
               <span>{fmtTime(meeting.meeting_date)}</span>

@@ -43,19 +43,10 @@ type ReviewForm = {
   transcript_text: string
 }
 
-const MEETING_TYPE_OPTIONS = [
-  { value: 'regular', label: '项目例会', description: '同步进展、问题与下一步安排', accent: '#0EA5E9', soft: '#E0F2FE' },
-  { value: 'special', label: '专题会议', description: '围绕一个议题形成结论或方案', accent: '#8B5CF6', soft: '#EDE9FE' },
-  { value: 'kickoff', label: '启动会', description: '明确目标、范围、分工与计划', accent: '#F59E0B', soft: '#FEF3C7' },
-  { value: 'communication', label: '沟通会', description: '对齐协作事项与处理方案', accent: '#2563EB', soft: '#DBEAFE' },
-  { value: 'review', label: '评审会', description: '评审交付物、方案或关键决策', accent: '#7C3AED', soft: '#F3E8FF' },
-  { value: 'retrospective', label: '复盘会', description: '沉淀经验、改进项与后续动作', accent: '#10B981', soft: '#D1FAE5' },
-] as const
-
-function emptyForm(defaultMeetingType: string): ReviewForm {
+function emptyForm(): ReviewForm {
   return {
     title: '',
-    meeting_type: defaultMeetingType || 'regular',
+    meeting_type: '',
     meeting_date: '',
     location: '',
     host: '',
@@ -127,13 +118,11 @@ function StandardMinutesReview({ form }: { form: ReviewForm }) {
 
 export function NewMeetingModal({
   projectId,
-  defaultMeetingType = '',
   editItem,
   onClose,
   onCreated,
 }: {
   projectId: number
-  defaultMeetingType?: string
   editItem?: MeetingItem
   onClose: () => void
   onCreated: (m: MeetingItem) => void
@@ -158,7 +147,7 @@ export function NewMeetingModal({
     if (editItem) {
       return {
         title: editItem.title ?? '',
-        meeting_type: editItem.meeting_type ?? (defaultMeetingType || 'regular'),
+        meeting_type: editItem.meeting_type ?? '',
         meeting_date: editItem.meeting_date ?? '',
         location: editItem.location ?? '',
         host: editItem.host ?? '',
@@ -177,7 +166,7 @@ export function NewMeetingModal({
         transcript_text: String((editItem as Record<string, unknown>).transcript_text ?? ''),
       }
     }
-    return emptyForm(defaultMeetingType)
+    return emptyForm()
   })
 
   const analysisText = useMemo(
@@ -266,7 +255,7 @@ export function NewMeetingModal({
         setStep('input')
         return
       }
-      const run = await createProjectMeetingDocumentRun(projectId, documentFile, form.meeting_type)
+      const run = await createProjectMeetingDocumentRun(projectId, documentFile)
       setStatusMsg(`Agent 正在分析（${run.stage || 'reading'}）…`)
       const status = await pollProjectMeetingDocumentRun(run.id, {
         onStatus: (next) => {
@@ -406,7 +395,7 @@ export function NewMeetingModal({
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-sky-500 text-lg text-white">▤</div>
             <div>
               <h1 className="text-lg font-semibold text-slate-900">{isEdit ? '编辑会议纪要' : '新建会议纪要'}</h1>
-              <p className="mt-0.5 text-sm text-slate-400">选择会议类型，补充任意会议材料后生成草稿</p>
+              <p className="mt-0.5 text-sm text-slate-400">上传会议纪要 Word，AI 将结合冻结项目上下文生成草稿</p>
             </div>
           </div>
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-800">关闭</button>
@@ -431,34 +420,6 @@ export function NewMeetingModal({
             <main className="meeting-workbench-main min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
           {step === 'input' && (
             <div className="mx-auto max-w-[1180px] space-y-7 px-8 py-8 pb-32">
-              <section>
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <h2 className="text-base font-semibold text-slate-800">会议类型</h2>
-                    <p className="mt-1 text-sm text-slate-400">六类会议均使用通用会议纪要模板</p>
-                  </div>
-                  <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700">通用模板</span>
-                </div>
-                <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-                  {MEETING_TYPE_OPTIONS.map((item) => {
-                    const selected = form.meeting_type === item.value
-                    return (
-                      <button
-                        key={item.value}
-                        type="button"
-                        onClick={() => setField('meeting_type', item.value)}
-                        className="rounded-xl border p-3 text-left transition"
-                        style={{ borderColor: selected ? item.accent : '#E2E8F0', background: selected ? item.soft : '#FFFFFF', boxShadow: selected ? `0 0 0 1px ${item.accent}` : 'none' }}
-                      >
-                        <span className="mb-2 flex h-7 w-7 items-center justify-center rounded-lg text-sm font-semibold" style={{ background: item.soft, color: item.accent }}>●</span>
-                        <span className="block text-sm font-semibold text-slate-800">{item.label}</span>
-                        <span className="mt-1 block text-xs leading-5 text-slate-500">{item.description}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </section>
-
               <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <SectionTitle>会议信息</SectionTitle>
                 <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">

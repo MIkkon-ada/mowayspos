@@ -215,7 +215,7 @@ export function buildArchiveTimeline(input: {
   const events: ArchiveTimelineEvent[] = []
   if (project.kickoff_date) pushEvent(events, { id: 'kickoff', title: '项目启动', detail: project.kickoff_by || '启动记录', at: project.kickoff_date, tone: 'blue' })
   updates.forEach((row) => pushEvent(events, { id: `update-${row.id}`, title: row.title || '提交工作汇报', detail: row.submitter || '项目成员', at: row.created_at, tone: 'blue' }))
-  meetings.forEach((row) => pushEvent(events, { id: `meeting-${row.id}`, title: row.title || '项目会议', detail: row.host || row.meeting_type || '会议记录', at: row.meeting_date || row.created_at || null, tone: 'orange' }))
+  meetings.forEach((row) => pushEvent(events, { id: `meeting-${row.id}`, title: row.title || '项目会议', detail: row.host || '会议记录', at: row.meeting_date || row.created_at || null, tone: 'orange' }))
   closeRequests.forEach((row) => {
     pushEvent(events, { id: `close-created-${row.id}`, title: `提交结束申请 #${row.id}`, detail: row.requester_name || '申请人未记录', at: row.created_at, tone: 'blue' })
     if (row.status === 'approved') pushEvent(events, { id: `close-approved-${row.id}`, title: `结束申请已批准 #${row.id}`, detail: row.reviewer_name || '审核人未记录', at: row.reviewed_at, tone: 'green' })

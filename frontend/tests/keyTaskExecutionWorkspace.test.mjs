@@ -20,6 +20,11 @@ test('shared key task workspace owns both detail entry points', () => {
   assert.match(page, /SHOW_EXECUTION_DETAIL = true/)
 })
 
+test('workspace owns a flex-safe vertical scroll container', () => {
+  const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
+  assert.match(workspace, /<main className="flex-1 min-h-0 overflow-y-auto bg-slate-50">/)
+})
+
 test('execution plan table has approved columns, row click, and no operation column', () => {
   const table = read('src/components/key-task-workspace/ExecutionPlanTable.tsx')
   for (const label of ['任务计划', '状态', '计划事项', '负责人', '协助人', '计划时间', '最新进展']) {

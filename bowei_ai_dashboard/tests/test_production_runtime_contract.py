@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+from cryptography.fernet import Fernet
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -120,6 +123,11 @@ def test_frontend_dockerfile_uses_tracked_lockfile_with_npm_ci():
 
 def test_github_actions_gate_runs_the_complete_isolated_runtime_contract():
     workflow = _read(".github/workflows/cloud-p1b2a-gate.yml")
+
+    ci_key_match = re.search(r"^\s*CI_FERNET_KEY:\s*([^\s#]+)", workflow, re.MULTILINE)
+    assert ci_key_match, "CI must define an ephemeral Fernet key for production startup"
+    Fernet(ci_key_match.group(1).encode("utf-8"))
+    assert "AI_CONFIG_ENCRYPTION_KEY=$CI_FERNET_KEY" in workflow
 
     assert "MOWAYS_DATA_ROOT: ${{ runner.temp }}" not in workflow
     assert "MOWAYS_ENV_FILE: ${{ runner.temp }}" not in workflow

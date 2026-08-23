@@ -38,6 +38,7 @@ jobs:
       DB_PASSWORD: p1b2a_ci_url_safe_password
       SESSION_COOKIE_NAME: moways_ci_session
       CI_FAKE_LLM_KEY: p1b2a_ci_environment_only_key
+      CI_FERNET_KEY: TEPAKY8df2f5lqstbfrvOIBMoEX4dabQoydQFcuouvQ=
 
     steps:
       - name: Checkout
@@ -127,6 +128,7 @@ jobs:
           ALLOW_FILE_SECRET_FALLBACK=false
           ALLOW_LEGACY_PASSWORD_LOGIN=false
           BOWEI_DEV_MODE=false
+          AI_CONFIG_ENCRYPTION_KEY=$CI_FERNET_KEY
           ALLOW_DEV_SCHEMA_CREATE_ALL=
           ALLOW_PROTECTED_DATABASE_MIGRATION=
           ANTHROPIC_API_KEY=

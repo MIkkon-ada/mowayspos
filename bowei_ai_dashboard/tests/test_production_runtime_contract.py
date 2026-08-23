@@ -142,6 +142,7 @@ def test_github_actions_gate_runs_the_complete_isolated_runtime_contract():
     assert "ALLOW_PROTECTED_DATABASE_MIGRATION=false" not in workflow
     assert "ALLOW_DEV_SCHEMA_CREATE_ALL=\n" in workflow
     assert "ALLOW_PROTECTED_DATABASE_MIGRATION=\n" in workflow
+    assert "llm_configs.json" not in workflow
 
     for expected in (
         "workflow_dispatch:",
@@ -159,7 +160,6 @@ def test_github_actions_gate_runs_the_complete_isolated_runtime_contract():
         "nginx -t",
         "alembic upgrade head",
         "http://127.0.0.1:18100/api/health",
-        "LLM configuration survives backend recreation",
         "Session cookie and production LLM key contracts",
         "git diff --check",
         "Cleanup isolated runtime",
@@ -187,11 +187,9 @@ def test_cloud_gate_provisions_and_exercises_backend_bind_mount_permissions():
         '"$MOWAYS_DATA_ROOT/project-init-attachments"',
         "mowayspos-backend-permissions-init",
         "stat -c '%u:%g'",
-        'test "$config_owner" = "10001:10001"',
         'test "$attachments_owner" = "10001:10001"',
         "assert os.getuid() == 10001",
         "assert os.getgid() == 10001",
-        'Path("/app/llm_configs.json").open("a").close()',
         'Path("/app/data/achievement-attachments/.permission-probe")',
         'Path("/app/data/project-init-attachments/.permission-probe")',
     ):

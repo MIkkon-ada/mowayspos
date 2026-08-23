@@ -30,6 +30,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("storage_key"),
     )
+    op.create_index("ix_meeting_document_sources_id", "meeting_document_sources", ["id"])
     op.create_index("ix_meeting_document_sources_project_id", "meeting_document_sources", ["project_id"])
     op.create_index("ix_meeting_document_sources_meeting_id", "meeting_document_sources", ["meeting_id"])
     op.create_index("ix_meeting_document_sources_content_hash", "meeting_document_sources", ["content_hash"])
@@ -53,6 +54,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
+    op.create_index("ix_project_meeting_runs_id", "project_meeting_runs", ["id"])
     op.create_index("ix_project_meeting_runs_project_id", "project_meeting_runs", ["project_id"])
     op.create_index("ix_project_meeting_runs_document_source_id", "project_meeting_runs", ["document_source_id"])
     op.create_index("ix_project_meeting_runs_status", "project_meeting_runs", ["status"])
@@ -72,6 +74,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["meeting_id"], ["meetings.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
+    op.create_index("ix_meeting_review_events_id", "meeting_review_events", ["id"])
     op.create_index("ix_meeting_review_events_meeting_id", "meeting_review_events", ["meeting_id"])
     op.create_index("ix_meeting_review_events_action", "meeting_review_events", ["action"])
     op.create_index("ix_meeting_review_events_actor_person_id", "meeting_review_events", ["actor_person_id"])
@@ -111,12 +114,12 @@ def downgrade() -> None:
         op.drop_column("meetings", "review_status")
         op.drop_column("meetings", "document_source_id")
 
-    for name in ("ix_meeting_review_events_actor_person_id", "ix_meeting_review_events_action", "ix_meeting_review_events_meeting_id"):
+    for name in ("ix_meeting_review_events_actor_person_id", "ix_meeting_review_events_action", "ix_meeting_review_events_meeting_id", "ix_meeting_review_events_id"):
         op.drop_index(name, table_name="meeting_review_events")
     op.drop_table("meeting_review_events")
-    for name in ("ix_project_meeting_runs_created_by_person_id", "ix_project_meeting_runs_status", "ix_project_meeting_runs_document_source_id", "ix_project_meeting_runs_project_id"):
+    for name in ("ix_project_meeting_runs_created_by_person_id", "ix_project_meeting_runs_status", "ix_project_meeting_runs_document_source_id", "ix_project_meeting_runs_project_id", "ix_project_meeting_runs_id"):
         op.drop_index(name, table_name="project_meeting_runs")
     op.drop_table("project_meeting_runs")
-    for name in ("ix_meeting_document_sources_uploaded_by_person_id", "ix_meeting_document_sources_content_hash", "ix_meeting_document_sources_meeting_id", "ix_meeting_document_sources_project_id"):
+    for name in ("ix_meeting_document_sources_uploaded_by_person_id", "ix_meeting_document_sources_content_hash", "ix_meeting_document_sources_meeting_id", "ix_meeting_document_sources_project_id", "ix_meeting_document_sources_id"):
         op.drop_index(name, table_name="meeting_document_sources")
     op.drop_table("meeting_document_sources")

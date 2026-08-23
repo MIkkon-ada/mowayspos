@@ -120,8 +120,8 @@ class Meeting(Base, TimestampMixin):
         Integer, ForeignKey("meeting_document_sources.id", ondelete="SET NULL"),
         nullable=True, index=True,
     )
-    review_status = Column(String(24), nullable=False, default="legacy", index=True)
-    review_version = Column(Integer, nullable=False, default=1)
+    review_status = Column(String(24), nullable=False, default="legacy", server_default="legacy", index=True)
+    review_version = Column(Integer, nullable=False, default=1, server_default="1")
 
 
 class MeetingDocumentSource(Base, TimestampMixin):
@@ -173,8 +173,8 @@ class MeetingReviewEvent(Base, TimestampMixin):
     meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=False, index=True)
     action = Column(String(24), nullable=False, index=True)
     actor_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
-    reason = Column(Text, nullable=False, default="")
-    selected_proposal_ids_json = Column(Text, nullable=False, default="[]")
+    reason = Column(Text, nullable=False, default="", server_default="")
+    selected_proposal_ids_json = Column(Text, nullable=False, default="[]", server_default="[]")
 
 
 class MeetingTranscriptSource(Base, TimestampMixin):

@@ -52,3 +52,11 @@ test('mobile confirmation does not create a task card without a selected submiss
   const source = await read('src/pages/ConfirmPage.tsx')
   assert.match(source, /cards=\{selected \? \(taskCards as unknown as Record<string, unknown>\[\]\) : \[\]\}/)
 })
+
+test('mobile confirmation puts secondary filters behind a compact panel', async () => {
+  const source = await read('src/pages/ConfirmPage.tsx')
+  assert.match(source, /data-mobile-confirm-header/)
+  assert.match(source, /data-mobile-confirm-filters/)
+  assert.match(source, /setMobileFiltersOpen/)
+  assert.match(source, /min-\[800px\]:hidden/)
+})

@@ -318,6 +318,7 @@ export function ConfirmPage() {
   const [filterProject, setFilterProject] = useState('')
   const [filterSubmitter, setFilterSubmitter] = useState('')
   const [search, setSearch] = useState('')
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
 
   // ceo / coordinator 视图下清除状态筛选
   const isCoachView = viewMode === 'ceo'
@@ -976,7 +977,44 @@ export function ConfirmPage() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <header data-confirm-header="compact" className="h-16 flex-shrink-0 bg-white border-b px-6 flex items-center" style={{ borderColor: '#E9EFF6' }}>
+      <header data-mobile-confirm-header className="min-[800px]:hidden flex-shrink-0 border-b bg-white px-4 py-3" style={{ borderColor: '#E9EFF6' }}>
+        <h1 className="text-base font-bold text-slate-900">AI 确认中心</h1>
+        <div className="mt-3 flex gap-2">
+          <select value={filterProject} onChange={(event) => setFilterProject(event.target.value)} className="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:outline-none focus:border-blue-300">
+            <option value="">全部项目</option>
+            {allProjects.map((project) => <option key={project}>{project}</option>)}
+          </select>
+          <button type="button" onClick={() => setMobileFiltersOpen((open) => !open)} aria-expanded={mobileFiltersOpen} className="h-10 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-600">
+            筛选
+          </button>
+        </div>
+        {mobileFiltersOpen && (
+          <div data-mobile-confirm-filters className="mt-3 space-y-3 border-t border-slate-100 pt-3">
+            {viewMode === 'all' && (
+              <select value={filterSubmitter} onChange={(event) => setFilterSubmitter(event.target.value)} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:outline-none focus:border-blue-300">
+                <option value="">全部提交人</option>
+                {allSubmitters.map((submitter) => <option key={submitter}>{submitter}</option>)}
+              </select>
+            )}
+            {!isCoachView && !isCoordinatorView && (
+              <select value={filterStatus} onChange={(event) => setFilterStatus(event.target.value)} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 focus:outline-none focus:border-blue-300">
+                <option value="">全部状态</option>
+                <option value="owner_actionable">待负责人处理</option>
+                <option value={SS.S_RETURNED}>已退回</option>
+                <option value={SS.S_WAITING_COORDINATOR}>已转交统筹</option>
+                <option value={SS.S_WAITING_CEO}>待企业教练决策</option>
+                <option value={SS.S_CONFIRMED}>已入库</option>
+              </select>
+            )}
+            <input value={search} onChange={(event) => setSearch(event.target.value)} type="text" placeholder="搜索记录或任务卡" className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm focus:outline-none focus:border-blue-300" />
+            <button type="button" onClick={() => { setFilterProject(''); setFilterSubmitter(''); setFilterStatus(''); setSearch(''); setMobileFiltersOpen(false) }} className="h-10 w-full rounded-lg bg-slate-100 text-sm font-semibold text-slate-600">
+              重置筛选
+            </button>
+          </div>
+        )}
+      </header>
+
+      <header data-confirm-header="compact" className="hidden min-[800px]:flex h-16 flex-shrink-0 bg-white border-b px-6 items-center" style={{ borderColor: '#E9EFF6' }}>
         <div className="flex items-center gap-2">
           <h1 className="mr-2 whitespace-nowrap text-base font-bold text-slate-900">AI 确认中心</h1>
           <div className="flex items-center gap-2 flex-1 min-w-0">

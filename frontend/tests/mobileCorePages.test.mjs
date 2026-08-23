@@ -47,3 +47,8 @@ test('core pages delegate mobile cards to existing detail routes and callbacks',
   assert.match(issues, /\/work\/issues\/\$\{item\.id\}/)
   for (const source of [taskCards, confirmCards, timeline, issueCards]) assert.match(source, /pb-24/)
 })
+
+test('mobile confirmation does not create a task card without a selected submission', async () => {
+  const source = await read('src/pages/ConfirmPage.tsx')
+  assert.match(source, /cards=\{selected \? \(taskCards as unknown as Record<string, unknown>\[\]\) : \[\]\}/)
+})

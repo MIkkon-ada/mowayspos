@@ -1011,7 +1011,7 @@ export function ConfirmPage() {
 
       <div className="min-[800px]:hidden flex-1 overflow-y-auto bg-slate-100 pt-3">
         <MobileConfirmationStream
-          cards={taskCards as unknown as Record<string, unknown>[]}
+          cards={selected ? (taskCards as unknown as Record<string, unknown>[]) : []}
           activeIndex={activeCardIndex}
           onSelect={setSelectedCardIndex}
           canAct={canUseOwnerActions && Boolean(activeCard?.isPersistedTaskCard)}

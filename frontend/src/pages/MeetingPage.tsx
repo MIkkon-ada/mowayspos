@@ -10,7 +10,7 @@ import { NewMeetingModal } from '../features/meeting/NewMeetingModal'
 import { KickoffAgentWorkspace } from '../features/meeting/KickoffAgentWorkspace'
 import { MeetingProgressReviewSection } from '../features/meeting/MeetingProgressReviewSection'
 import { MeetingDetailWorkspace } from '../features/meeting/MeetingDetailWorkspace'
-import { STATUS_CONFIG, TYPE_STYLE, fmtTime, getStatus, typeLabel, type PublishStatus } from '../features/meeting/meetingUtils'
+import { STATUS_CONFIG, fmtTime, getStatus, type PublishStatus } from '../features/meeting/meetingUtils'
 import { getProjectDisplayName } from '../domain/projectDisplay'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
 import { ProjectMeetingReviewWorkspace } from '../features/meeting/ProjectMeetingReviewWorkspace'
@@ -22,13 +22,11 @@ export function MeetingPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const urlProjectId = searchParams.get('projectId')
   const urlMeetingId = pathMeetingId ?? searchParams.get('meetingId')
-  const urlMeetingType = searchParams.get('meeting_type') ?? ''
   const effectiveProjectId = urlProjectId ? Number(urlProjectId) : currentProjectId
   const [meetings, setMeetings] = useState<MeetingItem[]>([])
   const [selected, setSelected] = useState<MeetingItem | null>(null)
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
-  const [typeFilter, setTypeFilter] = useState('')
   const [returnNote, setReturnNote] = useState('')
   const [showReturnInput, setShowReturnInput] = useState(false)
   const [showNewModal, setShowNewModal] = useState(false)
@@ -167,15 +165,13 @@ export function MeetingPage() {
     }
   }
 
-  const typeOptions = [...new Set(meetings.map((m) => typeLabel(m.meeting_type)).filter((l) => l !== '-'))]
   const statusOptions = [...new Set(meetings.map((meeting) => getStatus(meeting)))]
   const timeOptions = [...new Set(meetings.map((meeting) => meeting.meeting_date?.slice(0, 4)).filter(Boolean))].sort().reverse() as string[]
   const normalizedMeetingQuery = meetingQuery.trim().toLowerCase()
   const filtered = meetings
     .filter((meeting) => {
-      const haystack = [meeting.title, meeting.summary, meeting.host, typeLabel(meeting.meeting_type)].filter(Boolean).join(' ').toLowerCase()
+      const haystack = [meeting.title, meeting.summary, meeting.host].filter(Boolean).join(' ').toLowerCase()
       return (!normalizedMeetingQuery || haystack.includes(normalizedMeetingQuery))
-        && (!typeFilter || typeLabel(meeting.meeting_type) === typeFilter)
         && (!statusFilter || getStatus(meeting) === statusFilter)
         && (!timeFilter || meeting.meeting_date?.startsWith(timeFilter))
     })
@@ -185,10 +181,9 @@ export function MeetingPage() {
   const projectMemberCount = effectiveProject ? Object.values(effectiveProject.member_counts ?? {}).reduce((sum, count) => sum + count, 0) : 0
   const projectDate = (value?: string) => value ? value.slice(0, 10).replace(/-/g, '/') : '-'
   const meetingEditor = effectiveProjectId && !pending_kickoff && (showNewModal || editingItem)
-    ? <NewMeetingModal
-        projectId={effectiveProjectId}
-        defaultMeetingType={editingItem ? undefined : urlMeetingType}
-        editItem={editingItem ?? undefined}
+     ? <NewMeetingModal
+         projectId={effectiveProjectId}
+         editItem={editingItem ?? undefined}
         onClose={() => {
           setShowNewModal(false)
           setEditingItem(null)
@@ -206,10 +201,6 @@ export function MeetingPage() {
   if (selected && projectMeetingReview) {
     const snapshot = projectMeetingReview.snapshot
     const project = snapshot.project
-    const requestedMeetingType = String((snapshot as { requested_meeting_type?: unknown }).requested_meeting_type ?? '').trim()
-    const reviewMeetingType = ['regular', 'special', 'kickoff', 'communication', 'review', 'retrospective'].includes(requestedMeetingType)
-      ? requestedMeetingType
-      : (projectMeetingReview.meeting?.meeting_type ?? selected.meeting_type ?? '')
     const workstreams = snapshot.workstreams ?? []
     const keyTasks = workstreams.flatMap((workstream) => (workstream.key_tasks ?? []).map((task) => ({
       id: task.id,
@@ -237,7 +228,7 @@ export function MeetingPage() {
               id: meetingDraft.id,
               project_id: meetingDraft.project_id,
               title: meetingDraft.title ?? '',
-              meeting_type: reviewMeetingType,
+              meeting_type: meetingDraft.meeting_type ?? '',
               meeting_date: meetingDraft.meeting_date ?? '',
               location: meetingDraft.location ?? '',
               host: meetingDraft.host ?? '',
@@ -514,7 +505,7 @@ export function MeetingPage() {
             <div className="mx-auto w-full max-w-[1180px] space-y-4">
               <button
                 type="button"
-                onClick={() => setSearchParams((prev) => { prev.delete('projectId'); prev.delete('meetingId'); prev.delete('meeting_type'); return prev })}
+                onClick={() => setSearchParams((prev) => { prev.delete('projectId'); prev.delete('meetingId'); return prev })}
                 className="inline-flex items-center gap-2 px-1 text-sm font-medium text-slate-500 transition hover:text-sky-600"
               >
                 <span className="text-lg leading-none">←</span>
@@ -584,7 +575,6 @@ export function MeetingPage() {
                   <InfoRow label="会议名称" value={selected.title ?? '-'} />
                   <InfoRow label="日期" value={selected.meeting_date ?? '-'} />
                   <InfoRow label="主持人" value={selected.host ?? '-'} />
-                  <InfoRow label="类型" value={typeLabel(selected.meeting_type)} />
                 </MeetingSection>
                 {selected.summary && (
                   <MeetingSection title="会议要点">
@@ -711,10 +701,6 @@ export function MeetingPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4" style={{ borderColor: '#E9EFF6' }}>
             <h3 className="text-base font-semibold text-slate-800">会议记录 <span className="font-normal text-slate-400">{filtered.length} 条</span></h3>
             <div className="flex flex-1 flex-wrap items-center justify-end gap-2 sm:flex-none">
-              <select aria-label="会议类型筛选" className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-sky-400" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
-                <option value="">全部类型</option>
-                {typeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-              </select>
               <div className="relative min-w-[220px] flex-1 sm:w-[240px] sm:flex-none">
                 <svg className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <circle cx="11" cy="11" r="7" strokeWidth="2" />
@@ -742,18 +728,17 @@ export function MeetingPage() {
           ) : (
           <>
           <div className="overflow-x-auto">
-            <table className="min-w-[1040px] w-full table-fixed text-sm">
-              <colgroup>
-                <col style={{ width: '330px' }} />
-                <col style={{ width: '220px' }} />
-                <col style={{ width: '150px' }} />
-                <col style={{ width: '110px' }} />
-                <col style={{ width: '150px' }} />
-                <col style={{ width: '120px' }} />
+             <table className="min-w-[940px] w-full table-fixed text-sm">
+               <colgroup>
+                 <col style={{ width: '390px' }} />
+                 <col style={{ width: '150px' }} />
+                 <col style={{ width: '110px' }} />
+                 <col style={{ width: '170px' }} />
+                 <col style={{ width: '120px' }} />
               </colgroup>
               <thead>
                 <tr className="border-b" style={{ borderColor: '#E9EFF6' }}>
-                  {['会议主题', '会议类型', '会议时间', '纪要状态', '最近更新', '操作'].map((h) => (
+                  {['会议主题', '会议时间', '纪要状态', '最近更新', '操作'].map((h) => (
                     <th key={h} className="whitespace-nowrap bg-slate-50/70 px-5 py-3 text-left text-xs font-medium text-slate-500">
                       {h}
                     </th>
@@ -775,14 +760,6 @@ export function MeetingPage() {
                             <div className="mt-1 truncate text-xs text-slate-400" title={m.summary ?? ''}>{m.summary || '暂无会议摘要'}</div>
                           </div>
                         </div>
-                      </td>
-                      <td className="px-5 py-3.5 align-middle">
-                        <span
-                          className={`inline-flex max-w-full min-w-0 items-center rounded-md px-2 py-0.5 text-xs font-medium ${TYPE_STYLE[typeLabel(m.meeting_type)] ?? 'bg-slate-100 text-slate-600'}`}
-                          title={typeLabel(m.meeting_type)}
-                        >
-                          <span className="truncate">{typeLabel(m.meeting_type)}</span>
-                        </span>
                       </td>
                       <td className="whitespace-nowrap px-5 py-3.5 align-middle text-slate-700">{fmtTime(m.meeting_date)}</td>
                       <td className="whitespace-nowrap px-5 py-3.5 align-middle">

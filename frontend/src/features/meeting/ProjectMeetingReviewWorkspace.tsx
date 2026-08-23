@@ -1,7 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import type { MeetingItem } from '../../types'
 import type { ProjectMeetingAgentAudit, ProjectMeetingAgentFact, ProjectMeetingEvidence, ProjectMeetingEvidenceSpan, ProjectMeetingProposalLineage } from '../../api/meetings'
-import { TYPE_STYLE, typeLabel } from './meetingUtils'
 import { FormalProjectMeetingMinutes } from './FormalProjectMeetingMinutes'
 
 export type ProjectMeetingContext = {
@@ -121,7 +120,6 @@ export function ProjectMeetingReviewWorkspace({
   const [selectedScheduleChangeIds, setSelectedScheduleChangeIds] = useState<Set<number>>(new Set())
   const [returnReason, setReturnReason] = useState('')
   const [editableDraft, setEditableDraft] = useState<ProjectMeetingDraft>(meetingDraft)
-  const meetingTypeLabel = typeLabel(editableDraft.meeting_type)
   const isPublished = editableDraft.publish_status === 'published'
   const hasPendingScheduleChanges = scheduleChanges.some((change) => change.executionStatus === 'pending')
   const pendingScheduleChangeIds = scheduleChanges.filter((change) => change.executionStatus === 'pending').map((change) => change.id).join(',')
@@ -166,7 +164,7 @@ export function ProjectMeetingReviewWorkspace({
   return <section className="mx-auto w-full max-w-[1240px] space-y-5 rounded-2xl bg-[#F5F8FC] p-5" aria-label="项目会议纪要审核工作台">
     <header className="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${isPublished ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{isPublished ? '已发布' : '待审核草稿'}</span>{editableDraft.meeting_type && <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${TYPE_STYLE[meetingTypeLabel] ?? 'bg-slate-100 text-slate-600'}`}>{meetingTypeLabel}</span>}</div><h1 className="mt-3 text-xl font-semibold text-slate-900">{editableDraft.title || '项目会议纪要'}</h1></div>
+        <div><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${isPublished ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{isPublished ? '已发布' : '待审核草稿'}</span></div><h1 className="mt-3 text-xl font-semibold text-slate-900">{editableDraft.title || '项目会议纪要'}</h1></div>
         <button type="button" onClick={() => void onDownload()} disabled={busy} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-sky-300 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-50">下载会议纪要</button>
       </div>
       {message && <p className="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</p>}

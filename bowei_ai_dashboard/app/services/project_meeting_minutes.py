@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain import submission_status as SS
+from ..domain import source_type as ST
+from ..time_utils import utc_now
 from .project_meeting_agent_contracts import EvidenceSpan, MeetingAgentFinal, MeetingFact, TaskUpdate
 from .meeting_change_set import EXECUTION_SCHEDULE_FIELDS
 
@@ -49,6 +53,12 @@ _FACT_COLLECTIONS = (
     "open_questions",
     "decisions",
     "action_items",
+)
+_SHANGHAI = ZoneInfo("Asia/Shanghai")
+_WORK_REPORT_SOURCE_TYPE_ALIASES = frozenset(
+    alias
+    for source_type in (ST.MANUAL, ST.VOICE, ST.DOCUMENT)
+    for alias in ST.aliases_for(source_type)
 )
 
 
@@ -101,6 +111,201 @@ def _json_list(value: str | None) -> list[Any]:
     return parsed if isinstance(parsed, list) else []
 
 
+def _json_object(value: str | None) -> dict[str, Any]:
+    """Return persisted JSON objects without exposing malformed legacy data."""
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _parse_date(value: object) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return date.fromisoformat(value.strip())
+    except ValueError:
+        return None
+
+
+def _meeting_date(meeting: models.Meeting | None) -> date | None:
+    return _parse_date(meeting.meeting_date) if meeting is not None else None
+
+
+def _meeting_window(project: models.Project, published: list[models.Meeting]) -> dict[str, Any]:
+    dated_published = [meeting for meeting in published if _meeting_date(meeting) is not None]
+    last = max(
+        dated_published,
+        key=lambda meeting: (_meeting_date(meeting), meeting.id),
+        default=None,
+    )
+    boundary = _meeting_date(last) if last is not None else _parse_date(project.start_date)
+    if boundary is None:
+        return {
+            "start_utc": None,
+            "end_utc": None,
+            "public": None,
+            "diagnostic": "missing_execution_window_start",
+        }
+
+    start_date = boundary + timedelta(days=1) if last is not None else boundary
+    local_start = datetime.combine(start_date, time.min, tzinfo=_SHANGHAI)
+    end_utc = utc_now()
+    return {
+        "start_utc": local_start.astimezone(timezone.utc).replace(tzinfo=None),
+        "end_utc": end_utc,
+        "public": {
+            "start": local_start.isoformat(),
+            "end": end_utc.replace(tzinfo=timezone.utc).astimezone(_SHANGHAI).isoformat(),
+            "basis": "last_published_meeting_date" if last is not None else "project_start_date",
+            "last_published_meeting_id": last.id if last is not None else None,
+        },
+        "diagnostic": None,
+    }
+
+
+def _positive_integral_id(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if not isinstance(value, str) or not value.isascii() or not value.isdigit():
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _submission_task_reports(submission: models.UpdateSubmission) -> list[Any]:
+    human = _json_object(submission.human_result_json)
+    cards = human.get("task_reports")
+    if isinstance(cards, list):
+        return cards
+    ai = _json_object(submission.ai_result_json)
+    cards = ai.get("task_reports")
+    return cards if isinstance(cards, list) else []
+
+
+def _confirmed_report_cards(
+    db: Session,
+    *,
+    project_id: int,
+    window_start_utc: datetime,
+    window_end_utc: datetime,
+    key_task_parent_ids: dict[int, int],
+) -> tuple[dict[int, list[dict[str, Any]]], list[dict[str, Any]]]:
+    rows = (
+        db.query(models.UpdateSubmission)
+        .filter(
+            models.UpdateSubmission.project_id == project_id,
+            models.UpdateSubmission.source_type.in_(_WORK_REPORT_SOURCE_TYPE_ALIASES),
+            models.UpdateSubmission.confirm_status.in_(SS.CONFIRMED_AND_STORED),
+            models.UpdateSubmission.confirmed_at >= window_start_utc,
+            models.UpdateSubmission.confirmed_at <= window_end_utc,
+        )
+        .order_by(models.UpdateSubmission.confirmed_at.asc(), models.UpdateSubmission.id.asc())
+        .all()
+    )
+    cards_by_subtask: dict[int, list[dict[str, Any]]] = {}
+    diagnostics: list[dict[str, Any]] = []
+    for submission in rows:
+        for card_index, card in enumerate(_submission_task_reports(submission)):
+            parent_task_id = _positive_integral_id(card.get("parent_task_id")) if isinstance(card, dict) else None
+            key_task_id = _positive_integral_id(card.get("matched_subtask_id")) if isinstance(card, dict) else None
+            if (
+                not isinstance(card, dict)
+                or card.get("match_status") != "matched"
+                or key_task_id is None
+                or key_task_parent_ids.get(key_task_id) != parent_task_id
+            ):
+                diagnostics.append(
+                    {
+                        "code": "invalid_confirmed_report_card",
+                        "source_submission_id": submission.id,
+                        "card_index": card_index,
+                        "reason": "missing or invalid key-task assignment",
+                    }
+                )
+                continue
+            projected = {
+                "record_type": "confirmed_report",
+                "source_type": "confirmed_report",
+                "ingestion_source_type": submission.source_type or "",
+                "source_submission_id": submission.id,
+                "card_index": card_index,
+                "key_task_id": key_task_id,
+                "submitter": submission.submitter or "",
+                "submitter_id": submission.submitter_id,
+                "submitted_at": _json_value(submission.created_at),
+                "confirmed_at": _json_value(submission.confirmed_at),
+                "confirmation_status": SS.normalize(submission.confirm_status),
+                "content": str(card.get("content") or card.get("summary") or ""),
+                "actual_output": str(card.get("actual_output") or ""),
+                "next_step": str(card.get("next_step") or ""),
+            }
+            cards_by_subtask.setdefault(key_task_id, []).append(projected)
+    return cards_by_subtask, diagnostics
+
+
+def _confirmed_execution_events(
+    db: Session,
+    *,
+    project_id: int,
+    window_start_utc: datetime,
+    window_end_utc: datetime,
+) -> dict[int, list[dict[str, Any]]]:
+    rows = (
+        db.query(models.KeyTaskExecutionEvent)
+        .join(models.SubTask, models.SubTask.id == models.KeyTaskExecutionEvent.key_task_id)
+        .join(models.Task, models.Task.id == models.SubTask.task_id)
+        .filter(
+            models.KeyTaskExecutionEvent.project_id == project_id,
+            models.Task.project_id == project_id,
+            models.Task.is_deleted.is_(False),
+            models.SubTask.is_deleted.is_(False),
+            models.KeyTaskExecutionEvent.authority == "confirmed",
+            models.KeyTaskExecutionEvent.occurred_at >= window_start_utc,
+            models.KeyTaskExecutionEvent.occurred_at <= window_end_utc,
+        )
+        .order_by(models.KeyTaskExecutionEvent.occurred_at.asc(), models.KeyTaskExecutionEvent.id.asc())
+        .all()
+    )
+    events_by_subtask: dict[int, list[dict[str, Any]]] = {}
+    for event in rows:
+        events_by_subtask.setdefault(event.key_task_id, []).append(
+            {
+                "record_type": "confirmed_event",
+                "source_type": event.source_type,
+                "source_id": event.source_id,
+                "event_id": event.id,
+                "key_task_id": event.key_task_id,
+                "execution_schedule_id": event.execution_plan_id,
+                "event_type": event.event_type,
+                "actor": {
+                    "person_id": event.actor_person_id,
+                    "name": event.actor_name_snapshot or "",
+                },
+                "occurred_at": _json_value(event.occurred_at),
+                "confirmed_at": _json_value(event.confirmed_at),
+                "effective_at": _json_value(event.effective_at),
+                "status_before": event.status_before,
+                "status_after": event.status_after,
+                "progress_summary": event.progress_summary or "",
+                "next_step": event.next_step or "",
+                "affects_current_progress": bool(event.affects_current_progress),
+                "display_payload": _json_object(event.display_payload_json),
+            }
+        )
+    return events_by_subtask
+
+
 def build_project_meeting_snapshot(project_id: int, db: Session) -> dict[str, Any]:
     """Freeze the project context used to understand one Word meeting document.
 
@@ -141,6 +346,8 @@ def build_project_meeting_snapshot(project_id: int, db: Session) -> dict[str, An
         .all()
     )
     workstreams: list[dict[str, Any]] = []
+    key_task_parent_ids: dict[int, int] = {}
+    key_task_snapshots: list[tuple[models.SubTask, list[dict[str, Any]], dict[str, Any]]] = []
     for task in task_rows:
         subtask_rows = (
             db.query(models.SubTask)
@@ -162,19 +369,21 @@ def build_project_meeting_snapshot(project_id: int, db: Session) -> dict[str, An
                 .order_by(models.ExecutionSchedule.id.asc())
                 .all()
             )
-            key_tasks.append(
-                {
-                    "id": subtask.id,
-                    "title": subtask.title or "",
-                    "assignee": subtask.assignee or "",
-                    "assignee_id": subtask.assignee_id,
-                    "plan_time": subtask.plan_time or "",
-                    "status": subtask.status or "",
-                    "completion_criteria": subtask.completion_criteria or "",
-                    "notes": subtask.notes or "",
-                    "execution_schedules": [_schedule_snapshot(item) for item in schedules],
-                }
-            )
+            schedule_snapshots = [_schedule_snapshot(item) for item in schedules]
+            key_task_snapshot = {
+                "id": subtask.id,
+                "title": subtask.title or "",
+                "assignee": subtask.assignee or "",
+                "assignee_id": subtask.assignee_id,
+                "plan_time": subtask.plan_time or "",
+                "status": subtask.status or "",
+                "completion_criteria": subtask.completion_criteria or "",
+                "notes": subtask.notes or "",
+                "execution_schedules": schedule_snapshots,
+            }
+            key_tasks.append(key_task_snapshot)
+            key_task_parent_ids[subtask.id] = task.id
+            key_task_snapshots.append((subtask, schedule_snapshots, key_task_snapshot))
         workstreams.append(
             {
                 "id": task.id,
@@ -191,6 +400,51 @@ def build_project_meeting_snapshot(project_id: int, db: Session) -> dict[str, An
                 "key_tasks": key_tasks,
             }
         )
+
+    published_rows = (
+        db.query(models.Meeting)
+        .filter(
+            models.Meeting.project_id == project_id,
+            models.Meeting.publish_status == "published",
+        )
+        .all()
+    )
+    window = _meeting_window(project, published_rows)
+    diagnostics: list[dict[str, Any]] = []
+    if window["start_utc"] is None:
+        diagnostics.append({"code": window["diagnostic"]})
+        report_cards_by_subtask: dict[int, list[dict[str, Any]]] = {}
+        events_by_subtask: dict[int, list[dict[str, Any]]] = {}
+    else:
+        report_cards_by_subtask, diagnostics = _confirmed_report_cards(
+            db,
+            project_id=project_id,
+            window_start_utc=window["start_utc"],
+            window_end_utc=window["end_utc"],
+            key_task_parent_ids=key_task_parent_ids,
+        )
+        events_by_subtask = _confirmed_execution_events(
+            db,
+            project_id=project_id,
+            window_start_utc=window["start_utc"],
+            window_end_utc=window["end_utc"],
+        )
+    for subtask, schedule_snapshots, key_task_snapshot in key_task_snapshots:
+        key_task_snapshot["execution_context"] = {
+            "current_task_baseline": {
+                "id": subtask.id,
+                "title": subtask.title or "",
+                "assignee": subtask.assignee or "",
+                "assignee_id": subtask.assignee_id,
+                "status": subtask.status or "",
+                "plan_time": subtask.plan_time or "",
+                "completion_criteria": subtask.completion_criteria or "",
+                "notes": subtask.notes or "",
+            },
+            "current_execution_schedules": schedule_snapshots,
+            "confirmed_reports": report_cards_by_subtask.get(subtask.id, []),
+            "confirmed_events": events_by_subtask.get(subtask.id, []),
+        }
 
     valid_history = db.query(models.Meeting).filter(
         models.Meeting.project_id == project_id,
@@ -262,6 +516,8 @@ def build_project_meeting_snapshot(project_id: int, db: Session) -> dict[str, An
         ),
         "members": member_snapshot,
         "workstreams": workstreams,
+        "execution_window": window["public"],
+        "diagnostics": diagnostics,
         "history": {
             "is_first_meeting": not previous_meeting_ids,
             "previous_meeting_ids": previous_meeting_ids,
@@ -552,11 +808,19 @@ def _normalize_agent_task_update(
     )
     errors = list(proposal["validation"]["errors"])
     errors.extend(evidence_result["validation"]["errors"])
+    non_evidence_errors = [error for error in errors if "evidence" not in error]
     if item.needs_confirmation:
         errors.append("task update needs_confirmation requires owner review")
     proposal["evidence"] = evidence_result["evidence"]
     proposal["needs_confirmation"] = item.needs_confirmation
-    proposal["validation"] = {"state": "ready" if not errors else "blocked", "errors": errors}
+    proposal["validation"] = {
+        "state": (
+            "needs_confirmation"
+            if item.needs_confirmation and not non_evidence_errors
+            else "ready" if not errors else "blocked"
+        ),
+        "errors": errors,
+    }
     return proposal
 
 

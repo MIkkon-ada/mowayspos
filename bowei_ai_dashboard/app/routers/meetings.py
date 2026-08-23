@@ -851,7 +851,6 @@ def _project_meeting_change_set(
 async def create_project_meeting_document_run(
     background_tasks: BackgroundTasks,
     project_id: int = Form(...),
-    meeting_type: str = Form(""),
     file: UploadFile = File(...),
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
@@ -869,7 +868,6 @@ async def create_project_meeting_document_run(
 
     account = db.query(models.Account).filter_by(username=current_user).first()
     snapshot = build_project_meeting_snapshot(project_id, db)
-    snapshot["requested_meeting_type"] = str(meeting_type or "").strip()
     source = models.MeetingDocumentSource(
         project_id=project_id,
         original_name=saved["original_name"],

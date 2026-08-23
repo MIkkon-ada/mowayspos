@@ -88,7 +88,6 @@ def test_agent_executes_tool_then_returns_final(snapshot: dict, document_text: s
     result = run_project_meeting_agent(
         project_id=1,
         document_text=document_text,
-        requested_meeting_type="project weekly meeting",
         snapshot=snapshot,
         tools=ProjectMeetingAgentTools(snapshot),
         provider=lambda prompt: next(replies),
@@ -105,7 +104,7 @@ def test_agent_executes_tool_then_returns_final(snapshot: dict, document_text: s
 
 
 def test_agent_prompt_includes_the_exact_tool_and_final_envelope_shapes(document_text: str):
-    prompt = _base_prompt(1, document_text, "regular")
+    prompt = _base_prompt(1, document_text)
 
     assert '{"type":"tool_call","tool":"get_project_profile","arguments":{"project_id":1}}' in prompt
     assert '{"type":"final","result":{' in prompt
@@ -134,7 +133,12 @@ def test_agent_prompt_includes_the_exact_tool_and_final_envelope_shapes(document
     assert "Project baseline is not current meeting evidence" in prompt
     assert "Inference cannot create writable new values" in prompt
     assert "explicit field_sources" in prompt
+    assert "confirmed_report" in prompt
+    assert "confirmed_event" in prompt
+    assert "project_baseline" in prompt
+    assert "does not replace Word evidence" in prompt
     assert '"queries":[{"fact_id":"F001","query":"focused task title"}]' in prompt
+    assert "用户选择的会议类型" not in prompt
 
 
 def test_agent_retains_events_without_event_callback(snapshot: dict, document_text: str, valid_final: dict):

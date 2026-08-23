@@ -395,10 +395,9 @@ export type ProjectMeetingRun = {
   review_package?: { proposals: ProjectMeetingScheduleChange[] } | null
 }
 
-export function createProjectMeetingDocumentRun(projectId: number, file: File, meetingType = ''): Promise<ProjectMeetingRun> {
+export function createProjectMeetingDocumentRun(projectId: number, file: File): Promise<ProjectMeetingRun> {
   const form = new FormData()
   form.append('project_id', String(projectId))
-  form.append('meeting_type', meetingType)
   form.append('file', file, file.name)
   return apiUpload<ProjectMeetingRun>('/api/meetings/document-runs', form)
 }

@@ -3,35 +3,10 @@ import type { MeetingItem } from '../../types'
 
 export type PublishStatus = 'draft' | 'published' | 'returned'
 
-export const TYPE_LABEL: Record<string, string> = {
-  weekly: '项目例会',
-  monthly: '项目例会',
-  regular: '项目例会',
-  review: '评审会',
-  special: '专题会议',
-  discuss: '沟通会',
-  communication: '沟通会',
-  kickoff: '启动会',
-  retrospective: '复盘会',
-}
-
-export const TYPE_STYLE: Record<string, string> = {
-  项目例会: 'bg-blue-100 text-blue-700',
-  评审会: 'bg-purple-100 text-purple-700',
-  专题会议: 'bg-emerald-100 text-emerald-700',
-  沟通会: 'bg-orange-100 text-orange-700',
-  启动会: 'bg-amber-100 text-amber-700',
-  复盘会: 'bg-slate-100 text-slate-600',
-}
-
 export const STATUS_CONFIG: Record<PublishStatus, { cls: string; label: string }> = {
   draft: { cls: 'bg-amber-100 text-amber-700', label: '草稿' },
   published: { cls: 'bg-emerald-100 text-emerald-700', label: '已发布' },
   returned: { cls: 'bg-red-100 text-red-700', label: '已退回' },
-}
-
-export function typeLabel(raw?: string) {
-  return TYPE_LABEL[raw ?? ''] ?? raw ?? '-'
 }
 
 export function getStatus(m: MeetingItem): PublishStatus {

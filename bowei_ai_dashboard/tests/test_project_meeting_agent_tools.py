@@ -22,6 +22,12 @@ def snapshot() -> dict:
                 "updated_at": "2026-08-14T10:00:00",
             }
         ],
+        "execution_window": {
+            "start": "2026-08-01T00:00:00+08:00",
+            "end": "2026-08-17T12:00:00+08:00",
+            "basis": "last_published_meeting_date",
+            "last_published_meeting_id": 6,
+        },
         "previous_meetings": [],
         "workstreams": [
             {
@@ -35,6 +41,39 @@ def snapshot() -> dict:
                         "assignee": "Owner",
                         "status": "in_progress",
                         "notes": "must not leak",
+                        "execution_context": {
+                            "current_task_baseline": {
+                                "id": 20,
+                                "title": "Weekly delivery",
+                                "assignee": "Owner",
+                                "status": "in_progress",
+                            },
+                            "current_execution_schedules": [
+                                {
+                                    "id": 30,
+                                    "title": "Finish acceptance checklist",
+                                    "status": "in_progress",
+                                }
+                            ],
+                            "confirmed_reports": [
+                                {
+                                    "source_type": "confirmed_report",
+                                    "source_submission_id": 101,
+                                    "card_index": 0,
+                                    "key_task_id": 20,
+                                    "content": "Acceptance checklist reviewed",
+                                }
+                            ],
+                            "confirmed_events": [
+                                {
+                                    "source_type": "confirmed_event",
+                                    "event_id": 201,
+                                    "key_task_id": 20,
+                                    "status_before": "in_progress",
+                                    "status_after": "completed",
+                                }
+                            ],
+                        },
                         "execution_schedules": [
                             {
                                 "id": 30,
@@ -43,7 +82,53 @@ def snapshot() -> dict:
                                 "risk": "must not leak",
                             }
                         ],
-                    }
+                    },
+                    {
+                        "id": 21,
+                        "title": "Sibling delivery",
+                        "assignee": "Reviewer",
+                        "status": "pending",
+                        "execution_context": {
+                            "current_task_baseline": {
+                                "id": 21,
+                                "title": "Sibling delivery",
+                                "assignee": "Reviewer",
+                                "status": "pending",
+                            },
+                            "current_execution_schedules": [
+                                {
+                                    "id": 31,
+                                    "title": "Review deployment evidence",
+                                    "status": "pending",
+                                }
+                            ],
+                            "confirmed_reports": [
+                                {
+                                    "source_type": "confirmed_report",
+                                    "source_submission_id": 102,
+                                    "card_index": 0,
+                                    "key_task_id": 21,
+                                    "content": "Sibling report",
+                                }
+                            ],
+                            "confirmed_events": [
+                                {
+                                    "source_type": "confirmed_event",
+                                    "event_id": 202,
+                                    "key_task_id": 21,
+                                    "status_before": "pending",
+                                    "status_after": "in_progress",
+                                }
+                            ],
+                        },
+                        "execution_schedules": [
+                            {
+                                "id": 31,
+                                "title": "Review deployment evidence",
+                                "status": "pending",
+                            }
+                        ],
+                    },
                 ],
             }
         ],
@@ -195,8 +280,42 @@ def test_node_and_progress_filters_stay_inside_frozen_project_boundary(snapshot:
     assert node["key_task_id"] == 20
     assert progress["items"] == [snapshot["recent_progress"][0]]
     with pytest.raises(AgentToolError, match="not found"):
-        tools.execute("get_plan_node_detail", {"project_id": 7, "execution_schedule_id": 31})
-    assert tools.execute("get_recent_progress", {"project_id": 7, "execution_schedule_id": 31}) == {"items": []}
+        tools.execute("get_plan_node_detail", {"project_id": 7, "execution_schedule_id": 999})
+    assert tools.execute("get_recent_progress", {"project_id": 7, "execution_schedule_id": 999}) == {
+        "window": snapshot["execution_window"],
+        "items": [],
+        "confirmed_reports": [],
+        "confirmed_events": [],
+    }
+
+
+def test_schedule_scoped_progress_uses_only_the_owner_key_task_context(snapshot: dict):
+    progress = ProjectMeetingAgentTools(snapshot).execute(
+        "get_recent_progress",
+        {"project_id": 7, "execution_schedule_id": 30},
+    )
+
+    context = snapshot["workstreams"][0]["key_tasks"][0]["execution_context"]
+    assert progress == {
+        "window": snapshot["execution_window"],
+        "items": [snapshot["recent_progress"][0]],
+        "confirmed_reports": context["confirmed_reports"],
+        "confirmed_events": context["confirmed_events"],
+    }
+
+
+def test_schedule_scoped_progress_returns_empty_facts_for_conflicting_key_task(snapshot: dict):
+    progress = ProjectMeetingAgentTools(snapshot).execute(
+        "get_recent_progress",
+        {"project_id": 7, "key_task_id": 21, "execution_schedule_id": 30},
+    )
+
+    assert progress == {
+        "window": snapshot["execution_window"],
+        "items": [],
+        "confirmed_reports": [],
+        "confirmed_events": [],
+    }
 
 
 def test_plan_node_detail_preserves_parent_relationship_for_each_node_kind(snapshot: dict):
@@ -210,6 +329,22 @@ def test_plan_node_detail_preserves_parent_relationship_for_each_node_kind(snaps
     assert key_task["node_type"] == "key_task"
     assert key_task["workstream_id"] == 10
     assert key_task["key_task_id"] == 20
+
+
+def test_key_task_detail_and_recent_progress_expose_frozen_execution_context(snapshot: dict):
+    tools = ProjectMeetingAgentTools(snapshot)
+    expected_context = snapshot["workstreams"][0]["key_tasks"][0]["execution_context"]
+
+    detail = tools.execute("get_plan_node_detail", {"project_id": 7, "key_task_id": 20})
+    progress = tools.execute("get_recent_progress", {"project_id": 7, "key_task_id": 20})
+
+    assert detail["execution_context"] == expected_context
+    assert progress == {
+        "window": snapshot["execution_window"],
+        "items": [snapshot["recent_progress"][0]],
+        "confirmed_reports": expected_context["confirmed_reports"],
+        "confirmed_events": expected_context["confirmed_events"],
+    }
 
 
 def test_plan_node_detail_returns_only_sanitized_matching_and_baseline_fields(snapshot: dict):
@@ -254,6 +389,7 @@ def test_plan_node_detail_returns_only_sanitized_matching_and_baseline_fields(sn
         "key_task_id",
         "key_task",
         "execution_schedules",
+        "execution_context",
     }
     assert set(detail["workstream"]) == {
         "id",
@@ -286,6 +422,8 @@ def test_tools_freeze_input_snapshot_and_isolate_return_values(snapshot: dict):
     tools = ProjectMeetingAgentTools(snapshot)
     snapshot["project"]["name"] = "Mutated source"
     snapshot["members"][0]["name"] = "Mutated member"
+    snapshot["execution_window"]["end"] = "Mutated window"
+    snapshot["workstreams"][0]["key_tasks"][0]["execution_context"]["confirmed_reports"][0]["content"] = "Mutated report"
     snapshot["workstreams"][0]["key_tasks"][0]["execution_schedules"][0]["title"] = "Mutated schedule"
 
     profile = tools.execute("get_project_profile", {"project_id": 7})
@@ -298,6 +436,9 @@ def test_tools_freeze_input_snapshot_and_isolate_return_values(snapshot: dict):
     members["members"][0]["name"] = "Mutated return"
     candidate = matches["results"][0]["candidates"][0]
     candidate["execution_schedules"][0]["title"] = "Mutated return"
+    progress = tools.execute("get_recent_progress", {"project_id": 7, "key_task_id": 20})
+    progress["window"]["end"] = "Mutated return"
+    progress["confirmed_reports"][0]["content"] = "Mutated return"
     assert set(candidate) == {
         "target_type",
         "target_id",
@@ -316,3 +457,6 @@ def test_tools_freeze_input_snapshot_and_isolate_return_values(snapshot: dict):
         "search_plan_nodes",
         {"project_id": 7, "queries": [{"fact_id": "F001", "query": "acceptance"}]},
     )["results"][0]["candidates"][0]["execution_schedules"][0]["title"] == "Finish acceptance checklist"
+    frozen_progress = tools.execute("get_recent_progress", {"project_id": 7, "key_task_id": 20})
+    assert frozen_progress["window"]["end"] == "2026-08-17T12:00:00+08:00"
+    assert frozen_progress["confirmed_reports"][0]["content"] == "Acceptance checklist reviewed"

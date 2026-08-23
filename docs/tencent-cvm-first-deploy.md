@@ -4,6 +4,31 @@ This runbook starts only the isolated Moways Compose project from the three
 images validated and published by GitHub Actions run `29687343105`. It does not
 build images on the CVM and it does not alter any existing Docker project.
 
+## Existing database: application image update only
+
+Use this procedure only when the CVM already has a healthy Moways data service
+and its data volume. It updates application images only: it does not pull,
+start, recreate, or modify that service, and it does not run a schema
+migration. Preserve the current database connection values and
+`AI_CONFIG_ENCRYPTION_KEY` in `/opt/mowayspos/production.env`.
+
+```bash
+set -euo pipefail
+cd /opt/mowayspos
+
+dc=(
+  docker compose
+  --env-file /opt/mowayspos/production.env
+  -f docker-compose.prod.yml
+)
+
+"${dc[@]}" config --quiet
+"${dc[@]}" pull backend-permissions-init backend frontend
+"${dc[@]}" up -d --no-build --no-deps backend-permissions-init
+"${dc[@]}" up -d --no-build --no-deps backend frontend
+curl --fail --silent --show-error http://127.0.0.1:18100/api/health
+```
+
 ## 1. Create the server pull credential
 
 Manually create a dedicated GitHub token for this server with only

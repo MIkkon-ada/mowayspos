@@ -53,12 +53,32 @@ def _squash_whitespace(value: str) -> str:
     return re.sub(r"\s+", " ", value.replace("\\", " ")).strip()
 
 
+def _application_only_update_section(doc: str) -> str:
+    match = re.search(
+        r"## Existing database: application image update only\n(?P<body>.*?)(?=\n## |\Z)",
+        doc,
+        flags=re.DOTALL,
+    )
+    assert match, "missing existing-database application update section"
+    return match.group("body")
+
+
 def test_compose_parameterizes_backend_repository_and_requires_tag():
     compose = _read(COMPOSE_PATH)
     assert (
         "image: ${MOWAYS_BACKEND_REPOSITORY:-mowayspos-backend}:"
         "${MOWAYS_IMAGE_TAG:?MOWAYS_IMAGE_TAG is required}"
     ) in compose
+
+
+def test_existing_database_update_never_targets_postgres_or_runs_migrations():
+    section = _application_only_update_section(_read(DEPLOYMENT_DOC_PATH))
+
+    assert "pull backend-permissions-init backend frontend" in section
+    assert 'up -d --no-build --no-deps backend-permissions-init' in section
+    assert 'up -d --no-build --no-deps backend frontend' in section
+    for forbidden in ("alembic", "postgres", "MOWAYS_POSTGRES_IMAGE", "docker compose pull"):
+        assert forbidden not in section
 
 
 def test_compose_parameterizes_frontend_repository_and_requires_tag():
@@ -266,10 +286,14 @@ def test_deployment_directory_is_owned_by_the_current_docker_user():
 
 
 def test_deployment_doc_prepares_postgres_and_environment_directories():
-    doc = _read(DEPLOYMENT_DOC_PATH)
-    assert "/data/mowayspos/postgres" in doc
-    assert "/data/mowayspos/env" in doc
-    assert doc.index("/data/mowayspos/postgres") < doc.index("docker compose")
+    first_deploy = _read(DEPLOYMENT_DOC_PATH).split(
+        "## 1. Create the server pull credential", 1
+    )[1]
+    assert "/data/mowayspos/postgres" in first_deploy
+    assert "/data/mowayspos/env" in first_deploy
+    assert first_deploy.index("/data/mowayspos/postgres") < first_deploy.index(
+        "docker compose"
+    )
 
 
 def test_deployment_doc_sets_a_database_ai_encryption_key():

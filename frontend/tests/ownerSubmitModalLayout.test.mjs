@@ -46,7 +46,7 @@ test('picker triggers use a stable SVG chevron instead of a font glyph', () => {
 
 test('notes column receives a wide share without truncating its editor', () => {
   assert.match(source, /table-fixed/)
-  assert.match(source, /w-\[24%\][^\n]*验收标准 \/ 备注/)
+  assert.match(source, /w-\[24%\][^\n]*备注 \/ 标准/)
   assert.match(source, /placeholder="填写验收标准或说明"/)
   assert.doesNotMatch(source, /max-w-\[180px\]/)
   assert.doesNotMatch(source, /max-w-\[180px\][^\n]*truncate/)
@@ -60,15 +60,16 @@ test('expanded task header inputs use compact workbench styling', () => {
   assert.match(source, /placeholder="请输入完成准则"[\s\S]{0,360}h-6[\s\S]{0,220}focus:ring-0/)
 })
 
-test('workbench uses a single-column project summary and full-width plan', () => {
+test('workbench uses the final responsive project core sidebar and plan pane', () => {
   assert.match(workbenchShellClassName, /min-h-0/)
   assert.match(workbenchShellClassName, /flex-1/)
   assert.match(source, /填写项目方案 — \{project\.name\}/)
   assert.match(source, /完善项目计划内容，确认后提交企业教练审核/)
   assert.match(source, /owner-submit-project-summary/)
   assert.match(source, /owner-submit-plan-section/)
-  assert.doesNotMatch(source, /lg:flex-row/)
-  assert.doesNotMatch(source, /owner-submit-left-pane/)
+  assert.match(source, /owner-submit-workbench-columns[^\n]*lg:flex-row/)
+  assert.match(source, /owner-submit-left-pane[^\n]*lg:w-\[280px\][^\n]*xl:w-\[300px\]/)
+  assert.match(source, /owner-submit-right-pane[^\n]*flex-1 min-w-0/)
   assert.doesNotMatch(source, /disabled[\s\S]{0,120}value=\{project\.name\}/)
 })
 
@@ -82,11 +83,11 @@ test('workbench is page-local while retaining a scrollable main boundary', () =>
   assert.match(workbenchMainClassName, /overflow-y-auto/)
 })
 
-test('project summary stays compact while preserving the horizontal three-field structure', () => {
-  assert.match(source, /owner-submit-project-summary[^\n]*py-3/)
-  assert.match(source, /mb-1\.5[^>]*>项目资料/)
+test('project core card stays compact while preserving the editable summary fields', () => {
+  assert.match(source, /owner-submit-project-summary[^\n]*owner-submit-core-card[^\n]*py-4/)
+  assert.match(source, /mb-1\.5[^>]*>项目核心信息/)
   assert.match(source, /md:grid-cols-\[minmax\(160px,0\.8fr\)_minmax\(260px,1fr\)_minmax\(360px,2fr\)\]/)
-  assert.match(source, /rows=\{2\}/)
+  assert.match(source, /rows=\{3\}/)
   assert.match(source, /<details className="group mt-1">/)
 })
 

@@ -355,6 +355,7 @@ def test_meeting_analyze_persists_immutable_change_set_without_work_plan_mutatio
             "APP_ENV": "test",
             "DATABASE_URL": f"sqlite:///{database.resolve().as_posix()}",
             "FRONTEND_ORIGIN": "",
+            "SESSION_COOKIE_NAME": "bowei_session",
             "PYTHONPATH": str(BACKEND_ROOT),
         }
     )
@@ -498,6 +499,7 @@ def test_saving_meeting_attaches_only_own_matching_draft_and_reuses_read_permiss
             "APP_ENV": "test",
             "DATABASE_URL": f"sqlite:///{database.resolve().as_posix()}",
             "FRONTEND_ORIGIN": "",
+            "SESSION_COOKIE_NAME": "bowei_session",
             "PYTHONPATH": str(BACKEND_ROOT),
         }
     )
@@ -698,6 +700,7 @@ def _run_execution_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             "APP_ENV": "test",
             "DATABASE_URL": f"sqlite:///{database.resolve().as_posix()}",
             "FRONTEND_ORIGIN": "",
+            "SESSION_COOKIE_NAME": "bowei_session",
             "PYTHONPATH": str(BACKEND_ROOT),
         }
     )
@@ -1086,6 +1089,7 @@ def test_saved_meeting_requires_reviewed_selection_before_any_plan_write(
             "APP_ENV": "test",
             "DATABASE_URL": f"sqlite:///{database.resolve().as_posix()}",
             "FRONTEND_ORIGIN": "",
+            "SESSION_COOKIE_NAME": "bowei_session",
             "PYTHONPATH": str(BACKEND_ROOT),
         }
     )

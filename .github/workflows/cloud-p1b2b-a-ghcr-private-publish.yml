@@ -205,7 +205,7 @@ jobs:
           verify_pushed_digest() {
             local ref="$1"
             local expected remote
-            expected=$(docker image inspect "$ref" --format '{{range .RepoDigests}}{{println .}}{{end}}' | awk -F$ -v repo="${ref%:*}" '$1 == repo {print $2; exit}')
+            expected=$(docker image inspect "$ref" --format '{{range .RepoDigests}}{{println .}}{{end}}' | awk -F@ -v repo="${ref%:*}" '$1 == repo {print $2; exit}')
             remote=$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')
             [[ "$remote" =~ ^sha256:[0-9a-f]{64}$ && "$remote" == "$expected" ]]
           }

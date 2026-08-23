@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Sidebar } from '../components/Sidebar'
+import { MobileAppNavigation } from '../components/MobileAppNavigation'
 import { PageTransition } from '../components/PageTransition'
 import { useProject } from '../context/ProjectContext'
 import { getPlatformSettings } from '../api/platformSettings'
 import { getProjectScopedNavigationDestination } from '../domain/authFlow'
+import { getNavigationEntries } from '../domain/navigationModel'
 import type { AppPage } from '../types'
 
 type PageSegment =
@@ -122,24 +124,30 @@ export function ProjectLayout() {
   )
   const defaultPage: AppPage = isPrivileged ? 'dashboard' : 'mytasks'
   const activePage = getActivePage(location.pathname, defaultPage)
+  const navigationEntries = getNavigationEntries(currentUser, globalUserRoles, projects)
 
   const handleNavigate = (page: AppPage) => {
     navigate(getProjectScopedNavigationDestination(page, currentProjectId, projects))
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar
-        activePage={activePage}
-        onNavigate={handleNavigate}
-        currentUser={currentUser}
-        globalUserRoles={globalUserRoles}
-        onLogout={logout}
-        logoUrl={logoUrl}
-        platformName={platformName}
-      />
+    <div className="flex h-screen overflow-hidden bg-slate-100">
+      <div className="hidden min-[800px]:flex">
+        <Sidebar
+          activePage={activePage}
+          onNavigate={handleNavigate}
+          currentUser={currentUser}
+          globalUserRoles={globalUserRoles}
+          onLogout={logout}
+          logoUrl={logoUrl}
+          platformName={platformName}
+        />
+      </div>
       <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
         <PageTransition />
+      </div>
+      <div className="min-[800px]:hidden">
+        <MobileAppNavigation activePage={activePage} entries={navigationEntries} onNavigate={handleNavigate} onChangePassword={() => navigate('/change-password')} onLogout={() => void logout()} />
       </div>
     </div>
   )

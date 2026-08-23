@@ -28,6 +28,7 @@ import { buildConfirmationTaskCards, normalizeReviewCardData } from '../domain/c
 import { buildConfirmationAssetProjection } from '../domain/confirmationAssets'
 import { getProjectDisplayName } from '../domain/projectDisplay'
 import { AiConfirmationIssueActions } from '../features/confirmations/AiConfirmationIssueActions'
+import { MobileConfirmationStream } from '../features/mobile-core-pages/MobileConfirmationStream'
 
 type WriteMode = 'task_new' | 'subtask_update' | 'subtask_new'
 type ConfirmViewMode = 'all' | 'coordinator' | 'ceo'
@@ -1008,7 +1009,23 @@ export function ConfirmPage() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-hidden flex flex-col p-4 gap-3" style={{ background: '#F1F5F9' }}>
+      <div className="min-[800px]:hidden flex-1 overflow-y-auto bg-slate-100 pt-3">
+        <MobileConfirmationStream
+          cards={taskCards as unknown as Record<string, unknown>[]}
+          activeIndex={activeCardIndex}
+          onSelect={setSelectedCardIndex}
+          canAct={canUseOwnerActions && Boolean(activeCard?.isPersistedTaskCard)}
+          acting={acting}
+          onDecide={(action, note) => {
+            if (note) setActionNote(note)
+            if (action === 'confirm') void handleTaskCardDecision('confirm')
+            if (action === 'return') void handleTaskCardDecision('return')
+            if (action === 'transfer') void handleTaskCardDecision('transfer')
+            if (action === 'ceo') void handleTaskCardDecision('ceo')
+          }}
+        />
+      </div>
+      <div className="hidden min-[800px]:flex flex-1 overflow-hidden flex-col p-4 gap-3" style={{ background: '#F1F5F9' }}>
         <div data-confirm-layout="three-column" className="flex-1 overflow-hidden min-h-0" style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 0.8fr) minmax(500px, 1.6fr) minmax(280px, 0.9fr)', gap: '12px' }}>
 
           {/* Left: queue panel */}

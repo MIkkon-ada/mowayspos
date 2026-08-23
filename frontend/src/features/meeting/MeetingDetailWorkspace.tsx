@@ -128,14 +128,14 @@ export function MeetingDetailWorkspace({
   ]
 
   return (
-    <section className="mx-auto w-full max-w-[1180px]">
+    <section className="mx-auto w-full max-w-[1180px] pb-24 min-[800px]:pb-6">
       <div className="flex items-center gap-2 text-xs text-slate-400">
         <button type="button" onClick={onBack} className="hover:text-sky-600">会议列表</button>
         <span>/</span>
         <span className="text-slate-600">会议详情</span>
       </div>
 
-      <header className="mt-4 rounded-xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
+      <header className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-5 shadow-sm min-[800px]:px-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-3">

@@ -17,6 +17,7 @@ import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleSt
 import { PlanTableViewV2 } from '../components/task-management/PlanTableViewV2'
 import { ExecutionProgressView } from '../components/task-management/ExecutionProgressView'
 import { KeyTaskExecutionDetailView } from '../components/task-management/KeyTaskExecutionDetailView'
+import { MobileTaskList } from '../features/mobile-core-pages/MobileTaskList'
 import { toast } from '../utils/toast'
 
 const NOT_STARTED = new Set(['未开始', 'not_started', 'notstarted'])
@@ -1097,18 +1098,25 @@ function handleFormSave(payload: TaskPayload) {
               </div>
             </div>
           ) : viewMode === 'plan' ? (
-            <PlanTableViewV2
-              project={focusedProject}
-              tasks={planBaseTasks}
-              taskSubMap={taskSubMap}
-              searchText={search}
-              loading={planTableLoading}
-              exportDisabled={!planTableReady}
-              onExport={handlePlanExport}
-              canCreateTask={!showDeleted && !projectArchived && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProjectRoles })}
-              onCreateTask={() => openTaskCreateForProject(focusedProject?.id)}
-              onOpenSubTask={openSubDetail}
-            />
+            <>
+              <div className="min-[800px]:hidden flex-1 overflow-y-auto bg-slate-50 pt-3">
+                <MobileTaskList tasks={planBaseTasks} subTasksByTaskId={taskSubMap} loading={planTableLoading} onOpenSubTask={openSubDetail} />
+              </div>
+              <div className="hidden min-[800px]:flex min-w-0 flex-1 flex-col">
+                <PlanTableViewV2
+                  project={focusedProject}
+                  tasks={planBaseTasks}
+                  taskSubMap={taskSubMap}
+                  searchText={search}
+                  loading={planTableLoading}
+                  exportDisabled={!planTableReady}
+                  onExport={handlePlanExport}
+                  canCreateTask={!showDeleted && !projectArchived && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProjectRoles })}
+                  onCreateTask={() => openTaskCreateForProject(focusedProject?.id)}
+                  onOpenSubTask={openSubDetail}
+                />
+              </div>
+            </>
           ) : viewMode === 'execution' ? (
             <ExecutionProgressView
               project={focusedProject}

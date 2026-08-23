@@ -104,7 +104,7 @@ def upgrade() -> None:
         sa.UniqueConstraint("question_id", "answer_revision", name="uq_meeting_skill_answer_revision"),
     )
     op.create_index("ix_meeting_skill_clarification_answer_revisions_question_id", "meeting_skill_clarification_answer_revisions", ["question_id"])
-    op.create_index("ix_meeting_skill_clarification_answer_revisions_answered_by_person_id", "meeting_skill_clarification_answer_revisions", ["answered_by_person_id"])
+    op.create_index("ix_mskill_answer_rev_answered_by", "meeting_skill_clarification_answer_revisions", ["answered_by_person_id"])
 
     op.create_table(
         "meeting_skill_resolved_facts",
@@ -131,7 +131,7 @@ def downgrade() -> None:
     op.drop_index("ix_meeting_skill_resolved_facts_answer_revision_id", table_name="meeting_skill_resolved_facts")
     op.drop_index("ix_meeting_skill_resolved_facts_run_id", table_name="meeting_skill_resolved_facts")
     op.drop_table("meeting_skill_resolved_facts")
-    op.drop_index("ix_meeting_skill_clarification_answer_revisions_answered_by_person_id", table_name="meeting_skill_clarification_answer_revisions")
+    op.drop_index("ix_mskill_answer_rev_answered_by", table_name="meeting_skill_clarification_answer_revisions")
     op.drop_index("ix_meeting_skill_clarification_answer_revisions_question_id", table_name="meeting_skill_clarification_answer_revisions")
     op.drop_table("meeting_skill_clarification_answer_revisions")
     op.drop_index("ix_meeting_skill_clarifications_blocking", table_name="meeting_skill_clarifications")

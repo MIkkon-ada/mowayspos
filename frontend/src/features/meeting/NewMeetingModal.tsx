@@ -424,6 +424,18 @@ export function NewMeetingModal({
                 <SectionTitle>会议信息</SectionTitle>
                 <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                   <Field label="会议主题" value={form.title} onChange={(value) => setField('title', value)} placeholder="例如：项目推进周例会" />
+                  <label className="space-y-1.5 text-sm font-medium text-slate-700">
+                    <span>会议类型</span>
+                    <select value={form.meeting_type} onChange={(event) => setField('meeting_type', event.target.value)} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-sky-400">
+                      <option value="">请选择会议类型</option>
+                      <option value="项目例会">项目例会</option>
+                      <option value="专题会议">专题会议</option>
+                      <option value="启动会">启动会</option>
+                      <option value="沟通会">沟通会</option>
+                      <option value="评审会">评审会</option>
+                      <option value="复盘会">复盘会</option>
+                    </select>
+                  </label>
                   <Field label="会议日期" value={form.meeting_date} onChange={(value) => setField('meeting_date', value)} placeholder="YYYY-MM-DD" />
                   <Field label="会议地点" value={form.location} onChange={(value) => setField('location', value)} placeholder="线上会议或具体地点" />
                   <Field label="主持人" value={form.host} onChange={(value) => setField('host', value)} placeholder="单独填写主持人" />
@@ -498,6 +510,7 @@ export function NewMeetingModal({
                   <SectionTitle>确认会议信息</SectionTitle>
                   <div className="mt-4 grid gap-4 md:grid-cols-2">
                     <Field label="会议主题" value={form.title} onChange={(value) => setField('title', value)} />
+                    <Field label="会议类型" value={form.meeting_type} onChange={(value) => setField('meeting_type', value)} />
                     <Field label="会议日期" value={form.meeting_date} onChange={(value) => setField('meeting_date', value)} />
                     <Field label="会议地点" value={form.location} onChange={(value) => setField('location', value)} />
                     <Field label="主持人" value={form.host} onChange={(value) => setField('host', value)} />

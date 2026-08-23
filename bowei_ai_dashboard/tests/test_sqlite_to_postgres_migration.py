@@ -279,6 +279,62 @@ def postgres_database(postgres_server):
             connection.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(database)))
 
 
+def _fresh_postgres_url(postgres_server: dict[str, object], prefix: str) -> tuple[str, str]:
+    database = f"{prefix}_{uuid.uuid4().hex}"
+    with psycopg.connect(postgres_server["admin_url"], autocommit=True) as connection:
+        connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
+    url = (
+        f"postgresql+psycopg://moways_migration:{postgres_server['password']}"
+        f"@127.0.0.1:{postgres_server['port']}/{database}"
+    )
+    return database, url
+
+
+def test_retry_link_migration_upgrades_on_fresh_postgresql(postgres_server):
+    database, database_url = _fresh_postgres_url(postgres_server, "retry_link")
+    try:
+        result = _run_alembic(database_url, "upgrade", "d4e5f6a7b8c9")
+        assert result.returncode == 0, _output(result)
+        with psycopg.connect(_psycopg_url(database_url)) as connection:
+            columns = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name='project_init_analysis_runs'"
+                )
+            }
+            assert "retry_of_run_id" in columns
+            constraints = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT constraint_name FROM information_schema.table_constraints "
+                    "WHERE table_schema='public' AND table_name='project_init_analysis_runs'"
+                )
+            }
+            assert "fk_project_init_analysis_retry_of" in constraints
+    finally:
+        with psycopg.connect(postgres_server["admin_url"], autocommit=True) as connection:
+            connection.execute(
+                sql.SQL("SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                        "WHERE datname = {} AND pid <> pg_backend_pid()").format(sql.Literal(database))
+            )
+            connection.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(database)))
+
+
+def test_fresh_postgresql_upgrades_to_head(postgres_server):
+    database, database_url = _fresh_postgres_url(postgres_server, "head_upgrade")
+    try:
+        result = _run_alembic(database_url, "upgrade", "head")
+        assert result.returncode == 0, _output(result)
+    finally:
+        with psycopg.connect(postgres_server["admin_url"], autocommit=True) as connection:
+            connection.execute(
+                sql.SQL("SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                        "WHERE datname = {} AND pid <> pg_backend_pid()").format(sql.Literal(database))
+            )
+            connection.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(database)))
+
+
 @pytest.fixture
 def source_database(tmp_path: Path) -> Path:
     return _build_source_database(tmp_path / "source.db")

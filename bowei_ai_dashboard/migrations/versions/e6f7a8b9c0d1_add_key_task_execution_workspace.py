@@ -39,19 +39,23 @@ def upgrade() -> None:
     op.execute("UPDATE execution_schedules SET due_kind = 'unknown' WHERE due_date IS NULL")
 
     # Deterministic lineage repair only: exactly one active Key Task identifies the submission.
+    # SQLite stores booleans as 0/1, whereas PostgreSQL requires boolean operands.
+    active_subtask_predicate = "COALESCE(s.is_deleted, 0) = 0"
+    if op.get_bind().dialect.name != "sqlite":
+        active_subtask_predicate = "COALESCE(s.is_deleted, false) = false"
     op.execute(
-        """
+        f"""
         UPDATE update_submissions
         SET related_subtask_id = (
             SELECT MIN(s.id) FROM subtasks AS s
             WHERE s.source_submission_id = update_submissions.id
-              AND COALESCE(s.is_deleted, 0) = 0
+              AND {active_subtask_predicate}
         )
         WHERE related_subtask_id IS NULL
           AND 1 = (
             SELECT COUNT(*) FROM subtasks AS s
             WHERE s.source_submission_id = update_submissions.id
-              AND COALESCE(s.is_deleted, 0) = 0
+              AND {active_subtask_predicate}
           )
         """
     )

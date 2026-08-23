@@ -38,6 +38,7 @@ jobs:
       DB_PASSWORD: p1b2a_ci_url_safe_password
       SESSION_COOKIE_NAME: moways_ci_session
       CI_FAKE_LLM_KEY: p1b2a_ci_environment_only_key
+      CI_FERNET_KEY: TEPAKY8df2f5lqstbfrvOIBMoEX4dabQoydQFcuouvQ=
 
     steps:
       - name: Checkout
@@ -127,6 +128,7 @@ jobs:
           ALLOW_FILE_SECRET_FALLBACK=false
           ALLOW_LEGACY_PASSWORD_LOGIN=false
           BOWEI_DEV_MODE=false
+          AI_CONFIG_ENCRYPTION_KEY=$CI_FERNET_KEY
           ALLOW_DEV_SCHEMA_CREATE_ALL=
           ALLOW_PROTECTED_DATABASE_MIGRATION=
           ANTHROPIC_API_KEY=
@@ -143,8 +145,7 @@ jobs:
           ZHIPUAI_MODEL=
           EOF
 
-          printf '{}\n' > "$MOWAYS_DATA_ROOT/env/llm_configs.json"
-          chmod 600 "$MOWAYS_ENV_FILE" "$MOWAYS_DATA_ROOT/env/llm_configs.json"
+          chmod 600 "$MOWAYS_ENV_FILE"
 
       - name: Compile backend
         run: python -m compileall bowei_ai_dashboard/app
@@ -468,13 +469,10 @@ jobs:
           wait_for_health mowayspos-backend
 
           test "$(docker inspect --format '{{.State.ExitCode}}' mowayspos-backend-permissions-init)" = "0"
-          config_owner=$(stat -c '%u:%g' "$MOWAYS_DATA_ROOT/env/llm_configs.json")
           attachments_owner=$(stat -c '%u:%g' "$MOWAYS_DATA_ROOT/achievement-attachments")
           project_init_attachments_owner=$(stat -c '%u:%g' "$MOWAYS_DATA_ROOT/project-init-attachments")
-          test "$config_owner" = "10001:10001"
           test "$attachments_owner" = "10001:10001"
           test "$project_init_attachments_owner" = "10001:10001"
-          test "$(stat -c '%a' "$MOWAYS_DATA_ROOT/env/llm_configs.json")" = "600"
           test "$(stat -c '%a' "$MOWAYS_DATA_ROOT/achievement-attachments")" = "700"
           test "$(stat -c '%a' "$MOWAYS_DATA_ROOT/project-init-attachments")" = "700"
 
@@ -484,7 +482,6 @@ jobs:
 
           assert os.getuid() == 10001
           assert os.getgid() == 10001
-          Path("/app/llm_configs.json").open("a").close()
           probe = Path("/app/data/achievement-attachments/.permission-probe")
           probe.write_text("ok", encoding="utf-8")
           probe.unlink()
@@ -534,63 +531,6 @@ jobs:
             exit 1
           fi
           ss -ltnH 'sport = :18100' | grep -Fq '127.0.0.1:18100'
-
-      - name: LLM configuration survives backend recreation
-        shell: bash
-        run: |
-          set -euo pipefail
-          dc=(docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$MOWAYS_ENV_FILE" -f docker-compose.prod.yml)
-
-          "${dc[@]}" exec -T backend sh -c 'cat > /app/llm_configs.json' <<'JSON'
-          {
-            "deepseek": {
-              "enabled": true,
-              "base_url": "https://api.deepseek.com",
-              "model": "deepseek-chat"
-            }
-          }
-          JSON
-
-          if "${dc[@]}" exec -T backend grep -q 'api_key' /app/llm_configs.json; then
-            echo 'Persistent LLM file unexpectedly contains an API key field.' >&2
-            exit 1
-          fi
-
-          "${dc[@]}" up -d --no-deps --force-recreate backend
-          for attempt in $(seq 1 60); do
-            status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' mowayspos-backend)
-            if [[ "$status" == healthy ]]; then
-              break
-            fi
-            if [[ "$attempt" == 60 ]]; then
-              docker logs mowayspos-backend
-              exit 1
-            fi
-            sleep 2
-          done
-
-          "${dc[@]}" exec -T backend python - <<'PY'
-          import json
-          from pathlib import Path
-
-          from app.llm_config import get_provider_config
-
-          config = json.loads(Path('/app/llm_configs.json').read_text(encoding='utf-8'))
-          assert config == {
-              'deepseek': {
-                  'enabled': True,
-                  'base_url': 'https://api.deepseek.com',
-                  'model': 'deepseek-chat',
-              }
-          }
-          assert get_provider_config('deepseek').get('api_key')
-          print('llm_persistence=ok env_api_key_set=true')
-          PY
-
-          if docker logs mowayspos-backend 2>&1 | grep -Fq "$CI_FAKE_LLM_KEY"; then
-            echo 'Backend logs exposed the environment API key.' >&2
-            exit 1
-          fi
 
       - name: Final repository whitespace check
         run: git diff --check

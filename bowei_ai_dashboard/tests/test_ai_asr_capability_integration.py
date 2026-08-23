@@ -8,6 +8,7 @@ from fastapi import UploadFile
 
 from app.ai.contracts import AICapabilityNotConfigured
 from app.routers import transcribe
+from app.settings import get_settings
 
 
 class FakeAIService:
@@ -31,7 +32,7 @@ class FakeAIService:
 
 class RouteWebSocket:
     def __init__(self):
-        self.cookies = {"bowei_session": "session"}
+        self.cookies = {get_settings().session_cookie_name: "session"}
         self.sent: list[dict] = []
         self.closed: tuple[int, str] | None = None
 

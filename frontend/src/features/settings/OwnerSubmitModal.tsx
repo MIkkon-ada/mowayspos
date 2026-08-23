@@ -830,8 +830,8 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
   }
 
   return (
-      <section className="owner-submit-workbench-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-slate-900 shadow-[0_18px_50px_rgba(15,23,42,0.16)]">
-        <header className="owner-submit-workbench-header flex min-h-[72px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 py-3 sm:px-7">
+      <section className="owner-submit-workbench-shell mx-auto flex min-h-0 w-[96vw] max-w-[1560px] flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-[#f7f9fc] text-slate-900 shadow-[0_18px_50px_rgba(15,23,42,0.16)]">
+        <header className="owner-submit-workbench-header flex min-h-[64px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 py-3 sm:px-7">
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2.5">
               <h2 className="truncate text-xl font-bold tracking-[-0.02em] text-slate-900">
@@ -858,16 +858,17 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
         </header>
 
         <main className="owner-submit-workbench-main min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-slate-50">
-          <div className="mx-auto flex w-full max-w-[1560px] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
-            <section className="owner-submit-project-summary owner-submit-project-summary-display rounded-xl border border-slate-200 bg-white px-5 py-3 sm:px-6">
-              <h3 className="mb-1.5 text-sm font-bold text-slate-800">项目资料</h3>
+          <div className="owner-submit-workbench-columns flex w-full flex-col gap-5 px-4 py-5 sm:px-6 lg:flex-row lg:px-8">
+            <aside className="owner-submit-left-pane sticky top-4 self-start lg:w-[280px] xl:w-[300px]">
+            <section className="owner-submit-project-summary owner-submit-project-summary-display owner-submit-core-card space-y-5 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-[0_8px_24px_rgba(15,23,42,0.05)] sm:px-6">
+              <h3 className="mb-1.5 text-sm font-bold text-slate-800">项目核心信息</h3>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(160px,0.8fr)_minmax(260px,1fr)_minmax(360px,2fr)] md:items-start md:gap-0">
                 <div className="min-w-0">
                   <span className="block text-[11px] font-semibold text-slate-500">项目名称</span>
                   <p className="mt-2 truncate text-lg font-bold tracking-[-0.01em] text-slate-900">{project.name}</p>
                 </div>
                 <div className="owner-submit-project-period-display min-w-0 md:border-l md:border-slate-100 md:px-6">
-                  <label className="block text-[11px] font-semibold text-slate-500">项目周期</label>
+                  <label className="block text-[11px] font-semibold text-slate-500">项目周期 / 时间段</label>
                   <div className="relative mt-1.5">
                     <svg aria-hidden="true" viewBox="0 0 24 24" className="pointer-events-none absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8">
                       <rect x="3" y="5" width="18" height="16" rx="2" />
@@ -887,7 +888,7 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
                         value={fillForm.objectives ?? ''}
                         onChange={(e) => setFillForm((prev) => ({ ...prev, objectives: e.target.value }))}
                         placeholder="描述项目完成后如何验收，例如关键结果、通过标准、交付边界等"
-                    rows={2}
+                    rows={3}
                     className="mt-1 w-full resize-none border-0 bg-transparent px-0 py-0 text-sm leading-5 text-slate-700 placeholder:text-slate-400 outline-none focus:ring-0"
                       />
                 </div>
@@ -896,7 +897,7 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
               <details className="group mt-1">
                 <summary className="ml-auto flex w-fit cursor-pointer select-none items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-600 transition-colors hover:border-blue-200 hover:bg-blue-50">
                   <span className="text-sm leading-none transition-transform group-open:rotate-90">›</span>
-                  更多项目资料
+                  补充详细信息
                     </summary>
                 <div className="mt-3 grid grid-cols-1 gap-4 border-t border-slate-200 pt-4 md:grid-cols-2">
                       <div className="space-y-1.5">
@@ -940,13 +941,14 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
                 </div>
               </details>
             </section>
+            </aside>
 
-            <section className="owner-submit-plan-section min-w-0">
+            <section className="owner-submit-plan-section owner-submit-right-pane flex-1 min-w-0">
               <div className="owner-submit-workplan-heading mb-4 flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 flex-wrap items-center gap-3">
                     <h3 className="shrink-0 text-xl font-semibold text-slate-900">工作推进方案</h3>
-                    <span className="mt-1 block max-w-3xl text-xs leading-5 text-slate-500">规划重点工作方向，并拆解关键任务、负责人、协助人、时间和验收标准。</span>
+                    <span className="mt-1 block max-w-3xl text-xs leading-5 text-slate-500">重点工作用于归类工作方向；关键任务才需要明确责任人、协助人、时间段和备注标准。</span>
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
@@ -988,7 +990,7 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
               </div>}
 
               {aiPreview && (
-                <section className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4" aria-label="AI 草稿合并预览" data-testid="owner-submit-ai-preview">
+                <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4" aria-label="AI 草稿合并预览" data-testid="owner-submit-ai-preview">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <h4 className="text-sm font-bold text-emerald-900">请确认 AI 草稿合并</h4>
@@ -1010,10 +1012,10 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
                         || task.subtasks.map((subtask) => composeTaskPeriod(subtask.plan_start, subtask.plan_end)).find(Boolean)
                         || '待安排时间'
                       return (
-                    <div key={taskIndex} className="owner-submit-task-group rounded-xl border border-slate-200 bg-white">
+                    <div key={taskIndex} className="owner-submit-task-group overflow-hidden rounded-2xl border border-slate-200 bg-white">
                       {isExpanded ? (
                         <>
-                              <div className="owner-submit-task-group-header flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-200 bg-white px-4 py-3">
+                              <div className="owner-submit-task-group-header flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-200 bg-slate-50 px-4 py-3">
                             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-50 text-xs font-bold text-blue-700">
                               {String(taskIndex + 1).padStart(2, '0')}
                             </div>
@@ -1058,14 +1060,14 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
                           </div>
 
                           <div className="overflow-x-auto">
-                            <table className="owner-submit-subtask-table table-fixed min-w-[980px] w-full border-separate border-spacing-0 text-left text-sm">
+                            <table className="owner-submit-subtask-table table-fixed min-w-[980px] w-full border-none bg-transparent p-0 border-separate border-spacing-0 text-left text-sm">
                               <thead>
                                 <tr className="border-b border-slate-200 bg-white text-[11px] font-bold tracking-wide text-slate-500">
                                   <th className="w-[26%] py-2 pl-4 pr-2">关键任务</th>
                                   <th className="w-[14%] px-2 py-2">负责人</th>
                                   <th className="w-[16%] px-2 py-2">协助人</th>
                                   <th className="w-[15%] px-2 py-2">时间段</th>
-                                  <th className="w-[24%] px-2 py-2">验收标准 / 备注</th>
+                                  <th className="w-[24%] px-2 py-2">备注 / 标准</th>
                                   <th className="w-[5%] px-2 py-2">操作</th>
                                 </tr>
                               </thead>

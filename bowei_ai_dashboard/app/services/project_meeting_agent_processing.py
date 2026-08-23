@@ -25,11 +25,6 @@ from .project_meeting_minutes import normalize_project_meeting_agent_result
 
 logger = logging.getLogger("bowei.project_meeting_agent_processing")
 
-_STANDARD_MEETING_TYPES = frozenset({
-    "regular", "special", "kickoff", "communication", "review", "retrospective",
-})
-
-
 def _json_value(value: str, default: Any) -> Any:
     try:
         parsed = json.loads(value or "")
@@ -204,11 +199,7 @@ def _create_review_draft(
 ) -> None:
     """Persist a reviewable meeting draft and proposals, never live plan changes."""
     draft = normalized.get("meeting_draft") if isinstance(normalized.get("meeting_draft"), dict) else {}
-    try:
-        requested_meeting_type = str(json.loads(run.snapshot_json).get("requested_meeting_type") or "").strip()
-    except (TypeError, ValueError, json.JSONDecodeError):
-        requested_meeting_type = ""
-    meeting_type = requested_meeting_type if requested_meeting_type in _STANDARD_MEETING_TYPES else str(draft.get("meeting_type") or "").strip()
+    meeting_type = str(draft.get("meeting_type") or "").strip()
     source = db.get(models.MeetingDocumentSource, run.document_source_id)
     meeting = models.Meeting(
         project_id=run.project_id,
@@ -331,7 +322,6 @@ def process_project_meeting_agent_run(run_id: int, *, session_factory=SessionLoc
             snapshot=snapshot,
             tools=tools,
             provider=provider,
-            requested_meeting_type=str(snapshot.get("requested_meeting_type") or ""),
             on_event=on_event,
             require_plan_lookup=True,
         )

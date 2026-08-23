@@ -67,7 +67,6 @@ def _run(db: Session, *, status: str = "queued") -> models.ProjectMeetingRun:
         "recent_progress": [],
         "previous_meetings": [],
         "history": {"is_first_meeting": True, "previous_meeting_ids": []},
-        "requested_meeting_type": "周会",
     }
     run = models.ProjectMeetingRun(
         id=3,
@@ -196,11 +195,8 @@ def test_background_success_persists_trusted_update_lineage_and_immutable_result
     assert db.query(models.ExecutionSchedule).count() == 0
 
 
-def test_standard_meeting_category_is_persisted_without_rewriting_word_result(db, monkeypatch):
+def test_word_meeting_type_is_persisted_without_category_override(db, monkeypatch):
     run = _run(db)
-    snapshot = json.loads(run.snapshot_json)
-    snapshot["requested_meeting_type"] = "special"
-    run.snapshot_json = json.dumps(snapshot)
     run.document_text += " Word 原文专题名称"
     db.commit()
 
@@ -216,7 +212,7 @@ def test_standard_meeting_category_is_persisted_without_rewriting_word_result(db
     db.expire_all()
     meeting = db.query(models.Meeting).one()
     persisted_run = db.get(models.ProjectMeetingRun, run.id)
-    assert meeting.meeting_type == "special"
+    assert meeting.meeting_type == "Word 原文专题名称"
     assert json.loads(persisted_run.result_json)["meeting_draft"]["meeting_type"] == "Word 原文专题名称"
 
 
@@ -376,10 +372,12 @@ def test_create_route_queues_background_work_without_calling_model(db, monkeypat
     upload = UploadFile(filename="weekly.docx", file=BytesIO(b"word"))
     tasks = BackgroundTasks()
     payload = asyncio.run(meetings.create_project_meeting_document_run(
-        background_tasks=tasks, project_id=1, meeting_type="周会", file=upload, current_user="owner", db=db,
+        background_tasks=tasks, project_id=1, file=upload, current_user="owner", db=db,
     ))
 
     assert payload["status"] == "queued"
     assert payload["stage"] == "reading"
     assert len(tasks.tasks) == 1
     assert db.query(models.Meeting).count() == 0
+    run = db.query(models.ProjectMeetingRun).one()
+    assert "requested_meeting_type" not in json.loads(run.snapshot_json)

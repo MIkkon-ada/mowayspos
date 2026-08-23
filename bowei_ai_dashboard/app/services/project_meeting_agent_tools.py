@@ -191,6 +191,7 @@ class ProjectMeetingAgentTools:
                         self._node_summary(schedule, title_field="title")
                         for schedule in matching_schedules
                     ],
+                    "execution_context": deepcopy(key_task.get("execution_context", {})),
                 }
         raise AgentToolError("plan node not found in project snapshot")
 
@@ -204,7 +205,52 @@ class ProjectMeetingAgentTools:
             and (key_task_id is None or item.get("key_task_id") == key_task_id)
             and (schedule_id is None or item.get("execution_schedule_id") == schedule_id)
         ]
-        return {"items": items}
+        key_tasks = [
+            key_task
+            for workstream in self._snapshot.get("workstreams", [])
+            if isinstance(workstream, dict)
+            for key_task in workstream.get("key_tasks", [])
+            if isinstance(key_task, dict)
+        ]
+        if schedule_id is not None:
+            owner = next(
+                (
+                    key_task
+                    for key_task in key_tasks
+                    if any(
+                        isinstance(schedule, dict) and schedule.get("id") == schedule_id
+                        for schedule in key_task.get("execution_schedules", [])
+                    )
+                ),
+                None,
+            )
+            contexts = (
+                [owner.get("execution_context", {})]
+                if owner is not None and (key_task_id is None or owner.get("id") == key_task_id)
+                else []
+            )
+        else:
+            contexts = [
+                key_task.get("execution_context", {})
+                for key_task in key_tasks
+                if key_task_id is None or key_task.get("id") == key_task_id
+            ]
+        return {
+            "window": self._snapshot.get("execution_window"),
+            "items": items,
+            "confirmed_reports": [
+                item
+                for context in contexts
+                if isinstance(context, dict)
+                for item in context.get("confirmed_reports", [])
+            ],
+            "confirmed_events": [
+                item
+                for context in contexts
+                if isinstance(context, dict)
+                for item in context.get("confirmed_events", [])
+            ],
+        }
 
     def _get_previous_meetings(self, arguments: dict[str, Any]) -> dict[str, Any]:
         history = self._snapshot.get("history", {})

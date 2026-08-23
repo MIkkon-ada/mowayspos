@@ -57,7 +57,6 @@ class MeetingAgentError(RuntimeError):
 def _base_prompt(
     project_id: int,
     document_text: str,
-    requested_meeting_type: str,
 ) -> str:
     tool_names = ", ".join(ProjectMeetingAgentTools.TOOL_NAMES)
     protocol_examples = """
@@ -91,6 +90,7 @@ STRICT RESPONSE PROTOCOL (this overrides any older meeting-minutes JSON format):
   proposed_changes item: {"change_id":"C001","source_fact_id":"F001","source_match_id":"M001","source_delta_id":"D001","action":"update_execution_schedule","target":{"project_id":1,"workstream_id":10,"key_task_id":20,"execution_schedule_id":30},"before":{"status":"pending"},"proposed":{"status":"in_progress"},"field_sources":{"status":{"source_type":"meeting_fact","source_fact_id":"F001","usage":"new"}},"requires_confirmation":true}
 - If a fact has no structured business field, emit fields as {} and do not create a Proposed Change. A Proposed Change is allowed only when every proposed field has field_sources and each meeting_fact field source names the same F-series fact containing that field-level Word evidence.
 - Project baseline is not current meeting evidence. It may only support a project match or baseline comparison.
+- Execution context returned by tools is frozen project_baseline. Treat confirmed_report and confirmed_event as context for matching, consistency checks, risk flags, and questions for the owner. This project_baseline does not replace Word evidence: it never replaces field-level Word evidence and must never be the sole source of a proposed writeback value.
 - Inference cannot create writable new values. A Proposed Change must use explicit field_sources for every proposed field and requires_confirmation=true.
 - Extract every Word-only Meeting Fact before matching. Then call search_plan_nodes once with one batch covering all facts:
   {"type":"tool_call","tool":"search_plan_nodes","arguments":{"project_id":1,"queries":[{"fact_id":"F001","query":"focused task title"}]}}
@@ -101,7 +101,7 @@ STRICT RESPONSE PROTOCOL (this overrides any older meeting-minutes JSON format):
     return f"""{protocol_examples}你是项目会议纪要分析 Agent，提示词版本：{PROMPT_VERSION}。
 
 规则：
-1. Word 正文是唯一的会议事实来源。用户选择的会议类型只是上下文，不能覆盖与 Word 正文矛盾的事实。
+1. Word 正文是唯一的会议事实来源。
 2. 项目工具返回的项目人员、计划、进展和历史会议仅用于上下文、检索和目标匹配，不能作为会议事实证据。
 3. 每个非空的会议基本信息字段、每条事实和每个执行排期更新，都必须提供 Word 正文中的精确 evidence span（quote、char_start、char_end）。
 4. 缺失信息保持空值，或写入 open_questions；不要猜测、补全或从项目上下文推断会议事实。
@@ -110,7 +110,6 @@ STRICT RESPONSE PROTOCOL (this overrides any older meeting-minutes JSON format):
 7. 可用只读工具：{tool_names}。每个工具参数都必须含 project_id={project_id}。
 
 项目 ID：{project_id}
-用户选择的会议类型：{requested_meeting_type or "（未选择）"}
 Word 正文（证据偏移以此文本为准）：
 {document_text}
 """
@@ -154,7 +153,6 @@ def run_project_meeting_agent(
     snapshot: dict[str, Any],
     tools: ProjectMeetingAgentTools,
     provider: Callable[[str], AgentModelResponse],
-    requested_meeting_type: str = "",
     on_event: Callable[[dict[str, Any]], None] | None = None,
     require_plan_lookup: bool = False,
 ) -> MeetingAgentRunResult:
@@ -172,7 +170,7 @@ def run_project_meeting_agent(
     invocation_log_ids: list[int] = []
     seen_tool_calls: set[tuple[str, str]] = set()
     repair_used = False
-    base_prompt = _base_prompt(project_id, document_text, requested_meeting_type)
+    base_prompt = _base_prompt(project_id, document_text)
     prompt = base_prompt
 
     for step in range(1, MAX_AGENT_STEPS + 1):

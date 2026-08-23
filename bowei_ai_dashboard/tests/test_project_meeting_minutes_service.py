@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import date
+import json
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -9,6 +10,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app import models
 from app.database import Base
+from app.domain import submission_status as SS
+from app.domain import source_type as ST
+from app.services.key_task_execution import record_execution_event
 from app.services.meeting_document_storage import (
     MeetingDocumentStorageError,
     download_meeting_document_path,
@@ -95,6 +99,69 @@ def project_plan(db: Session) -> tuple[models.Project, models.ExecutionSchedule]
     )
     db.commit()
     return project, schedule
+
+
+def _confirmed_submission(
+    db: Session,
+    *,
+    confirmed_at: datetime,
+    created_at: datetime | None = None,
+    cards: list[dict] | None = None,
+    confirm_status: str = SS.S_CONFIRMED,
+    source_type: str = ST.MANUAL,
+) -> models.UpdateSubmission:
+    submission = models.UpdateSubmission(
+        project_id=1,
+        source_type=source_type,
+        submitter="Owner",
+        submitter_id=1,
+        title="Weekly report",
+        transcript_text="Acceptance checklist reviewed",
+        human_result_json=json.dumps({
+            "task_reports": cards if cards is not None else [{
+                "parent_task_id": 10,
+                "matched_subtask_id": 20,
+                "matched_subtask_title": "Weekly delivery",
+                "match_status": "matched",
+                "content": "Acceptance checklist reviewed",
+                "actual_output": "Signed checklist",
+                "next_step": "Prepare release",
+            }],
+        }),
+        confirm_status=confirm_status,
+        confirmed_at=confirmed_at,
+        created_at=created_at,
+    )
+    db.add(submission)
+    db.flush()
+    return submission
+
+
+def _confirmed_event(
+    db: Session,
+    *,
+    occurred_at: datetime,
+    source_id: int,
+    authority: str = "confirmed",
+) -> models.KeyTaskExecutionEvent:
+    return record_execution_event(
+        db,
+        project_id=1,
+        key_task_id=20,
+        execution_plan_id=30,
+        event_type="status_changed",
+        source_type="work_report",
+        source_id=source_id,
+        dedupe_key=f"meeting-snapshot-{source_id}",
+        actor_name="Owner",
+        occurred_at=occurred_at,
+        confirmed_at=occurred_at,
+        effective_at=occurred_at,
+        affects_current_progress=True,
+        status_before="in_progress",
+        status_after="completed",
+        authority=authority,
+    )
 
 
 def test_first_meeting_snapshot_contains_project_members_plan_and_schedules(
@@ -207,6 +274,309 @@ def test_snapshot_ignores_draft_and_returned_meetings_when_identifying_first_mee
 
     assert snapshot["history"] == {"is_first_meeting": True, "previous_meeting_ids": []}
     assert snapshot["previous_meetings"] == []
+
+
+def test_snapshot_freezes_only_confirmed_execution_facts_after_last_published_meeting_cutoff(
+    db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
+):
+    project, _ = project_plan
+    published = models.Meeting(
+        project_id=project.id,
+        meeting_date="2026-07-27",
+        publish_status="published",
+    )
+    approved_draft = models.Meeting(
+        project_id=project.id,
+        title="Approved draft meeting",
+        meeting_date="2026-08-15",
+        review_status="approved",
+        publish_status="draft",
+    )
+    second_key_task = models.SubTask(
+        id=22,
+        task_id=10,
+        title="Unreported delivery",
+        assignee="Owner",
+        assignee_id=1,
+        status="not_started",
+        plan_time="2026-08",
+        completion_criteria="Release notes approved",
+        notes="No confirmed updates yet",
+    )
+    second_schedule = models.ExecutionSchedule(
+        id=32,
+        subtask_id=second_key_task.id,
+        plan_type="week",
+        title="Draft release notes",
+        status="not_started",
+    )
+    db.add_all([published, approved_draft, second_key_task, second_schedule])
+    db.flush()
+    submission = _confirmed_submission(
+        db,
+        created_at=datetime(2026, 8, 1, 1, 30),
+        confirmed_at=datetime(2026, 8, 1, 2),
+    )
+    cutoff_utc = datetime(2026, 7, 27, 16, tzinfo=timezone.utc)
+    before_cutoff = (cutoff_utc - timedelta(minutes=1)).replace(tzinfo=None)
+    before_cutoff_submission = _confirmed_submission(
+        db, confirmed_at=before_cutoff
+    )
+    _confirmed_event(db, occurred_at=datetime(2026, 8, 2, 3), source_id=100)
+    before_cutoff_event = _confirmed_event(
+        db,
+        occurred_at=before_cutoff,
+        source_id=101,
+    )
+    unconfirmed_submission = _confirmed_submission(
+        db,
+        confirmed_at=datetime(2026, 8, 3, 2),
+        confirm_status=SS.S_NEW,
+    )
+    non_work_report_submission = _confirmed_submission(
+        db,
+        confirmed_at=datetime(2026, 8, 3, 2),
+        source_type=ST.MEETING,
+    )
+    voice_submission = _confirmed_submission(
+        db,
+        confirmed_at=datetime(2026, 8, 3, 2),
+        source_type=ST.VOICE,
+    )
+    document_submission = _confirmed_submission(
+        db,
+        confirmed_at=datetime(2026, 8, 3, 3),
+        source_type=ST.DOCUMENT,
+    )
+    unconfirmed_event = _confirmed_event(
+        db,
+        occurred_at=datetime(2026, 8, 3, 3),
+        source_id=102,
+        authority="pending_confirmation",
+    )
+    db.commit()
+
+    snapshot = build_project_meeting_snapshot(project.id, db)
+
+    assert approved_draft.id in {
+        item["meeting_id"] for item in snapshot["previous_meetings"]
+    }
+    assert snapshot["execution_window"] == {
+        "start": "2026-07-28T00:00:00+08:00",
+        "end": snapshot["execution_window"]["end"],
+        "basis": "last_published_meeting_date",
+        "last_published_meeting_id": published.id,
+    }
+    context = snapshot["workstreams"][0]["key_tasks"][0]["execution_context"]
+    second_context = snapshot["workstreams"][0]["key_tasks"][1]["execution_context"]
+    assert set(context) == {
+        "current_task_baseline",
+        "current_execution_schedules",
+        "confirmed_reports",
+        "confirmed_events",
+    }
+    assert all(
+        set(key_task["execution_context"]) == {
+            "current_task_baseline",
+            "current_execution_schedules",
+            "confirmed_reports",
+            "confirmed_events",
+        }
+        for key_task in snapshot["workstreams"][0]["key_tasks"]
+    )
+    assert context["current_task_baseline"] == {
+        "id": 20,
+        "title": "Weekly delivery",
+        "assignee": "Owner",
+        "assignee_id": 1,
+        "status": "in_progress",
+        "plan_time": "",
+        "completion_criteria": "",
+        "notes": "",
+    }
+    assert context["current_execution_schedules"] == snapshot["workstreams"][0]["key_tasks"][0]["execution_schedules"]
+    assert context["current_execution_schedules"][0]["id"] == 30
+    assert context["current_execution_schedules"][0]["title"] == "Finish acceptance checklist"
+    assert context["current_execution_schedules"][0]["status"] == "in_progress"
+    assert context["confirmed_reports"][0] == {
+        "record_type": "confirmed_report",
+        "source_type": "confirmed_report",
+        "ingestion_source_type": ST.MANUAL,
+        "source_submission_id": submission.id,
+        "card_index": 0,
+        "key_task_id": 20,
+        "submitter": "Owner",
+        "submitter_id": 1,
+        "submitted_at": "2026-08-01T01:30:00",
+        "confirmed_at": "2026-08-01T02:00:00",
+        "confirmation_status": SS.S_CONFIRMED,
+        "content": "Acceptance checklist reviewed",
+        "actual_output": "Signed checklist",
+        "next_step": "Prepare release",
+    }
+    assert {item["source_submission_id"] for item in context["confirmed_reports"]} == {
+        submission.id,
+        voice_submission.id,
+        document_submission.id,
+    }
+    reports_by_submission_id = {
+        item["source_submission_id"]: item for item in context["confirmed_reports"]
+    }
+    assert reports_by_submission_id[voice_submission.id]["source_type"] == "confirmed_report"
+    assert reports_by_submission_id[voice_submission.id]["ingestion_source_type"] == ST.VOICE
+    assert reports_by_submission_id[document_submission.id]["source_type"] == "confirmed_report"
+    assert reports_by_submission_id[document_submission.id]["ingestion_source_type"] == ST.DOCUMENT
+    assert [
+        (
+            item["status_before"],
+            item["status_after"],
+            item["record_type"],
+            item["source_type"],
+            item["source_id"],
+        )
+        for item in context["confirmed_events"]
+    ] == [
+        ("in_progress", "completed", "confirmed_event", "work_report", 100),
+    ]
+    assert before_cutoff_submission.id not in {
+        item["source_submission_id"] for item in context["confirmed_reports"]
+    }
+    assert before_cutoff_event.id not in {item["event_id"] for item in context["confirmed_events"]}
+    assert unconfirmed_submission.id not in {
+        item["source_submission_id"] for item in context["confirmed_reports"]
+    }
+    assert non_work_report_submission.id not in {
+        item["source_submission_id"] for item in context["confirmed_reports"]
+    }
+    assert unconfirmed_event.id not in {item["event_id"] for item in context["confirmed_events"]}
+    assert second_context["current_task_baseline"] == {
+        "id": 22,
+        "title": "Unreported delivery",
+        "assignee": "Owner",
+        "assignee_id": 1,
+        "status": "not_started",
+        "plan_time": "2026-08",
+        "completion_criteria": "Release notes approved",
+        "notes": "No confirmed updates yet",
+    }
+    assert second_context["current_execution_schedules"] == snapshot["workstreams"][0]["key_tasks"][1]["execution_schedules"]
+    assert second_context["current_execution_schedules"][0]["id"] == 32
+    assert second_context["current_execution_schedules"][0]["title"] == "Draft release notes"
+    assert second_context["current_execution_schedules"][0]["status"] == "not_started"
+    assert second_context["confirmed_reports"] == []
+    assert second_context["confirmed_events"] == []
+
+
+def test_first_meeting_execution_window_uses_project_start_and_reports_missing_start(
+    db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
+):
+    project, _ = project_plan
+    project.start_date = "2026-07-01"
+    submission = _confirmed_submission(db, confirmed_at=datetime(2026, 7, 2, 2))
+    db.commit()
+
+    snapshot = build_project_meeting_snapshot(project.id, db)
+
+    context = snapshot["workstreams"][0]["key_tasks"][0]["execution_context"]
+    assert snapshot["execution_window"]["basis"] == "project_start_date"
+    assert context["confirmed_reports"][0]["source_submission_id"] == submission.id
+
+    project.start_date = ""
+    db.commit()
+
+    missing_start_snapshot = build_project_meeting_snapshot(project.id, db)
+
+    missing_start_context = missing_start_snapshot["workstreams"][0]["key_tasks"][0]["execution_context"]
+    assert missing_start_snapshot["execution_window"] is None
+    assert missing_start_context["confirmed_reports"] == []
+    assert missing_start_context["confirmed_events"] == []
+    assert missing_start_snapshot["diagnostics"] == [{"code": "missing_execution_window_start"}]
+
+
+def test_first_meeting_execution_window_includes_same_shanghai_calendar_day_facts(
+    db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
+):
+    project, _ = project_plan
+    project.start_date = "2026-07-01"
+    report = _confirmed_submission(db, confirmed_at=datetime(2026, 6, 30, 16, 1))
+    event = _confirmed_event(db, occurred_at=datetime(2026, 6, 30, 16, 2), source_id=103)
+    db.commit()
+
+    snapshot = build_project_meeting_snapshot(project.id, db)
+
+    context = snapshot["workstreams"][0]["key_tasks"][0]["execution_context"]
+    assert snapshot["execution_window"]["start"] == "2026-07-01T00:00:00+08:00"
+    assert report.id in {item["source_submission_id"] for item in context["confirmed_reports"]}
+    assert event.id in {item["event_id"] for item in context["confirmed_events"]}
+
+
+def test_snapshot_excludes_invalid_confirmed_report_cards_with_diagnostics(
+    db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
+):
+    project, _ = project_plan
+    project.start_date = "2026-07-01"
+    invalid = _confirmed_submission(
+        db,
+        confirmed_at=datetime(2026, 7, 2, 2),
+        cards=[{
+            "parent_task_id": 10,
+            "match_status": "matched",
+            "content": "This card has no canonical key-task assignment",
+        }],
+    )
+    db.commit()
+
+    snapshot = build_project_meeting_snapshot(project.id, db)
+
+    context = snapshot["workstreams"][0]["key_tasks"][0]["execution_context"]
+    assert context["confirmed_reports"] == []
+    assert snapshot["diagnostics"] == [{
+        "code": "invalid_confirmed_report_card",
+        "source_submission_id": invalid.id,
+        "card_index": 0,
+        "reason": "missing or invalid key-task assignment",
+    }]
+
+
+@pytest.mark.parametrize("invalid_key_task_id", [20.9, float("inf")])
+def test_snapshot_rejects_non_integral_confirmed_report_ids_and_continues(
+    db: Session,
+    project_plan: tuple[models.Project, models.ExecutionSchedule],
+    invalid_key_task_id: float,
+):
+    project, _ = project_plan
+    project.start_date = "2026-07-01"
+    submission = _confirmed_submission(
+        db,
+        confirmed_at=datetime(2026, 7, 2, 2),
+        cards=[
+            {
+                "parent_task_id": 10,
+                "matched_subtask_id": invalid_key_task_id,
+                "match_status": "matched",
+            },
+            {
+                "parent_task_id": 10,
+                "matched_subtask_id": 20,
+                "match_status": "matched",
+                "content": "Valid card after an invalid historic card",
+            },
+        ],
+    )
+    db.commit()
+
+    snapshot = build_project_meeting_snapshot(project.id, db)
+
+    context = snapshot["workstreams"][0]["key_tasks"][0]["execution_context"]
+    assert [(item["source_submission_id"], item["card_index"]) for item in context["confirmed_reports"]] == [
+        (submission.id, 1),
+    ]
+    assert snapshot["diagnostics"] == [{
+        "code": "invalid_confirmed_report_card",
+        "source_submission_id": submission.id,
+        "card_index": 0,
+        "reason": "missing or invalid key-task assignment",
+    }]
 
 
 def test_schedule_proposal_accepts_only_contiguous_document_evidence(
@@ -453,6 +823,40 @@ def test_agent_normalization_blocks_task_update_without_exact_evidence(
 
     assert result["execution_schedule_changes"][0]["validation"]["state"] == "blocked"
     assert any("quote" in error for error in result["execution_schedule_changes"][0]["validation"]["errors"])
+
+
+def test_agent_normalization_requires_confirmation_when_only_confirmed_event_supports_schedule_update(
+    db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
+):
+    project, schedule = project_plan
+    document_text = _agent_document_text()
+    project.start_date = "2026-08-01"
+    _confirmed_event(db, occurred_at=datetime(2026, 8, 15, 1), source_id=104)
+    db.commit()
+    snapshot = build_project_meeting_snapshot(project.id, db)
+    event = snapshot["workstreams"][0]["key_tasks"][0]["execution_context"]["confirmed_events"][0]
+    update = TaskUpdate(
+        action="update_execution_schedule",
+        target=TaskTarget(project_id=project.id, workstream_id=10, key_task_id=20, execution_schedule_id=schedule.id),
+        before={"status": "in_progress"},
+        proposed={"status": "completed"},
+        evidence=[EvidenceSpan(
+            quote="Confirmed event records completed status",
+            char_start=0,
+            char_end=len("Confirmed event records completed status"),
+        )],
+        reason=f"confirmed_event {event['event_id']} records completed status",
+        confidence=0.9,
+        needs_confirmation=True,
+    )
+
+    result = normalize_project_meeting_agent_result(
+        _agent_final(document_text, task_updates=[update]), document_text, snapshot
+    )
+
+    proposal = result["execution_schedule_changes"][0]
+    assert proposal["validation"]["state"] == "needs_confirmation"
+    assert "evidence" in " ".join(proposal["validation"]["errors"])
 
 
 def test_agent_normalization_blocks_task_update_with_mismatched_workstream_parent(

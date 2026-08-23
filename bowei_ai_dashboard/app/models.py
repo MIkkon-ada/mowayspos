@@ -318,13 +318,14 @@ class MeetingSkillClarificationAnswerRevision(Base, TimestampMixin):
     __tablename__ = "meeting_skill_clarification_answer_revisions"
     __table_args__ = (
         UniqueConstraint("question_id", "answer_revision", name="uq_meeting_skill_answer_revision"),
+        Index("ix_mskill_answer_rev_answered_by", "answered_by_person_id"),
     )
 
     id = Column(Integer, primary_key=True)
     question_id = Column(Integer, ForeignKey("meeting_skill_clarifications.id"), nullable=False, index=True)
     answer_revision = Column(Integer, nullable=False)
     answer_json = Column(Text, nullable=False, default="{}", server_default="{}")
-    answered_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+    answered_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True)
 
 
 class MeetingSkillResolvedFact(Base, TimestampMixin):

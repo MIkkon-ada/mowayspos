@@ -18,6 +18,16 @@ def _db():
     return sessionmaker(bind=engine)()
 
 
+def test_answer_revision_indexes_use_postgresql_safe_names():
+    index_names = {
+        index.name
+        for index in models.MeetingSkillClarificationAnswerRevision.__table__.indexes
+    }
+
+    assert "ix_mskill_answer_rev_answered_by" in index_names
+    assert all(len(name) <= 63 for name in index_names)
+
+
 def test_preflight_only_creates_blocking_material_questions_without_minutes_output():
     db = _db()
     run = start_preflight(

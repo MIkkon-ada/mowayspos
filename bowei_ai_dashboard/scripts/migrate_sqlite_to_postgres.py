@@ -768,7 +768,14 @@ def _build_report_and_plan(
         for table, reason in EXCLUDED_TABLES.items()
         if table in target_tables or table in source_tables
     }
-    planned = (source_tables & target_tables) - set(excluded)
+    # Tables with no source rows do not need an insertion plan.  Omitting them
+    # also prevents newly introduced, mutually-referencing empty tables from
+    # turning a safe legacy-data migration into an artificial dependency cycle.
+    planned = {
+        table
+        for table in (source_tables & target_tables) - set(excluded)
+        if source_audit["table_counts"][table] > 0
+    }
     target_only = sorted((target_tables - source_tables) - set(excluded))
     source_only_tables = sorted((source_tables - target_tables) - set(excluded))
     dependencies = _target_dependencies(target_metadata, planned)

@@ -76,24 +76,40 @@ def upgrade() -> None:
     op.create_index("ix_meeting_review_events_action", "meeting_review_events", ["action"])
     op.create_index("ix_meeting_review_events_actor_person_id", "meeting_review_events", ["actor_person_id"])
 
-    with op.batch_alter_table("meetings", recreate="always") as batch:
-        batch.add_column(sa.Column("document_source_id", sa.Integer(), nullable=True))
-        batch.add_column(sa.Column("review_status", sa.String(length=24), nullable=False, server_default="legacy"))
-        batch.add_column(sa.Column("review_version", sa.Integer(), nullable=False, server_default="1"))
-        batch.create_foreign_key("fk_meetings_document_source_id", "meeting_document_sources", ["document_source_id"], ["id"], ondelete="SET NULL")
-        batch.create_index("ix_meetings_document_source_id", ["document_source_id"])
-        batch.create_index("ix_meetings_review_status", ["review_status"])
+    if op.get_bind().dialect.name == "sqlite":
+        with op.batch_alter_table("meetings", recreate="always") as batch:
+            batch.add_column(sa.Column("document_source_id", sa.Integer(), nullable=True))
+            batch.add_column(sa.Column("review_status", sa.String(length=24), nullable=False, server_default="legacy"))
+            batch.add_column(sa.Column("review_version", sa.Integer(), nullable=False, server_default="1"))
+            batch.create_foreign_key("fk_meetings_document_source_id", "meeting_document_sources", ["document_source_id"], ["id"], ondelete="SET NULL")
+            batch.create_index("ix_meetings_document_source_id", ["document_source_id"])
+            batch.create_index("ix_meetings_review_status", ["review_status"])
+    else:
+        op.add_column("meetings", sa.Column("document_source_id", sa.Integer(), nullable=True))
+        op.add_column("meetings", sa.Column("review_status", sa.String(length=24), nullable=False, server_default="legacy"))
+        op.add_column("meetings", sa.Column("review_version", sa.Integer(), nullable=False, server_default="1"))
+        op.create_foreign_key("fk_meetings_document_source_id", "meetings", "meeting_document_sources", ["document_source_id"], ["id"], ondelete="SET NULL")
+        op.create_index("ix_meetings_document_source_id", "meetings", ["document_source_id"])
+        op.create_index("ix_meetings_review_status", "meetings", ["review_status"])
     op.execute("UPDATE meetings SET review_status = 'legacy' WHERE review_status IS NULL OR review_status = ''")
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("meetings", recreate="always") as batch:
-        batch.drop_index("ix_meetings_review_status")
-        batch.drop_index("ix_meetings_document_source_id")
-        batch.drop_constraint("fk_meetings_document_source_id", type_="foreignkey")
-        batch.drop_column("review_version")
-        batch.drop_column("review_status")
-        batch.drop_column("document_source_id")
+    if op.get_bind().dialect.name == "sqlite":
+        with op.batch_alter_table("meetings", recreate="always") as batch:
+            batch.drop_index("ix_meetings_review_status")
+            batch.drop_index("ix_meetings_document_source_id")
+            batch.drop_constraint("fk_meetings_document_source_id", type_="foreignkey")
+            batch.drop_column("review_version")
+            batch.drop_column("review_status")
+            batch.drop_column("document_source_id")
+    else:
+        op.drop_index("ix_meetings_review_status", table_name="meetings")
+        op.drop_index("ix_meetings_document_source_id", table_name="meetings")
+        op.drop_constraint("fk_meetings_document_source_id", "meetings", type_="foreignkey")
+        op.drop_column("meetings", "review_version")
+        op.drop_column("meetings", "review_status")
+        op.drop_column("meetings", "document_source_id")
 
     for name in ("ix_meeting_review_events_actor_person_id", "ix_meeting_review_events_action", "ix_meeting_review_events_meeting_id"):
         op.drop_index(name, table_name="meeting_review_events")

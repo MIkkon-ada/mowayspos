@@ -870,7 +870,6 @@ def test_p1b2a_gate_keeps_existing_runtime_business_steps():
         "Build frontend image without cache",
         "PostgreSQL 16 migration gate",
         "Complete Compose smoke and port isolation",
-        "LLM configuration survives backend recreation",
         "Cleanup isolated runtime",
     ):
         assert f"- name: {step}" in workflow

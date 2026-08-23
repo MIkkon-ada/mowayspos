@@ -29,7 +29,7 @@ jobs:
 
     steps:
       - name: Checkout exact revision
-        uses: actions/checkout$11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
 
@@ -58,7 +58,7 @@ jobs:
           docker build --pull --no-cache -f Dockerfile.frontend -t "$FRONTEND_LOCAL" .
 
       - name: Scan backend image for secrets
-        uses: aquasecurity/trivy-action$ed142fd0673e97e23eac54620cfb913e5ce36c25
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: image
           image-ref: ${{ env.BACKEND_LOCAL }}
@@ -68,7 +68,7 @@ jobs:
           exit-code: '0'
 
       - name: Scan frontend image for secrets
-        uses: aquasecurity/trivy-action$ed142fd0673e97e23eac54620cfb913e5ce36c25
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: image
           image-ref: ${{ env.FRONTEND_LOCAL }}
@@ -78,7 +78,7 @@ jobs:
           exit-code: '0'
 
       - name: Scan backend image for fixable vulnerabilities
-        uses: aquasecurity/trivy-action$ed142fd0673e97e23eac54620cfb913e5ce36c25
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: image
           image-ref: ${{ env.BACKEND_LOCAL }}
@@ -91,7 +91,7 @@ jobs:
           exit-code: '0'
 
       - name: Scan frontend image for fixable vulnerabilities
-        uses: aquasecurity/trivy-action$ed142fd0673e97e23eac54620cfb913e5ce36c25
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: image
           image-ref: ${{ env.FRONTEND_LOCAL }}
@@ -157,7 +157,7 @@ jobs:
 
       - name: Log in to GHCR after all gates pass
         if: ${{ inputs.operation == 'publish' }}
-        uses: docker/login-action$74a5d142397b4f367a81961eba4e8cd7edddf772
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}

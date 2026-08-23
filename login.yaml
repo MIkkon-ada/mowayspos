@@ -16,16 +16,17 @@
         - generic [ref=f1e19]:
           - generic [ref=f1e20]:
             - generic [ref=f1e21]: 密码
-            - link "忘记密码？" [ref=f1e22] [cursor=pointer]:
-              - /url: "#"
+            - button "忘记密码？" [ref=f1e22] [cursor=pointer]
           - textbox "密码" [ref=f1e23]:
             - /placeholder: 请输入密码
         - button "进入系统" [disabled] [ref=f1e24]
-        - generic [ref=f1e25]:
+        - generic [ref=f1e25]: 或
+        - button "企业微信登录" [ref=f1e27] [cursor=pointer]
+        - generic [ref=f1e30]:
           - text: 本系统仅供授权人员内部使用。登录即表示您已同意
-          - link "服务条款" [ref=f1e26] [cursor=pointer]:
+          - link "服务条款" [ref=f1e31] [cursor=pointer]:
             - /url: "#"
           - text: 与
-          - link "数据隐私协议" [ref=f1e27] [cursor=pointer]:
+          - link "数据隐私协议" [ref=f1e32] [cursor=pointer]:
             - /url: "#"
           - text: 。

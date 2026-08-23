@@ -22,6 +22,7 @@ from ..permissions import (
 from ..time_utils import utc_now
 from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
+from ..services.key_task_execution import record_execution_event
 
 router = APIRouter(tags=["subtasks"])  # endpoint 不变；业务语义：KeyTask/关键任务 CRUD
 _TRASH_ROLES = {"owner"}
@@ -48,6 +49,42 @@ def _get_task_project_id(task: models.Task, db: Session) -> int | None:
         project_id=task.project_id,
         special_project=task.special_project or "",
     )["project_id"]
+
+
+def _validate_key_task_people(
+    task: models.Task,
+    assignee: str,
+    collaborator_ids: list[int],
+    db: Session,
+) -> int | None:
+    project_id = _get_task_project_id(task, db)
+    if project_id is None:
+        raise HTTPException(422, "关键任务必须属于有效项目")
+    member_ids = {
+        person_id
+        for (person_id,) in db.query(models.ProjectMember.person_id)
+        .filter(models.ProjectMember.project_id == project_id)
+        .all()
+    }
+    collaborators = set(collaborator_ids or [])
+    if not collaborators.issubset(member_ids):
+        raise HTTPException(422, "协同人不属于当前项目")
+    if collaborators:
+        people_ids = {
+            person_id
+            for (person_id,) in db.query(models.Person.id)
+            .filter(models.Person.id.in_(collaborators))
+            .all()
+        }
+        if people_ids != collaborators:
+            raise HTTPException(422, "协同人不存在")
+    from ..services.notify import person_id_for_name as _pid_for_name
+    assignee_id = _pid_for_name(assignee or "", db)
+    if assignee_id is not None and assignee_id not in member_ids:
+        raise HTTPException(422, "负责人不属于当前项目")
+    if assignee_id is not None and assignee_id in collaborators:
+        raise HTTPException(422, "负责人不能同时作为协同人")
+    return assignee_id
 
 
 def _check_owner_write(context: dict, task: models.Task, db: Session) -> None:
@@ -366,6 +403,7 @@ def list_subtasks_batch(
 @router.get("/api/subtasks/{row_id}/detail")
 def get_subtask_detail(
     row_id: int,
+    project_id: int | None = None,
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
@@ -378,13 +416,21 @@ def get_subtask_detail(
 
     parent = db.get(models.Task, row.task_id)
     if parent:
-        project_id = _get_task_project_id(parent, db)
-        if project_id is not None:
-            require_project_access(current_user, project_id, db)
+        resolved_project_id = _get_task_project_id(parent, db)
+        if project_id is not None and resolved_project_id != project_id:
+            raise HTTPException(404, "subtask not found")
+        if resolved_project_id is not None:
+            require_project_access(current_user, resolved_project_id, db)
         elif not (context.get("is_tech_admin") or context.get("is_ceo")):
             raise HTTPException(403, "permission denied")
 
     result = crud.to_dict(row)
+    from .execution_schedules import to_schedule_dict
+    schedules = db.query(models.ExecutionSchedule).filter(
+        models.ExecutionSchedule.subtask_id == row.id,
+        models.ExecutionSchedule.is_deleted.is_(False),
+    ).order_by(models.ExecutionSchedule.start_date, models.ExecutionSchedule.due_date, models.ExecutionSchedule.id).all()
+    result["execution_schedules"] = [to_schedule_dict(schedule) for schedule in schedules]
 
     # 执行详情使用：按关键任务聚合已确认/已提交的工作汇报，保留四项固定结构。
     import json as _json
@@ -506,14 +552,14 @@ def create_subtask(
     require_project_business_writable(_get_task_project_id(task, db), db)
 
     data = payload.model_dump()
+    assignee_id = _validate_key_task_people(task, payload.assignee, payload.collaborator_ids, db)
     if (data.get("assignee") or "").strip() and TS.normalize(data.get("status", "")) == TS.S_NOT_STARTED:
         data["status"] = TS.S_IN_PROGRESS
 
     parent_was_completed = TS.normalize(task.status) == TS.S_COMPLETED
 
     row = models.SubTask(task_id=task_id, **data)
-    from ..services.notify import person_id_for_name as _pid_for_name
-    row.assignee_id = _pid_for_name(row.assignee or "", db)
+    row.assignee_id = assignee_id
     db.add(row)
     db.flush()
     crud.log(db, current_user, "subtask_create", "subtask", row.id, {}, crud.to_dict(row), project_id=_get_task_project_id(task, db))
@@ -582,10 +628,10 @@ def update_subtask(
     require_project_business_writable(_get_task_project_id(task, db), db)
 
     before = crud.to_dict(row)
+    assignee_id = _validate_key_task_people(task, payload.assignee, payload.collaborator_ids, db)
     before_assignee = (row.assignee or "").strip()
     crud.update_model(row, payload.model_dump())
-    from ..services.notify import person_id_for_name as _pid_for_name
-    row.assignee_id = _pid_for_name(row.assignee or "", db)
+    row.assignee_id = assignee_id
 
     if not before_assignee and (row.assignee or "").strip():
         if TS.normalize(row.status) == TS.S_NOT_STARTED:
@@ -621,6 +667,7 @@ def patch_subtask_status(
 
     before_status = row.status or ""
     row.status = payload.status
+    row.edit_count = (row.edit_count or 0) + 1
     project_id = _get_task_project_id(task, db)
     crud.log(
         db,
@@ -632,6 +679,28 @@ def patch_subtask_status(
         {"status": payload.status},
         project_id=project_id,
     )
+    # A deliberate Key Task status change is an authoritative business fact.  It
+    # is projected to the execution timeline, but does not replace the source
+    # object: SubTask remains the source of truth for the status itself.
+    if TS.normalize(before_status) != TS.normalize(payload.status):
+        record_execution_event(
+            db,
+            project_id=project_id,
+            key_task_id=row.id,
+            event_type="key_task_status_changed",
+            source_type="key_task",
+            source_id=row.id,
+            dedupe_key=f"key-task:{row.id}:status:{row.edit_count}:{TS.normalize(payload.status)}",
+            actor_name_snapshot=current_user,
+            occurred_at=utc_now(),
+            confirmed_at=utc_now(),
+            effective_at=utc_now(),
+            affects_current_progress=True,
+            status_before=before_status,
+            status_after=payload.status,
+            progress_summary=f"关键任务状态更新为{payload.status}",
+            authority="confirmed",
+        )
     if TS.normalize(payload.status) == TS.S_COMPLETED and task.owner_id:
         from ..services.notify import send as _notify, person_name_for_account, person_id_for_account
         caller_name = person_name_for_account(current_user, db)

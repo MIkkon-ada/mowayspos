@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
+from .kickoff_agent import build_kickoff_snapshot
 from ..time_utils import utc_now
 
 
@@ -36,6 +37,12 @@ def confirm_kickoff_start(run_id: int, reviewer_name: str, db: Session):
     project.kickoff_date = utc_now().date().isoformat()
     project.kickoff_by = reviewer_name
     run.status = "approved"
+    db.flush()
+    run.meeting_id = meeting.id
+    run.approved_snapshot_json = json.dumps(
+        build_kickoff_snapshot(project.id, db),
+        ensure_ascii=False,
+    )
     db.flush()
     return project, meeting
 

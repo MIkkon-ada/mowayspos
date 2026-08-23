@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import secrets
-import tempfile
 import time
 from typing import Any, Literal
 
@@ -16,9 +15,10 @@ from fastapi.websockets import WebSocketDisconnect
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.orm import Session
 
+from ..ai.contracts import AICapabilityNotConfigured, AIInvocationContext, AIUpstreamError, Capability
+from ..ai.service import AIService
 from ..auth import get_session_user
 from ..database import get_db
-from ..llm_config import get_provider_config
 from ..permissions import get_current_user_name
 from ..services.asr_context import build_work_report_asr_context
 from ..services.realtime_asr import DashScopeRealtimeAsr
@@ -59,97 +59,34 @@ class StreamStart(BaseModel):
     format: Literal["pcm"]
 
 
-def _detect_format(filename: str) -> str:
-    ext = os.path.splitext(filename)[1].lower()
-    fmt_map = {
-        ".mp3": "mp3",
-        ".wav": "wav",
-        ".flac": "flac",
-        ".aac": "aac",
-        ".ogg": "ogg-opus",
-        ".m4a": "m4a",
-        ".wma": "wma",
-        ".amr": "amr",
-        ".webm": "opus",
-        ".mp4": "mp4",
-    }
-    return fmt_map.get(ext, "mp3")
-
-
-def _do_transcribe(file_bytes: bytes, filename: str, api_key: str) -> str:
-    import dashscope
-    from dashscope.audio.asr import Recognition
-
-    dashscope.api_key = api_key
-    suffix = os.path.splitext(filename)[1].lower() or ".mp3"
-    fmt = _detect_format(filename)
-
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(file_bytes)
-        tmp_path = tmp.name
-
-    try:
-        recognition = Recognition(
-            model="paraformer-realtime-v2",
-            format=fmt,
-            sample_rate=16000,
-            language_hints=["zh", "en"],
-            api_key=api_key,
-            callback=None,
-        )
-        result = recognition.call(tmp_path)
-        if result.status_code != 200:
-            raise RuntimeError(
-                f"转写失败（{result.status_code}）: {result.message}"
-            )
-
-        output = result.output or {}
-        sentences = output.get("sentence") or []
-        if sentences:
-            return "".join(
-                sentence.get("text", "")
-                for sentence in sentences
-                if sentence.get("text")
-            )
-        return output.get("text", "")
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-
-
 @router.post("")
 async def transcribe(
     file: UploadFile = File(...),
     current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
 ):
     filename = file.filename or "audio.mp3"
     ext = os.path.splitext(filename)[1].lower()
     if ext and ext not in _SUPPORTED_FORMATS:
         raise HTTPException(422, f"不支持的音频格式: {ext}")
 
-    api_key = get_provider_config("dashscope").get("api_key", "")
-    if not api_key:
-        raise HTTPException(
-            500,
-            "未配置 Dashscope API Key，请在系统设置中填写",
-        )
-
     content = await file.read()
     if len(content) > 200 * 1024 * 1024:
         raise HTTPException(413, "文件过大，最大支持 200MB")
 
     try:
-        text = await asyncio.to_thread(
-            _do_transcribe,
+        result = await asyncio.to_thread(
+            AIService(db).transcribe_file,
+            Capability.SPEECH_REALTIME,
             content,
             filename,
-            api_key,
+            AIInvocationContext(actor=current_user, resource_type="transcription_file"),
         )
-        return {"text": text, "filename": filename}
-    except Exception as exc:
-        raise HTTPException(500, f"{type(exc).__name__}: {exc}") from exc
+        return {"text": result.text, "filename": filename}
+    except AICapabilityNotConfigured as exc:
+        raise HTTPException(503, "语音识别能力未配置") from exc
+    except AIUpstreamError as exc:
+        raise HTTPException(502, "语音识别服务暂不可用") from exc
 
 
 async def run_transcribe_stream(
@@ -159,7 +96,8 @@ async def run_transcribe_stream(
     db: Session,
     context_builder=build_work_report_asr_context,
     asr_factory=DashScopeRealtimeAsr,
-    api_key: str,
+    api_key: str = "",
+    asr_session=None,
 ) -> None:
     """Coordinate one authenticated work-report transcription session."""
     settings = get_asr_settings()
@@ -458,11 +396,14 @@ async def run_transcribe_stream(
                 )
                 return
 
-            session = asr_factory(
+            session = asr_session or asr_factory(
                 api_key=api_key,
                 settings=settings,
                 context=context,
             )
+            update_context = getattr(session, "update_context", None)
+            if callable(update_context):
+                update_context(context)
             try:
                 await session.start()
             except Exception:
@@ -710,8 +651,28 @@ async def transcribe_stream(
         await websocket.close(code=4001)
         return
 
-    api_key = get_provider_config("dashscope").get("api_key", "")
-    if not api_key:
+    try:
+        asr_session = AIService(db).create_realtime_asr_session(
+            Capability.SPEECH_REALTIME,
+            settings=get_asr_settings(),
+            context_text="",
+            context=AIInvocationContext(actor=username, resource_type="transcription_stream"),
+        )
+    except AICapabilityNotConfigured:
+        asr_session = None
+    except AIUpstreamError:
+        await websocket.send_json(
+            {
+                "type": "error",
+                "code": "ASR_PROVIDER_ERROR",
+                "message": "语音识别服务暂不可用，请稍后重试",
+                "retryable": True,
+            }
+        )
+        await websocket.close(code=4003)
+        return
+
+    if asr_session is None:
         await websocket.send_json(
             {
                 "type": "error",
@@ -728,7 +689,7 @@ async def transcribe_stream(
             websocket,
             current_user=username,
             db=db,
-            api_key=api_key,
+            asr_session=asr_session,
         )
     finally:
         try:

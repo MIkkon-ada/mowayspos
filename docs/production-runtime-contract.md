@@ -12,19 +12,25 @@ Only the frontend publishes a host port. PostgreSQL and the backend are reachabl
 
 ## First deployment
 
-Create the host directories and the non-secret LLM settings file before starting the stack:
+Create the host directories and the production environment file before starting the stack:
 
 ```bash
 sudo install -d -m 700 /data/mowayspos/postgres /data/mowayspos/env
-printf '{}\n' | sudo tee /data/mowayspos/env/llm_configs.json >/dev/null
-sudo chmod 600 /data/mowayspos/env/llm_configs.json
 sudo cp .env.production.example /data/mowayspos/env/production.env
 sudo chmod 600 /data/mowayspos/env/production.env
 ```
 
 Edit `/data/mowayspos/env/production.env` before use. `DB_PASSWORD` must contain URL-safe characters and must match the password embedded in `DATABASE_URL`. Replace `MOWAYS_IMAGE_TAG` with the deployed Git commit SHA. Never commit the populated file.
 
-Production API keys must be supplied through environment variables. The administration API can persist non-sensitive provider settings (`enabled`, `base_url`, and `model`) to `/data/mowayspos/env/llm_configs.json`, but production rejects attempts to persist an API key.
+Set `AI_CAPABILITY_CENTER_MODE=database` and generate a Fernet-compatible
+`AI_CONFIG_ENCRYPTION_KEY` before the first start. Model credentials are
+encrypted in PostgreSQL; neither API keys nor the legacy JSON file are mounted
+into the production container. To import an existing legacy configuration, run
+the one-time administrator migration after the database schema is at head.
+
+The one-time migration file path is supplied only through
+AI_LEGACY_MIGRATION_FILE; remove that variable and its temporary mount before
+returning the stack to AI_CAPABILITY_CENTER_MODE=database.
 
 ## Validate and start
 
@@ -55,3 +61,23 @@ curl --fail http://127.0.0.1:18100/api/health
 ```
 
 The health response must report `status=ok`, `database=ok`, and `env=production`. The host Nginx should proxy `pos.moways.com.cn` to `127.0.0.1:18100` and preserve `X-Forwarded-Proto`; configuring that host proxy and Certbot remains a separate infrastructure step.
+
+## Meeting change-set release safety
+
+The meeting change-set release adds only `meeting_change_sets` and
+`meeting_change_proposals` plus their indexes. Apply the additive migration with
+`alembic upgrade head`.
+
+Do not run `docker compose down -v`, remove `/data/mowayspos/postgres`, or
+recreate the PostgreSQL service for this release. The persistent LLM settings
+file remains `/data/mowayspos/env/llm_configs.json`, and WeCom values remain in
+`/data/mowayspos/env/production.env`; this feature modifies neither file.
+
+After deployment:
+
+1. Verify `/api/health` and confirm `alembic current` reports the expected head.
+2. In a non-production test project, run one meeting analysis and confirm that
+   saving the meeting does not change `tasks` or `subtasks` row counts.
+3. Explicitly select one non-blocked proposal, execute it, and confirm that only
+   the selected proposal changed the work-progress rows and produced a
+   `meeting_change_execute` audit record.

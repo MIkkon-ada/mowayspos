@@ -20,10 +20,15 @@ _DEFAULTS: dict = {
     "notify_decision": True,
     "notify_weekly": False,
     "notify_channels": ["站内信", "企业微信"],
-    "confidence": 75,
     "two_fa": True,
     "session_ttl": "8 小时",
 }
+
+
+def _without_retired_settings(data: dict) -> dict:
+    cleaned = dict(data)
+    cleaned.pop("confidence", None)
+    return cleaned
 
 
 def _get_row(db: Session) -> models.PlatformSettings:
@@ -43,7 +48,7 @@ def get_settings(
 ):
     require_tech_admin(current_user, db)
     row = _get_row(db)
-    data = {**_DEFAULTS, **json.loads(row.data_json or "{}")}
+    data = _without_retired_settings({**_DEFAULTS, **json.loads(row.data_json or "{}")})
     return data
 
 
@@ -57,6 +62,7 @@ async def save_settings(
     row = _get_row(db)
     existing = {**_DEFAULTS, **json.loads(row.data_json or "{}")}
     existing.update(request_data)
+    existing = _without_retired_settings(existing)
     row.data_json = json.dumps(existing, ensure_ascii=False)
     db.commit()
     return existing

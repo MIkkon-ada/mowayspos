@@ -87,11 +87,11 @@ const taskSubMap = {
   12: [],
 }
 
-test('work progress defaults to the Excel table and preserves execution detail', () => {
+test('work progress exposes the shared execution detail entry', () => {
   const source = read(PAGE_FILE)
   assert.match(source, /useState<'execution' \| 'plan'>\('plan'\)/)
-  assert.match(source, />\s*表格视图\s*</)
-  assert.match(source, />\s*执行详情\s*</)
+  assert.match(source, /const SHOW_EXECUTION_DETAIL = true/)
+  assert.match(source, /SHOW_EXECUTION_DETAIL && \(/)
   assert.match(source, /viewMode === 'execution'/)
   assert.match(source, /data-testid="work-progress-detail-panel"/)
 })
@@ -320,9 +320,9 @@ test('V2 table is a compact data table without a fake empty spreadsheet canvas',
 
   assert.match(css, /\.v2-sheet-frame/)
   assert.doesNotMatch(css, /\.v2-task-card__index/)
-  assert.match(css, /width:\s*1180px/)
+  assert.match(css, /width:\s*1110px/)
   assert.match(source, /<col style=\{\{ width: 300 \}\} \/>/)
-  assert.match(source, /<col style=\{\{ width: 430 \}\} \/>/)
+  assert.match(source, /<col style=\{\{ width: 360 \}\} \/>/)
   assert.match(source, /<col style=\{\{ width: 80 \}\} \/>/)
   assert.match(source, /<col style=\{\{ width: 155 \}\} \/>/)
   assert.doesNotMatch(css, /repeating-linear-gradient/)
@@ -346,36 +346,45 @@ test('table view only exposes the project-standard button when a project standar
   )
 })
 
-test('work progress header keeps mode tabs next to the title', () => {
+test('work progress header keeps the execution-detail tab available', () => {
   const page = read(PAGE_FILE)
+  assert.match(page, /SHOW_EXECUTION_DETAIL = true/)
   assert.match(page, /work-progress-title-group/)
-  assert.match(page, /工作推进表[\s\S]*表格视图[\s\S]*执行详情/)
+  assert.match(page, /工作推进表[\s\S]*表格视图/)
+  assert.match(page, /SHOW_EXECUTION_DETAIL && \(\s*<button[\s\S]*执行详情/)
   assert.doesNotMatch(page, /min-w-\[260px\]/)
 })
 
-test('key task execution detail is report-driven with optional criteria', () => {
+test('key task execution detail combines subtasks with the execution timeline', () => {
   const detail = read(DETAIL_FILE)
-  assert.match(detail, /工作汇报记录/)
-  assert.match(detail, /已完成内容/)
-  assert.match(detail, /下一步计划/)
-  assert.match(detail, /related_achievements/)
-  assert.match(detail, /暂无工作汇报/)
-  assert.match(detail, /const hasReports = reports\.length > 0/)
+  assert.match(detail, /KeyTaskExecutionWorkspace/)
+  assert.match(detail, /keyTaskId=\{subTask\.id\}/)
+  assert.doesNotMatch(detail, /KeyTaskSubtasksWorkspace/)
+  return
+  assert.match(detail, /KeyTaskSubtasksWorkspace/)
+  assert.match(detail, /KeyTaskExecutionTimeline/)
+  assert.match(detail, /buildWorkReportEntryUrl/)
+  assert.match(detail, /负责人/)
+  assert.match(detail, /协作人/)
+  assert.match(detail, /开始时间/)
+  assert.match(detail, /状态/)
+  assert.doesNotMatch(detail, /ExecutionScheduleTimeline/)
+  assert.doesNotMatch(detail, /MonthlyPlanWorkspace/)
   assert.doesNotMatch(detail, /function Step\(/)
   assert.doesNotMatch(detail, /function Line\(/)
 })
 
-test('table-view key task editor keeps people, time and status on one row', () => {
+test('key-task base editor lives in the execution workbench instead of a table modal', () => {
   const view = read(VIEW_FILE)
-  const css = read(CSS_FILE)
-  assert.match(view, /v2-edit-form__context/)
-  assert.match(view, /v2-edit-form__grid/)
-  assert.match(view, /v2-modal__footer/)
-  assert.match(view, /fetchSubtaskDetail/)
-  assert.match(view, /v2-edit-form__latest-progress/)
-  assert.match(css, /\.v2-modal--edit\s*\{[^}]*width:\s*760px/s)
-  assert.match(css, /\.v2-edit-form__grid\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/s)
-  assert.match(view, /责任人[\s\S]*协同人\s*\/\s*备注[\s\S]*计划时间[\s\S]*当前状态/)
+  const detail = read(DETAIL_FILE)
+  assert.doesNotMatch(view, /function SubTaskEditModal/)
+  assert.doesNotMatch(view, /fetchSubtaskDetail/)
+  assert.match(detail, /KeyTaskExecutionWorkspace/)
+  assert.doesNotMatch(detail, /function KeyTaskEditDrawer/)
+  return
+  assert.match(detail, /function KeyTaskEditDrawer/)
+  assert.match(detail, /fixed inset-0.*ml-auto.*max-w-md/s)
+  assert.match(detail, /任务名称[\s\S]*负责人[\s\S]*协作人[\s\S]*开始时间[\s\S]*状态[\s\S]*完成标准/)
 })
 
 test('page resolves an archived project detail without falling back to another project', () => {

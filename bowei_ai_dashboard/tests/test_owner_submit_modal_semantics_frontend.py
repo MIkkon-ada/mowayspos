@@ -46,7 +46,8 @@ def test_owner_submit_modal_payload_still_compatible():
     assert "assignee: subtask.assignee.trim()" in source
 
     # work_progress_draft 仍正确传递
-    assert "const workProgressDraft = toPayloadDraft(draftTasks)" in source
+    assert "const workProgressDraft = toSubmitDraft(currentAiDraft())" in source
+    assert "buildAiMergePreview" in source
     assert "work_progress_draft: workProgressDraft" in source
 
 

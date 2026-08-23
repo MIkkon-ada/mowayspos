@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from .. import crud, models
 from ..auth import hash_password, invalidate_user_sessions, _check_password, validate_password_policy
 from ..database import get_db
-from ..permissions import get_current_user_name, require_tech_admin, ROLE_SUPER_ADMIN, normalize_system_role
+from ..permissions import get_current_user_name, require_tech_admin, ROLE_NORMAL, ROLE_SUPER_ADMIN, normalize_system_role
 from ..time_utils import utc_now
 from ..settings import get_legacy_password_file_users, legacy_password_login_enabled, get_settings
 from ..services import wecom
@@ -73,6 +73,16 @@ class AccountStatusRequest(BaseModel):
         return v
 
 
+class WecomDirectorySyncItem(BaseModel):
+    wecom_userid: str
+    person_id: int | None = None
+    create_person: bool = False
+
+
+class WecomDirectorySyncRequest(BaseModel):
+    items: list[WecomDirectorySyncItem]
+
+
 def _account_to_dict(row: models.Account, person: models.Person | None = None) -> dict:
     def iso(value):
         return value.isoformat() if value else None
@@ -92,6 +102,156 @@ def _account_to_dict(row: models.Account, person: models.Person | None = None) -
         "created_at": iso(row.created_at),
         "updated_at": iso(row.updated_at),
     }
+
+
+def apply_wecom_identity_record(person: models.Person, record: dict) -> models.Person:
+    """Apply the latest WeCom identity values without breaking local overrides."""
+    userid = str(record.get("userid") or record.get("wecom_userid") or "").strip()
+    department = str(record.get("department_path") or record.get("department") or "").strip()
+    position = str(record.get("position") or record.get("wecom_position_title") or "").strip()
+
+    person.wecom_userid = userid
+    person.wecom_department = department
+    person.wecom_position_title = position
+    if (person.department_source or "wecom") != "local":
+        person.department = department
+        person.department_source = "wecom"
+    if (person.position_source or "wecom") != "local":
+        person.position_title = position
+        person.position_source = "wecom"
+    return person
+
+
+def _directory_department_path(record: dict, department_paths: dict[int, dict]) -> str:
+    paths = [
+        str(department_paths.get(int(department_id), {}).get("path") or "").strip()
+        for department_id in (record.get("department") or [])
+        if str(department_id).strip().isdigit()
+    ]
+    paths = list(dict.fromkeys(path for path in paths if path))
+    if not paths:
+        return ""
+    return max(paths, key=lambda path: (path.count(" / "), len(path)))
+
+
+def _normalize_wecom_directory_records(users: list[dict], department_paths: dict[int, dict]) -> list[dict]:
+    result = []
+    for user in users:
+        userid = str(user.get("userid") or "").strip()
+        if not userid:
+            continue
+        result.append({
+            "userid": userid,
+            "name": str(user.get("name") or "").strip(),
+            "department_ids": [int(value) for value in (user.get("department") or []) if str(value).strip().isdigit()],
+            "department_path": _directory_department_path(user, department_paths),
+            "position": str(user.get("position") or "").strip(),
+        })
+    return result
+
+
+def build_wecom_directory_preview(
+    users: list[dict],
+    department_paths: dict[int, dict],
+    db: Session,
+) -> list[dict]:
+    """Build a safe preview; exact WeCom IDs match automatically, names do not."""
+    records = _normalize_wecom_directory_records(users, department_paths)
+    people = db.query(models.Person).all()
+    by_wecom_userid = {str(person.wecom_userid).strip(): person for person in people if person.wecom_userid}
+    linked_people = (
+        db.query(models.Account, models.Person)
+        .join(models.Person, models.Account.person_id == models.Person.id)
+        .filter(models.Account.wecom_userid.isnot(None), models.Account.wecom_userid != "")
+        .all()
+    )
+    for account, person in linked_people:
+        by_wecom_userid.setdefault(str(account.wecom_userid).strip(), person)
+    by_name: dict[str, list[models.Person]] = {}
+    for person in people:
+        if person.name:
+            by_name.setdefault(person.name.strip(), []).append(person)
+
+    preview = []
+    for record in records:
+        person = by_wecom_userid.get(record["userid"])
+        match_type = "exact"
+        needs_confirmation = False
+        if person is None:
+            name_matches = by_name.get(record["name"], [])
+            if len(name_matches) == 1:
+                person = name_matches[0]
+                match_type = "name_suggestion"
+                needs_confirmation = True
+            elif len(name_matches) > 1:
+                match_type = "conflict"
+                needs_confirmation = True
+            else:
+                match_type = "new"
+                needs_confirmation = True
+        preview.append({
+            **record,
+            "matched_person_id": person.id if person else None,
+            "matched_person_name": person.name if person else "",
+            "match_type": match_type,
+            "needs_confirmation": needs_confirmation,
+            "current_department": person.department if person else "",
+            "current_position_title": person.position_title if person else "",
+            "department_source": person.department_source if person else "wecom",
+            "position_source": person.position_source if person else "wecom",
+            "wecom_department": person.wecom_department if person else "",
+            "wecom_position_title": person.wecom_position_title if person else "",
+        })
+    return preview
+
+
+def sync_wecom_identity_records(
+    db: Session,
+    records: list[dict],
+    selections: list[dict],
+) -> list[dict]:
+    """Apply selected current WeCom records; caller owns the transaction."""
+    by_userid = {str(record.get("userid") or "").strip(): record for record in records}
+    result = []
+    for selection in selections:
+        userid = str(selection.get("wecom_userid") or "").strip()
+        record = by_userid.get(userid)
+        if not record:
+            raise HTTPException(422, f"企业微信成员不存在或已变化：{userid}")
+
+        person_id = selection.get("person_id")
+        person = db.get(models.Person, person_id) if person_id else None
+        if person is None and selection.get("create_person"):
+            person = models.Person(
+                name=record.get("name") or userid,
+                system_role=ROLE_NORMAL,
+                department=record.get("department_path") or "",
+                position_title=record.get("position") or "",
+                department_source="wecom",
+                position_source="wecom",
+                is_active=True,
+            )
+            db.add(person)
+            db.flush()
+        if person is None:
+            raise HTTPException(422, f"请为企业微信成员 {userid} 选择本地人员或新建人员")
+        if person.wecom_userid and person.wecom_userid != userid:
+            raise HTTPException(409, f"本地人员 {person.name} 已绑定其他企业微信 ID")
+        duplicate = db.query(models.Person).filter(
+            models.Person.wecom_userid == userid,
+            models.Person.id != person.id,
+        ).first()
+        if duplicate:
+            raise HTTPException(409, f"企业微信 ID {userid} 已绑定到人员 {duplicate.name}")
+
+        apply_wecom_identity_record(person, record)
+        accounts = db.query(models.Account).filter(models.Account.person_id == person.id).all()
+        for account in accounts:
+            if account.wecom_userid and account.wecom_userid != userid:
+                raise HTTPException(409, f"账号 {account.username} 已绑定其他企业微信 ID")
+            account.wecom_userid = userid
+        result.append({"person_id": person.id, "person_name": person.name, "wecom_userid": userid})
+    return result
 
 
 @router.get("")
@@ -509,3 +669,65 @@ def batch_bind_wecom(
         _account_to_dict(a, db.get(models.Person, a.person_id) if a.person_id else None)
         for a in updated
     ]
+
+
+@router.get("/wecom-directory")
+def preview_wecom_directory(
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """读取企业微信通讯录详情，返回管理员确认用的同步预览。"""
+    _require_admin(current_user, db)
+    if not get_settings().wecom_directory_enabled:
+        raise HTTPException(503, "wecom_directory_disabled")
+    try:
+        users = wecom.list_department_user_details(department_id=1, fetch_child=True)
+        departments = wecom.list_departments()
+    except wecom.WecomError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    department_paths = wecom.build_department_paths(departments)
+    items = build_wecom_directory_preview(users, department_paths, db)
+    summary = {
+        "total": len(items),
+        "exact": sum(1 for item in items if item["match_type"] == "exact"),
+        "needs_confirmation": sum(1 for item in items if item["needs_confirmation"]),
+        "new": sum(1 for item in items if item["match_type"] == "new"),
+        "conflict": sum(1 for item in items if item["match_type"] == "conflict"),
+    }
+    return {"items": items, "summary": summary}
+
+
+@router.post("/wecom-directory/sync")
+def sync_wecom_directory(
+    payload: WecomDirectorySyncRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """确认并写入选中的企业微信公司身份资料。"""
+    _require_admin(current_user, db)
+    if not get_settings().wecom_directory_enabled:
+        raise HTTPException(503, "wecom_directory_disabled")
+    if not payload.items:
+        raise HTTPException(422, "至少选择一名企业微信成员")
+    try:
+        users = wecom.list_department_user_details(department_id=1, fetch_child=True)
+        departments = wecom.list_departments()
+    except wecom.WecomError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    department_paths = wecom.build_department_paths(departments)
+    records = _normalize_wecom_directory_records(users, department_paths)
+    result = sync_wecom_identity_records(
+        db,
+        records,
+        [item.model_dump() for item in payload.items],
+    )
+    crud.log(
+        db,
+        current_user,
+        "sync_wecom_directory",
+        "people",
+        None,
+        after={"count": len(result), "person_ids": [item["person_id"] for item in result]},
+    )
+    db.commit()
+    return {"synced": len(result), "items": result}

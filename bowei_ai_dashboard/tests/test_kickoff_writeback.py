@@ -79,6 +79,33 @@ def test_confirm_start_creates_an_approved_key_task_proposal():
     assert created.assignee == "Owner"
 
 
+def test_confirm_start_persists_post_approval_snapshot():
+    db = _db()
+    db.add_all([
+        models.Project(id=1, name="P", status="pending_kickoff"),
+        models.Task(id=10, project_id=1, key_task="Workstream"),
+        models.KickoffAgentRun(id=1, project_id=1, status="submitted", result_json=json.dumps({"summary": "鏂板浠诲姟"})),
+        models.KickoffChangeProposal(
+            run_id=1,
+            proposal_type="create",
+            target_type="subtask",
+            proposed_json=json.dumps({"task_id": 10, "title": "New key task", "assignee": "Owner", "plan_time": "2026-08-01"}),
+            review_status="approved",
+        ),
+    ])
+    db.commit()
+
+    confirm_kickoff_start(1, "Coach", db)
+
+    run = db.get(models.KickoffAgentRun, 1)
+    snapshot = json.loads(run.approved_snapshot_json)
+    assert any(
+        subtask["title"] == "New key task"
+        for task in snapshot["tasks"]
+        for subtask in task["subtasks"]
+    )
+
+
 def test_confirm_start_rejects_returned_proposal():
     db = _db()
     db.add_all([models.Project(id=1, name="P", status="pending_kickoff"), models.KickoffAgentRun(id=1, project_id=1, status="submitted"), models.KickoffChangeProposal(run_id=1, proposal_type="update", target_type="task", review_status="returned")])

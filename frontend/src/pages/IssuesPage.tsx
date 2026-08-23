@@ -340,11 +340,11 @@ export function IssuesPage() {
     if (!hasAnyManagementRole) {
       return (
         <div className="flex-1 overflow-hidden bg-[#f6f8fb] flex flex-col">
-          <header className="h-16 flex-shrink-0 bg-white px-6 flex items-center border-b" style={{ borderColor: '#E9EFF6' }}>
+          <header className="min-h-16 flex-shrink-0 bg-white px-4 py-3 lg:px-6 flex flex-wrap items-center border-b" style={{ borderColor: '#E9EFF6' }}>
             <h1 className="text-base font-bold text-slate-800">问题中心</h1>
           </header>
           <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-[1440px] px-6 py-6">
+          <div className="mx-auto max-w-[1440px] px-4 py-6 lg:px-6">
 
             <div className="mb-6 max-w-xs">
               <div className="rounded border border-slate-200 bg-white px-4 py-2.5 shadow-sm">
@@ -363,8 +363,8 @@ export function IssuesPage() {
                 <h2 className="text-base font-bold text-slate-900">可查看项目</h2>
                 <p className="mt-0.5 text-xs text-slate-500">选择项目，查看与你相关的问题。</p>
               </div>
-              <div className="overflow-auto">
-                <table className="w-full text-left text-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[920px] text-left text-sm">
                   <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
                     <tr>
                       <th className="px-5 py-2.5">项目名称</th>
@@ -417,12 +417,12 @@ export function IssuesPage() {
     // 管理角色：原项目选择页
     return (
       <div className="flex-1 overflow-hidden bg-[#f6f8fb] flex flex-col">
-        <header className="h-16 flex-shrink-0 bg-white px-6 flex items-center border-b" style={{ borderColor: '#E9EFF6' }}>
+        <header className="min-h-16 flex-shrink-0 bg-white px-4 py-3 lg:px-6 flex flex-wrap items-center border-b" style={{ borderColor: '#E9EFF6' }}>
           <h1 className="text-base font-bold text-slate-800">问题中心</h1>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[1440px] px-6 py-6">
-          <div className="mb-6 flex items-center gap-4">
+        <div className="mx-auto max-w-[1440px] px-4 py-6 lg:px-6">
+          <div className="mb-6 flex flex-wrap items-center gap-4">
             {[
               ['可查看项目数', projects.length, 'bg-indigo-50 text-indigo-600'],
               ['待处理问题', '—', 'bg-amber-50 text-amber-600'],
@@ -473,7 +473,7 @@ export function IssuesPage() {
           </div>
 
           <div className="overflow-hidden rounded border border-slate-200 bg-white shadow-sm">
-            <div className="overflow-auto">
+            <div className="overflow-x-auto">
               <table className="w-full min-w-[920px] text-left text-sm">
                 <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
                   <tr>
@@ -544,7 +544,7 @@ export function IssuesPage() {
       <>
       <div className="flex-1 overflow-hidden bg-[#f6f8fb] flex flex-col">
         {/* Header */}
-        <header className="h-16 flex-shrink-0 bg-white px-6 flex items-center justify-between gap-4 border-b" style={{ borderColor: '#E9EFF6' }}>
+        <header className="min-h-16 flex-shrink-0 bg-white px-4 py-3 lg:px-6 flex flex-wrap items-center justify-between gap-4 border-b" style={{ borderColor: '#E9EFF6' }}>
             <div className="min-w-0 flex-1">
               <h1 className="text-base font-bold text-slate-800">问题中心</h1>
             </div>
@@ -555,7 +555,7 @@ export function IssuesPage() {
             </div>
         </header>
 
-        <div className="flex-shrink-0 rounded-xl border border-slate-200 bg-white mx-5 mt-5 px-4 py-4 shadow-sm">
+        <div className="flex-shrink-0 rounded-xl border border-slate-200 bg-white mx-4 mt-5 px-4 py-4 shadow-sm lg:mx-5">
           {/* Filter bar */}
           <div className="flex flex-wrap items-center gap-2">
             <select value={memberStatusFilter} onChange={(e) => setMemberStatusFilter(e.target.value)} className="rounded border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700">
@@ -572,7 +572,7 @@ export function IssuesPage() {
         </div>
 
         {/* Table + Detail Panel */}
-        <div className="min-h-0 flex-1 flex gap-4 px-5 py-4 overflow-hidden">
+        <div className="min-h-0 flex-1 flex gap-4 px-4 py-4 lg:px-5 overflow-hidden">
           {/* Table area */}
           <div className="flex-1 overflow-auto">
             {loading ? (
@@ -585,8 +585,8 @@ export function IssuesPage() {
                 <p className="mt-1 text-xs text-slate-400">你上报的问题，或被指定负责、协助的问题，会显示在这里。</p>
               </div>
             ) : (
-              <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-                <table className="w-full text-left text-sm">
+              <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+                <table className="w-full min-w-[920px] text-left text-sm">
                   <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
                     <tr>
                       <th className="px-4 py-2.5">问题摘要</th>
@@ -702,7 +702,7 @@ export function IssuesPage() {
     <>
     <div className="flex-1 overflow-hidden bg-[#f6f8fb] flex flex-col">
       {/* Header */}
-      <header className="h-16 flex-shrink-0 bg-white px-6 flex items-center justify-between gap-4 border-b" style={{ borderColor: '#E9EFF6' }}>
+      <header className="min-h-16 flex-shrink-0 bg-white px-4 py-3 lg:px-6 flex flex-wrap items-center justify-between gap-4 border-b" style={{ borderColor: '#E9EFF6' }}>
           <div className="min-w-0 flex-1">
             <h1 className="text-base font-bold text-slate-800">问题中心</h1>
           </div>
@@ -713,9 +713,9 @@ export function IssuesPage() {
           </div>
       </header>
 
-      <div className="flex-shrink-0 rounded-xl border border-slate-200 bg-white mx-5 mt-5 px-4 py-4 shadow-sm">
+      <div className="flex-shrink-0 rounded-xl border border-slate-200 bg-white mx-4 mt-5 px-4 py-4 shadow-sm lg:mx-5">
         {/* Stats bar */}
-        <div className="mt-4 grid grid-cols-6 overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="mt-4 grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 overflow-hidden rounded-lg border border-slate-200 bg-white">
           {[
             ['问题总数', stats.total],
             ['待处理', stats.pending],
@@ -762,7 +762,7 @@ export function IssuesPage() {
       </div>
 
       {/* Issue List + Detail Panel */}
-      <div className="min-h-0 flex-1 flex gap-4 px-5 py-4 overflow-hidden">
+      <div className="min-h-0 flex-1 flex gap-4 px-4 py-4 lg:px-5 overflow-hidden">
         {/* Issue list table */}
         <div className="flex-1 overflow-auto">
           {loading ? (
@@ -775,8 +775,8 @@ export function IssuesPage() {
               <p className="mt-1 text-xs text-slate-400">尝试调整筛选条件，或点击「新增问题」创建第一个问题。</p>
             </div>
           ) : (
-            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-              <table className="w-full text-left text-sm">
+            <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+              <table className="w-full min-w-[920px] text-left text-sm">
                 <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-4 py-2.5 whitespace-nowrap">问题摘要 · 处理进度</th>

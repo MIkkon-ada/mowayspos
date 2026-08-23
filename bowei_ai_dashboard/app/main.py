@@ -1,7 +1,10 @@
 from contextlib import asynccontextmanager
+import asyncio
+from datetime import datetime, time, timedelta
 import logging
 import os
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +25,7 @@ from .auth import (
     validate_password_policy,
     verify_password,
 )
+from .ai.crypto import AICredentialCipher, AIConfigurationKeyError
 from .database import Base, SQLALCHEMY_DATABASE_URL, SessionLocal, engine
 from .database_safety import (
     authorize_dev_create_all,
@@ -30,7 +34,6 @@ from .database_safety import (
     print_database_target,
 )
 from .excel_importer import read_project_assignments
-from .llm_config import PROVIDERS, load_configs
 from .permissions import get_all_project_roles, get_user_context_from_db, system_role_label
 from .routers import (
     accounts,
@@ -38,13 +41,17 @@ from .routers import (
     achievement_submissions,
     achievements,
     admin,
+    ai_config,
     confirmations,
     dashboard,
     issues,
-    llm_config,
     logs,
     meetings,
     notifications,
+    execution_schedules,
+    monthly_plans,
+    key_tasks,
+    project_init_ai,
     people,
     platform_settings,
     projects,
@@ -66,6 +73,55 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("bowei")
+_reminder_task: asyncio.Task | None = None
+_AI_CAPABILITY_DATABASE_MODE = "database"
+_AI_CAPABILITY_LEGACY_ROLLBACK_MODE = "legacy-rollback"
+
+
+def _ai_capability_mode() -> str:
+    mode = os.getenv("AI_CAPABILITY_CENTER_MODE", _AI_CAPABILITY_DATABASE_MODE).strip().lower()
+    if mode not in {_AI_CAPABILITY_DATABASE_MODE, _AI_CAPABILITY_LEGACY_ROLLBACK_MODE}:
+        raise RuntimeError("AI_CAPABILITY_CENTER_MODE must be 'database' or 'legacy-rollback'.")
+
+    if mode == _AI_CAPABILITY_LEGACY_ROLLBACK_MODE:
+        if os.getenv("AI_LEGACY_ROLLBACK_ACKNOWLEDGED", "").strip().lower() != "true":
+            raise RuntimeError(
+                "AI legacy rollback requires AI_LEGACY_ROLLBACK_ACKNOWLEDGED=true."
+            )
+        rollback_path = os.getenv("AI_LEGACY_ROLLBACK_CONFIG_PATH", "").strip()
+        if not rollback_path or not os.path.isfile(rollback_path):
+            raise RuntimeError(
+                "AI legacy rollback requires AI_LEGACY_ROLLBACK_CONFIG_PATH."
+            )
+        return mode
+
+    if get_settings().app_env == "production":
+        try:
+            AICredentialCipher(os.getenv("AI_CONFIG_ENCRYPTION_KEY", ""))
+        except AIConfigurationKeyError as exc:
+            raise RuntimeError(
+                "AI_CONFIG_ENCRYPTION_KEY must be a valid Fernet key in production database mode."
+            ) from exc
+    return mode
+
+
+def run_execution_schedule_reminder_scan() -> None:
+    from .services.execution_schedule_reminders import scan_execution_schedule_reminders
+    with SessionLocal() as db:
+        scan_execution_schedule_reminders(db)
+
+
+async def _execution_schedule_reminder_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(run_execution_schedule_reminder_scan)
+        except Exception:
+            logger.exception("execution schedule reminder scan failed")
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        next_run = datetime.combine(now.date(), time(9), tzinfo=now.tzinfo)
+        if next_run <= now:
+            next_run += timedelta(days=1)
+        await asyncio.sleep((next_run - now).total_seconds())
 
 
 def _startup():
@@ -79,8 +135,19 @@ def _startup():
         authorize_dev_create_all(SQLALCHEMY_DATABASE_URL)
         Base.metadata.create_all(bind=engine)
 
+    ai_capability_mode = _ai_capability_mode()
     inspector = inspect(engine)
     required_tables = {"accounts", "auth_sessions", "people", "projects"}
+    if (
+        get_settings().app_env == "production"
+        and ai_capability_mode == _AI_CAPABILITY_DATABASE_MODE
+    ):
+        required_tables |= {
+            "ai_models",
+            "ai_model_credentials",
+            "ai_capability_policies",
+            "ai_invocation_logs",
+        }
     if not required_tables.issubset(set(inspector.get_table_names())):
         raise RuntimeError(
             "Database schema is not ready. Run the approved migration procedure."
@@ -89,6 +156,15 @@ def _startup():
     with SessionLocal() as db:
         db.query(models.AuthSession).filter(models.AuthSession.expires_at <= utc_now()).delete(synchronize_session=False)
         db.query(models.AuthSession).filter(models.AuthSession.session_token_hash == None).delete(synchronize_session=False)
+        if ai_capability_mode == _AI_CAPABILITY_LEGACY_ROLLBACK_MODE:
+            db.add(
+                models.OperationLog(
+                    operator="system",
+                    action="ai_capability_legacy_rollback",
+                    target_type="ai_capability_center",
+                    note="Legacy JSON configuration rollback mode enabled at startup.",
+                )
+            )
         db.commit()
 
     if dev_seed_requested:
@@ -104,7 +180,18 @@ def _startup():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _startup()
-    yield
+    global _reminder_task
+    _reminder_task = asyncio.create_task(_execution_schedule_reminder_loop())
+    try:
+        yield
+    finally:
+        if _reminder_task:
+            _reminder_task.cancel()
+            try:
+                await _reminder_task
+            except asyncio.CancelledError:
+                pass
+            _reminder_task = None
 
 
 app = FastAPI(title="Moways-SOP project collaboration platform", version="0.3", lifespan=lifespan)
@@ -117,7 +204,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_PUBLIC_PREFIXES = ("/api/auth/", "/api/llm-config/enabled", "/api/health", "/api/setup", "/login", "/setup")
+_PUBLIC_PREFIXES = ("/api/auth/", "/api/health", "/api/setup", "/login", "/setup")
 _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _FORCE_PASSWORD_ALLOWED_PREFIXES = ("/api/auth/me", "/api/auth/logout", "/api/auth/change-password", "/api/accounts/me/change-password")
 
@@ -455,16 +542,6 @@ def index():
     )
 
 
-@app.get("/api/llm-config/enabled")
-def llm_config_enabled():
-    stored = load_configs()
-    return [
-        {"provider": provider, "display_name": meta["display"]}
-        for provider, meta in PROVIDERS.items()
-        if stored.get(provider, {}).get("enabled", False)
-    ]
-
-
 @app.get("/api/project-assignments")
 def project_assignments():
     if EXCEL_SEED.exists():
@@ -486,11 +563,16 @@ app.include_router(people.router)
 app.include_router(accounts.router)
 app.include_router(projects.router)
 app.include_router(logs.router)
-app.include_router(llm_config.router)
+app.include_router(ai_config.router)
 app.include_router(platform_settings.router)
 app.include_router(transcribe.router)
 app.include_router(subtasks.router)
 app.include_router(subtask_drafts.router)
 app.include_router(notifications.router)
+app.include_router(execution_schedules.router)
+app.include_router(monthly_plans.router)
+app.include_router(key_tasks.router)
+app.include_router(project_init_ai.router)
+app.include_router(project_init_ai.analysis_router)
 app.include_router(admin.router)
 app.include_router(wecom_auth.router)

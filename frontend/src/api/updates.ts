@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost } from './client'
+import { apiDelete, apiGet, apiPost, apiUpload } from './client'
 
 export type CreateUpdatePayload = {
   project_id?: number | null  // 可选，AI 自动匹配
@@ -99,6 +99,19 @@ export type ExtractOnlyPayload = {
   submitter?: string
   llm_provider?: string
   user_subtasks?: UserSubtaskContext[]
+}
+
+export type WorkReportDocumentTextResult = {
+  filename: string
+  text: string
+  char_count: number
+  source_type: 'document'
+}
+
+export function extractWorkReportDocumentText(file: File): Promise<WorkReportDocumentTextResult> {
+  const fd = new FormData()
+  fd.append('file', file)
+  return apiUpload<WorkReportDocumentTextResult>('/api/updates/extract-document-text', fd)
 }
 
 export type CreateUpdateResult = {

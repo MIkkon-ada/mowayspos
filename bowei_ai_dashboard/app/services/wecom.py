@@ -51,6 +51,15 @@ def _http_get_json(url: str, params: dict | None = None, timeout: float = 10.0) 
         raise WecomError(f"wecom response not json: {body[:200]}") from e
 
 
+def _http_post_json(url: str, payload: dict, timeout: float = 10.0) -> dict:
+    req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        raise WecomError(f"wecom request failed: {e}") from e
+
+
 def get_access_token() -> str:
     """获取企业微信 access_token，带内存缓存。
 
@@ -72,6 +81,20 @@ def get_access_token() -> str:
     _access_token = data["access_token"]
     _access_token_expires_at = time.time() + data.get("expires_in", 7200)
     return _access_token
+
+
+def send_text_message(userids: list[str], content: str) -> bool:
+    recipients = [userid.strip() for userid in userids if userid and userid.strip()]
+    if not recipients:
+        return False
+    settings = get_settings()
+    result = _http_post_json(
+        f"{_WECOM_API_BASE}/message/send?access_token={get_access_token()}",
+        {"touser": "|".join(recipients), "msgtype": "text", "agentid": int(settings.wecom_agent_id), "text": {"content": content}},
+    )
+    if result.get("errcode") != 0:
+        raise WecomError(f"wecom send message failed: {result}")
+    return True
 
 
 def build_qrcode_url(state: str = "") -> str:
@@ -150,3 +173,58 @@ def list_department_users(department_id: int = 1, fetch_child: bool = True) -> l
             )
         raise WecomError(f"wecom simplelist failed: {data}")
     return data.get("userlist") or []
+
+
+def list_department_user_details(department_id: int = 1, fetch_child: bool = True) -> list[dict]:
+    """拉取企业微信通讯录成员详情，包含部门 ID 和职位信息。"""
+    token = get_access_token()
+    data = _http_get_json(
+        f"{_WECOM_API_BASE}/user/list",
+        params={
+            "access_token": token,
+            "department_id": department_id,
+            "fetch_child": 1 if fetch_child else 0,
+        },
+    )
+    if data.get("errcode") != 0:
+        if data.get("errcode") == 60011:
+            raise WecomError("wecom no contact permission: 请在企业微信管理后台给应用授予通讯录读取权限")
+        raise WecomError(f"wecom user detail list failed: {data}")
+    return data.get("userlist") or []
+
+
+def list_departments() -> list[dict]:
+    """拉取企业微信部门树。"""
+    data = _http_get_json(
+        f"{_WECOM_API_BASE}/department/list",
+        params={"access_token": get_access_token()},
+    )
+    if data.get("errcode") != 0:
+        if data.get("errcode") == 60011:
+            raise WecomError("wecom no contact permission: 请在企业微信管理后台给应用授予通讯录读取权限")
+        raise WecomError(f"wecom department list failed: {data}")
+    return data.get("department") or []
+
+
+def build_department_paths(departments: list[dict]) -> dict[int, dict]:
+    """把企业微信部门列表整理为可展示的部门路径。"""
+    by_id = {int(row["id"]): row for row in departments if row.get("id") is not None}
+    result: dict[int, dict] = {}
+    for department_id, row in by_id.items():
+        names: list[str] = []
+        seen: set[int] = set()
+        current = department_id
+        while current in by_id and current not in seen:
+            seen.add(current)
+            names.append(str(by_id[current].get("name") or ""))
+            parent_id = by_id[current].get("parentid")
+            if parent_id in (None, 0, current):
+                break
+            current = int(parent_id)
+        result[department_id] = {
+            "id": department_id,
+            "name": str(row.get("name") or ""),
+            "parent_id": int(row.get("parentid") or 0),
+            "path": " / ".join(reversed([name for name in names if name])),
+        }
+    return result

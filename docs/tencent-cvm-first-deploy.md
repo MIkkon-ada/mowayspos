@@ -49,15 +49,6 @@ sudo install -d \
   /data/mowayspos \
   /data/mowayspos/postgres \
   /data/mowayspos/env
-
-install -m 0600 /dev/null \
-  /data/mowayspos/env/llm_configs.json
-
-printf '{}\n' > \
-  /data/mowayspos/env/llm_configs.json
-
-test -f /data/mowayspos/env/llm_configs.json
-test ! -d /data/mowayspos/env/llm_configs.json
 ```
 
 Create the deployment environment file with private permissions before editing
@@ -85,10 +76,15 @@ DB_PASSWORD=replace_with_url_safe_server_secret
 MOWAYS_ENV_FILE=/opt/mowayspos/production.env
 MOWAYS_DATA_ROOT=/data/mowayspos
 SESSION_COOKIE_NAME=moways_session
+AI_CAPABILITY_CENTER_MODE=database
+AI_CONFIG_ENCRYPTION_KEY=replace_with_a_new_fernet_key
 ```
 
-Do not place the GHCR token in this file. Supply any production LLM API keys
-only through the protected server environment file, never in the repository.
+Do not place the GHCR token in this file. Generate
+`AI_CONFIG_ENCRYPTION_KEY` with `python -c "from cryptography.fernet import
+Fernet; print(Fernet.generate_key().decode())"` on the server and keep it
+private. AI model credentials are encrypted in PostgreSQL after the one-time
+administrator import; they are never mounted as `llm_configs.json`.
 
 ## 3. Validate and pull the immutable release
 

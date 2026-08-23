@@ -41,6 +41,7 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
   const highestRole = rolePriority.find((r) => globalUserRoles.includes(r))
   const roleText = highestRole ? getProjectRoleLabel(highestRole) : systemRoleLabel(currentUser?.system_role)
   const avatarChar = userName.slice(0, 1) || '我'
+  const userIdentityLabel = `${userName || '未登录'} · ${roleText || '暂无角色'}`
 
   const isCEO = !!(currentUser?.is_ceo || globalUserRoles.includes('project_ceo'))
 
@@ -134,13 +135,13 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
   }
 
   return (
-    <aside className="w-44 flex-shrink-0 flex flex-col overflow-hidden" style={{ background: '#0F172A' }}>
+    <aside className="app-sidebar w-16 xl:w-44 flex-shrink-0 flex flex-col overflow-hidden" style={{ background: '#0F172A' }}>
       <div
-        className="flex items-center justify-between px-3 h-14 flex-shrink-0"
+        className="flex items-center justify-center xl:justify-between px-3 h-14 flex-shrink-0"
         style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
       >
         {logoUrl
-          ? <img src={logoUrl} alt="logo" style={{ height: 32, maxWidth: 90, objectFit: 'contain', flexShrink: 0 }} />
+          ? <img src={logoUrl} alt="logo" className="h-8 max-w-8 xl:max-w-[90px] object-contain flex-shrink-0" />
           : <div
               className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
               style={{ background: 'linear-gradient(135deg,var(--brand-accent,#0EA5E9),var(--brand-primary,#0369A1))' }}
@@ -150,7 +151,9 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
               </svg>
             </div>
         }
-        <NotificationBell />
+        <div className="hidden xl:block">
+          <NotificationBell />
+        </div>
       </div>
 
       <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
@@ -164,7 +167,9 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
             <button
               key={entry.page}
               type="button"
+              title={entry.label}
               onClick={() => handleNavigate(entry.page)}
+              className="justify-center xl:justify-start"
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -198,9 +203,10 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
               }}
             >
               <span style={{ width: 16, height: 16, flexShrink: 0 }}>{entry.icon}</span>
-              <span style={{ flex: 1, minWidth: 0 }}>{entry.label}</span>
+              <span className="hidden xl:block flex-1 min-w-0">{entry.label}</span>
               {entry.badge ? (
                 <span
+                  className="hidden xl:inline-flex"
                   style={{
                     background: '#EF4444',
                     color: '#fff',
@@ -223,16 +229,18 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
       </nav>
 
       <div
-        className="px-3 py-2.5 flex items-center gap-2 flex-shrink-0"
+        className="px-3 py-2.5 flex flex-col xl:flex-row items-center gap-2 flex-shrink-0"
         style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}
       >
         <div
           className="w-7 h-7 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
+          title={userIdentityLabel}
+          aria-label={userIdentityLabel}
           style={{ background: 'linear-gradient(135deg,#3B82F6,var(--brand-primary,#0369A1))' }}
         >
           {avatarChar}
         </div>
-        <div className="flex-1 min-w-0">
+        <div className="hidden xl:block flex-1 min-w-0">
           <div className="text-white text-sm font-semibold truncate">{userName || '未登录'}</div>
           <div className="text-slate-500 text-xs truncate">{roleText || '暂无角色'}</div>
         </div>

@@ -138,7 +138,7 @@ export function ProjectLayout() {
         logoUrl={logoUrl}
         platformName={platformName}
       />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
         <PageTransition />
       </div>
     </div>

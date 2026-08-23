@@ -9,13 +9,17 @@ const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 const exists = (file) => fs.existsSync(path.join(root, file))
 const MODEL = 'src/features/my-tasks/myTasksViewModel.ts'
 
-async function loadModel() {
-  assert.ok(exists(MODEL), `${MODEL} must exist`)
-  const source = read(MODEL)
+async function loadSourceModule(file) {
+  assert.ok(exists(file), `${file} must exist`)
+  const source = read(file)
   const js = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
   }).outputText
   return import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)
+}
+
+async function loadModel() {
+  return loadSourceModule(MODEL)
 }
 
 const projects = [
@@ -172,7 +176,7 @@ test('data hook queries each active project with the fixed current user name', (
   assert.doesNotMatch(hook, /fetchSubtasksByAssignee\([^,]+,\s*null\)/)
 })
 
-test('task detail opens as a full page instead of the old right drawer', () => {
+test('task detail delegates to the shared key-task execution workspace', () => {
   const hook = read('src/features/my-tasks/useMyTasks.ts')
   const page = read('src/pages/MyTasksPage.tsx')
   const detail = read('src/pages/MyTaskDetailPage.tsx')
@@ -180,8 +184,27 @@ test('task detail opens as a full page instead of the old right drawer', () => {
   assert.doesNotMatch(page, /fetchSubtaskDetail/)
   assert.doesNotMatch(page, /MyTaskDetailDrawer|selectedRow|setSelectedRow/)
   assert.match(page, /navigate\(`\/member\/tasks\/\$\{row\.id\}/)
-  assert.match(detail, /fetchSubtaskDetail\(taskId\)/)
-  assert.doesNotMatch(detail, /patchSubTaskStatus|updateSubTask|deleteSubTask|createUpdate/)
+  assert.match(detail, /KeyTaskExecutionWorkspace/)
+  assert.match(detail, /keyTaskId=\{taskId\}/)
+  assert.doesNotMatch(detail, /fetchSubtaskDetail|patchSubTaskStatus|updateSubTask|deleteSubTask|createUpdate/)
+})
+
+test('my task detail requests retain the selected project scope and display context', () => {
+  const subtasks = read('src/api/subtasks.ts')
+  const page = read('src/pages/MyTasksPage.tsx')
+
+  assert.match(subtasks, /fetchSubtaskDetail\(id: number, projectId\?: number \| null\)/)
+  assert.match(subtasks, /params\.set\('project_id', String\(projectId\)\)/)
+  assert.match(page, /state:\s*\{[\s\S]*projectId: row\.projectId[\s\S]*projectName: row\.projectName[\s\S]*workstreamName: row\.workstreamName/)
+})
+
+test('my task detail preserves route scope for the shared workspace', () => {
+  const detail = read('src/pages/MyTaskDetailPage.tsx')
+
+  assert.match(detail, /useLocation/)
+  assert.match(detail, /useSearchParams/)
+  assert.match(detail, /projectId=\{resolvedProjectId\}/)
+  assert.match(detail, /onBack=\{\(\) => navigate\('\/member\/tasks'\)\}/)
 })
 
 test('table keeps the exact personal-task columns and no unsupported metrics', () => {
@@ -218,20 +241,28 @@ test('each task row exposes a dedicated detail action beside the overflow menu',
   assert.doesNotMatch(menu, /查看详情/)
 })
 
-test('task detail page shows structure, deadline, closed-loop timeline, outcomes and issues', () => {
+test('task overflow menu is controlled and closes outside its trigger', () => {
+  const table = read('src/features/my-tasks/MyTasksTable.tsx')
+  assert.match(table, /useEffect, useRef, useState/)
+  assert.match(table, /getMyTaskMenuPlacement/)
+  assert.match(table, /openMenuId/)
+  assert.match(table, /aria-expanded=\{isMenuOpen\}/)
+  assert.match(table, /my-task-actions-menu--top/)
+  assert.match(table, /event\.key === 'Escape'/)
+  assert.match(table, /!menuRoot\.contains\(event\.target as Node\)/)
+})
+
+test('my task detail uses the shared execution workspace instead of a second detail composition', () => {
   const detail = read('src/pages/MyTaskDetailPage.tsx')
-  const css = read('src/features/my-tasks/myTasks.css')
-  for (const token of ['my-task-detail-page', 'my-task-structure-card', 'my-task-structure-chain', 'my-task-structure-node', 'my-task-structure-deadline', 'my-task-loop-timeline', 'my-task-assets-card', 'my-task-issues-card']) {
-    assert.match(detail, new RegExp(token))
-  }
-  for (const label of ['任务结构', '项目', '重点工作', '关键任务', '截止日期', '闭环过程线', '提交内容', '处理结果', '成果', '问题']) {
-    assert.match(detail, new RegExp(label))
-  }
-  assert.doesNotMatch(detail, /负责人|贡献者/)
-  assert.match(css, /\.my-task-loop-card\s*\{[\s\S]*?font-size:\s*13px/s)
-  assert.match(css, /\.my-task-structure-chain\s*\{[\s\S]*?font-size:\s*13px/s)
-  assert.match(css, /\.my-task-structure-node::before\s*\{[\s\S]*?content:\s*''/s)
-  assert.match(css, /\.my-task-structure-index\s*\{[\s\S]*?border-radius:\s*50%/s)
+  assert.match(detail, /<KeyTaskExecutionWorkspace/)
+  assert.doesNotMatch(detail, /my-task-detail-page|my-task-loop-timeline|my-task-assets-card|my-task-issues-card/)
+})
+
+test('overflow menu opens upward only when the viewport lacks lower space', async () => {
+  const { getMyTaskMenuPlacement } = await loadSourceModule('src/features/my-tasks/menuPlacement.ts')
+  assert.equal(getMyTaskMenuPlacement({ bottom: 400 }, 700, 120, 8), 'bottom')
+  assert.equal(getMyTaskMenuPlacement({ bottom: 620 }, 700, 120, 8), 'top')
+  assert.equal(getMyTaskMenuPlacement({ bottom: 580 }, 700, 112, 8), 'bottom')
 })
 
 test('my tasks page removes bottom metric/support cards and keeps compact labels', () => {
@@ -255,7 +286,7 @@ test('my tasks page keeps the compact report-style header and filters', () => {
   const css = read('src/features/my-tasks/myTasks.css')
   assert.doesNotMatch(page, /my-task-stats-row|my-task-stat-card|my-task-fab/)
   assert.doesNotMatch(css, /\.my-task-stats-row|\.my-task-stat-card|\.my-task-fab/)
-  assert.match(css, /\.my-tasks-header\s*\{[^}]*height:\s*64px/s)
+  assert.match(css, /\.my-tasks-header\s*\{[^}]*height:\s*56px/s)
   assert.match(css, /\.my-tasks-header h1\s*\{[^}]*font-size:\s*16px/s)
   assert.match(css, /\.my-task-toolbar\s*\{[^}]*grid-template-columns:\s*minmax\(112px,\s*150px\) minmax\(112px,\s*150px\) minmax\(240px,\s*1fr\)/s)
   assert.match(css, /\.my-task-project-filter,\s*\.my-task-status-filter,\s*\.my-task-search\s*\{[^}]*height:\s*32px/s)
@@ -264,4 +295,14 @@ test('my tasks page keeps the compact report-style header and filters', () => {
   assert.match(css, /\.my-task-state h2\s*\{[^}]*font-size:\s*18px/s)
   assert.match(css, /\.my-task-state p\s*\{[^}]*font-size:\s*13px/s)
   assert.doesNotMatch(css, /\.my-task-state\s*\{[^}]*height:\s*clamp/)
+})
+
+test('my tasks list uses content-driven height and compact chrome', () => {
+  const css = read('src/features/my-tasks/myTasks.css')
+  assert.match(css, /\.my-tasks-header\s*\{[^}]*height:\s*56px/s)
+  assert.match(css, /\.my-task-toolbar\s*\{[^}]*min-height:\s*48px/s)
+  assert.match(css, /\.my-task-table-card\s*\{[^}]*height:\s*auto/s)
+  assert.match(css, /\.my-task-table-card\s*\{[^}]*overflow:\s*visible/s)
+  assert.match(css, /\.my-task-table td\s*\{[^}]*height:\s*76px/s)
+  assert.match(css, /\.my-task-actions-menu--top\s*\{[^}]*bottom:\s*38px/s)
 })

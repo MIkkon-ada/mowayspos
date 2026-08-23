@@ -29,10 +29,16 @@ import {
 } from '../../domain/projectLifecycleStatus'
 import { getProjectRoleLabel } from '../../domain/roleLabels'
 import { NewProjectForm, ProjectInitModal, type TeamMap } from './ProjectInitModal'
-import { OwnerSubmitModal } from './OwnerSubmitModal'
 import { getPickerPosition } from './projectPickerPosition.js'
 import { ProjectCloseFlowDrawer } from './ProjectCloseFlowDrawer'
 import { getProjectCloseMainAction } from '../../domain/projectCloseUi'
+import {
+  getProjectLifecycleStage,
+  getProjectOverviewStats,
+  getProjectTodo,
+} from './projectsWorkbench'
+import { ProjectOverviewStats } from './ProjectOverviewStats'
+import { ProjectTodoSection, type ProjectTodoViewModel } from './ProjectTodoSection'
 
 // ── 常量 ──────────────────────────────────────────────────────
 
@@ -274,13 +280,13 @@ function getMainAction(
         : { label: '查看详情', type: 'viewDetail' }
     case 'dispatched':
       return isRealOwner
-        ? { label: '完善立项信息', type: 'ownerSubmit' }
+        ? { label: '完善项目计划', type: 'ownerSubmit' }
         : { label: '查看详情', type: 'viewDetail' }
     case 'pending_review':
-      return { label: '查看审核材料', type: 'approvalMaterials' }
+      return { label: '审核项目', type: 'approvalMaterials' }
     case 'returned':
       return isRealOwner
-        ? { label: '修改立项信息', type: 'ownerSubmit' }
+        ? { label: '修改项目计划', type: 'ownerSubmit' }
         : { label: '查看详情', type: 'viewDetail' }
     case 'active':
       return { label: '进入工作推进表', type: 'workProgress' }
@@ -288,6 +294,21 @@ function getMainAction(
       return { label: '查看项目档案', type: 'projectArchive' }
     default:
       return { label: '查看详情', type: 'viewDetail' }
+  }
+}
+
+function getMainActionLabel(action: MainAction): string {
+  switch (action.type) {
+    case 'edit': return '编辑项目'
+    case 'dispatch': return '下发给负责人'
+    case 'ownerSubmit': return action.label
+    case 'approvalMaterials': return '审核项目'
+    case 'workProgress': return '进入工作推进表'
+    case 'projectArchive': return '查看项目档案'
+    case 'closeRequest': return '申请项目结束'
+    case 'closeReview': return '审核结束申请'
+    case 'closeArchiveView': return '查看结束档案'
+    default: return '进入项目'
   }
 }
 
@@ -305,6 +326,8 @@ export function ProjectsMgmtSection() {
   // 搜索 + 分页
   const [page, setPage] = useState(0)
   const [searchQuery, setSearchQuery] = useState('')
+  const [viewMode, setViewMode] = useState<'card' | 'list'>('card')
+  const [showAllTodos, setShowAllTodos] = useState(false)
 
   // 流程相关
   const [closeFlowProjectId, setCloseFlowProjectId] = useState<number | null>(null)
@@ -333,9 +356,6 @@ export function ProjectsMgmtSection() {
   // 审核
   const [approvalMaterialsProject, setApprovalMaterialsProject] = useState<Project | null>(null)
   const [approveLoading, setApproveLoading] = useState(false)
-
-  // 负责人完善立项
-  const [ownerFillProject, setOwnerFillProject] = useState<Project | null>(null)
 
   // 批量导入
   const [importOpen, setImportOpen] = useState(false)
@@ -436,6 +456,31 @@ export function ProjectsMgmtSection() {
     const start = safePage * PAGE_SIZE
     return filteredProjects.slice(start, start + PAGE_SIZE)
   }, [filteredProjects, safePage])
+
+  const overviewStats = useMemo(() => getProjectOverviewStats(roleFilteredProjects), [roleFilteredProjects])
+
+  const todoItems = useMemo<ProjectTodoViewModel[]>(() => {
+    return roleFilteredProjects.flatMap((project) => {
+      const pm = members[project.id] ?? []
+      const roles = {
+        isSuperAdmin: Boolean(currentUser?.is_tech_admin),
+        isCompanyCeo: Boolean(currentUser?.is_ceo) && !currentUser?.is_tech_admin,
+        isRealProjectCeo: Boolean(myPersonId && pm.some((member) => member.person_id === myPersonId && member.role === 'project_ceo')),
+        isRealOwner: Boolean(myPersonId && pm.some((member) => member.person_id === myPersonId && member.role === 'owner')),
+      }
+      const todo = getProjectTodo(
+        project,
+        roles,
+        projectTasksMap[project.id] ?? [],
+        projectSubtasksMap[project.id] ?? [],
+      )
+      if (!todo) return []
+      const teamLine = summarizeProjectRoleLine(pm, project)
+      return [{ todo, ownerName: teamLine.ownerText, coachName: teamLine.ceoText }]
+    })
+  }, [currentUser, members, myPersonId, projectSubtasksMap, projectTasksMap, roleFilteredProjects])
+
+  const visibleTodoItems = showAllTodos ? todoItems : todoItems.slice(0, 3)
 
   // 搜索时重置到第0页
   useEffect(() => {
@@ -691,6 +736,26 @@ export function ProjectsMgmtSection() {
     return { isSuperAdmin, isCompanyCeo, isRealProjectCeo, isRealOwner }
   }
 
+  function handleProjectMainAction(project: Project) {
+    const status = getProjectPrimaryStatus(project)
+    const roles = getProjectRoles(project.id)
+    const mainAction = getMainAction(status, roles.isSuperAdmin, roles.isCompanyCeo, roles.isRealProjectCeo, roles.isRealOwner)
+    if (mainAction.type === 'edit') void openProjectEditor(project)
+    else if (mainAction.type === 'dispatch') void handleDispatch(project.id)
+    else if (mainAction.type === 'ownerSubmit') navigate(`/home/projects/${project.id}/owner-submit`)
+    else if (mainAction.type === 'approvalMaterials') setApprovalMaterialsProject(project)
+    else if (mainAction.type === 'workProgress') navigate(`/work/tasks?projectId=${project.id}`)
+    else if (mainAction.type === 'projectArchive') navigate(`/home/projects/${project.id}/archive`)
+    else if (mainAction.type === 'closeRequest' || mainAction.type === 'closeReview' || mainAction.type === 'closeArchiveView') openCloseFlow(project)
+    else navigate(`/home/projects/${project.id}`)
+  }
+
+  function handleTodoAction(todo: ProjectTodoViewModel['todo']) {
+    if (todo.action === 'edit') void openProjectEditor(todo.project)
+    else if (todo.action === 'ownerSubmit') navigate(`/home/projects/${todo.project.id}/owner-submit`)
+    else if (todo.action === 'approvalMaterials') setApprovalMaterialsProject(todo.project)
+  }
+
   // ── 渲染 ──
 
   if (loading) {
@@ -705,40 +770,92 @@ export function ProjectsMgmtSection() {
 
   return (
     <div className="projects-lifecycle-workbench projects-lifecycle-page-shell -m-3 bg-[#F8FAFC] px-6 py-5">
-      <section className="mx-auto flex max-w-[1440px] flex-col gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索项目名称..."
-              className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-sky-400 focus:bg-white sm:w-72"
-            />
-            <span className="whitespace-nowrap text-xs text-slate-400">
-              共 {filteredProjects.length} 个项目
-            </span>
-          </div>
+      <header className="mx-auto flex max-w-[1440px] flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">项目管理</h1>
+          <p className="mt-1 text-sm text-slate-500">管理项目从立项、启动到执行与归档</p>
+        </div>
+        {isFullAdmin && (
           <div className="flex items-center gap-2">
-            {isFullAdmin && (
-              <>
-                <button type="button" onClick={() => setImportOpen(true)}
-                  className="h-9 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-600 shadow-sm transition-colors hover:bg-slate-100">
-                  批量导入
-                </button>
-                <button type="button" onClick={() => setShowNew(true)}
-                  className="h-9 cursor-pointer rounded-lg bg-[#2170e4] px-3 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-[#1b5fc7]">
-                  新建项目
-                </button>
-              </>
-            )}
+            <button type="button" onClick={() => setImportOpen(true)}
+              className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50">
+              批量导入
+            </button>
+            <button type="button" onClick={() => setShowNew(true)}
+              className="h-10 cursor-pointer rounded-lg bg-[#2170e4] px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#1b5fc7]">
+              ＋ 新建项目
+            </button>
           </div>
-      </section>
+        )}
+      </header>
 
-      <div className="mx-auto mt-5 max-w-[1200px]">{/* 宽表格 */}
+      <div className="mx-auto mt-5 flex max-w-[1440px] flex-col gap-5">
+        <ProjectOverviewStats stats={overviewStats} />
+
+        <ProjectTodoSection
+          items={visibleTodoItems}
+          totalCount={todoItems.length}
+          onAction={handleTodoAction}
+          onShowAll={() => setShowAllTodos(true)}
+        />
+
         <section className="projects-lifecycle-project-queue min-w-0">
+          <div className="mb-3 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-lg font-bold text-slate-900">全部项目（{roleFilteredProjects.length}）</h2>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="搜索项目名称..."
+                className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-sky-400 focus:bg-white sm:w-60"
+              />
+              <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs font-semibold">
+                <button type="button" onClick={() => setViewMode('card')}
+                  className={`rounded-md px-3 py-1.5 ${viewMode === 'card' ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-500'}`}>
+                  ▦ 卡片视图
+                </button>
+                <button type="button" onClick={() => setViewMode('list')}
+                  className={`rounded-md px-3 py-1.5 ${viewMode === 'list' ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-500'}`}>
+                  ☰ 列表视图
+                </button>
+              </div>
+            </div>
+          </div>
+
           {filteredProjects.length === 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-white py-12 text-center text-sm text-slate-400 shadow-sm">暂无项目</div>
           ) : (
             <>
+              {viewMode === 'card' && (
+                <div className="space-y-3">
+                  {currentPageItems.map((project) => {
+                    const status = getProjectPrimaryStatus(project)
+                    const roles = getProjectRoles(project.id)
+                    const pm = members[project.id] ?? []
+                    const mainAction = getMainAction(status, roles.isSuperAdmin, roles.isCompanyCeo, roles.isRealProjectCeo, roles.isRealOwner)
+                    const teamLine = summarizeProjectRoleLine(pm, project)
+                    return (
+                      <LifecycleCard
+                        key={project.id}
+                        project={project}
+                        status={status}
+                        teamLine={teamLine}
+                        mainAction={mainAction}
+                        mainBusy={dispatchingId === project.id}
+                        showReturn={mainAction.type === 'approvalMaterials'}
+                        isSelected={false}
+                        hasMore={roles.isSuperAdmin || (roles.isCompanyCeo && status === 'draft')}
+                        onSelect={() => navigate(`/home/projects/${project.id}`)}
+                        onMainAction={() => handleProjectMainAction(project)}
+                        onReturn={() => void handleReturn(project.id, project.name)}
+                        onOpenMore={(anchorEl) => setMenuState({ pid: project.id, anchorEl })}
+                      />
+                    )
+                  })}
+                </div>
+              )}
+
+              {viewMode === 'list' && (
               <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
                 <table className="w-full border-collapse">
                   <thead className="bg-slate-50">
@@ -768,25 +885,12 @@ export function ProjectsMgmtSection() {
 
                       // 主要操作按钮（行内快捷操作）
                       const mainAction = getMainAction(status, roles.isSuperAdmin, roles.isCompanyCeo, roles.isRealProjectCeo, roles.isRealOwner)
-                      const actionLabel = (() => {
-                        switch (mainAction.type) {
-                          case 'edit': return '编辑'
-                          case 'dispatch': return '派发'
-                          case 'ownerSubmit': return '完善材料'
-                          case 'approvalMaterials': return '审核材料'
-                          case 'workProgress': return '工作进展'
-                          case 'projectArchive': return '项目归档'
-                          case 'closeRequest': return '结束流程'
-                          case 'closeReview': return '审核结束'
-                          case 'closeArchiveView': return '查看归档'
-                          default: return '查看'
-                        }
-                      })()
+                      const actionLabel = getMainActionLabel(mainAction)
 
                       const handleAction = () => {
                         if (mainAction.type === 'edit') void openProjectEditor(project)
                         else if (mainAction.type === 'dispatch') void handleDispatch(project.id)
-                        else if (mainAction.type === 'ownerSubmit') setOwnerFillProject(project)
+                        else if (mainAction.type === 'ownerSubmit') navigate(`/home/projects/${project.id}/owner-submit`)
                         else if (mainAction.type === 'approvalMaterials') { setApprovalMaterialsProject(project) }
                         else if (mainAction.type === 'workProgress') navigate(`/work/tasks?projectId=${project.id}`)
                         else if (mainAction.type === 'projectArchive') navigate(`/home/projects/${project.id}/archive`)
@@ -837,6 +941,8 @@ export function ProjectsMgmtSection() {
                   </tbody>
                 </table>
               </div>
+
+              )}
 
               {/* 分页 */}
               {totalPages > 1 && (
@@ -929,19 +1035,6 @@ export function ProjectsMgmtSection() {
         />
       )}
 
-      {/* 负责人完善立项弹窗 */}
-      {ownerFillProject && (
-        <OwnerSubmitModal
-          project={ownerFillProject}
-          onClose={() => setOwnerFillProject(null)}
-          onSuccess={() => {
-            setOwnerFillProject(null)
-            getProjects(true).then(setProjects).catch(() => {})
-            reloadProjects()
-          }}
-        />
-      )}
-
       <ProjectCloseFlowDrawer
         open={closeFlowProjectId !== null}
         project={closeFlowProjectId !== null ? projects.find((project) => project.id === closeFlowProjectId) ?? null : null}
@@ -996,6 +1089,8 @@ function LifecycleCard({
   const statusBadge = getProjectStatusBadge(project)
   const projectType = project.project_type?.trim() || ''
   const stageDesc = STAGE_DESCRIPTIONS[status] ?? ''
+  const lifecycleStage = getProjectLifecycleStage(status)
+  const lifecycleNodes = ['立项准备', '启动', '执行', '结束', '归档']
 
   return (
     <div
@@ -1023,7 +1118,7 @@ function LifecycleCard({
       <p className="projects-lifecycle-card-stage-row mt-2 flex items-start gap-1.5 text-xs leading-relaxed text-slate-600">
         <span className="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#2170e4]" />
         <span className="sr-only">当前阶段：</span>
-        <span>{stageDesc}</span>
+        <span><span className="font-semibold text-slate-800">{lifecycleStage.label}</span> · {stageDesc || lifecycleStage.detail}</span>
       </p>
 
       <div className="projects-lifecycle-card-people-line mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-600">
@@ -1037,6 +1132,20 @@ function LifecycleCard({
         </div>
       </div>
 
+      <div className="mt-3 flex items-start gap-1" aria-label="项目生命周期">
+        {lifecycleNodes.map((node, index) => (
+          <div key={node} className="min-w-0 flex-1">
+            <div className="flex items-center">
+              <span className={`h-2.5 w-2.5 shrink-0 rounded-full border-2 ${index <= lifecycleStage.activeIndex ? 'border-sky-600 bg-sky-500' : 'border-slate-300 bg-white'}`} />
+              {index < lifecycleNodes.length - 1 && (
+                <span className={`h-0.5 flex-1 ${index < lifecycleStage.activeIndex ? 'bg-sky-400' : 'bg-slate-200'}`} />
+              )}
+            </div>
+            <div className={`mt-1 text-[10px] ${index === lifecycleStage.activeIndex ? 'font-semibold text-sky-700' : 'text-slate-400'}`}>{node}</div>
+          </div>
+        ))}
+      </div>
+
       <div className="projects-lifecycle-card-action-row mt-2 flex items-center justify-end gap-2 border-t border-slate-100 pt-2" onClick={(e) => e.stopPropagation()}>
         {showReturn && (
           <button type="button" onClick={onReturn}
@@ -1048,6 +1157,10 @@ function LifecycleCard({
           className="cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold text-white shadow-sm disabled:opacity-50"
           style={{ background: 'linear-gradient(135deg,#2563EB,#0EA5E9)' }}>
           {mainBusy ? '处理中…' : mainAction.label}
+        </button>
+        <button type="button" onClick={(event) => { event.stopPropagation(); onSelect() }}
+          className="cursor-pointer rounded-lg border border-sky-300 bg-white px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-50">
+          进入项目 →
         </button>
       </div>
     </div>

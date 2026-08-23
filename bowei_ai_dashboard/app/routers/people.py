@@ -148,6 +148,19 @@ def _normalize_system_role(role: str | None) -> str:
     return normalize_system_role(role) or ROLE_NORMAL
 
 
+def reset_wecom_identity_field(person: models.Person, field: str) -> models.Person:
+    """Restore one effective identity field from its latest WeCom value."""
+    if field == "department":
+        person.department = person.wecom_department or ""
+        person.department_source = "wecom"
+    elif field == "position":
+        person.position_title = person.wecom_position_title or ""
+        person.position_source = "wecom"
+    else:
+        raise HTTPException(422, "field 必须是 department 或 position")
+    return person
+
+
 def _person_to_dict(row) -> dict:
     """序列化 Person，附带 system_role_label 中文展示名。"""
     d = crud.to_dict(row)
@@ -368,8 +381,11 @@ def create_person(
     row = models.Person(
         name=payload.name.strip(),
         role=payload.role,
+        position_title=payload.position_title or "",
         system_role=system_role,
         department=payload.department,
+        department_source="local" if payload.department else "wecom",
+        position_source="local" if payload.position_title else "wecom",
         special_project_duty=_all_assigned_projects(coordinated, owned, collaborated) or payload.special_project_duty,
         permission=payload.permission,
         contact=payload.contact,
@@ -413,6 +429,10 @@ def update_person(
     coordinated, owned, collaborated = _payload_project_sets(payload)
     row.name = payload.name.strip()
     row.role = payload.role
+    if payload.position_title is not None:
+        if row.position_title != payload.position_title:
+            row.position_source = "local"
+        row.position_title = payload.position_title
     new_system_role = _normalize_system_role(payload.system_role)
     # 禁止降级最后一个超级管理员，防止锁死系统
     if _is_super_admin_role(row.system_role) and not _is_super_admin_role(new_system_role):
@@ -424,6 +444,8 @@ def update_person(
         if other_supers == 0:
             raise HTTPException(409, "不能降级最后一个超级管理员，请先提升其他人为超级管理员")
     row.system_role = new_system_role
+    if row.department != payload.department:
+        row.department_source = "local"
     row.department = payload.department
     row.permission = payload.permission
     row.contact = payload.contact
@@ -436,6 +458,25 @@ def update_person(
     _sync_person_assignments(db, row.name, coordinated, owned, collaborated)
     crud.log(db, current_user, "update", "person", row.id, before=before, after=crud.to_dict(row))
     db.commit()
+    return _person_to_dict(row)
+
+
+@router.post("/{row_id}/identity-reset")
+def reset_identity(
+    row_id: int,
+    payload: schemas.IdentityResetPayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    _require_admin(current_user, db)
+    row = db.get(models.Person, row_id)
+    if not row:
+        raise HTTPException(404, "person not found")
+    before = crud.to_dict(row)
+    reset_wecom_identity_field(row, payload.field)
+    crud.log(db, current_user, "reset_wecom_identity", "person", row.id, before=before, after=crud.to_dict(row))
+    db.commit()
+    db.refresh(row)
     return _person_to_dict(row)
 
 

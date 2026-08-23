@@ -231,8 +231,15 @@ export type DashboardOverview = {
 export type Person = {
   id: number
   name: string
+  role?: string
+  position_title?: string
   system_role?: string
   department?: string
+  wecom_userid?: string
+  wecom_department?: string
+  wecom_position_title?: string
+  department_source?: 'wecom' | 'local' | string
+  position_source?: 'wecom' | 'local' | string
   contact?: string
   is_active?: boolean
   special_project_duty?: string
@@ -319,8 +326,14 @@ export type MeetingItem = {
   meeting_type?: string
   title?: string
   meeting_date?: string
+  location?: string
   host?: string
   participants?: string
+  organizer?: string
+  copied_to?: string
+  agenda_items_json?: string
+  prior_action_items_json?: string
+  source_mode?: 'standard_minutes' | 'ai_analysis'
   summary?: string
   task_list_json?: string
   decision_items_json?: string
@@ -366,7 +379,15 @@ export type SubTaskItem = {
   project_id?: number | null
   title: string
   assignee: string
+  assignee_id?: number | null
+  collaborator_ids?: number[]
+  collaborators?: string[]
   plan_time: string
+  start_date?: string | null
+  due_kind?: 'exact' | 'fuzzy' | 'unknown'
+  due_date?: string | null
+  due_label?: string | null
+  due_reference_date?: string | null
   status: string
   completion_criteria?: string
   notes?: string

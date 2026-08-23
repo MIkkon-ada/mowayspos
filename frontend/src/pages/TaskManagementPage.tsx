@@ -7,7 +7,7 @@ import type { TaskLog, TaskPayload, TaskUpdate, TaskDraft } from '../api/tasks'
 import { fetchSubTasks, fetchSubTasksBatch, createSubTask, patchSubTaskStatus, isPendingConfirmation, updateSubTask, deleteSubTask, restoreSubTask, fetchSubtaskDetail } from '../api/subtasks'
 import type { SubTaskDetail, SubTaskPayload } from '../api/subtasks'
 import { createUpdate } from '../api/updates'
-import { ApiError, apiGet } from '../api/client'
+import { ApiError } from '../api/client'
 import { getProject, getProjectMembers } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } from '../domain/taskPermission'
@@ -127,6 +127,8 @@ const TASK_PROJECT_CONTEXT_REQUIRED_MESSAGE = '请先选择项目后查看工作
 const TASK_PROJECT_CONTEXT_EMPTY_MESSAGE = '当前没有可查看的项目工作推进表'
 const TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE = '当前入口缺少项目上下文，请从项目进入工作推进表，或先选择项目。'
 const TASK_PROJECT_PERMISSION_DENIED_MESSAGE = '你没有权限查看该项目工作推进表。'
+// The execution workspace is the default Key Task detail entry.
+const SHOW_EXECUTION_DETAIL = true
 function avatarColor(name: string) {
   let h = 0
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff
@@ -279,6 +281,7 @@ export function TaskManagementPage() {
   const projectOptions = resolvedTaskProjects.map((p) => p.name)
   const ownerNames = [...new Set(resolvedTaskProjects.flatMap((p) => p.owners ?? []))]
   const focusedProject = projectFromContext ?? resolvedProjectForContext ?? null
+  const focusedSubTaskProject = projectForSubTask(resolvedTaskProjects, tasks, selectedSubTask)
   const projectArchived = isProjectArchived(focusedProject)
   const trashProject = resolvedTaskProjects.find((p) => p.id === effectiveTaskProjectId) ?? null
   const canManageTrash = currentUser?.is_tech_admin || resolvedTaskProjects.some((p) =>
@@ -555,6 +558,8 @@ export function TaskManagementPage() {
   }
 
   function focusSubTask(st: SubTaskItem, opts?: { keepTask?: boolean }) {
+    if (SHOW_EXECUTION_DETAIL) setViewMode('execution')
+    ensureProjectMembersLoaded(projectForSubTask(resolvedTaskProjects, tasks, st)?.id)
     setSelectedSubTask(null)
     setSubDetailLoading(true)
     setSubEditField(null)
@@ -657,6 +662,19 @@ export function TaskManagementPage() {
     } finally {
       setSubSaving(false)
     }
+  }
+
+  async function handleWorkbenchSubTaskSave(payload: Omit<SubTaskPayload, 'project_id'>) {
+    if (!selectedSubTask) return
+    const projectId = selectedSubTask.project_id ?? focusedSubTaskProject?.id ?? currentProjectId
+    if (!projectId) throw new Error('缺少项目上下文，无法保存关键任务')
+    const updated = await updateSubTask(selectedSubTask.id, { ...payload, project_id: projectId })
+    setSelectedSubTask((current) => current ? { ...current, ...updated } as SubTaskDetail : current)
+    setSubTasks((prev) => prev.map((item) => item.id === updated.id ? { ...item, ...updated } : item))
+    setTaskSubMap((prev) => ({
+      ...prev,
+      [updated.task_id]: (prev[updated.task_id] ?? []).map((item) => item.id === updated.id ? { ...item, ...updated } : item),
+    }))
   }
 
   function openDetail(task: TaskItem) {
@@ -927,7 +945,7 @@ function handleFormSave(payload: TaskPayload) {
       )}
 
       {/* Top Bar */}
-      {!((viewMode === 'execution') && selectedSubTask) && <header className="h-14 px-6 gap-3 flex items-center flex-shrink-0 bg-white border-b overflow-x-auto" style={{ borderColor: '#E9EFF6' }}>
+      {!((viewMode === 'execution') && selectedSubTask) && <header className="min-h-14 px-4 py-2 lg:px-6 gap-3 flex flex-wrap items-center flex-shrink-0 bg-white border-b overflow-x-auto" style={{ borderColor: '#E9EFF6' }}>
         <div className="work-progress-title-group flex-shrink-0">
           <h1 className="text-base font-bold text-slate-800">工作推进表</h1>
         </div>
@@ -942,13 +960,15 @@ function handleFormSave(payload: TaskPayload) {
           >
             表格视图
           </button>
-          <button
-            type="button"
-            onClick={() => setViewMode('execution')}
-            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'execution' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-          >
-            执行详情
-          </button>
+          {SHOW_EXECUTION_DETAIL && (
+            <button
+              type="button"
+              onClick={() => setViewMode('execution')}
+              className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'execution' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              执行详情
+            </button>
+          )}
         </div>
 
         {/* Filters */}
@@ -1042,11 +1062,16 @@ function handleFormSave(payload: TaskPayload) {
       </header>}
 
       {/* Main */}
-      {viewMode === 'execution' && selectedSubTask ? (
+      {SHOW_EXECUTION_DETAIL && viewMode === 'execution' && selectedSubTask ? (
         <KeyTaskExecutionDetailView
-          project={focusedProject}
+          project={focusedProject ?? focusedSubTaskProject}
           task={tasks.find((task) => task.id === selectedSubTask.task_id) ?? null}
           subTask={selectedSubTask}
+          projectMembers={projectMembersByProject[(focusedProject ?? focusedSubTaskProject)?.id ?? 0] ?? []}
+          canManageSchedules={Boolean(currentUser?.is_tech_admin || currentUser?.name === selectedSubTask.assignee || canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: (focusedProject ?? focusedSubTaskProject)?.user_roles ?? currentProjectRoles }))}
+          canChangeAssignee={canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: (focusedProject ?? focusedSubTaskProject)?.user_roles ?? currentProjectRoles })}
+          onEditSubTask={handleWorkbenchSubTaskSave}
+          onSchedulesChanged={() => { fetchSubtaskDetail(selectedSubTask.id).then(setSelectedSubTask).catch(() => {}) }}
           onBack={() => clearSelection()}
         />
       ) : (
@@ -1082,30 +1107,7 @@ function handleFormSave(payload: TaskPayload) {
               onExport={handlePlanExport}
               canCreateTask={!showDeleted && !projectArchived && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProjectRoles })}
               onCreateTask={() => openTaskCreateForProject(focusedProject?.id)}
-              currentUserName={currentUser?.name}
-              projectRoles={currentProjectRoles ?? []}
-              isTechAdmin={currentUser?.is_tech_admin ?? false}
-              projectMembers={projectMembersByProject[focusedProject?.id ?? 0] ?? []}
-              onUpdateSubTask={async (id, payload) => {
-                const updated = await updateSubTask(id, {
-                  ...payload,
-                  project_id: focusedProject!.id,
-                })
-                setTaskSubMap((prev) => {
-                  const next = { ...prev }
-                  for (const tid of Object.keys(next)) {
-                    const list = next[Number(tid)]
-                    const idx = list.findIndex((s) => s.id === id)
-                    if (idx >= 0) {
-                      next[Number(tid)] = [...list]
-                      next[Number(tid)][idx] = updated
-                      break
-                    }
-                  }
-                  return next
-                })
-                return updated
-              }}
+              onOpenSubTask={openSubDetail}
             />
           ) : viewMode === 'execution' ? (
             <ExecutionProgressView
@@ -1324,7 +1326,7 @@ function handleFormSave(payload: TaskPayload) {
 
         {viewMode !== 'execution' && (selectedSubTask || subDetailLoading) && <aside
           data-testid="work-progress-detail-panel"
-          className="w-[380px] flex-shrink-0 border-l bg-white flex flex-col overflow-hidden"
+          className="fixed inset-y-0 right-0 z-40 w-[min(380px,calc(100vw-64px))] flex-shrink-0 border-l bg-white flex flex-col overflow-hidden shadow-2xl lg:static lg:z-auto lg:w-[340px] lg:shadow-none xl:w-[380px]"
           style={{ borderColor: '#E2E8F0' }}
         >
           {(() => {
@@ -1784,11 +1786,9 @@ function OutlineImportModal({ defaultProjectId, projects, onCreated, onClose }: 
   const [noEngine, setNoEngine] = useState(false)
 
   useEffect(() => {
-    apiGet<{ provider: string; display_name: string }[]>('/api/llm-config/available').then((list) => {
-      if (list.length === 0) { setNoEngine(true); return }
-      setProvider(list[0].provider)
-      setProviderLabel(list[0].display_name)
-    }).catch(() => setNoEngine(true))
+    setProvider('capability')
+    setProviderLabel('AI能力策略')
+    setNoEngine(false)
   }, [])
 
   async function handleExtract() {

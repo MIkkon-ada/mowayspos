@@ -1,8 +1,8 @@
 import json
-from datetime import datetime
-from typing import Any, Literal
+from datetime import date, datetime
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def _safe_json_object(value: Any) -> dict[str, Any]:
@@ -23,6 +23,61 @@ def _safe_json_list(value: Any) -> list[Any]:
     except (json.JSONDecodeError, TypeError, ValueError):
         return []
     return parsed if isinstance(parsed, list) else []
+
+
+class AIModelCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=96)
+    display_name: str = Field(min_length=1, max_length=160)
+    provider: str = Field(min_length=1, max_length=64)
+    model_name: str = Field(min_length=1, max_length=160)
+    model_type: Literal["chat", "asr"]
+    base_url: str = Field(min_length=1)
+    config: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = False
+    source: str = Field(default="custom", min_length=1, max_length=24)
+
+
+class AIModelUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
+    provider: str | None = Field(default=None, min_length=1, max_length=64)
+    model_name: str | None = Field(default=None, min_length=1, max_length=160)
+    model_type: Literal["chat", "asr"] | None = None
+    base_url: str | None = Field(default=None, min_length=1)
+    config: dict[str, Any] | None = None
+    enabled: bool | None = None
+
+
+class AIModelEnabledWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+
+
+class AICredentialWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    api_key: str | None = None
+    app_secret: str | None = None
+
+
+class AIPolicyWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    primary_model_id: int | None = Field(default=None, gt=0)
+    fallback_model_ids: list[int] = Field(default_factory=list)
+    timeout_seconds: int = Field(gt=0, le=600)
+    max_attempts: int = Field(ge=1, le=10)
+    enabled: bool
+
+
+class AIModelTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    temporary_api_key: str | None = None
 
 
 class UserSubtaskContext(BaseModel):
@@ -174,6 +229,7 @@ class IssuePayload(BaseModel):
 class PersonPayload(BaseModel):
     name: str = Field(..., max_length=50)
     role: str = Field("", max_length=40)
+    position_title: str | None = Field(None, max_length=100)
     system_role: str = Field("normal_member", max_length=40)
     department: str = Field("", max_length=80)
     special_project_duty: str = ""
@@ -184,6 +240,10 @@ class PersonPayload(BaseModel):
     coordinated_projects: list[str] = []
     owned_projects: list[str] = []
     collaborated_projects: list[str] = []
+
+
+class IdentityResetPayload(BaseModel):
+    field: str
 
 
 class PersonBatchItem(BaseModel):
@@ -365,7 +425,9 @@ class ProjectWorkProgressSubTaskDraft(BaseModel):
     title: str = Field("", max_length=200)
     evaluation_standard: str = ""
     assignee: str = Field("", max_length=50)
+    assignee_id: int | None = None
     helper: str = Field("", max_length=100)
+    helper_ids: list[int] = Field(default_factory=list)
     plan_start: str = Field("", max_length=20)
     plan_end: str = Field("", max_length=20)
 
@@ -378,6 +440,43 @@ class ProjectWorkProgressTaskDraft(BaseModel):
     plan_start: str = Field("", max_length=20)
     plan_end: str = Field("", max_length=20)
     subtasks: list[ProjectWorkProgressSubTaskDraft] = Field(default_factory=list)
+
+
+class ProjectInitAnalysisCreate(BaseModel):
+    attachment_ids: list[Annotated[int, Field(strict=True, gt=0)]] = Field(
+        min_length=1,
+        max_length=10,
+    )
+    current_draft: list[ProjectWorkProgressTaskDraft] = Field(default_factory=list)
+
+    @field_validator("attachment_ids")
+    @classmethod
+    def require_unique_attachment_ids(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("attachment_ids must be unique")
+        return value
+
+
+class ProjectInitAnalysisAction(BaseModel):
+    action: Literal["retry", "applied"]
+
+
+class ProjectInitAnalysisRunResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: Annotated[int, Field(strict=True, gt=0)]
+    project_id: Annotated[int, Field(strict=True, gt=0)]
+    attachment_ids: list[Annotated[int, Field(strict=True, gt=0)]] = Field(default_factory=list)
+    status: Literal["queued", "processing", "retrying", "completed", "partial_failed", "failed"]
+    stage: Literal["reading", "parsing", "extracting", "matching", "merging", "retrying", "completed", "failed", "stale"]
+    progress: Annotated[int, Field(strict=True, ge=0, le=100)]
+    error_message: str = Field(default="", max_length=500)
+    draft: dict[str, Any] | list[Any] = Field(default_factory=dict)
+    result_metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    applied_at: datetime | None = None
 
 
 class ProjectProfilePayload(BaseModel):
@@ -395,18 +494,75 @@ class ProjectProfilePayload(BaseModel):
 
 class MeetingPayload(BaseModel):
     project_id: int | None = None
+    analysis_id: int | None = None
     related_special_project: str = ""
     meeting_type: str = ""
     title: str = ""
     meeting_date: str = ""
+    location: str = ""
     host: str = ""
     participants: str = ""
+    organizer: str = ""
+    copied_to: str = ""
+    agenda_items_json: str = "[]"
+    prior_action_items_json: str = "[]"
+    source_mode: str = "ai_analysis"
     transcript_text: str = ""
     summary: str = ""
     task_list_json: str = ""
     decision_items_json: str = ""
     risk_items_json: str = ""
     publish_status: str = "draft"
+    skill_run_id: int | None = None
+
+
+class ProjectMeetingReviewPayload(BaseModel):
+    action: Literal["publish", "apply_changes", "return"]
+    reason: str = ""
+    proposal_ids: list[int] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_review(self):
+        self.reason = self.reason.strip()
+        if self.action == "return" and not self.reason:
+            raise ValueError("return reason is required")
+        if any(isinstance(item, bool) or item <= 0 for item in self.proposal_ids):
+            raise ValueError("proposal_ids must contain positive integers")
+        if len(set(self.proposal_ids)) != len(self.proposal_ids):
+            raise ValueError("proposal_ids must be unique")
+        if self.action == "apply_changes" and not self.proposal_ids:
+            raise ValueError("proposal_ids are required when applying changes")
+        if self.action in {"publish", "return"} and self.proposal_ids:
+            raise ValueError("proposal_ids are only allowed when applying changes")
+        return self
+
+
+class MeetingSkillReferenceFile(BaseModel):
+    source_id: str
+    kind: str = "meeting_document"
+    filename: str = ""
+
+
+class MeetingSkillPreflightPayload(BaseModel):
+    project_id: int
+    meeting_type: str = ""
+    transcript_text: str = ""
+    reference_files: list[MeetingSkillReferenceFile] = Field(default_factory=list)
+
+
+class MeetingSkillSnapshotPayload(BaseModel):
+    transcript_text: str = ""
+    reference_files: list[MeetingSkillReferenceFile] = Field(default_factory=list)
+
+
+class MeetingSkillAnswerItem(BaseModel):
+    question_id: int
+    value: Any | None = None
+    omit: bool = False
+
+
+class MeetingSkillAnswersPayload(BaseModel):
+    answers: list[MeetingSkillAnswerItem] = Field(default_factory=list)
 
 
 class MeetingRevisionResponse(BaseModel):
@@ -420,8 +576,14 @@ class MeetingRevisionResponse(BaseModel):
     meeting_type: str = ""
     title: str = ""
     meeting_date: str = ""
+    location: str = ""
     host: str = ""
     participants: str = ""
+    organizer: str = ""
+    copied_to: str = ""
+    agenda_items_json: str = "[]"
+    prior_action_items_json: str = "[]"
+    source_mode: str = "ai_analysis"
     transcript_text: str = ""
     summary: str = ""
     task_list_json: str = ""
@@ -544,6 +706,50 @@ class MeetingStatusPatch(BaseModel):
     reject_reason: str = ""
 
 
+class MeetingChangeProposalPatch(BaseModel):
+    proposed: dict[str, Any]
+    evidence: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+
+class MeetingChangeSetExecutePayload(BaseModel):
+    proposal_ids: list[int]
+
+    @field_validator("proposal_ids")
+    @classmethod
+    def validate_proposal_ids(cls, value: list[int]) -> list[int]:
+        if any(isinstance(item, bool) or item <= 0 for item in value):
+            raise ValueError("proposal_ids must contain positive integers")
+        if len(set(value)) != len(value):
+            raise ValueError("proposal_ids must be unique")
+        return value
+
+
+class MeetingProgressReviewPatch(BaseModel):
+    status: Literal[
+        "completed",
+        "in_progress",
+        "blocked",
+        "not_started",
+        "not_mentioned",
+    ] | None = None
+    suggested_task_status: str = ""
+    review_status: Literal["pending", "ignored"] | None = None
+    review_comment: str = ""
+
+
+class MeetingProgressReviewConfirm(BaseModel):
+    status: Literal[
+        "completed",
+        "in_progress",
+        "blocked",
+        "not_started",
+        "not_mentioned",
+    ] | None = None
+    suggested_task_status: str = ""
+    review_comment: str = ""
+
+
 class KickoffRunCreatePayload(BaseModel):
     transcript_text: str = Field(..., min_length=1)
 
@@ -561,14 +767,159 @@ class KickoffStartConfirmPayload(BaseModel):
     review_comment: str = ""
 
 
+DueKind = Literal["exact", "fuzzy", "unknown"]
+
+
+def _validate_due_semantics(model):
+    kind = model.due_kind
+    label = (model.due_label or "").strip() or None
+    if kind is None:
+        kind = "exact" if model.due_date else ("fuzzy" if label else "unknown")
+    model.due_kind = kind
+    model.due_label = label
+    if kind == "exact":
+        if model.due_date is None:
+            raise ValueError("精确期限必须填写截止日期")
+        if label is not None:
+            raise ValueError("精确期限不能同时填写模糊期限")
+    elif kind == "fuzzy":
+        if model.due_date is not None:
+            raise ValueError("模糊期限不能保存为精确截止日期")
+        if label is None:
+            raise ValueError("模糊期限必须保留用户原始语义")
+        if label == "暂未确定":
+            raise ValueError("暂未确定不能作为日期语义保存")
+    else:
+        if model.due_date is not None or label is not None or model.due_reference_date is not None:
+            raise ValueError("未确定期限不能保存截止日期或显示语义")
+    start_date = getattr(model, "start_date", None)
+    if start_date and model.due_date and model.due_date < start_date:
+        raise ValueError("截止日期不得早于开始日期")
+    return model
+
+
+class ExecutionSchedulePayload(BaseModel):
+    plan_type: Literal["week", "month"]
+    title: str = Field(..., min_length=1, max_length=200)
+    start_date: date | None = None
+    due_kind: DueKind | None = None
+    due_date: date | None = None
+    due_label: str | None = Field(default=None, max_length=100)
+    due_reference_date: date | None = None
+    assignee_id: int | None = None
+    assignee: str = Field(default="", max_length=50)
+    collaborator_ids: list[int] = Field(default_factory=list)
+    status: Literal["待开始", "进行中", "已完成", "已取消"] = "待开始"
+    reminder_policy: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_date_range(self):
+        if self.assignee_id is not None and self.assignee_id in self.collaborator_ids:
+            raise ValueError("执行负责人不能同时作为协同人")
+        if len(self.collaborator_ids) != len(set(self.collaborator_ids)):
+            raise ValueError("协同人不能重复")
+        return _validate_due_semantics(self)
+
+
+MonthPlanStatus = Literal["未开始", "进行中", "暂缓", "已完成", "已取消"]
+
+
+class MonthPlanCreatePayload(BaseModel):
+    plan_month: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    title: str = Field(min_length=1, max_length=200)
+    expected_output: str = Field(min_length=1)
+    assignee_id: int = Field(gt=0)
+    collaborator_ids: list[int] = Field(default_factory=list)
+    status: MonthPlanStatus = "未开始"
+    start_date: date | None = None
+    due_kind: DueKind | None = None
+    due_date: date | None = None
+    due_label: str | None = Field(default=None, max_length=100)
+    due_reference_date: date | None = None
+    completion_criteria: str = ""
+    progress_note: str = ""
+    risk_dependency: str = ""
+    actual_output: str = ""
+    delay_reason: str = ""
+    sort_order: int = 0
+    is_archived: bool = False
+
+    @field_validator("title", "expected_output")
+    @classmethod
+    def required_text_cannot_be_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("不能为空")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_month_plan(self):
+        if self.status == "已完成" and not self.actual_output.strip():
+            raise ValueError("已完成的月计划必须填写实际产出")
+        if self.assignee_id in self.collaborator_ids:
+            raise ValueError("执行负责人不能同时作为协作人")
+        if len(self.collaborator_ids) != len(set(self.collaborator_ids)):
+            raise ValueError("协作人不能重复")
+        return _validate_due_semantics(self)
+
+
+class MonthPlanUpdatePayload(BaseModel):
+    plan_month: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    expected_output: str | None = Field(default=None, min_length=1)
+    assignee_id: int | None = Field(default=None, gt=0)
+    collaborator_ids: list[int] | None = None
+    status: MonthPlanStatus | None = None
+    start_date: date | None = None
+    due_kind: DueKind | None = None
+    due_date: date | None = None
+    due_label: str | None = Field(default=None, max_length=100)
+    due_reference_date: date | None = None
+    completion_criteria: str | None = None
+    progress_note: str | None = None
+    risk_dependency: str | None = None
+    actual_output: str | None = None
+    delay_reason: str | None = None
+    sort_order: int | None = None
+    is_archived: bool | None = None
+
+
 class SubTaskPayload(BaseModel):
     """关键任务(KeyTask)创建/更新参数 — 对应物理表 subtasks"""
     title: str = Field(..., max_length=200)
     assignee: str = Field(..., max_length=50)
+    collaborator_ids: list[int] = Field(default_factory=list)
     plan_time: str = Field("", max_length=50)
+    start_date: date | None = None
+    due_kind: DueKind | None = None
+    due_date: date | None = None
+    due_label: str | None = Field(default=None, max_length=100)
+    due_reference_date: date | None = None
     status: str = Field("未开始", max_length=20)
     completion_criteria: str = ""
     notes: str = ""
+
+    @model_validator(mode="after")
+    def validate_key_task(self):
+        if len(self.collaborator_ids) != len(set(self.collaborator_ids)):
+            raise ValueError("协同人不能重复")
+        return _validate_due_semantics(self)
+
+
+class KeyTaskCompletionRequest(BaseModel):
+    note: str = Field(default="", max_length=500)
+
+
+class KeyTaskReopenRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def reason_cannot_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("重新打开原因不能为空")
+        return value
 
 # alias：SubTaskPayload 即 KeyTaskPayload
 KeyTaskPayload = SubTaskPayload

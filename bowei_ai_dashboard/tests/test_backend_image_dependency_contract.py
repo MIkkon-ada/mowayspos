@@ -76,3 +76,27 @@ def test_binary_psycopg_image_does_not_install_a_build_toolchain():
 
     assert "gcc" not in dockerfile
     assert "libpq-dev" not in dockerfile
+
+
+def test_backend_security_dependency_pins_use_the_scanner_fixed_versions():
+    requirements = REQUIREMENTS_PATH.read_text(encoding="utf-8")
+    lines = {
+        line.strip().split("==", 1)[0].lower(): line.strip()
+        for line in requirements.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+    assert lines["pypdf"] == "pypdf==6.14.2"
+    assert lines["cryptography"] == "cryptography==50.0.0"
+
+
+def test_backend_dockerfile_applies_debian_security_updates_before_installing_packages():
+    dockerfile = DOCKERFILE_PATH.read_text(encoding="utf-8")
+
+    assert "apt-get upgrade -y --no-install-recommends" in dockerfile
+    assert dockerfile.index("apt-get upgrade -y --no-install-recommends") < dockerfile.index(
+        "apt-get install -y --no-install-recommends antiword"
+    )
+    assert dockerfile.index("apt-get install -y --no-install-recommends antiword") < dockerfile.index(
+        "pip install --no-cache-dir -r requirements.txt"
+    )

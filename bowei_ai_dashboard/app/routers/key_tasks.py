@@ -130,6 +130,9 @@ def get_execution_workspace(
         "due_reference_date": key_task.due_reference_date.isoformat() if key_task.due_reference_date else None,
         "plan_time": key_task.plan_time or "",
         "completion_definition": key_task.completion_criteria or "",
+        "risk_note": key_task.risk_note or "",
+        "risk_marked_by": key_task.risk_marked_by or "",
+        "risk_marked_at": key_task.risk_marked_at.isoformat() if key_task.risk_marked_at else None,
         "created_at": key_task.created_at.isoformat() if key_task.created_at else None,
         "source_type": "update_submission" if key_task.source_submission_id else "manual",
     }
@@ -181,6 +184,7 @@ def get_execution_workspace(
             "can_submit_update": can_submit,
             "can_confirm_completion": can_operate,
             "can_reopen": can_operate,
+            "can_manage_risk": can_operate,
         },
     }
 
@@ -295,6 +299,71 @@ def reopen_key_task(
         next_step=payload.reason,
         display_payload={"reason": payload.reason},
     )
+    db.commit()
+    db.refresh(key_task)
+    return {"ok": True, "key_task": crud.to_dict(key_task)}
+
+
+@router.patch("/{row_id}/risk")
+def set_key_task_risk(
+    row_id: int,
+    payload: schemas.KeyTaskRiskRequest,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user, context, project, _workstream, key_task = _load_key_task(
+        row_id, current_user, db
+    )
+    require_project_business_writable(project.id, db)
+    if not _can_operate(context, project.id, key_task, db):
+        raise HTTPException(403, "permission denied")
+
+    note = payload.risk_note.strip()
+    before = {
+        "risk_note": key_task.risk_note or "",
+        "risk_marked_by": key_task.risk_marked_by or "",
+        "risk_marked_at": key_task.risk_marked_at.isoformat() if key_task.risk_marked_at else None,
+    }
+    now = utc_now()
+    key_task.risk_note = note
+    key_task.risk_marked_by = current_user if note else ""
+    key_task.risk_marked_at = now if note else None
+    after = {
+        "risk_note": key_task.risk_note,
+        "risk_marked_by": key_task.risk_marked_by,
+        "risk_marked_at": key_task.risk_marked_at.isoformat() if key_task.risk_marked_at else None,
+    }
+    if before != after:
+        log_row = crud.log(
+            db,
+            current_user,
+            "key_task_risk_updated",
+            "subtask",
+            key_task.id,
+            before,
+            after,
+            project_id=project.id,
+            note=note or "解除风险标记",
+        )
+        db.flush()
+        record_execution_event(
+            db,
+            project_id=project.id,
+            key_task_id=key_task.id,
+            event_type="key_task_risk_updated",
+            source_type="key_task",
+            source_id=key_task.id,
+            dedupe_key=f"operation_log:{log_row.id}:key-task-risk",
+            actor_person_id=context.get("person_id"),
+            actor_name=context.get("name") or current_user,
+            occurred_at=now,
+            confirmed_at=now,
+            effective_at=now,
+            affects_current_progress=False,
+            progress_summary="关键任务已标记风险" if note else "关键任务风险标记已解除",
+            next_step=note or None,
+            display_payload={"risk_note": note, "has_risk": bool(note)},
+        )
     db.commit()
     db.refresh(key_task)
     return {"ok": True, "key_task": crud.to_dict(key_task)}

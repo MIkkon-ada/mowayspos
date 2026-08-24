@@ -80,6 +80,22 @@ test('current progress and timeline use authoritative workspace DTOs', () => {
   assert.doesNotMatch(timeline, /related_achievements|work_reports/)
 })
 
+test('key-task workspace lets authorized users mark and clear a recorded risk', () => {
+  const api = read('src/api/keyTaskWorkspace.ts')
+  const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
+  const header = read('src/components/key-task-workspace/KeyTaskHeader.tsx')
+
+  assert.match(api, /apiPatch/)
+  assert.match(api, /setKeyTaskRisk/)
+  assert.match(api, /risk_note/)
+  assert.match(api, /can_manage_risk/)
+  assert.match(workspace, /setKeyTaskRisk/)
+  assert.match(workspace, /onChangeRisk/)
+  assert.match(header, /有风险/)
+  assert.match(header, /标记风险|解除风险/)
+  assert.match(header, /can_manage_risk/)
+})
+
 test('execution plan drawer reuses DetailDrawer and keeps actions outside table', () => {
   const drawer = read('src/components/key-task-workspace/ExecutionPlanDetailDrawer.tsx')
 

@@ -58,11 +58,18 @@ export type PlanTableRow = {
   assistingPerson: string
   status: string
   statusTone: 'neutral' | 'blue' | 'green' | 'red' | 'amber'
+  latestConfirmedSubmission: SubTaskItem['latest_confirmed_submission'] | null
+  statusMarkers: PlanStatusMarker[]
   completionNote: string
   remarks: string
   projectManager: string
   taskPlanStart: string
   taskPlanEnd: string
+}
+
+export type PlanStatusMarker = {
+  kind: 'overdue' | 'risk' | 'paused' | 'not_started' | 'completed'
+  label: '已延期' | '有风险' | '暂缓' | '未开始' | '已完成'
 }
 
 export type BuildPlanRowsInput = {
@@ -168,6 +175,19 @@ export function getPlanStatusTone(status: string): PlanTableRow['statusTone'] {
   return 'neutral'
 }
 
+export function getPlanStatusMarkers(subtask: SubTaskItem | null): PlanStatusMarker[] {
+  if (!subtask) return []
+  const status = getPlanStatusLabel(subtask.status)
+  if (status === '已完成') return [{ kind: 'completed', label: '已完成' }]
+
+  const markers: PlanStatusMarker[] = []
+  if (subtask.is_overdue || status === '延期') markers.push({ kind: 'overdue', label: '已延期' })
+  if (subtask.has_risk) markers.push({ kind: 'risk', label: '有风险' })
+  if (status === '暂缓') markers.push({ kind: 'paused', label: '暂缓' })
+  if (status === '未开始') markers.push({ kind: 'not_started', label: '未开始' })
+  return markers
+}
+
 function includesSearch(values: unknown[], searchText: string): boolean {
   const query = searchText.trim().toLocaleLowerCase('zh-CN')
   if (!query) return true
@@ -240,6 +260,8 @@ export function buildPlanRows({
         assistingPerson: subtask ? parsedNotes.assistingPerson : EMPTY_PLAN_CELL,
         status,
         statusTone: getPlanStatusTone(status),
+        latestConfirmedSubmission: subtask?.latest_confirmed_submission ?? null,
+        statusMarkers: getPlanStatusMarkers(subtask),
         completionNote: subtask ? parsedNotes.remainingNotes : '',
         remarks: EMPTY_PLAN_CELL,
         projectManager: projectManagers || textOrFallback(task.owner, EMPTY_PLAN_CELL),

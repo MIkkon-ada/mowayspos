@@ -155,6 +155,30 @@ test('parent task search retains all of its visible key tasks', async () => {
   assert.equal(rows[0].taskRowSpan, 2)
 })
 
+test('plan rows expose confirmed progress and distinct status markers', async () => {
+  const { buildPlanRows } = await loadViewModel()
+  const rows = buildPlanRows({
+    project,
+    tasks,
+    taskSubMap: {
+      11: [{
+        ...taskSubMap[11][0],
+        status: '进行中',
+        is_overdue: true,
+        has_risk: true,
+        latest_confirmed_submission: {
+          id: 9,
+          submitter: '张三',
+          confirmed_at: '2026-08-24T09:00:00',
+          summary: '已完成字段核验',
+        },
+      }],
+    },
+  })
+  assert.deepEqual(rows[0].statusMarkers.map((item) => item.kind), ['overdue', 'risk'])
+  assert.equal(rows[0].latestConfirmedSubmission.summary, '已完成字段核验')
+})
+
 test('parseAssistingPerson separates only the supported first-line prefixes', async () => {
   const { parseAssistingPerson } = await loadViewModel()
   assert.deepEqual(parseAssistingPerson('协助人：张三\n完成第一轮核验'), {
@@ -319,15 +343,20 @@ test('V2 table is a compact data table without a fake empty spreadsheet canvas',
   assert.match(source, />\s*负责人\s*</)
   assert.match(source, />\s*计划时间\s*</)
   assert.match(source, />\s*协同人\s*</)
-  assert.match(source, />\s*状态\s*</)
+  assert.match(source, />\s*最新已确认提交\s*</)
+  assert.doesNotMatch(source, />\s*状态\s*</)
+  assert.match(source, /latestConfirmedSubmission/)
+  assert.match(source, /statusMarkers/)
+  assert.match(source, /暂无已确认提交/)
 
   assert.match(css, /\.v2-sheet-frame/)
   assert.doesNotMatch(css, /\.v2-task-card__index/)
-  assert.match(css, /width:\s*1180px/)
+  assert.match(css, /width:\s*1305px/)
   assert.match(source, /<col style=\{\{ width: 300 \}\} \/>/)
-  assert.match(source, /<col style=\{\{ width: 430 \}\} \/>/)
+  assert.match(source, /<col style=\{\{ width: 360 \}\} \/>/)
   assert.match(source, /<col style=\{\{ width: 80 \}\} \/>/)
   assert.match(source, /<col style=\{\{ width: 155 \}\} \/>/)
+  assert.match(source, /<col style=\{\{ width: 280 \}\} \/>/)
   assert.doesNotMatch(css, /repeating-linear-gradient/)
   assert.doesNotMatch(css, /background-size:\s*80px 28px/)
   assert.doesNotMatch(css, /\.v2-table-canvas\s*\{[^}]*height:\s*100%/s)
@@ -336,6 +365,8 @@ test('V2 table is a compact data table without a fake empty spreadsheet canvas',
   assert.match(css, /\.v2-td--person\s*\{[^}]*text-overflow:\s*ellipsis/s)
   assert.match(css, /\.v2-grid td\.v2-td--keytask\s*\{[^}]*padding:\s*14px 12px/s)
   assert.match(css, /\.v2-keytask-line\s*\{[^}]*line-height:\s*1\.45/s)
+  assert.match(css, /\.v2-status-marker--overdue/)
+  assert.match(css, /\.v2-latest-submission/)
   assert.doesNotMatch(css, /\.v2-task-card__std-btn\s*{[^}]*display:\s*none/s)
 })
 

@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './client'
+import { apiGet, apiPatch, apiPost } from './client'
 
 export type DueKind = 'exact' | 'fuzzy' | 'unknown'
 
@@ -74,6 +74,9 @@ export type KeyTaskWorkspace = {
     due_reference_date: string | null
     plan_time: string
     completion_definition: string
+    risk_note: string
+    risk_marked_by: string
+    risk_marked_at: string | null
     created_at: string | null
     source_type: string
   }
@@ -91,7 +94,7 @@ export type KeyTaskWorkspace = {
   achievements: Array<{ id: number; name: string; achievement_type: string; status: string; owner: string; version: string; created_at: string | null }>
   issues: Array<{ id: number; description: string; issue_type: string; status: string; priority: string; owner: string; updated_at: string | null }>
   timeline: ExecutionEvent[]
-  permissions: { can_view: boolean; can_operate: boolean; can_submit_update: boolean; can_confirm_completion: boolean }
+  permissions: { can_view: boolean; can_operate: boolean; can_submit_update: boolean; can_confirm_completion: boolean; can_manage_risk: boolean }
 }
 
 export const fetchKeyTaskExecutionWorkspace = (keyTaskId: number) =>
@@ -102,3 +105,6 @@ export const confirmKeyTaskCompletion = (keyTaskId: number) =>
 
 export const reopenKeyTask = (keyTaskId: number, reason: string) =>
   apiPost(`/api/key-tasks/${keyTaskId}/reopen`, { reason })
+
+export const setKeyTaskRisk = (keyTaskId: number, riskNote: string) =>
+  apiPatch<{ ok: boolean }>(`/api/key-tasks/${keyTaskId}/risk`, { risk_note: riskNote })

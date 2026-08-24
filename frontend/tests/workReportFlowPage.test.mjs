@@ -358,10 +358,10 @@ test('target visual replica uses one compact header and keeps existing controls'
 test('work report scope selector uses a compact chevron matching other project selectors', () => {
   const binding = read(BINDING_BAR)
   const css = read(CSS)
-  assert.match(binding, /voice-update-binding-scope-arrow/)
+  assert.match(binding, /import \{ ChevronDownIcon \} from '\.\.\/\.\.\/components\/icons\/ChevronDownIcon'/)
+  assert.match(binding, /<ChevronDownIcon className="voice-update-binding-scope-arrow"\s*\/>/)
   assert.match(css, /\.voice-update-binding-field\.is-scope \{ position: relative/)
-  assert.match(css, /\.voice-update-binding-scope-arrow \{[^}]*width: 8px[^}]*height: 8px[^}]*border-right: 2px solid #94a3b8[^}]*transform: translateY\(-65%\) rotate\(45deg\)/s)
-  assert.match(css, /\.voice-update-binding-field\.is-scope select \{[^}]*appearance: none[^}]*padding-right: 36px/s)
+  assert.match(css, /\.voice-update-binding-scope-arrow \{[^}]*width: 14px[^}]*height: 14px[^}]*color: #94a3b8[^}]*transform: translateY\(-50%\)/s)
 })
 
 test('work report scope menu previews project and key-task candidates on hover', () => {

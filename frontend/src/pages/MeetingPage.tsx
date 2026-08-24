@@ -706,7 +706,7 @@ export function MeetingPage() {
                   <span>只读版本</span>
                 </div>
                 <p className="whitespace-pre-wrap leading-6">{selectedRevision.summary || '暂无摘要'}</p>
-                <details className="mt-2">
+                <details className="app-disclosure mt-2">
                   <summary className="cursor-pointer text-sky-700">查看该版本原始转写</summary>
                   <p className="mt-2 whitespace-pre-wrap leading-6">{selectedRevision.transcript_text}</p>
                 </details>

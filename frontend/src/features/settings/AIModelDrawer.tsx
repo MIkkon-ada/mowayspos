@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ChevronDownIcon } from '../../components/icons/ChevronDownIcon'
 import {
   createAIModel,
   replaceAIModelCredentials,
@@ -32,10 +33,6 @@ const emptyForm: AIModelWrite = {
   config: {},
   enabled: true,
   source: 'custom',
-}
-
-function Chevron() {
-  return <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M3.5 6.25 8 10.75l4.5-4.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
 }
 
 export function AIModelDrawer({ open, model, onClose, onSaved }: Props) {
@@ -178,7 +175,7 @@ export function AIModelDrawer({ open, model, onClose, onSaved }: Props) {
 
           <section className="pt-6">
             <h3 className="mb-4 text-sm font-bold text-slate-700">接入配置</h3>
-            <label className="block text-sm font-semibold text-slate-700">服务商 <span className="text-rose-600">*</span><div className="relative mt-2"><select value={form.provider} onChange={(event) => changeProvider(event.target.value)} className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-3 py-2.5 pr-9 text-sm font-normal">{providerOptions.map((provider) => <option key={provider.value} value={provider.value}>{provider.label}</option>)}</select><span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-500"><Chevron /></span></div></label>
+            <label className="block text-sm font-semibold text-slate-700">服务商 <span className="text-rose-600">*</span><div className="relative mt-2"><select value={form.provider} onChange={(event) => changeProvider(event.target.value)} className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-3 py-2.5 pr-9 text-sm font-normal">{providerOptions.map((provider) => <option key={provider.value} value={provider.value}>{provider.label}</option>)}</select><span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-500"><ChevronDownIcon /></span></div></label>
             <p className="mt-1.5 text-xs text-slate-400">{providerByValue(form.provider).description}</p>
 
             <label className="mt-5 block text-sm font-semibold text-slate-700">模型名称 <span className="text-rose-600">*</span><input value={form.model_name} onChange={(event) => setForm({ ...form, model_name: event.target.value })} placeholder="例如：deepseek-v4-pro" className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal" /></label>

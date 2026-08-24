@@ -894,9 +894,8 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
                 </div>
               </div>
 
-              <details className="group mt-1">
+              <details className="app-disclosure group mt-1">
                 <summary className="ml-auto flex w-fit cursor-pointer select-none items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-600 transition-colors hover:border-blue-200 hover:bg-blue-50">
-                  <span className="text-sm leading-none transition-transform group-open:rotate-90">›</span>
                   补充详细信息
                     </summary>
                 <div className="mt-3 grid grid-cols-1 gap-4 border-t border-slate-200 pt-4 md:grid-cols-2">

@@ -6,6 +6,7 @@ import { fetchSubTasksBatch } from '../api/subtasks'
 import { getOverview } from '../api/dashboard'
 import { useProject } from '../context/ProjectContext'
 import { getProjectRoleLabel } from '../domain/roleLabels'
+import { systemRoleLabel } from '../domain/roles'
 import type { Person, Project, ProjectMember, TaskItem, SubTaskItem } from '../types'
 
 
@@ -332,7 +333,8 @@ export function CoordinatePage() {
               <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
                 {displayPeople.map((p) => {
                   const roleInProject = selectedProjectId ? getRoleInProject(p, selectedProjectId) : null
-                  const { label: roleLabel, cls: roleCls } = roleInProject ?? getBestRole(p)
+                  const companyRole = { label: systemRoleLabel(p.system_role), cls: 'bg-slate-100 text-slate-700' }
+                  const { label: roleLabel, cls: roleCls } = selectedProjectId ? (roleInProject ?? companyRole) : companyRole
                   const duties = getProjectDuties(p)
                   const isPersonSelected = selectedPersonId === p.id
                   const lit = isPersonLit(p)

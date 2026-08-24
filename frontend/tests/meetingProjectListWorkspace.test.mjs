@@ -13,3 +13,10 @@ test('project meeting list uses a compact project strip and a unified workspace 
   assert.match(source, /setShowNewModal\(true\)/)
   assert.doesNotMatch(source, /10 条\/页/)
 })
+
+test('meeting API exposes the existing delete endpoint', () => {
+  const api = readFileSync(new URL('../src/api/meetings.ts', import.meta.url), 'utf8')
+  assert.match(api, /import \{[^}]*apiDelete[^}]*\} from '\.\/client'/)
+  assert.match(api, /export function deleteMeeting\(id: number\): Promise<\{ ok: boolean \}>/)
+  assert.match(api, /apiDelete<\{ ok: boolean \}>\('\/api\/meetings\/' \+ id\)/)
+})

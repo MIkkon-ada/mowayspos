@@ -262,7 +262,7 @@
 
 /* ── 表格 ── */
 .v2-grid {
-  width: 1110px;
+  width: 1305px;
   min-width: 100%;
   table-layout: fixed;
   border-spacing: 0;
@@ -544,7 +544,8 @@
 .v2-keytask-line {
   display: flex;
   align-items: flex-start;
-  gap: 0;
+  flex-wrap: wrap;
+  gap: 5px;
   line-height: 1.45;
 }
 
@@ -573,43 +574,51 @@
   padding: 7px 6px;
 }
 
-.v2-td--status {
-  text-align: center;
-  padding: 7px 4px;
-}
-
 .v2-cell-placeholder {
   color: #cbd5e1;
 }
 
-/* ── 状态 badge ── */
-.v2-status {
+/* ── 关键任务状态标记与已确认提交 ── */
+.v2-status-marker {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  border: 1px solid currentColor;
-  border-radius: 4px;
-  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
 }
 
-.v2-status::before {
-  content: '';
-  display: none;
+.v2-status-marker--overdue { color: #b91c1c; background: #fef2f2; }
+.v2-status-marker--risk { color: #b45309; background: #fff7ed; }
+.v2-status-marker--paused { color: #475569; background: #f1f5f9; }
+.v2-status-marker--not_started { color: #64748b; background: #f8fafc; }
+.v2-status-marker--completed { color: #15803d; background: #f0fdf4; }
+
+.v2-td--latest-submission {
+  padding: 8px 10px;
+  color: #475569;
 }
 
-.v2-status--neutral { background: transparent; color: #64748b; }
-.v2-status--neutral::before { background: #94a3b8; }
-.v2-status--blue { background: transparent; color: #2563eb; }
-.v2-status--blue::before { background: #2563eb; }
-.v2-status--green { background: transparent; color: #15803d; }
-.v2-status--green::before { background: #22c55e; }
-.v2-status--red { background: transparent; color: #dc2626; }
-.v2-status--red::before { background: #ef4444; }
-.v2-status--amber { background: transparent; color: #b45309; }
-.v2-status--amber::before { background: #f59e0b; }
+.v2-latest-submission {
+  min-width: 0;
+}
+
+.v2-latest-submission__meta {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.v2-latest-submission__summary {
+  margin-top: 2px;
+  overflow: hidden;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ── 空行 ── */
 .v2-empty-row td {

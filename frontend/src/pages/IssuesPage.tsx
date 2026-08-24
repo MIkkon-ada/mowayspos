@@ -6,6 +6,7 @@ import { fetchSubTasks, fetchSubtasksByProject } from '../api/subtasks'
 import { useProject } from '../context/ProjectContext'
 import { toast } from '../utils/toast'
 import { fmtDate } from '../utils/time'
+import { MobileIssueList } from '../features/mobile-core-pages/MobileIssueList'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
 import { getProjectDisplayName } from '../domain/projectDisplay'
 import type { IssueItem, Project, SubTaskItem, TaskItem } from '../types'
@@ -571,8 +572,12 @@ export function IssuesPage() {
           </div>
         </div>
 
+        <div className="min-[800px]:hidden flex-1 overflow-y-auto bg-slate-50 pt-3">
+          <MobileIssueList issues={memberFilteredIssues} loading={loading} onOpen={(item) => navigate(`/work/issues/${item.id}?projectId=${projectId}`)} />
+        </div>
+
         {/* Table + Detail Panel */}
-        <div className="min-h-0 flex-1 flex gap-4 px-4 py-4 lg:px-5 overflow-hidden">
+        <div className="hidden min-[800px]:flex min-h-0 flex-1 gap-4 px-4 py-4 lg:px-5 overflow-hidden">
           {/* Table area */}
           <div className="flex-1 overflow-auto">
             {loading ? (
@@ -761,8 +766,12 @@ export function IssuesPage() {
         </div>
       </div>
 
+      <div className="min-[800px]:hidden min-h-0 flex-1 overflow-y-auto bg-slate-50 pt-3">
+        <MobileIssueList issues={filteredIssues} loading={loading} onOpen={(item) => navigate(`/work/issues/${item.id}?projectId=${projectId}`)} />
+      </div>
+
       {/* Issue List + Detail Panel */}
-      <div className="min-h-0 flex-1 flex gap-4 px-4 py-4 lg:px-5 overflow-hidden">
+      <div className="hidden min-[800px]:flex min-h-0 flex-1 gap-4 px-4 py-4 lg:px-5 overflow-hidden">
         {/* Issue list table */}
         <div className="flex-1 overflow-auto">
           {loading ? (

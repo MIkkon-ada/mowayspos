@@ -21,7 +21,7 @@ function MetaItem({ label, value, marker, markerTone = 'slate' }: MetaItemProps)
   </div>
 }
 
-export function KeyTaskHeader({ workspace, onSubmitUpdate, onConfirmCompletion, onReopen }: { workspace: KeyTaskWorkspace; onSubmitUpdate?: () => void; onConfirmCompletion: () => void; onReopen: () => void }) {
+export function KeyTaskHeader({ workspace, onSubmitUpdate, onConfirmCompletion, onReopen, onChangeRisk }: { workspace: KeyTaskWorkspace; onSubmitUpdate?: () => void; onConfirmCompletion: () => void; onReopen: () => void; onChangeRisk: () => void }) {
   const { key_task: task, project, workstream, completion_eligibility: eligibility, permissions } = workspace
   const isCompleted = task.status === '已完成'
   const collaborators = task.collaborators.length ? task.collaborators.map((person) => person.name).join('、') : '—'
@@ -36,11 +36,13 @@ export function KeyTaskHeader({ workspace, onSubmitUpdate, onConfirmCompletion, 
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">{task.title}</h1>
           <span className={`rounded-full px-3 py-1 text-sm font-semibold ${statusTone(task.status)}`}>{task.status || '未开始'}</span>
+          {task.risk_note && <span title={task.risk_note} className="rounded-full bg-orange-50 px-3 py-1 text-sm font-semibold text-orange-700">有风险</span>}
         </div>
       </div>
 
       <div className="flex shrink-0 flex-wrap gap-2">
         {permissions.can_submit_update && <button type="button" onClick={onSubmitUpdate} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">提交更新</button>}
+        {permissions.can_manage_risk && <button type="button" onClick={onChangeRisk} className="rounded-lg border border-orange-300 px-4 py-2 text-sm font-semibold text-orange-700">{task.risk_note ? '解除风险' : '标记风险'}</button>}
         {permissions.can_confirm_completion && !isCompleted && eligibility.state === 'eligible' && <button type="button" onClick={onConfirmCompletion} className="rounded-lg border border-emerald-300 px-4 py-2 text-sm font-semibold text-emerald-700">确认完成</button>}
         {permissions.can_operate && isCompleted && <button type="button" onClick={onReopen} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700">重新打开</button>}
       </div>
@@ -50,6 +52,7 @@ export function KeyTaskHeader({ workspace, onSubmitUpdate, onConfirmCompletion, 
       <MetaItem label="负责人" value={task.owner.name || '未指定'} marker={(task.owner.name || '?').slice(0, 1)} markerTone="blue" />
       <MetaItem label="协同人" value={collaborators} marker="协" />
       <MetaItem label="计划时间" value={formatKeyTaskPlanTime(task)} marker="时" />
+      {task.risk_note && <MetaItem label="风险原因" value={task.risk_note} marker="险" />}
     </div>
   </header>
 }

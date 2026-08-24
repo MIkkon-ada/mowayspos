@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiPost, apiPut, apiUpload } from './client'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut, apiUpload } from './client'
 import type { MeetingItem } from '../types'
 
 export type MeetingRevisionItem = {
@@ -21,6 +21,10 @@ export type MeetingRevisionItem = {
 
 export function fetchMeetings(projectId: number): Promise<MeetingItem[]> {
   return apiGet<MeetingItem[]>(`/api/meetings?project_id=${projectId}`)
+}
+
+export function deleteMeeting(id: number): Promise<{ ok: boolean }> {
+  return apiDelete<{ ok: boolean }>('/api/meetings/' + id)
 }
 
 export function fetchMeetingRevisions(meetingId: number): Promise<MeetingRevisionItem[]> {

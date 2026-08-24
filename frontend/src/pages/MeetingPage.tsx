@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { analyzeProgressReview, fetchMeetingRevisions, fetchMeetings, fetchProjectMeetingReviewPackage, patchMeetingStatus, projectMeetingDocumentDownloadUrl, reviewProjectMeeting, updateMeeting, type MeetingRevisionItem, type ProjectMeetingRun } from '../api/meetings'
+import { analyzeProgressReview, deleteMeeting, fetchMeetingRevisions, fetchMeetings, fetchProjectMeetingReviewPackage, patchMeetingStatus, projectMeetingDocumentDownloadUrl, reviewProjectMeeting, updateMeeting, type MeetingRevisionItem, type ProjectMeetingRun } from '../api/meetings'
 import { useProject } from '../context/ProjectContext'
 import type { MeetingItem } from '../types'
 import { InfoRow, MeetingSection, renderJsonList } from '../features/meeting/meetingShared'
@@ -14,6 +14,7 @@ import { STATUS_CONFIG, fmtTime, getStatus, type PublishStatus } from '../featur
 import { getProjectDisplayName } from '../domain/projectDisplay'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
 import { ProjectMeetingReviewWorkspace } from '../features/meeting/ProjectMeetingReviewWorkspace'
+import { MobileMeetingTimeline } from '../features/mobile-core-pages/MobileMeetingTimeline'
 
 export function MeetingPage() {
   const { currentProjectId, projects, currentUser, currentProjectRoles } = useProject()
@@ -27,6 +28,7 @@ export function MeetingPage() {
   const [selected, setSelected] = useState<MeetingItem | null>(null)
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
+  const [deletingMeetingId, setDeletingMeetingId] = useState<number | null>(null)
   const [returnNote, setReturnNote] = useState('')
   const [showReturnInput, setShowReturnInput] = useState(false)
   const [showNewModal, setShowNewModal] = useState(false)
@@ -44,7 +46,8 @@ export function MeetingPage() {
   const currentProject = projects.find((p) => p.id === currentProjectId) ?? null
   const effectiveProject = projects.find((p) => p.id === effectiveProjectId) ?? null
   const pending_kickoff = String(effectiveProject?.lifecycle_status ?? effectiveProject?.status ?? '') === 'pending_kickoff'
-  const projectArchived = isProjectArchived(currentProject)
+  const projectArchived = isProjectArchived(effectiveProject)
+  const canDeleteMeeting = Boolean(currentUser?.is_tech_admin || (effectiveProject?.user_roles ?? currentProjectRoles).includes('owner'))
   const legacySelected = selected as MeetingItem
   const noProject = !effectiveProjectId
   const normalizedProjectQuery = projectQuery.trim().toLowerCase()
@@ -162,6 +165,22 @@ export function MeetingPage() {
       setProgressReviewRefresh((value) => value + 1)
     } catch {
       toast.error('会议已保存，但成员完成情况分析未完成，可在详情中重试')
+    }
+  }
+
+  async function handleDeleteMeeting(meeting: MeetingItem) {
+    const title = meeting.title ?? '未命名会议'
+    if (!window.confirm('确认删除会议纪要「' + title + '」吗？此操作不可恢复。')) return
+    setDeletingMeetingId(meeting.id)
+    try {
+      await deleteMeeting(meeting.id)
+      setMeetings((rows) => rows.filter((row) => row.id !== meeting.id))
+      setSelected((row) => row?.id === meeting.id ? null : row)
+      toast.success('会议纪要已删除')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '删除会议纪要失败')
+    } finally {
+      setDeletingMeetingId(null)
     }
   }
 
@@ -696,7 +715,16 @@ export function MeetingPage() {
           </div>
         )}
 
+        {!loading && <div className="min-[800px]:hidden pt-3">
+          <MobileMeetingTimeline meetings={filtered} loading={loading} onOpen={(meeting) => {
+            setSelected(meeting)
+            setShowReturnInput(false)
+            navigate(`/work/meetings/detail/${meeting.id}?projectId=${effectiveProjectId}`)
+          }} />
+        </div>}
+
         {!loading && (
+        <div className="hidden min-[800px]:block">
         <section className="meeting-list-workspace mx-auto w-full max-w-[1180px] overflow-hidden rounded-xl border bg-white shadow-sm" style={{ borderColor: '#E9EFF6' }}>
           <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4" style={{ borderColor: '#E9EFF6' }}>
             <h3 className="text-base font-semibold text-slate-800">会议记录 <span className="font-normal text-slate-400">{filtered.length} 条</span></h3>
@@ -779,7 +807,14 @@ export function MeetingPage() {
                             查看
                           </button>
                           <button className="text-slate-400 hover:text-slate-600" disabled={projectArchived} title={projectArchived ? '项目已归档，不可写入。' : undefined} onClick={() => setEditingItem(m)}>编辑</button>
-                          <span className="text-lg leading-none text-slate-400">…</span>
+                          {canDeleteMeeting && !projectArchived && <button
+                            type="button"
+                            className="font-medium text-rose-600 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={deletingMeetingId !== null}
+                            onClick={() => void handleDeleteMeeting(m)}
+                          >
+                            {deletingMeetingId === m.id ? '删除中…' : '删除'}
+                          </button>}
                         </div>
                       </td>
                     </tr>
@@ -792,6 +827,7 @@ export function MeetingPage() {
           </>
           )}
         </section>
+        </div>
         )}
           </>
         )}

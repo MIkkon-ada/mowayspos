@@ -1,4 +1,5 @@
 import json
+from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -49,6 +50,73 @@ def _get_task_project_id(task: models.Task, db: Session) -> int | None:
         project_id=task.project_id,
         special_project=task.special_project or "",
     )["project_id"]
+
+
+def _submission_summary(row: models.UpdateSubmission, subtask_id: int) -> str:
+    """Return the readable, key-task-scoped summary for a confirmed submission."""
+    try:
+        payload = json.loads(row.human_result_json or row.ai_result_json or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+
+    reports = payload.get("task_reports") if isinstance(payload, dict) else []
+    if isinstance(reports, list):
+        matched = next(
+            (
+                report for report in reports
+                if isinstance(report, dict) and report.get("matched_subtask_id") == subtask_id
+            ),
+            None,
+        )
+        if matched:
+            completed = matched.get("completed") or matched.get("completed_items")
+            if isinstance(completed, list):
+                completed = next((str(item).strip() for item in completed if str(item).strip()), "")
+            if isinstance(completed, str) and completed.strip():
+                return completed.strip()
+
+    return (row.title or row.transcript_text or "").strip()[:160]
+
+
+def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[dict], db: Session) -> None:
+    """Attach latest confirmed progress and display-safe status facts without N+1 queries."""
+    subtask_ids = [row.id for row in rows]
+    latest_by_subtask: dict[int, dict] = {}
+    if subtask_ids:
+        submissions = (
+            db.query(models.UpdateSubmission)
+            .filter(
+                models.UpdateSubmission.related_subtask_id.in_(subtask_ids),
+                models.UpdateSubmission.confirmed_at.is_not(None),
+            )
+            .order_by(
+                models.UpdateSubmission.related_subtask_id.asc(),
+                models.UpdateSubmission.confirmed_at.desc(),
+                models.UpdateSubmission.id.desc(),
+            )
+            .all()
+        )
+        for submission in submissions:
+            subtask_id = submission.related_subtask_id
+            if subtask_id is None or subtask_id in latest_by_subtask:
+                continue
+            latest_by_subtask[subtask_id] = {
+                "id": submission.id,
+                "submitter": submission.submitter or "",
+                "confirmed_at": submission.confirmed_at.isoformat(),
+                "summary": _submission_summary(submission, subtask_id),
+            }
+
+    today = date.today()
+    for row, payload in zip(rows, payloads):
+        payload["latest_confirmed_submission"] = latest_by_subtask.get(row.id)
+        payload["is_overdue"] = bool(
+            row.due_kind == "exact"
+            and row.due_date is not None
+            and row.due_date < today
+            and TS.normalize(row.status) != TS.S_COMPLETED
+        )
+        payload["has_risk"] = bool((row.risk_note or "").strip())
 
 
 def _validate_key_task_people(
@@ -314,6 +382,16 @@ def list_subtasks_global(
     return result
 
 
+@router.get("/api/tasks/subtasks/batch")
+def list_subtasks_batch(
+    task_ids: str = "",
+    deleted: bool = False,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    return _list_subtasks_batch(task_ids, deleted, current_user, db)
+
+
 @router.get("/api/tasks/{task_id}/subtasks")
 def list_subtasks(
     task_id: int,
@@ -342,11 +420,12 @@ def list_subtasks(
         .order_by(models.SubTask.created_at.asc())
         .all()
     )
-    return [crud.to_dict(r) for r in rows]
+    payloads = [crud.to_dict(row) for row in rows]
+    _apply_work_progress_projection(rows, payloads, db)
+    return payloads
 
 
-@router.get("/api/tasks/subtasks/batch")
-def list_subtasks_batch(
+def _list_subtasks_batch(
     task_ids: str = "",
     deleted: bool = False,
     current_user: str = Depends(get_current_user_name),
@@ -372,6 +451,8 @@ def list_subtasks_batch(
         raise HTTPException(400, "too many task_ids (max 200)")
     tasks = db.query(models.Task).filter(models.Task.id.in_(ids)).all()
     result: dict[str, list] = {}
+    visible_rows: list[models.SubTask] = []
+    visible_payloads: list[dict] = []
     for task in tasks:
         if bool(getattr(task, "is_deleted", False)) and not deleted:
             continue
@@ -396,7 +477,11 @@ def list_subtasks_batch(
             .order_by(models.SubTask.created_at.asc())
             .all()
         )
-        result[str(task.id)] = [crud.to_dict(r) for r in rows]
+        payloads = [crud.to_dict(row) for row in rows]
+        result[str(task.id)] = payloads
+        visible_rows.extend(rows)
+        visible_payloads.extend(payloads)
+    _apply_work_progress_projection(visible_rows, visible_payloads, db)
     return result
 
 

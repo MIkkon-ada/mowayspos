@@ -326,7 +326,7 @@ export function IssueDetailPage() {
 
       {/* ── Body ── */}
       <div className="flex-1 overflow-auto">
-        <div className="max-w-4xl mx-auto p-6 space-y-6">
+        <div className="max-w-4xl mx-auto p-4 pb-24 space-y-6 min-[800px]:p-6">
 
           {/* ── Issue Header ── */}
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">

@@ -14,6 +14,7 @@ import type { DashboardOverview, Project } from '../types'
 import Chart from 'chart.js/auto'
 import { fmtMonth, fmtPlanTime } from '../utils/time'
 import { Skel, SkeletonStatCard } from '../components/Skeleton'
+import { MobileDashboardContent, type RoleQueueType } from '../features/dashboard/MobileDashboardContent'
 
 type DashboardScope = 'global' | 'my' | 'project'
 
@@ -317,6 +318,18 @@ export function DashboardPage() {
     in_progress:         '流程推进中',
   }
   const notifTotal = delayedTasks.length + (canViewDecisions ? pendingDecisions : qCount)
+  const mobileRoleQueueType: RoleQueueType = ['pending_decisions', 'pending_review', 'pending_coordinator', 'in_progress'].includes(qType)
+    ? qType as RoleQueueType
+    : 'pending_decisions'
+  const mobileScopeOptions = [
+    ...(canViewGlobalDashboard ? [{ value: 'global', label: '全部项目' }] : []),
+    ...(!canViewGlobalDashboard && canViewMyDashboard ? [{ value: 'my', label: '我的项目' }] : []),
+    ...projects.map((project) => ({ value: String(project.id), label: project.name })),
+  ]
+  const mobileCompletionRows = projects.slice(0, 6).map((project) => {
+    const card = completionMap.get(project.name)
+    return { id: project.id, name: project.name, done: card?.done ?? 0, total: card?.total ?? 0, rate: card?.rate ?? 0 }
+  })
 
   // 点击面板外部关闭
   useEffect(() => {
@@ -352,11 +365,66 @@ export function DashboardPage() {
     ? '请选择单个项目后导出周报；多项目周报将在后续聚合导出中支持。'
     : undefined
   const exportLabel = exportLoading ? '生成中…' : (scopeMode === 'my' ? '导出我的项目周报' : '导出周报')
+  const mobileProjectNotice = isFillableForOwner
+    ? { title: `项目「${currentProject?.name ?? ''}」待补全立项信息`, detail: '请填写项目背景、目标、预期交付物等内容，填完后可直接发布或提交企业教练审核。', tone: 'warning' as const, actionLabel: '去填写' }
+    : isPendingReviewForOwner
+      ? { title: '立项信息已提交，等待企业教练审核', detail: '企业教练审核通过后项目将正式启动，届时会通知全体成员。', tone: 'review' as const }
+      : undefined
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="min-[800px]:hidden flex min-h-0 flex-1 flex-col">
+        {dataReady ? (
+          <MobileDashboardContent
+            scopeOptions={mobileScopeOptions}
+            selectedScope={scopeMode === 'project' ? String(scopeId ?? '') : scopeMode}
+            selectedMonth={selectedMonth}
+            monthOptions={monthOptions}
+            onScopeChange={handleScopeChange}
+            onMonthChange={setSelectedMonth}
+            total={total}
+            notStarted={notStarted}
+            inProgress={inProgress}
+            completed={completed}
+            delayed={delayed}
+            paused={paused}
+            achievements={achievements}
+            pendingDecisions={pendingDecisions}
+            canViewDecisions={canViewDecisions}
+            recentTasks={(data?.recent?.tasks as Array<Record<string, unknown>>) ?? []}
+            delayedTasks={delayedTasks}
+            roleQueue={{ type: mobileRoleQueueType, count: qCount, items: qItems }}
+            completionRows={mobileCompletionRows}
+            onOpenTasks={(status) => {
+              const pid = scopeId ?? currentProjectId
+              if (pid) navigate(status ? `/project/${pid}/tasks?status=${encodeURIComponent(status)}` : `/project/${pid}/tasks`)
+            }}
+            onOpenAchievements={() => {
+              const pid = scopeId ?? currentProjectId
+              if (pid) navigate(`/project/${pid}/achievements`)
+            }}
+            onOpenRoleQueue={(type) => {
+              const pid = scopeId ?? currentProjectId
+              const route = { pending_decisions: 'decisions', pending_review: 'confirm', pending_coordinator: 'coordinate', in_progress: 'confirm' }[type]
+              if (pid) navigate(`/project/${pid}/${route}`)
+            }}
+            onOpenNotifications={() => navigate('/home/notifications')}
+            projectNotice={mobileProjectNotice}
+            onOpenProjectNotice={isFillableForOwner ? () => openFillModal() : undefined}
+            formatPlanTime={fmtPlanTime}
+            projectNameFromRecord={projectNameFromRecord}
+          />
+        ) : (
+          <main className="flex min-h-0 flex-1 items-center justify-center bg-slate-100 p-4">
+            <div className="w-full rounded-2xl border border-[#E9EFF6] bg-white p-5 text-center shadow-sm">
+              <p className="text-sm font-semibold text-slate-700">{shouldBlockDashboardLoading ? '普通成员请从我的任务查看个人工作' : initialLoading ? '驾驶舱加载中…' : loadError ?? '暂无可查看的项目驾驶舱数据。'}</p>
+              {errorWithNoData ? <p className="mt-2 text-xs text-slate-500">{loadError}</p> : null}
+            </div>
+          </main>
+        )}
+      </div>
       {/* Top Bar */}
-      <header className="min-h-16 flex flex-wrap items-center px-4 py-3 lg:px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
+      <header className="hidden min-[800px]:flex min-h-16 flex-wrap items-center px-4 py-3 lg:px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
         <div className="flex-1 min-w-0">
           <h1 className="text-base font-bold text-slate-800">首页驾驶舱</h1>
           {!canViewGlobalDashboard && (
@@ -513,7 +581,7 @@ export function DashboardPage() {
       </header>
 
       {/* Content */}
-      <main className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-5" style={{ background: '#F1F5F9' }}>
+      <main className="hidden min-[800px]:block flex-1 overflow-y-auto p-4 lg:p-6 space-y-5" style={{ background: '#F1F5F9' }}>
         {shouldBlockDashboardLoading && (
           <div className="rounded-2xl border bg-white p-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
             <div>

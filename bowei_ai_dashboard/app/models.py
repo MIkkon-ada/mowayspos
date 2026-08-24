@@ -129,7 +129,7 @@ class MeetingDocumentSource(Base, TimestampMixin):
 
     __tablename__ = "meeting_document_sources"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
     meeting_id = Column(Integer, ForeignKey("meetings.id", ondelete="SET NULL"), nullable=True, index=True)
     original_name = Column(String(255), nullable=False)
@@ -145,14 +145,14 @@ class ProjectMeetingRun(Base, TimestampMixin):
 
     __tablename__ = "project_meeting_runs"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
     document_source_id = Column(Integer, ForeignKey("meeting_document_sources.id"), nullable=False, index=True)
-    snapshot_json = Column(Text, nullable=False, default="{}")
-    document_text = Column(Text, nullable=False, default="")
-    result_json = Column(Text, nullable=False, default="{}")
-    status = Column(String(24), nullable=False, default="analyzing", index=True)
-    error_message = Column(Text, nullable=False, default="")
+    snapshot_json = Column(Text, nullable=False, default="{}", server_default="{}")
+    document_text = Column(Text, nullable=False, default="", server_default="")
+    result_json = Column(Text, nullable=False, default="{}", server_default="{}")
+    status = Column(String(24), nullable=False, default="analyzing", server_default="analyzing", index=True)
+    error_message = Column(Text, nullable=False, default="", server_default="")
     created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
     stage = Column(String(32), nullable=False, default="created", server_default="created", index=True)
     step_count = Column(Integer, nullable=False, default=0, server_default="0")
@@ -169,7 +169,7 @@ class MeetingReviewEvent(Base, TimestampMixin):
 
     __tablename__ = "meeting_review_events"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=False, index=True)
     action = Column(String(24), nullable=False, index=True)
     actor_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
@@ -768,14 +768,14 @@ class Person(Base, TimestampMixin):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(50), nullable=False, index=True)
     role = Column(String(40), default="")          # 职务描述，仅展示用
-    position_title = Column(String(100), default="")  # 公司岗位名称，身份资料，不参与权限判断
+    position_title = Column(String(100), default="", server_default="")  # 公司岗位名称，身份资料，不参与权限判断
     system_role = Column(String(40), default="normal_member", index=True)  # 全局权限角色英文键（company_ceo/super_admin/normal_member）
     department = Column(String(80), default="")
-    wecom_userid = Column(String(64), default="", index=True)
-    wecom_department = Column(String(200), default="")
-    wecom_position_title = Column(String(100), default="")
-    department_source = Column(String(20), default="wecom")
-    position_source = Column(String(20), default="wecom")
+    wecom_userid = Column(String(64), default="", server_default="", index=True)
+    wecom_department = Column(String(200), default="", server_default="")
+    wecom_position_title = Column(String(100), default="", server_default="")
+    department_source = Column(String(20), default="wecom", server_default="wecom")
+    position_source = Column(String(20), default="wecom", server_default="wecom")
     special_project_duty = Column(Text, default="")
     permission = Column(String(40), default="查看")
     contact = Column(String(100), default="")
@@ -877,6 +877,9 @@ class SubTask(Base, TimestampMixin):
     delete_reason = Column(Text, default="")
     delete_batch_id = Column(String(64), default="", index=True)
     deleted_by_parent_id = Column(Integer, nullable=True, index=True)
+    risk_note = Column(Text, nullable=False, default="", server_default="")
+    risk_marked_by = Column(String(50), nullable=False, default="", server_default="")
+    risk_marked_at = Column(DateTime, nullable=True)
 
 
 class Notification(Base):

@@ -392,6 +392,14 @@ export type SubTaskItem = {
   completion_criteria?: string
   notes?: string
   source_submission_id?: number | null
+  latest_confirmed_submission?: {
+    id: number
+    submitter: string
+    confirmed_at: string
+    summary: string
+  } | null
+  is_overdue?: boolean
+  has_risk?: boolean
   is_deleted?: boolean
   deleted_at?: string | null
   deleted_by?: string

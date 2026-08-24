@@ -43,8 +43,13 @@ test('key task header does not present a placeholder more-actions menu', () => {
 test('workspace keeps its history scrollable inside the fixed application shell', () => {
   const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
 
-  assert.match(workspace, /<main className="min-h-0 flex-1 overflow-y-auto bg-slate-50">/)
+  assert.match(workspace, /<main className="flex-1 min-h-0 overflow-y-auto bg-slate-50">/)
   assert.doesNotMatch(workspace, /<main className="min-h-full bg-slate-50">/)
+})
+
+test('workspace owns a flex-safe vertical scroll container', () => {
+  const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
+  assert.match(workspace, /<main className="flex-1 min-h-0 overflow-y-auto bg-slate-50">/)
 })
 
 test('execution plan table has approved columns, row click, and no operation column', () => {
@@ -100,6 +105,22 @@ test('current progress and timeline use authoritative workspace DTOs', () => {
     assert.match(timeline, new RegExp(label))
   }
   assert.doesNotMatch(timeline, /related_achievements|work_reports/)
+})
+
+test('key-task workspace lets authorized users mark and clear a recorded risk', () => {
+  const api = read('src/api/keyTaskWorkspace.ts')
+  const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
+  const header = read('src/components/key-task-workspace/KeyTaskHeader.tsx')
+
+  assert.match(api, /apiPatch/)
+  assert.match(api, /setKeyTaskRisk/)
+  assert.match(api, /risk_note/)
+  assert.match(api, /can_manage_risk/)
+  assert.match(workspace, /setKeyTaskRisk/)
+  assert.match(workspace, /onChangeRisk/)
+  assert.match(header, /有风险/)
+  assert.match(header, /标记风险|解除风险/)
+  assert.match(header, /can_manage_risk/)
 })
 
 test('execution plan drawer reuses DetailDrawer and keeps actions outside table', () => {

@@ -6,10 +6,10 @@ const dashboard = readFileSync(new URL('../src/pages/DashboardPage.tsx', import.
 const meeting = readFileSync(new URL('../src/pages/MeetingPage.tsx', import.meta.url), 'utf8')
 
 test('dashboard uses wrapping desktop header and responsive content padding', () => {
-  assert.match(dashboard, /<header className="min-h-16 flex flex-wrap items-center px-4 py-3 lg:px-6 gap-4 flex-shrink-0 bg-white border-b"/)
+  assert.match(dashboard, /<header className="hidden min-\[800px\]:flex min-h-16 flex-wrap items-center px-4 py-3 lg:px-6 gap-4 flex-shrink-0 bg-white border-b"/)
   assert.match(dashboard, /<div className="flex-1 min-w-0">/)
   assert.match(dashboard, /<div className="flex flex-wrap items-center gap-2">/)
-  assert.match(dashboard, /<main className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-5"/)
+  assert.match(dashboard, /<main className="hidden min-\[800px\]:block flex-1 overflow-y-auto p-4 lg:p-6 space-y-5"/)
 })
 
 test('dashboard grids progressively expand across desktop breakpoints', () => {

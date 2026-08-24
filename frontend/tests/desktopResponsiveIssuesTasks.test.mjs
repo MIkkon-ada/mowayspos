@@ -24,7 +24,7 @@ test('Issues page summary, filters, and main spacing adapt without page-level ho
   assert.match(issuesSource, /grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6/)
   assert.match(issuesSource, /mb-6 flex flex-wrap items-center gap-4/)
   assert.match(issuesSource, /mx-auto max-w-\[1440px\] px-4 py-6 lg:px-6/)
-  assert.match(issuesSource, /min-h-0 flex-1 flex gap-4 px-4 py-4 lg:px-5 overflow-hidden/)
+  assert.match(issuesSource, /hidden min-\[800px\]:flex min-h-0 flex-1 gap-4 px-4 py-4 lg:px-5 overflow-hidden/)
   assert.match(issuesSource, /flex-1 overflow-hidden bg-\[#f6f8fb\] flex flex-col/)
 })
 

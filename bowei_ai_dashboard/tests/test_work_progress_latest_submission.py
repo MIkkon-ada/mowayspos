@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from app import models
 from app import schemas
 from app.database import Base
+from app.main import app
 from app.routers import key_tasks
 from app.routers.subtasks import list_subtasks_batch
 
@@ -123,3 +124,11 @@ def test_assignee_can_set_and_clear_key_task_risk():
     )
     assert cleared["key_task"]["risk_note"] == ""
     assert db.get(models.SubTask, 20).risk_marked_at is None
+
+
+def test_batch_subtask_route_precedes_dynamic_subtask_route():
+    routes = [route.path for route in app.routes]
+
+    assert routes.index("/api/tasks/subtasks/batch") < routes.index(
+        "/api/tasks/{task_id}/subtasks"
+    )

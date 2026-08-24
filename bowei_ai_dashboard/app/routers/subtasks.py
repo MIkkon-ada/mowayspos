@@ -382,6 +382,16 @@ def list_subtasks_global(
     return result
 
 
+@router.get("/api/tasks/subtasks/batch")
+def list_subtasks_batch(
+    task_ids: str = "",
+    deleted: bool = False,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    return _list_subtasks_batch(task_ids, deleted, current_user, db)
+
+
 @router.get("/api/tasks/{task_id}/subtasks")
 def list_subtasks(
     task_id: int,
@@ -415,8 +425,7 @@ def list_subtasks(
     return payloads
 
 
-@router.get("/api/tasks/subtasks/batch")
-def list_subtasks_batch(
+def _list_subtasks_batch(
     task_ids: str = "",
     deleted: bool = False,
     current_user: str = Depends(get_current_user_name),

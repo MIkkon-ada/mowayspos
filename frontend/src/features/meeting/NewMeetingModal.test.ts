@@ -17,4 +17,17 @@ describe('new meeting modal', () => {
     expect(source).toContain('createProjectMeetingDocumentRun(projectId: number, file: File)')
     expect(source).not.toContain("form.append('meeting_type'")
   })
+
+  it('uses reference-aligned meeting controls and default project-wide copy recipients', () => {
+    const source = fs.readFileSync('src/features/meeting/NewMeetingModal.tsx', 'utf8')
+
+    expect(source).toContain("copied_to: '项目全体成员'")
+    expect(source).toContain('type="date"')
+    expect(source).toContain('getProjectMembers(projectId)')
+    expect(source).toContain("singleMemberField('主持人', 'host'")
+    expect(source).toContain("singleMemberField('整理人', 'organizer'")
+    expect(source).toContain('meeting-new-information-card')
+    expect(source).toContain('meeting-new-material-card')
+    expect(source).toContain('meeting-new-footer')
+  })
 })

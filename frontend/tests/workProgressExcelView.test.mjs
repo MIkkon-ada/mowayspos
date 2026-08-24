@@ -257,9 +257,9 @@ test('plan export uses the web model, fourteen headers, merges and frozen panes'
 
 test('plan mode loads subtasks before search projection and disables incomplete export', () => {
   const page = read(PAGE_FILE)
-  // Plan base tasks loaded before filtering/search
+  // All current-project tasks load before owner filtering/search so the assignee dropdown is complete.
   assert.match(page, /planBaseTasks/)
-  assert.match(page, /missingTasks = planBaseTasks\.filter/)
+  assert.match(page, /missingTasks = tasks\.filter/)
   // Search text passed to plan table
   assert.match(page, /searchText=\{search\}/)
   // Export disabled until all subtasks are loaded
@@ -450,4 +450,13 @@ test('work-progress assignee filter uses key-task assignees instead of project o
   assert.match(source, /taskHasKeyTaskAssignee\(t, taskSubMap, filterOwner\)/)
   assert.match(source, /assigneeNames\.map\(\(name\) => <option key=\{name\} value=\{name\}>\{name\}<\/option>\)/)
   assert.doesNotMatch(source, /resolvedTaskProjects\.flatMap\(\(p\) => p\.owners/)
+})
+
+test('work-progress assignee filter resets stale key-task data when the project changes', () => {
+  const source = read(PAGE_FILE)
+
+  assert.match(source, /setTaskSubMap\(\{\}\)/)
+  assert.match(source, /const keyTaskAssigneesLoaded = tasks\.every\(\(task\) => task\.id in taskSubMap\)/)
+  assert.match(source, /if \(!keyTaskAssigneesLoaded \|\| !filterOwner \|\| assigneeNames\.includes\(filterOwner\)\) return/)
+  assert.match(source, /setFilterOwner\(''\)/)
 })

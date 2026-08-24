@@ -284,6 +284,7 @@ export function TaskManagementPage() {
     () => getKeyTaskAssigneeNames(tasks, taskSubMap),
     [taskSubMap, tasks],
   )
+  const keyTaskAssigneesLoaded = tasks.every((task) => task.id in taskSubMap)
   const focusedProject = projectFromContext ?? resolvedProjectForContext ?? null
   const focusedSubTaskProject = projectForSubTask(resolvedTaskProjects, tasks, selectedSubTask)
   const projectArchived = isProjectArchived(focusedProject)
@@ -345,7 +346,13 @@ export function TaskManagementPage() {
     setTaskUpdates([])
     setSubTasks([])
     setTrashedSubTasks([])
+    setTaskSubMap({})
   }, [effectiveTaskProjectId])
+
+  useEffect(() => {
+    if (!keyTaskAssigneesLoaded || !filterOwner || assigneeNames.includes(filterOwner)) return
+    setFilterOwner('')
+  }, [assigneeNames, filterOwner, keyTaskAssigneesLoaded])
 
   useEffect(() => {
     if (showDeleted && !canManageTrash) {
@@ -468,7 +475,7 @@ export function TaskManagementPage() {
 
   function ensurePlanTableSubTasksLoaded() {
     if (planTableLoading) return
-    const missingTasks = planBaseTasks.filter((task) => !(task.id in taskSubMap))
+    const missingTasks = tasks.filter((task) => !(task.id in taskSubMap))
     if (missingTasks.length === 0) return
     const missingIds = missingTasks.map((task) => task.id)
     setPlanTableLoading(true)
@@ -497,18 +504,18 @@ export function TaskManagementPage() {
   useEffect(() => {
     if (viewMode !== 'plan') return
     ensurePlanTableSubTasksLoaded()
-  }, [viewMode, planBaseTasks, planTableLoading, taskSubMap])
+  }, [viewMode, tasks, planTableLoading, taskSubMap])
 
   useEffect(() => {
     if (viewMode !== 'execution') return
-    const missingIds = planBaseTasks.filter((task) => !(task.id in taskSubMap)).map((task) => task.id)
+    const missingIds = tasks.filter((task) => !(task.id in taskSubMap)).map((task) => task.id)
     if (!missingIds.length) return
     fetchSubTasksBatch(missingIds, false).then((batch) => setTaskSubMap((prev) => {
       const next = { ...prev }
       missingIds.forEach((id) => { next[id] = batch[String(id)] ?? [] })
       return next
     })).catch(() => {})
-  }, [viewMode, planBaseTasks, taskSubMap])
+  }, [viewMode, tasks, taskSubMap])
 
   // 进入计划视图时预加载项目成员列表（用于责任人下拉）
   useEffect(() => {
@@ -516,7 +523,7 @@ export function TaskManagementPage() {
     ensureProjectMembersLoaded(focusedProject.id)
   }, [viewMode, focusedProject])
 
-  const planTableReady = !planTableLoading && planBaseTasks.every((task) => task.id in taskSubMap)
+  const planTableReady = !planTableLoading && tasks.every((task) => task.id in taskSubMap)
 
   function assignmentMembers(projectId: number | null | undefined) {
     if (!projectId) return []

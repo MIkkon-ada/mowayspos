@@ -96,6 +96,15 @@ test('key-task workspace lets authorized users mark and clear a recorded risk', 
   assert.match(header, /can_manage_risk/)
 })
 
+test('key-task header aligns its metadata in three desktop columns', () => {
+  const header = read('src/components/key-task-workspace/KeyTaskHeader.tsx')
+
+  assert.match(header, /grid[^"']*sm:grid-cols-3/)
+  for (const label of ['负责人：', '协同人：', '计划时间：']) {
+    assert.match(header, new RegExp(label))
+  }
+})
+
 test('execution plan drawer reuses DetailDrawer and keeps actions outside table', () => {
   const drawer = read('src/components/key-task-workspace/ExecutionPlanDetailDrawer.tsx')
 

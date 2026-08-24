@@ -537,10 +537,22 @@ test('editor uses one cohesive SaaS workspace with a compact visible footer', ()
   assert.match(css, /\.voice-update-footer-bar\s*\{[^}]*height:\s*56px/s)
 })
 
-test('result panel declares its border in one rule to avoid shorthand conflicts', () => {
+test('work report uses independent two-column cards while keeping the footer below the workspace', () => {
+  const page = read(PAGE)
   const css = read(CSS)
-  assert.match(css, /\.voice-update-result-panel\s*\{[^}]*border:\s*0[^}]*border-left:\s*1px solid/s)
-  assert.doesNotMatch(css, /\.voice-update-result-panel\s*\{[^}]*\}\s*\.voice-update-result-panel\s*\{[^}]*border-left:/s)
+
+  assert.match(page, /voice-update-workspace[\s\S]*<VoiceUpdateInputPanel[\s\S]*<VoiceUpdateResultPanel[\s\S]*<\/main>\s*<VoiceUpdateSubmitPanel/)
+  assert.match(css, /\.voice-update-workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*40fr\)\s+minmax\(0,\s*60fr\)[^}]*gap:\s*20px/s)
+  assert.match(css, /\.voice-update-left-column\s*\{[^}]*border:\s*1px solid #e1e7ef[^}]*border-radius:\s*10px/s)
+  assert.match(css, /\.voice-update-result-panel\s*\{[^}]*border:\s*1px solid #e1e7ef[^}]*border-radius:\s*10px/s)
+  assert.match(css, /\.voice-update-progress-field\s*\{[^}]*border:\s*1px solid #e5eaf1[^}]*border-radius:\s*10px/s)
+  assert.match(css, /@media \(max-width:\s*899px\)[\s\S]*\.voice-update-workspace\s*\{[^}]*grid-template-columns:\s*1fr/s)
+})
+
+test('result panel declares its independent card border in one rule', () => {
+  const css = read(CSS)
+  assert.match(css, /\.voice-update-result-panel\s*\{[^}]*border:\s*1px solid #e1e7ef[^}]*border-radius:\s*10px/s)
+  assert.doesNotMatch(css, /\.voice-update-result-panel\s*\{[^}]*border-left:/s)
 })
 
 test('unconfirmed Agent ownership blocks formal submission without changing createUpdate', async () => {

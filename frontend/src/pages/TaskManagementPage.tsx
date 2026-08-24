@@ -14,6 +14,7 @@ import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } fro
 import type { TaskItem, SubTaskItem, Project, ProjectMember } from '../types'
 import { getProjectById, getProjectDisplayName, getProjectIdFromRecord } from '../domain/projectDisplay'
 import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
+import { getKeyTaskAssigneeNames, taskHasKeyTaskAssignee } from '../domain/keyTaskAssigneeFilter'
 import { PlanTableViewV2 } from '../components/task-management/PlanTableViewV2'
 import { ExecutionProgressView } from '../components/task-management/ExecutionProgressView'
 import { KeyTaskExecutionDetailView } from '../components/task-management/KeyTaskExecutionDetailView'
@@ -279,7 +280,11 @@ export function TaskManagementPage() {
   const requiresProjectSelection = effectiveTaskProjectId == null && availableTaskProjects.length > 1
   const hasNoTaskProjects = effectiveTaskProjectId == null && availableTaskProjects.length === 0
   const projectOptions = resolvedTaskProjects.map((p) => p.name)
-  const ownerNames = [...new Set(resolvedTaskProjects.flatMap((p) => p.owners ?? []))]
+  const assigneeNames = useMemo(
+    () => getKeyTaskAssigneeNames(tasks, taskSubMap),
+    [taskSubMap, tasks],
+  )
+  const keyTaskAssigneesLoaded = tasks.every((task) => task.id in taskSubMap)
   const focusedProject = projectFromContext ?? resolvedProjectForContext ?? null
   const focusedSubTaskProject = projectForSubTask(resolvedTaskProjects, tasks, selectedSubTask)
   const projectArchived = isProjectArchived(focusedProject)
@@ -341,7 +346,13 @@ export function TaskManagementPage() {
     setTaskUpdates([])
     setSubTasks([])
     setTrashedSubTasks([])
+    setTaskSubMap({})
   }, [effectiveTaskProjectId])
+
+  useEffect(() => {
+    if (!keyTaskAssigneesLoaded || !filterOwner || assigneeNames.includes(filterOwner)) return
+    setFilterOwner('')
+  }, [assigneeNames, filterOwner, keyTaskAssigneesLoaded])
 
   useEffect(() => {
     if (showDeleted && !canManageTrash) {
@@ -442,7 +453,7 @@ export function TaskManagementPage() {
         }
       }
       if (viewProjectId != null && taskProject?.id !== viewProjectId) return false
-      if (filterOwner && !(projectForTask(resolvedTaskProjects, t)?.owners ?? []).includes(filterOwner)) return false
+      if (filterOwner && !taskHasKeyTaskAssignee(t, taskSubMap, filterOwner)) return false
       return true
     })
     .sort((a, b) => {
@@ -453,7 +464,7 @@ export function TaskManagementPage() {
       const at = a.created_at ?? ''
       const bt = b.created_at ?? ''
       return at.localeCompare(bt)
-    }), [filterOwner, filterStatus, resolvedTaskProjects, tasks, viewProjectId])
+    }), [filterOwner, filterStatus, resolvedTaskProjects, taskSubMap, tasks, viewProjectId])
 
   const filtered = useMemo(() => planBaseTasks.filter((task) => {
     if (!search) return true
@@ -464,7 +475,7 @@ export function TaskManagementPage() {
 
   function ensurePlanTableSubTasksLoaded() {
     if (planTableLoading) return
-    const missingTasks = planBaseTasks.filter((task) => !(task.id in taskSubMap))
+    const missingTasks = tasks.filter((task) => !(task.id in taskSubMap))
     if (missingTasks.length === 0) return
     const missingIds = missingTasks.map((task) => task.id)
     setPlanTableLoading(true)
@@ -493,18 +504,18 @@ export function TaskManagementPage() {
   useEffect(() => {
     if (viewMode !== 'plan') return
     ensurePlanTableSubTasksLoaded()
-  }, [viewMode, planBaseTasks, planTableLoading, taskSubMap])
+  }, [viewMode, tasks, planTableLoading, taskSubMap])
 
   useEffect(() => {
     if (viewMode !== 'execution') return
-    const missingIds = planBaseTasks.filter((task) => !(task.id in taskSubMap)).map((task) => task.id)
+    const missingIds = tasks.filter((task) => !(task.id in taskSubMap)).map((task) => task.id)
     if (!missingIds.length) return
     fetchSubTasksBatch(missingIds, false).then((batch) => setTaskSubMap((prev) => {
       const next = { ...prev }
       missingIds.forEach((id) => { next[id] = batch[String(id)] ?? [] })
       return next
     })).catch(() => {})
-  }, [viewMode, planBaseTasks, taskSubMap])
+  }, [viewMode, tasks, taskSubMap])
 
   // 进入计划视图时预加载项目成员列表（用于责任人下拉）
   useEffect(() => {
@@ -512,7 +523,7 @@ export function TaskManagementPage() {
     ensureProjectMembersLoaded(focusedProject.id)
   }, [viewMode, focusedProject])
 
-  const planTableReady = !planTableLoading && planBaseTasks.every((task) => task.id in taskSubMap)
+  const planTableReady = !planTableLoading && tasks.every((task) => task.id in taskSubMap)
 
   function assignmentMembers(projectId: number | null | undefined) {
     if (!projectId) return []
@@ -1002,7 +1013,7 @@ function handleFormSave(payload: TaskPayload) {
             className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 cursor-pointer focus:outline-none font-medium"
           >
             <option value="">全部负责人</option>
-            {ownerNames.map((o) => <option key={o}>{o}</option>)}
+            {assigneeNames.map((name) => <option key={name} value={name}>{name}</option>)}
           </select>
           <div className="relative">
             <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" style={{ width: 13, height: 13 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>

@@ -12,7 +12,7 @@ import { MeetingProgressReviewSection } from '../features/meeting/MeetingProgres
 import { MeetingDetailWorkspace } from '../features/meeting/MeetingDetailWorkspace'
 import { STATUS_CONFIG, fmtTime, getStatus, type PublishStatus } from '../features/meeting/meetingUtils'
 import { getProjectDisplayName } from '../domain/projectDisplay'
-import { isProjectArchived } from '../domain/projectLifecycleStatus'
+import { isProjectArchived, isProjectExecutionAvailable } from '../domain/projectLifecycleStatus'
 import { ProjectMeetingReviewWorkspace } from '../features/meeting/ProjectMeetingReviewWorkspace'
 import { MobileMeetingTimeline } from '../features/mobile-core-pages/MobileMeetingTimeline'
 
@@ -32,6 +32,7 @@ export function MeetingPage() {
   const [returnNote, setReturnNote] = useState('')
   const [showReturnInput, setShowReturnInput] = useState(false)
   const [showNewModal, setShowNewModal] = useState(false)
+  const [showKickoffWorkspace, setShowKickoffWorkspace] = useState(false)
   const [editingItem, setEditingItem] = useState<MeetingItem | null>(null)
   const [projectQuery, setProjectQuery] = useState('')
   const [meetingQuery, setMeetingQuery] = useState('')
@@ -45,8 +46,8 @@ export function MeetingPage() {
 
   const currentProject = projects.find((p) => p.id === currentProjectId) ?? null
   const effectiveProject = projects.find((p) => p.id === effectiveProjectId) ?? null
-  const pending_kickoff = String(effectiveProject?.lifecycle_status ?? effectiveProject?.status ?? '') === 'pending_kickoff'
   const projectArchived = isProjectArchived(effectiveProject)
+  const canOpenKickoff = Boolean(effectiveProjectId && !projectArchived && isProjectExecutionAvailable(effectiveProject))
   const canDeleteMeeting = Boolean(currentUser?.is_tech_admin || (effectiveProject?.user_roles ?? currentProjectRoles).includes('owner'))
   const legacySelected = selected as MeetingItem
   const noProject = !effectiveProjectId
@@ -199,7 +200,7 @@ export function MeetingPage() {
   const statusCfg = STATUS_CONFIG[selStatus]
   const projectMemberCount = effectiveProject ? Object.values(effectiveProject.member_counts ?? {}).reduce((sum, count) => sum + count, 0) : 0
   const projectDate = (value?: string) => value ? value.slice(0, 10).replace(/-/g, '/') : '-'
-  const meetingEditor = effectiveProjectId && !pending_kickoff && (showNewModal || editingItem)
+  const meetingEditor = effectiveProjectId && (showNewModal || editingItem)
      ? <NewMeetingModal
          projectId={effectiveProjectId}
          editItem={editingItem ?? undefined}
@@ -214,6 +215,15 @@ export function MeetingPage() {
   if (meetingEditor) return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {meetingEditor}
+    </div>
+  )
+
+  if (showKickoffWorkspace && effectiveProjectId) return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-slate-50 p-4 lg:p-6">
+      <div className="mx-auto w-full max-w-[1180px]">
+        <button type="button" onClick={() => setShowKickoffWorkspace(false)} className="mb-4 text-sm font-medium text-slate-500 hover:text-sky-600">← 返回会议列表</button>
+        <KickoffAgentWorkspace projectId={effectiveProjectId} onClose={() => setShowKickoffWorkspace(false)} />
+      </div>
     </div>
   )
 
@@ -440,8 +450,18 @@ export function MeetingPage() {
             <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
             </svg>
-            {pending_kickoff ? '发起启动会确认' : '新建会议纪要'}
+            新建会议纪要
           </button>
+          {effectiveProjectId && (
+            <button
+              onClick={() => setShowKickoffWorkspace(true)}
+              disabled={!canOpenKickoff}
+              title={!canOpenKickoff ? '项目进入执行阶段后可记录启动会' : '启动会作为执行事件留痕，不改变项目阶段'}
+              className="cursor-pointer rounded-lg border border-sky-200 bg-white px-4 py-2 text-sm font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              记录启动会
+            </button>
+          )}
         </div>
       </header>
 
@@ -548,7 +568,6 @@ export function MeetingPage() {
               </section>
             </div>
 
-            {pending_kickoff && showNewModal && <KickoffAgentWorkspace projectId={effectiveProjectId} onClose={() => setShowNewModal(false)} />}
             {loading && (
               <div className="mx-auto w-full max-w-[1180px] rounded-xl border bg-white p-4" style={{ borderColor: '#E9EFF6' }}>
                 <table className="w-full text-sm"><tbody><SkeletonTableRows rows={6} cols={6} /></tbody></table>

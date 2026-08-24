@@ -139,7 +139,7 @@ export function ownerSubmitProfile(
   return apiPost(`/api/projects/${projectId}/owner-submit`, payload)
 }
 
-export function dispatchProject(projectId: number): Promise<{ ok: boolean; dispatched_to: number }> {
+export function notifyProjectOwner(projectId: number): Promise<{ ok: boolean; notified_to: number; status: string }> {
   return apiPost(`/api/projects/${projectId}/dispatch`, {})
 }
 

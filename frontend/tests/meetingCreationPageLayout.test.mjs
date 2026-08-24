@@ -8,7 +8,7 @@ const editor = readFileSync(new URL('../src/features/meeting/NewMeetingModal.tsx
 test('meeting creation replaces the meeting content with a page-level workbench', () => {
   assert.match(page, /if \(meetingEditor\) return \(/)
   assert.match(page, /<NewMeetingModal[\s\S]{0,80}projectId=\{effectiveProjectId\}/)
-  assert.doesNotMatch(page, /showNewModal && effectiveProjectId && !pending_kickoff && <NewMeetingModal/)
+  assert.doesNotMatch(page, /!pending_kickoff && \(showNewModal \|\| editingItem\)/)
   assert.doesNotMatch(page, /editingItem && effectiveProjectId && <NewMeetingModal/)
 })
 

@@ -15,7 +15,7 @@ def test_pending_kickoff_has_a_canonical_lifecycle_and_audit_models():
     assert models.KickoffChangeProposal.__tablename__ == "kickoff_change_proposals"
 
 
-def test_project_approval_enters_pending_kickoff_without_starting_project():
+def test_project_approval_enters_active_without_startup_gate():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = sessionmaker(bind=engine)()
@@ -31,25 +31,33 @@ def test_project_approval_enters_pending_kickoff_without_starting_project():
     approve_project(1, current_user="coach", db=db)
 
     project = db.get(models.Project, 1)
-    assert project.status == "pending_kickoff"
-    assert project.is_active is False
+    assert project.status == "active"
+    assert project.is_active is True
 
 
-def test_pending_kickoff_rejects_execution_task_structure_write():
+def test_active_project_allows_execution_task_structure_write():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = sessionmaker(bind=engine)()
     db.add_all([
         models.Person(id=1, name="Owner", is_active=True),
-        models.Project(id=1, name="P", status="pending_kickoff", is_active=False),
+        models.Project(id=1, name="P", status="active", is_active=True),
         models.ProjectMember(project_id=1, person_id=1, person_name_snapshot="Owner", role="owner"),
         models.Task(id=1, project_id=1, key_task="Work"),
     ])
     db.commit()
 
-    try:
-        _check_subtask_struct_write({"person_id": 1, "is_tech_admin": False}, db.get(models.Task, 1), db)
-    except HTTPException as exc:
-        assert exc.status_code == 409
-    else:
-        raise AssertionError("pending kickoff must reject execution task writes")
+    _check_subtask_struct_write({"is_tech_admin": True}, db.get(models.Task, 1), db)
+
+
+def test_legacy_pending_kickoff_project_remains_execution_writable():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    db.add_all([
+        models.Project(id=1, name="P", status="pending_kickoff", is_active=False),
+        models.Task(id=1, project_id=1, key_task="Work"),
+    ])
+    db.commit()
+
+    _check_subtask_struct_write({"is_tech_admin": True}, db.get(models.Task, 1), db)

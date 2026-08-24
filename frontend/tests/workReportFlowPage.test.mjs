@@ -386,16 +386,21 @@ test('input and result panels expose plain headings and the re-extract action', 
   assert.match(result, /重新提取/)
 })
 
-test('AI result keeps all five structured fields mounted before extraction', () => {
+test('AI result uses a clean empty state before extraction', () => {
   const result = read(RESULT)
   const reports = read(REPORTS)
+  const emptyStart = reports.indexOf('if (taskReports.length === 0)')
+  const emptyEnd = reports.indexOf('\n  return (', emptyStart)
+  const emptyState = reports.slice(emptyStart, emptyEnd)
+
   assert.match(result, /<VoiceUpdateTaskReportsSection/)
   assert.doesNotMatch(result, /\{result\s*&&\s*\([\s\S]*?<VoiceUpdateTaskReportsSection/)
-  for (const label of ['本次完成', '下一步计划', '问题与风险', '取得的成果', '任务状态建议']) {
-    assert.match(reports, new RegExp(label))
-  }
-  assert.match(reports, /voice-update-structured-empty/)
-  assert.doesNotMatch(result, /voice-update-result-empty[^>]*><strong>\{emptyMessage\}/)
+  assert.match(emptyState, /voice-update-clean-empty/)
+  assert.match(emptyState, /等待 AI 提取汇报结果/)
+  for (const label of ['本次完成', '下一步计划', '问题与风险', '取得的成果']) assert.match(emptyState, new RegExp(label))
+  assert.doesNotMatch(emptyState, /<textarea/)
+  assert.doesNotMatch(emptyState, /0\/1000/)
+  assert.doesNotMatch(emptyState, /type="radio"/)
 })
 
 test('task status suggestion uses the five target radio options', () => {

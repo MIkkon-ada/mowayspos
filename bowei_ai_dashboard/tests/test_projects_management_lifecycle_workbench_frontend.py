@@ -12,17 +12,17 @@ def test_project_management_page_owns_the_management_surface():
 
 
 def test_project_management_section_preserves_lifecycle_and_write_entries():
-    for symbol in ["filteredProjects", "setShowNew", "setImportOpen", "handleDispatch", "handleReturn", "openProjectEditor"]:
+    for symbol in ["filteredProjects", "setShowNew", "setImportOpen", "handleReturn", "openProjectEditor", "notifyProjectOwner"]:
         assert symbol in SECTION
-    for status in ["draft", "dispatched", "pending_review", "returned", "active", "archived"]:
+    for status in ["draft", "dispatched", "pending_kickoff", "pending_review", "returned", "active", "archived"]:
         assert status in SECTION
 
 
-def test_project_dispatch_requires_owner_and_project_coach_membership():
-    dispatch_block = SECTION[SECTION.index("async function handleDispatch"):SECTION.index("async function handleApprove")]
-    assert "m.role === 'project_ceo'" in dispatch_block
-    assert "m.role === 'owner'" in dispatch_block
-    assert "dispatchProject(pid)" in dispatch_block
+def test_project_team_configuration_notifies_owner_without_dispatch_gate():
+    assert "async function handleDispatch" not in SECTION
+    assert "dispatchProject" not in SECTION
+    assert "await notifyProjectOwner(project.id)" in SECTION
+    assert "await notifyProjectOwner(editProjectId)" in SECTION
 
 
 def test_project_return_and_approval_reload_the_lifecycle_workbench():

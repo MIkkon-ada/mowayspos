@@ -2,7 +2,7 @@ import io
 import json
 import re
 from collections import Counter, defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -251,10 +251,227 @@ def _empty_project_overview(context: dict, label: str) -> dict:
         "decisions":        [],
         "risks":            [],
         "latest_achievements": [],
+        "governance": {
+            "signals": {"pending_decisions": 0, "pending_coordination": 0, "pending_owner_confirmation": 0},
+            "actions": [],
+            "initiatives": [],
+        },
     }
 
 
 # ── 项目模式 overview ─────────────────────────────────────────
+
+def _governance_text(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _governance_date(value: object) -> str | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    text_value = _governance_text(value)
+    return text_value or None
+
+
+def _governance_waiting_days(value: object) -> int | None:
+    if not isinstance(value, datetime):
+        return None
+    return max((date.today() - value.date()).days, 0)
+
+
+def _governance_official_progress(status: str) -> int | None:
+    if status in _COMPLETED:
+        return 100
+    if status in _NOT_STARTED:
+        return 0
+    return None
+
+
+def _governance_health(key_task: object, evidence_confirmed: int, evidence_total: int) -> str:
+    status = _governance_text(getattr(key_task, "status", ""))
+    due_date = getattr(key_task, "due_date", None)
+    if status in _DELAYED or (isinstance(due_date, date) and due_date < date.today() and status not in _COMPLETED):
+        return "risk"
+    if evidence_total and evidence_confirmed < evidence_total:
+        return "watch"
+    if status in _NOT_STARTED:
+        return "unstarted"
+    return "healthy"
+
+
+def _build_governance_payload(
+    *,
+    workstreams: list[object],
+    key_tasks: list[object],
+    issues: list[object],
+    submissions: list[object],
+    people_by_id: dict[int, object],
+    can_view_decisions: bool,
+    can_view_risks: bool,
+    can_view_submissions: bool,
+) -> dict:
+    """Build compact, permission-filtered executive governance signals."""
+    workstream_by_id = {getattr(item, "id", None): item for item in workstreams}
+    key_task_by_id = {getattr(item, "id", None): item for item in key_tasks}
+
+    def owner_for(task_id: int | None, subtask_id: int | None) -> str:
+        key_task = key_task_by_id.get(subtask_id)
+        if key_task and _governance_text(getattr(key_task, "assignee", "")):
+            return _governance_text(getattr(key_task, "assignee", ""))
+        workstream = workstream_by_id.get(task_id)
+        return _governance_text(getattr(workstream, "owner", "")) if workstream else ""
+
+    actions: list[dict] = []
+    decision_count = 0
+    coordination_count = 0
+    owner_confirmation_count = 0
+
+    if can_view_decisions:
+        for issue in issues:
+            if not (bool(getattr(issue, "need_decision_by", "")) or IT.is_decision(_governance_text(getattr(issue, "issue_type", "")))):
+                continue
+            decision_count += 1
+            project_id = getattr(issue, "project_id", None)
+            actions.append({
+                "id": f"issue:{getattr(issue, 'id', '')}",
+                "project_id": project_id,
+                "kind": "decision",
+                "title": _governance_text(getattr(issue, "description", "")) or "待决策事项",
+                "accountable_owner": owner_for(getattr(issue, "related_task_id", None), getattr(issue, "related_subtask_id", None)),
+                "due_at": _governance_date(getattr(issue, "expected_resolve_time", None)),
+                "waiting_days": _governance_waiting_days(getattr(issue, "updated_at", None)),
+                "route": f"/project/{project_id}/decisions" if project_id else None,
+                "priority": 0 if _governance_text(getattr(issue, "priority", "")) == "高" else 1,
+                "updated_at": getattr(issue, "updated_at", None),
+            })
+
+    if can_view_risks:
+        for issue in issues:
+            if _governance_text(getattr(issue, "status", "")) != "待协调":
+                continue
+            coordination_count += 1
+            project_id = getattr(issue, "project_id", None)
+            actions.append({
+                "id": f"issue:{getattr(issue, 'id', '')}",
+                "project_id": project_id,
+                "kind": "coordination",
+                "title": _governance_text(getattr(issue, "description", "")) or "待协调事项",
+                "accountable_owner": owner_for(getattr(issue, "related_task_id", None), getattr(issue, "related_subtask_id", None)),
+                "due_at": _governance_date(getattr(issue, "expected_resolve_time", None)),
+                "waiting_days": _governance_waiting_days(getattr(issue, "updated_at", None)),
+                "route": f"/project/{project_id}/coordinate" if project_id else None,
+                "priority": 0,
+                "updated_at": getattr(issue, "updated_at", None),
+            })
+
+    if can_view_submissions:
+        for submission in submissions:
+            status = _governance_text(getattr(submission, "confirm_status", ""))
+            project_id = getattr(submission, "project_id", None)
+            if status in SS.WAITING_COORDINATOR_FEEDBACK:
+                coordination_count += 1
+                actions.append({
+                    "id": f"submission:{getattr(submission, 'id', '')}",
+                    "project_id": project_id,
+                    "kind": "coordination",
+                    "title": _governance_text(getattr(submission, "title", "")) or "待统筹反馈",
+                    "accountable_owner": owner_for(getattr(submission, "related_task_id", None), getattr(submission, "related_subtask_id", None)),
+                    "due_at": None,
+                    "waiting_days": _governance_waiting_days(getattr(submission, "created_at", None)),
+                    "route": f"/project/{project_id}/coordinate" if project_id else None,
+                    "priority": 1,
+                    "updated_at": getattr(submission, "created_at", None),
+                })
+            if status in SS.PENDING_OWNER_REVIEW:
+                owner_confirmation_count += 1
+                actions.append({
+                    "id": f"submission:{getattr(submission, 'id', '')}",
+                    "project_id": project_id,
+                    "kind": "owner_confirmation",
+                    "title": _governance_text(getattr(submission, "title", "")) or "待责任人确认",
+                    "accountable_owner": owner_for(getattr(submission, "related_task_id", None), getattr(submission, "related_subtask_id", None)),
+                    "due_at": None,
+                    "waiting_days": _governance_waiting_days(getattr(submission, "created_at", None)),
+                    "route": f"/project/{project_id}/confirm" if project_id else None,
+                    "priority": 0,
+                    "updated_at": getattr(submission, "created_at", None),
+                })
+
+    action_order = {"decision": 0, "coordination": 1, "owner_confirmation": 2}
+    actions.sort(key=lambda item: (
+        action_order[item["kind"]],
+        item["priority"],
+        item["due_at"] or "9999-12-31",
+        item["updated_at"] or datetime.min,
+        item["title"],
+    ))
+    for action in actions:
+        action.pop("priority", None)
+        action.pop("updated_at", None)
+
+    submissions_by_key_task: dict[int, list[object]] = defaultdict(list)
+    if can_view_submissions:
+        for submission in submissions:
+            related_subtask_id = getattr(submission, "related_subtask_id", None)
+            if related_subtask_id:
+                submissions_by_key_task[related_subtask_id].append(submission)
+
+    initiatives: list[dict] = []
+    for key_task in key_tasks:
+        workstream = workstream_by_id.get(getattr(key_task, "task_id", None))
+        if not workstream:
+            continue
+        evidence = submissions_by_key_task.get(getattr(key_task, "id", None), [])
+        evidence_confirmed = sum(
+            1 for item in evidence
+            if _governance_text(getattr(item, "confirm_status", "")) in SS.CONFIRMED_AND_STORED
+        )
+        collaborators = []
+        seen_collaborators: set[int] = set()
+        for person_id in getattr(key_task, "collaborator_ids", None) or []:
+            if not isinstance(person_id, int) or person_id == getattr(key_task, "assignee_id", None) or person_id in seen_collaborators:
+                continue
+            person = people_by_id.get(person_id)
+            name = _governance_text(getattr(person, "name", "")) if person else ""
+            if name:
+                collaborators.append({"id": person_id, "name": name})
+                seen_collaborators.add(person_id)
+        initiatives.append({
+            "key_task_id": getattr(key_task, "id", None),
+            "workstream_id": getattr(workstream, "id", None),
+            "workstream_title": _governance_text(getattr(workstream, "key_task", "")),
+            "project_id": getattr(workstream, "project_id", None),
+            "project_name": _governance_text(getattr(workstream, "special_project", "")),
+            "title": _governance_text(getattr(key_task, "title", "")),
+            "accountable_owner": _governance_text(getattr(key_task, "assignee", "")),
+            "collaborators": collaborators,
+            "official_progress": _governance_official_progress(_governance_text(getattr(key_task, "status", ""))),
+            "next_milestone": _governance_text(getattr(key_task, "due_label", "")) or _governance_text(getattr(key_task, "title", "")),
+            "next_milestone_at": _governance_date(getattr(key_task, "due_date", None)) or _governance_date(getattr(key_task, "plan_time", None)),
+            "health": _governance_health(key_task, evidence_confirmed, len(evidence)),
+            "evidence_confirmed": evidence_confirmed,
+            "evidence_total": len(evidence),
+        })
+
+    health_order = {"risk": 0, "watch": 1, "unstarted": 2, "healthy": 3}
+    initiatives.sort(key=lambda item: (
+        health_order[item["health"]],
+        item["next_milestone_at"] or "9999-12-31",
+        item["title"],
+        item["key_task_id"] or 0,
+    ))
+    return {
+        "signals": {
+            "pending_decisions": decision_count,
+            "pending_coordination": coordination_count,
+            "pending_owner_confirmation": owner_confirmation_count,
+        },
+        "actions": actions[:3],
+        "initiatives": initiatives[:6],
+    }
 
 def _require_global_read_scope(context: dict) -> None:
     if not (context.get("is_tech_admin") or context.get("is_ceo")):
@@ -435,6 +652,34 @@ def _project_overview(
         "items": [crud.to_dict(s) for s in queue_items[:10]],
     }
 
+    task_ids = [task.id for task in tasks]
+    key_tasks = (
+        db.query(models.SubTask)
+        .filter(models.SubTask.task_id.in_(task_ids), models.SubTask.is_deleted == False)
+        .all()
+        if task_ids else []
+    )
+    collaborator_ids = {
+        person_id
+        for key_task in key_tasks
+        for person_id in (key_task.collaborator_ids or [])
+        if isinstance(person_id, int)
+    }
+    people_by_id = {
+        person.id: person
+        for person in db.query(models.Person).filter(models.Person.id.in_(collaborator_ids)).all()
+    } if collaborator_ids else {}
+    governance = _build_governance_payload(
+        workstreams=tasks,
+        key_tasks=key_tasks,
+        issues=issues,
+        submissions=all_subs,
+        people_by_id=people_by_id,
+        can_view_decisions=can_see_decisions,
+        can_view_risks=can_see_risks,
+        can_view_submissions=can_see_submissions,
+    )
+
     return {
         "project": {"id": project_id, "name": proj_name or ""},
         "access": {
@@ -491,6 +736,7 @@ def _project_overview(
         "risks":              risks_list,
         "latest_achievements": recent_achs,
         "role_queue":         role_queue,
+        "governance":         governance,
     }
 
 
@@ -712,6 +958,36 @@ def _global_overview(
     )
 
     task_s = _task_stats(tasks)
+    task_ids = [task.id for task in tasks]
+    key_tasks = (
+        db.query(models.SubTask)
+        .filter(models.SubTask.task_id.in_(task_ids), models.SubTask.is_deleted == False)
+        .all()
+        if task_ids else []
+    )
+    collaborator_ids = {
+        person_id
+        for key_task in key_tasks
+        for person_id in (key_task.collaborator_ids or [])
+        if isinstance(person_id, int)
+    }
+    people_by_id = {
+        person.id: person
+        for person in db.query(models.Person).filter(models.Person.id.in_(collaborator_ids)).all()
+    } if collaborator_ids else {}
+    visible_submissions = _apply_project_scope(
+        db.query(models.UpdateSubmission), context, models.UpdateSubmission, visible_proj_ids
+    ).all()
+    governance = _build_governance_payload(
+        workstreams=tasks,
+        key_tasks=key_tasks,
+        issues=issue_rows,
+        submissions=visible_submissions,
+        people_by_id=people_by_id,
+        can_view_decisions=can_view_issue_decisions(context),
+        can_view_risks=can_view_issue_risks(context),
+        can_view_submissions=can_access_confirmation_center(context),
+    )
 
     return {
         "access": {
@@ -756,6 +1032,7 @@ def _global_overview(
         "risks":             risks if can_view_issue_risks(context) else [],
         "latest_achievements": latest_achievements,
         "role_queue":        _global_role_queue(context, db),
+        "governance":        governance,
     }
 
 

@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain import project_lifecycle as PL
 from .kickoff_agent import build_kickoff_snapshot
 from ..time_utils import utc_now
 
@@ -17,8 +18,8 @@ def confirm_kickoff_start(run_id: int, reviewer_name: str, db: Session):
     if not run:
         raise HTTPException(404, "启动会审核包不存在")
     project = db.get(models.Project, run.project_id)
-    if not project or project.status != "pending_kickoff":
-        raise HTTPException(409, "项目不处于待启动会状态")
+    if not project or not PL.is_execution_available(project.status):
+        raise HTTPException(409, "当前项目阶段不可确认启动会")
     proposals = db.query(models.KickoffChangeProposal).filter_by(run_id=run.id).all()
     if any(item.review_status == "pending" for item in proposals):
         raise HTTPException(409, "启动会仍有未审核提案")
@@ -31,9 +32,12 @@ def confirm_kickoff_start(run_id: int, reviewer_name: str, db: Session):
     data = json.loads(run.result_json or "{}")
     meeting = models.Meeting(project_id=project.id, meeting_type="kickoff", title="启动会纪要", summary=str(data.get("summary") or ""), publish_status="published")
     db.add(meeting)
-    project.status = "active"
+    # Active projects stay active: kickoff is an audited execution event, not
+    # another lifecycle gate. Legacy pending_kickoff rows are normalized here
+    # when their historical kickoff package is finally confirmed.
+    project.status = PL.S_ACTIVE
     project.is_active = True
-    setattr(project, "lifecycle_status", "active")
+    setattr(project, "lifecycle_status", PL.S_ACTIVE)
     project.kickoff_date = utc_now().date().isoformat()
     project.kickoff_by = reviewer_name
     run.status = "approved"

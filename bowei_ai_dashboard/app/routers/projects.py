@@ -2103,20 +2103,19 @@ def dispatch_project(
     if _role_counts.get("owner", 0) <= 0:
         raise HTTPException(409, "请先配置项目负责人后再下发项目。")
 
-    _set_project_lifecycle(project, "dispatched", db=db, project_id=project_id)
     recipient_ids = project_owner_ids(project_id, db)
     _notify_people(
         db,
         recipient_ids,
-        ntype="project_dispatch",
-        title="项目下发通知",
-        body=f"项目《{project.name}》已下发，请负责人补全立项信息",
+        ntype="project_owner_notify",
+        title="项目负责人待完善立项信息",
+        body=f"项目《{project.name}》已完成团队配置，请负责人补全立项信息",
         link=f"/home/dashboard?projectId={project_id}",
         project_id=project_id,
     )
-    crud.log(db, current_user, "dispatch_project", "project", project_id, {"status": lifecycle}, {"status": "dispatched"})
+    crud.log(db, current_user, "notify_project_owner", "project", project_id, {"status": lifecycle}, {"status": lifecycle})
     db.commit()
-    return {"ok": True, "dispatched_to": len(recipient_ids)}
+    return {"ok": True, "notified_to": len(recipient_ids), "status": lifecycle}
 
 
 @router.post("/{project_id}/owner-submit")
@@ -2134,10 +2133,12 @@ def owner_submit_project_profile(
     require_project_owner_or_admin(current_user, project_id, db)
 
     lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
-    if lifecycle == "archived":
-        raise HTTPException(409, "已归档项目不可提交")
-    if lifecycle == "pending_review":
-        raise HTTPException(409, "项目已在审核中")
+    if not PL.is_owner_plan_editable(lifecycle):
+        if lifecycle == "archived":
+            raise HTTPException(409, "已归档项目不可提交")
+        if lifecycle == "pending_review":
+            raise HTTPException(409, "项目已在审核中")
+        raise HTTPException(409, "当前项目阶段不可提交立项信息")
 
     resolved_people = _resolve_work_progress_people(payload, db)
 
@@ -2240,7 +2241,7 @@ def approve_project(
         raise HTTPException(409, "已归档项目不可启动")
 
     payload = payload or schemas.ProjectProfilePayload()
-    _set_project_lifecycle(project, PL.S_PENDING_KICKOFF, db=db, project_id=project_id)
+    _set_project_lifecycle(project, PL.S_ACTIVE, db=db, project_id=project_id)
     _update_project_columns(
         db,
         project_id,

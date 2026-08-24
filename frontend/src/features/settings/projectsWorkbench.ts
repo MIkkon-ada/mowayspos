@@ -43,7 +43,7 @@ export function getProjectOverviewStats(projects: readonly Project[]): ProjectWo
   return projects.reduce<ProjectWorkbenchOverviewStats>((stats, project) => {
     const status = getProjectPrimaryStatus(project)
     stats.all += 1
-    if (status === 'dispatched' || status === 'returned') stats.toComplete += 1
+    if (status === 'draft' || status === 'dispatched' || status === 'returned') stats.toComplete += 1
     if (status === 'pending_review') stats.toApprove += 1
     if (status === 'active') stats.active += 1
     if (status === 'archived') stats.archived += 1
@@ -71,17 +71,28 @@ export function getProjectTodo(
   subtasks: readonly SubTaskWithParent[],
 ): ProjectTodo | null {
   const status = getProjectPrimaryStatus(project)
-  const materialChecks = status === 'dispatched' || status === 'returned'
+  const materialChecks = status === 'draft' || status === 'dispatched' || status === 'returned'
     ? getProjectMaterialChecklist(project, tasks, subtasks)
     : []
+
+  if (status === 'draft' && roles.isRealOwner) {
+    return {
+      project,
+      action: 'ownerSubmit',
+      actionLabel: '完善立项信息',
+      title: '项目待负责人完善立项信息',
+      description: '请补充项目目标、项目周期、重点工作和关键任务等信息。',
+      materialChecks,
+    }
+  }
 
   if (status === 'draft' && (roles.isSuperAdmin || roles.isCompanyCeo)) {
     return {
       project,
       action: 'edit',
       actionLabel: '继续完善项目',
-      title: '项目尚未下发',
-      description: '请继续完善项目信息并完成下发。',
+      title: '项目已完成团队配置',
+      description: '可继续编辑项目资料和团队配置，负责人会收到待完善通知。',
       materialChecks,
     }
   }
@@ -124,6 +135,7 @@ export function getProjectTodo(
 
 export function getProjectLifecycleStage(status: string): ProjectLifecycleStage {
   switch (status) {
+    case 'pending_kickoff':
     case 'active':
       return { key: 'execution', label: '执行阶段', activeIndex: 2, detail: '项目正在执行中。' }
     case 'pending_close':

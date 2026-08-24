@@ -71,12 +71,12 @@ export function KickoffAgentWorkspace({ projectId, onClose }: { projectId: numbe
   async function confirm() {
     if (!run) return
     setSaving(true)
-    try { await confirmKickoffStart(run.id); setMessage('项目已启动。'); onClose() }
+    try { await confirmKickoffStart(run.id); setMessage('启动会已确认，执行基线已写回。'); onClose() }
     catch { setMessage('启动确认失败，请完成所有提案审核后重试。') } finally { setSaving(false) }
   }
 
   return <section className="rounded-2xl border bg-white p-6" data-project-id={projectId}>
-    <h2 className="text-base font-bold text-slate-800">启动会确认 Agent</h2>
+    <h2 className="text-base font-bold text-slate-800">启动会执行事件 Agent</h2>
     <p className="mt-2 text-sm text-slate-500">冻结会前工作推进表后，Agent 只生成可审核的结论和变更提案；未审核内容不会写入执行版。</p>
 
     {!run && <>
@@ -105,13 +105,13 @@ export function KickoffAgentWorkspace({ projectId, onClose }: { projectId: numbe
         </div>
       </div>
 
-      {isSubmitted && <button className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={!canConfirm || saving} onClick={confirm}>确认启动项目</button>}
+      {isSubmitted && <button className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={!canConfirm || saving} onClick={confirm}>确认启动会并写回执行基线</button>}
     </div>}
 
     <div className="mt-4 flex gap-3">
       <button className="rounded-xl border px-4 py-2 text-sm" onClick={onClose}>返回</button>
     </div>
     {message && <p className="mt-3 text-sm text-slate-600">{message}</p>}
-    {result.start_conclusion === 'no_change' && <p className="mt-3 text-xs text-slate-500">本次会议结论为无调整，仍需完成审核后才能启动项目。</p>}
+    {result.start_conclusion === 'no_change' && <p className="mt-3 text-xs text-slate-500">本次会议结论为无调整，仍需完成审核后才能写回执行基线。</p>}
   </section>
 }

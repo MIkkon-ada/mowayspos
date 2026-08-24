@@ -10,18 +10,18 @@ import {
   getProjectPrimaryStatus,
   getProjectStatusBadge,
 } from '../domain/projectLifecycleStatus'
-import type { DashboardOverview, Project } from '../types'
-import Chart from 'chart.js/auto'
+import type { DashboardOverview, GovernanceAction, GovernanceInitiative, Project } from '../types'
 import { fmtMonth, fmtPlanTime } from '../utils/time'
 import { Skel, SkeletonStatCard } from '../components/Skeleton'
 import { MobileDashboardContent, type RoleQueueType } from '../features/dashboard/MobileDashboardContent'
+import { GovernanceDashboardContent, type ProjectHealthRow } from '../features/dashboard/GovernanceDashboardContent'
+import { aggregateGovernanceOverviews, emptyGovernance } from '../features/dashboard/governanceDashboard'
 
 type DashboardScope = 'global' | 'my' | 'project'
 
 function asNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
-
 function mergeRecords(overviews: DashboardOverview[], path: (overview: any) => unknown): Array<Record<string, unknown>> {
   return overviews.flatMap((overview) => {
     const value = path(overview)
@@ -81,6 +81,7 @@ function aggregateDashboardOverviews(projects: Project[], overviews: DashboardOv
       count: roleQueueItems.length,
       items: roleQueueItems.slice(0, 10),
     },
+    governance: aggregateGovernanceOverviews(overviews),
   }
 }
 
@@ -130,8 +131,6 @@ export function DashboardPage() {
   const [data, setData] = useState<DashboardOverview | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const chartRef = useRef<HTMLCanvasElement>(null)
-  const chartInstance = useRef<Chart | null>(null)
   const shouldBlockDashboardLoading = !canViewMyDashboard && scopeMode === 'my'
 
   // ── 顶层渲染状态 ──
@@ -278,33 +277,6 @@ export function DashboardPage() {
     })
   })
 
-  // 甜甜圈图
-  useEffect(() => {
-    if (!chartRef.current) return
-    chartInstance.current?.destroy()
-    chartInstance.current = new Chart(chartRef.current, {
-      type: 'doughnut',
-      data: {
-        labels: ['未启动', '进行中', '已完成', '延期', '暂缓'],
-        datasets: [{
-          data: [notStarted, inProgress, completed, delayed, paused],
-          backgroundColor: ['#9CA3AF', '#2563EB', '#059669', '#DC2626', '#D97706'],
-          borderWidth: 2,
-          borderColor: '#fff',
-        }],
-      },
-      options: {
-        cutout: '72%',
-        plugins: {
-          legend: { display: false },
-          tooltip: { callbacks: { label: (ctx) => ` ${ctx.label}: ${ctx.parsed} 项` } },
-        },
-        animation: { animateRotate: true, duration: 800 },
-      },
-    })
-    return () => { chartInstance.current?.destroy() }
-  }, [notStarted, inProgress, completed, delayed, paused])
-
   // ── 通知数据 ────────────────────────────────────────────────
   const delayedTasks: any[]   = (data as any)?.recent?.delayed_tasks ?? []
   const queue: any            = (data as any)?.role_queue ?? {}
@@ -330,6 +302,30 @@ export function DashboardPage() {
     const card = completionMap.get(project.name)
     return { id: project.id, name: project.name, done: card?.done ?? 0, total: card?.total ?? 0, rate: card?.rate ?? 0 }
   })
+  const governance = data?.governance ?? emptyGovernance()
+  const scopedProjects = scopeMode === 'project' && scopeId
+    ? projects.filter((project) => project.id === scopeId)
+    : projects
+  const projectHealthRows: ProjectHealthRow[] = scopedProjects.slice(0, 4).map((project) => {
+    const card = completionMap.get(project.name)
+    const relatedInitiative = governance.initiatives.find((initiative) => initiative.project_id === project.id)
+    return {
+      id: project.id,
+      name: project.name,
+      nextMilestone: relatedInitiative?.next_milestone || '未设置',
+      health: card?.rate === 0 && (card?.total ?? 0) > 0 ? 'unstarted' : card?.rate === 100 ? 'healthy' : 'watch',
+    }
+  })
+
+  function openGovernanceAction(action: GovernanceAction) {
+    if (!action.route || (scopeMode === 'project' && action.project_id !== scopeId)) return
+    navigate(action.route)
+  }
+
+  function openGovernanceInitiative(initiative: GovernanceInitiative) {
+    if (!initiative.project_id) return
+    navigate(`/work/tasks?projectId=${initiative.project_id}`)
+  }
 
   // 点击面板外部关闭
   useEffect(() => {
@@ -351,12 +347,6 @@ export function DashboardPage() {
   const now = new Date()
   const monthStr = `${now.getFullYear()}年${now.getMonth() + 1}月`
 
-  // 当前选中的专项名
-  const scopeLabel = scopeMode === 'global'
-    ? '全部项目'
-    : scopeMode === 'my'
-      ? '我的项目'
-      : (projects.find((p) => p.id === scopeId)?.name ?? '单个项目')
   const dashboardProject = scopeMode === 'project' && scopeId ? (projects.find((p) => p.id === scopeId) ?? currentProject) : currentProject
   const dashboardProjectRoles = dashboardProject?.user_roles ?? currentProjectRoles
   const isFillableForOwner = canShowProjectSubmitAction(dashboardProject) && dashboardProjectRoles.includes('owner')
@@ -733,310 +723,16 @@ export function DashboardPage() {
             {loadError && <span className="text-xs" style={{ color: '#9A3412' }}>（{loadError}）</span>}
           </div>
         )}
-        {(() => {
-          const pid = scopeId ?? currentProjectId
-          const toTasks = (status?: string) => () => {
-            if (!pid) return
-            navigate(status ? `/project/${pid}/tasks?status=${encodeURIComponent(status)}` : `/project/${pid}/tasks`)
-          }
-          const toAchs = () => pid && navigate(`/project/${pid}/achievements`)
-          const toDecisions = () => pid && navigate(`/project/${pid}/decisions`)
-          return (
-            <div className={`grid gap-4 ${canViewDecisions ? 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-6' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-5'}`}>
-              <StatCard label="任务总数" value={total} sub={notStarted > 0 ? `未开始 ${notStarted} 项` : '全部已启动'} subColor="#64748B"
-                onClick={toTasks()}
-                icon={<IconBox bg="#EFF6FF" color="#2563EB"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></IconBox>}
-              />
-              <StatCard label="进行中" value={inProgress} sub={`占比 ${total ? Math.round(inProgress / total * 100) : 0}%`} accent="#2563EB"
-                onClick={toTasks('推进中')}
-                icon={<IconBox bg="#DBEAFE" color="#2563EB"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></IconBox>}
-              />
-              <StatCard label="已完成" value={completed} sub={`完成率 ${total ? Math.round(completed / total * 100) : 0}%`} accent="#059669"
-                onClick={toTasks('已完成')}
-                icon={<IconBox bg="#D1FAE5" color="#059669"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></IconBox>}
-              />
-              <StatCard label="延期" value={delayed} sub={total ? `延期率 ${Math.round(delayed / total * 100)}%` : '无任务'} accent="#DC2626"
-                onClick={toTasks('延期')}
-                icon={<IconBox bg="#FEE2E2" color="#DC2626"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></IconBox>}
-              />
-              {canViewDecisions && (
-                <StatCard label="待决策" value={pendingDecisions} sub={pendingDecisions > 0 ? '需及时处理' : '暂无待决策'} subColor={pendingDecisions > 0 ? '#D97706' : '#94A3B8'} accent="#D97706"
-                  onClick={toDecisions}
-                  icon={<IconBox bg="#FEF3C7" color="#D97706"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></IconBox>}
-                />
-              )}
-              <StatCard label="成果数量" value={achievements} sub={scopeMode === 'global' ? '全部项目汇总' : scopeLabel} subColor="#7C3AED" accent="#7C3AED"
-                onClick={toAchs}
-                icon={<IconBox bg="#EDE9FE" color="#7C3AED"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></IconBox>}
-              />
-            </div>
-          )
-        })()}
-
-        {/* ─── 本月重点 / 延迟任务 / 需决策 ─── */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-          {(() => {
-            const pid = scopeId ?? currentProjectId
-            const toTasks = (status?: string) => pid
-              ? () => navigate(status ? `/project/${pid}/tasks?status=${encodeURIComponent(status)}` : `/project/${pid}/tasks`)
-              : undefined
-            return null
-          })()}
-          <PanelCard title="本月重点" onMore={(() => { const pid = scopeId ?? currentProjectId; return pid ? () => navigate(`/project/${pid}/tasks`) : undefined })()}>
-            {(data?.recent?.tasks as any[] ?? []).slice(0, 3).map((t: any, i: number) => (
-              <div key={i} className="flex items-start gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer">
-                <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-slate-700 leading-snug">{t.key_task ?? '任务项'}</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-xs text-slate-400">{t.owner ?? ''}</span>
-                    <StatusBadge status={t.status ?? '进行中'} />
-                  </div>
-                </div>
-              </div>
-            ))}
-            {!(data?.recent?.tasks as any[])?.length && (
-              <p className="text-xs text-slate-400 text-center py-4">暂无数据</p>
-            )}
-          </PanelCard>
-
-          <PanelCard title="延迟任务" badge={delayed} badgeColor="bg-red-100 text-red-600"
-            onMore={(() => { const pid = scopeId ?? currentProjectId; return pid ? () => navigate(`/project/${pid}/tasks?status=${encodeURIComponent('延期')}`) : undefined })()}>
-
-            {((data?.recent as any)?.delayed_tasks as any[] ?? []).slice(0, 4).map((t: any, i: number) => (
-              <div key={i} className="flex items-start gap-3 p-2.5 rounded-lg cursor-pointer hover:bg-red-50 transition-colors" style={{ background: '#FEF2F250', border: '1px solid #FECACA' }}>
-                <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <svg style={{ width: 14, height: 14, color: '#DC2626' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-slate-700 truncate">{t.key_task ?? '任务'}</p>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    {t.is_overdue && <span className="text-xs font-semibold text-red-500">超期</span>}
-                    <span className="text-xs text-slate-400">{projectNameFromRecord(t)}{projectNameFromRecord(t) && t.owner ? ' · ' : ''}{t.owner ?? ''}</span>
-                    {t.plan_time && <span className="text-xs text-slate-300 ml-auto whitespace-nowrap">{fmtPlanTime(t.plan_time)}</span>}
-                  </div>
-                </div>
-              </div>
-            ))}
-            {!((data?.recent as any)?.delayed_tasks as any[])?.length && (
-              <p className="text-xs text-slate-400 text-center py-4">暂无延期任务</p>
-            )}
-          </PanelCard>
-
-          {(() => {
-            const queue = (data as any)?.role_queue
-            const qType: string = queue?.type ?? 'pending_decisions'
-            const qItems: any[] = queue?.items ?? []
-            const qCount: number = queue?.count ?? 0
-            const PANEL_META: Record<string, { title: string; empty: string; accent: string; bg: string }> = {
-              pending_decisions:  { title: '需决策事项',  empty: '暂无待决策事项',  accent: '#DC2626', bg: '#FEF2F2' },
-              pending_review:     { title: '待审核内容',  empty: '暂无待审核内容',  accent: '#2563EB', bg: '#EFF6FF' },
-              pending_coordinator:{ title: '待给出建议',  empty: '暂无待处理事项',  accent: '#7C3AED', bg: '#F5F3FF' },
-              in_progress:        { title: '流程推进中',  empty: '暂无进行中提交',  accent: '#059669', bg: '#F0FDF4' },
-            }
-            const meta = PANEL_META[qType] ?? PANEL_META['pending_decisions']
-            const pid = scopeId ?? currentProjectId
-            const Q_ROUTE: Record<string, string> = {
-              pending_decisions:   'decisions',
-              pending_review:      'confirm',
-              pending_coordinator: 'coordinate',
-              in_progress:         'confirm',
-            }
-            const qRoute = Q_ROUTE[qType] ?? 'confirm'
-            const onQueueMore = pid ? () => navigate(`/project/${pid}/${qRoute}`) : undefined
-            return (
-              <PanelCard title={meta.title} badge={qCount || undefined} badgeColor={`text-white`} badgeStyle={{ background: meta.accent }} onMore={onQueueMore}>
-                {qItems.slice(0, 3).map((item: any, i: number) => (
-                  <div key={i} className="p-3 rounded-xl border cursor-pointer transition-colors hover:opacity-90"
-                    style={{ borderColor: `${meta.accent}40`, background: `${meta.bg}CC` }}>
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-xs font-semibold text-slate-700 leading-snug flex-1 truncate">
-                        {item.title ?? item.key_task ?? item.description ?? '提交事项'}
-                      </p>
-                      <span className="text-xs px-1.5 py-0.5 rounded flex-shrink-0 font-medium"
-                        style={{ background: `${meta.accent}20`, color: meta.accent }}>
-                        {item.confirm_status ?? item.status ?? '处理中'}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-400 mt-1.5 truncate">
-                      {item.submitter ?? item.owner ?? ''}{projectNameFromRecord(item) ? ` · ${projectNameFromRecord(item)}` : ''}
-                    </p>
-                  </div>
-                ))}
-                {qItems.length === 0 && (
-                  <p className="text-xs text-slate-400 text-center py-4">{meta.empty}</p>
-                )}
-              </PanelCard>
-            )
-          })()}
-        </div>
-
-        {/* ─── 专项进度 + 状态环形图 ─── */}
-        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-          <div className="bg-white rounded-2xl border p-5 col-span-2 lg:col-span-2 xl:col-span-3" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-sm font-bold text-slate-800">专项进度总览</h2>
-              <span className="text-xs text-slate-400">更新于 {selectedMonth || '全部月份'}</span>
-            </div>
-            <div className="space-y-4">
-              {projects.slice(0, 6).map((p, i) => {
-                const gradients = [
-                  '#2563EB,#60A5FA', '#059669,#34D399', '#F59E0B,#FCD34D',
-                  '#8B5CF6,#C4B5FD', '#0891B2,#67E8F9', '#6366F1,#A5B4FC',
-                ]
-                const dots = ['#2563EB', '#059669', '#F59E0B', '#8B5CF6', '#0891B2', '#6366F1']
-                const card = completionMap.get(p.name)
-                const pct = card?.rate ?? 0
-                const taskLabel = card ? `${card.done}/${card.total}` : '暂无数据'
-                return (
-                  <div key={p.id}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleScopeChange(String(p.id))}
-                          className="w-2 h-2 rounded-full flex-shrink-0 cursor-pointer hover:scale-125 transition-transform"
-                          style={{ background: dots[i] }}
-                          title={`切换到 ${p.name}`}
-                        />
-                        <span
-                          onClick={() => handleScopeChange(String(p.id))}
-                          className="text-sm font-medium text-slate-700 cursor-pointer hover:text-blue-600 transition-colors"
-                        >
-                          {p.name}
-                        </span>
-                        {p.user_roles?.includes('owner') && (
-                          <svg
-                            style={{ width: 14, height: 14, color: '#DC2626', flexShrink: 0 }}
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                            aria-label="项目预警"
-                          >
-                            <title>项目预警</title>
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                          </svg>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-slate-400">{taskLabel}</span>
-                        <span className="text-sm font-bold text-slate-700">{pct}%</span>
-                      </div>
-                    </div>
-                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#EEF2F7' }}>
-                      <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: `linear-gradient(90deg,${gradients[i]})` }} />
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl border p-5 col-span-2 lg:col-span-1 xl:col-span-2" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
-            <h2 className="text-sm font-bold text-slate-800 mb-4">任务状态分布</h2>
-            <div className="flex items-center gap-4">
-              <div style={{ width: 140, height: 140, flexShrink: 0 }}>
-                <canvas ref={chartRef} />
-              </div>
-              <div className="flex-1 space-y-2.5">
-                {[
-                  { label: '未启动', val: notStarted, color: '#6B7280' },
-                  { label: '进行中', val: inProgress, color: '#2563EB' },
-                  { label: '已完成', val: completed, color: '#059669' },
-                  { label: '延期',   val: delayed,   color: '#DC2626' },
-                  { label: '暂缓',   val: paused,    color: '#D97706' },
-                ].map(({ label, val, color }) => (
-                  <div key={label} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 rounded-sm" style={{ background: color }} />
-                      <span className="text-xs text-slate-600">{label}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-700">{val}</span>
-                      <span className="text-xs text-slate-400">{total ? `${Math.round(val / total * 100)}%` : '0%'}</span>
-                    </div>
-                  </div>
-                ))}
-                <div className="pt-1 border-t border-slate-100 flex items-center justify-between">
-                  <span className="text-xs text-slate-500 font-medium">合计</span>
-                  <span className="text-xs font-bold text-slate-800">{total} 项</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <GovernanceDashboardContent
+          governance={governance}
+          projectHealthRows={projectHealthRows}
+          onOpenAction={openGovernanceAction}
+          onOpenProject={(projectId) => handleScopeChange(String(projectId))}
+          onOpenInitiative={openGovernanceInitiative}
+        />
         </>}
       </main>
 
-    </div>
-  )
-}
-
-/* ── 子组件 ── */
-
-function StatCard({ label, value, sub, subColor, accent, icon, onClick }: {
-  label: string; value: number; sub?: string; subColor?: string; accent?: string; icon: React.ReactNode; onClick?: () => void
-}) {
-  return (
-    <div
-      onClick={onClick}
-      className={`bg-white rounded-2xl border p-4 transition-all hover:-translate-y-0.5 ${onClick ? 'cursor-pointer hover:shadow-md' : ''}`}
-      style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)', borderLeft: accent ? `3px solid ${accent}` : undefined }}
-    >
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs text-slate-500 font-medium">{label}</p>
-          <p className="text-3xl font-bold mt-1.5 leading-none" style={{ color: accent ?? '#1E293B' }}>{value}</p>
-          {sub && <p className="text-xs font-medium mt-2" style={{ color: subColor ?? '#94A3B8' }}>{sub}</p>}
-        </div>
-        {icon}
-      </div>
-    </div>
-  )
-}
-
-function PanelCard({ title, badge, badgeColor, badgeStyle, onMore, children }: {
-  title: string; badge?: number; badgeColor?: string; badgeStyle?: React.CSSProperties; onMore?: () => void; children: React.ReactNode
-}) {
-  return (
-    <div className="bg-white rounded-2xl border p-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-          {title}
-          {badge !== undefined && badge > 0 && (
-            <span className={`w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center ${badgeColor ?? 'bg-blue-100 text-blue-600'}`}
-              style={badgeStyle}>{badge}</span>
-          )}
-        </h2>
-        {onMore && (
-          <button onClick={onMore} className="cursor-pointer text-xs text-blue-500 hover:text-blue-700 font-medium">查看更多 →</button>
-        )}
-      </div>
-      <div className="space-y-2.5">{children}</div>
-    </div>
-  )
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    '进行中': 'bg-blue-100 text-blue-700',
-    '推进中': 'bg-blue-100 text-blue-700',
-    '已完成': 'bg-emerald-100 text-emerald-700',
-    '延期':   'bg-red-100 text-red-700',
-    '暂缓':   'bg-amber-100 text-amber-700',
-    '未启动': 'bg-slate-100 text-slate-600',
-    '待审核': 'bg-purple-100 text-purple-700',
-  }
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${map[status] ?? 'bg-slate-100 text-slate-600'}`}>
-      {status}
-    </span>
-  )
-}
-
-function IconBox({ bg, color, children }: { bg: string; color: string; children: React.ReactNode }) {
-  return (
-    <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: bg }}>
-      <svg style={{ width: 20, height: 20, color }} fill="none" stroke="currentColor" viewBox="0 0 24 24">{children}</svg>
     </div>
   )
 }

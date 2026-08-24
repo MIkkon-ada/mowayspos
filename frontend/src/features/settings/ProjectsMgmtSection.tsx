@@ -8,7 +8,7 @@ import {
   createProject,
   patchProject,
   approveProject,
-  dispatchProject,
+  notifyProjectOwner,
   returnProject,
   addProjectMember,
   removeProjectMember,
@@ -58,13 +58,14 @@ const EMPTY_NEW_FORM: NewProjectForm = {
 const PAGE_SIZE = 10
 
 const STATUS_LABEL_MAP: Record<string, string> = {
-  draft: '草稿', dispatched: '已派发', pending_review: '待审核', returned: '已退回',
+  draft: '草稿', dispatched: '历史派发', pending_kickoff: '执行中（历史状态）', pending_review: '待审核', returned: '已退回',
   active: '进行中', pending_close: '结束审核中', ended: '已结束', archived: '已归档',
 }
 
 const STATUS_COLOR_MAP: Record<string, string> = {
   draft: 'text-slate-500 bg-slate-100',
-  dispatched: 'text-amber-700 bg-amber-50',
+  dispatched: 'text-slate-600 bg-slate-100',
+  pending_kickoff: 'text-blue-700 bg-blue-50',
   pending_review: 'text-orange-700 bg-orange-50',
   returned: 'text-red-600 bg-red-50',
   active: 'text-sky-600 bg-sky-50',
@@ -74,8 +75,9 @@ const STATUS_COLOR_MAP: Record<string, string> = {
 }
 
 const STAGE_DESCRIPTIONS: Record<string, string> = {
-  draft: '项目尚未下发，可继续编辑项目基础信息和角色配置。',
-  dispatched: '项目已下发，等待负责人完善立项信息和推进表草案。',
+  draft: '项目已完成基础立项和团队配置，负责人可直接完善立项信息。',
+  dispatched: '历史项目状态：负责人可继续完善立项信息。',
+  pending_kickoff: '历史项目状态：项目已进入执行阶段，启动会作为执行事件留痕。',
   pending_review: '负责人已提交，等待企业教练审核立项和推进表草案。',
   returned: '企业教练已退回，请负责人修改后重新提交。',
   active: '项目已进入执行阶段，可进入工作推进表查看推进情况。',
@@ -85,8 +87,9 @@ const STAGE_DESCRIPTIONS: Record<string, string> = {
 }
 
 const ACTION_REMINDERS: Record<string, string> = {
-  draft: '项目尚未下发，可继续编辑项目资料与角色配置。',
-  dispatched: '项目已下发，等待负责人完善立项信息和工作推进表雏形。',
+  draft: '项目已完成基础立项和团队配置，负责人可直接完善立项信息。',
+  dispatched: '历史项目可继续完善立项信息和工作推进表雏形。',
+  pending_kickoff: '项目已进入执行阶段，启动会可作为执行事件补录。',
   pending_review: '负责人已提交立项信息和工作推进表雏形，请企业教练审核项目完成准则、重点工作和关键任务安排。',
   returned: '项目已被企业教练退回，请负责人根据意见修改后重新提交。',
   active: '项目已进入执行阶段，可进入工作推进表查看重点工作、关键任务和进展记录。',
@@ -262,7 +265,7 @@ function buildDraftRows(tasks: TaskItem[], subtasks: SubTaskWithParent[], projec
   return rows
 }
 
-type MainAction = { label: string; type: 'edit' | 'dispatch' | 'ownerSubmit' | 'approvalMaterials' | 'workProgress' | 'viewDetail' | 'closeRequest' | 'closeReview' | 'closeArchiveView' | 'projectArchive' }
+type MainAction = { label: string; type: 'edit' | 'ownerSubmit' | 'approvalMaterials' | 'workProgress' | 'viewDetail' | 'closeRequest' | 'closeReview' | 'closeArchiveView' | 'projectArchive' }
 
 function getMainAction(
   status: string,
@@ -275,7 +278,9 @@ function getMainAction(
   if (closeAction && status !== 'active') return closeAction
   switch (status) {
     case 'draft':
-      return (isSuperAdmin || isCompanyCeo)
+      return isRealOwner
+        ? { label: '完善立项信息', type: 'ownerSubmit' }
+        : (isSuperAdmin || isCompanyCeo)
         ? { label: '编辑项目', type: 'edit' }
         : { label: '查看详情', type: 'viewDetail' }
     case 'dispatched':
@@ -300,7 +305,6 @@ function getMainAction(
 function getMainActionLabel(action: MainAction): string {
   switch (action.type) {
     case 'edit': return '编辑项目'
-    case 'dispatch': return '下发给负责人'
     case 'ownerSubmit': return action.label
     case 'approvalMaterials': return '审核项目'
     case 'workProgress': return '进入工作推进表'
@@ -349,9 +353,6 @@ export function ProjectsMgmtSection() {
   const [editForm, setEditForm] = useState<NewProjectForm>(EMPTY_NEW_FORM)
   const [editTeam, setEditTeam] = useState<TeamMap>({ ...EMPTY_TEAM })
   const [editingProject, setEditingProject] = useState(false)
-
-  // 下发
-  const [dispatchingId, setDispatchingId] = useState<number | null>(null)
 
   // 审核
   const [approvalMaterialsProject, setApprovalMaterialsProject] = useState<Project | null>(null)
@@ -519,6 +520,7 @@ export function ProjectsMgmtSection() {
         member_ids: newTeam.member,
         project_ceo_ids: newTeam.project_ceo,
       })
+      if (newTeam.owner.length > 0) await notifyProjectOwner(project.id)
       setProjects((prev) => [...prev, project])
       reloadProjects()
       resetNewForm()
@@ -603,6 +605,7 @@ export function ProjectsMgmtSection() {
       })
       setProjects((prev) => prev.map((p) => (p.id === editProjectId ? { ...p, ...updated } : p)))
       await syncProjectMembers(editProjectId, editTeam)
+      if (editTeam.owner.length > 0) await notifyProjectOwner(editProjectId)
       reloadProjects()
       closeProjectEditor()
       toast.success('项目已保存')
@@ -610,27 +613,6 @@ export function ProjectsMgmtSection() {
       toast.error(error instanceof Error ? error.message : '保存失败')
     } finally {
       setEditingProject(false)
-    }
-  }
-
-  async function handleDispatch(pid: number) {
-    const pm = members[pid]
-    if (pm) {
-      const hasCeo = pm.some((m) => m.role === 'project_ceo')
-      const hasOwner = pm.some((m) => m.role === 'owner')
-      if (!hasCeo || !hasOwner) { toast.warning('请先配置企业教练和负责人后再下发项目。'); return }
-    }
-    setDispatchingId(pid)
-    try {
-      const result = await dispatchProject(pid)
-      toast.success(`已下发给 ${result.dispatched_to} 位负责人`)
-      const rows = await getProjects(true)
-      setProjects(rows)
-      reloadProjects()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '下发失败')
-    } finally {
-      setDispatchingId(null)
     }
   }
 
@@ -741,7 +723,6 @@ export function ProjectsMgmtSection() {
     const roles = getProjectRoles(project.id)
     const mainAction = getMainAction(status, roles.isSuperAdmin, roles.isCompanyCeo, roles.isRealProjectCeo, roles.isRealOwner)
     if (mainAction.type === 'edit') void openProjectEditor(project)
-    else if (mainAction.type === 'dispatch') void handleDispatch(project.id)
     else if (mainAction.type === 'ownerSubmit') navigate(`/home/projects/${project.id}/owner-submit`)
     else if (mainAction.type === 'approvalMaterials') setApprovalMaterialsProject(project)
     else if (mainAction.type === 'workProgress') navigate(`/work/tasks?projectId=${project.id}`)
@@ -841,7 +822,7 @@ export function ProjectsMgmtSection() {
                         status={status}
                         teamLine={teamLine}
                         mainAction={mainAction}
-                        mainBusy={dispatchingId === project.id}
+                        mainBusy={false}
                         showReturn={mainAction.type === 'approvalMaterials'}
                         isSelected={false}
                         hasMore={roles.isSuperAdmin || (roles.isCompanyCeo && status === 'draft')}
@@ -889,7 +870,6 @@ export function ProjectsMgmtSection() {
 
                       const handleAction = () => {
                         if (mainAction.type === 'edit') void openProjectEditor(project)
-                        else if (mainAction.type === 'dispatch') void handleDispatch(project.id)
                         else if (mainAction.type === 'ownerSubmit') navigate(`/home/projects/${project.id}/owner-submit`)
                         else if (mainAction.type === 'approvalMaterials') { setApprovalMaterialsProject(project) }
                         else if (mainAction.type === 'workProgress') navigate(`/work/tasks?projectId=${project.id}`)
@@ -929,10 +909,9 @@ export function ProjectsMgmtSection() {
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handleAction() }}
-                              disabled={dispatchingId === project.id}
                               className="cursor-pointer rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors whitespace-nowrap hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              {dispatchingId === project.id ? '派发中...' : actionLabel}
+                              {actionLabel}
                             </button>
                           </td>
                         </tr>
@@ -1240,7 +1219,7 @@ function LifecycleMoreMenu({
 
 export function DetailPanel({
   project, projectMembers, tasks, subtasks, roles, onClose, wide,
-  onEdit, onDispatch, dispatching = false, onOwnerSubmit, onOpenApprovalMaterials, onReturn, onWorkProgress, onOpenCloseFlow, onOpenArchive,
+  onEdit, onOwnerSubmit, onOpenApprovalMaterials, onReturn, onWorkProgress, onOpenCloseFlow, onOpenArchive,
 }: {
   project: Project
   projectMembers: ProjectMember[]
@@ -1249,8 +1228,6 @@ export function DetailPanel({
   roles: { isSuperAdmin: boolean; isCompanyCeo: boolean; isRealProjectCeo: boolean; isRealOwner: boolean }
   onClose: () => void
   onEdit: () => void
-  onDispatch: () => void
-  dispatching?: boolean
   onOwnerSubmit: () => void
   onOpenApprovalMaterials: () => void
   onReturn: () => void
@@ -1281,9 +1258,11 @@ export function DetailPanel({
 
   // 操作按钮定义
   const actionButtons: Array<{ label: string; primary?: boolean; danger?: boolean; onClick: () => void }> = []
+  if (status === 'draft' && roles.isRealOwner) {
+    actionButtons.push({ label: '完善立项信息', primary: true, onClick: onOwnerSubmit })
+  }
   if (status === 'draft' && canEditDraft) {
     actionButtons.push({ label: '编辑项目', primary: true, onClick: onEdit })
-    actionButtons.push({ label: '下发给负责人', onClick: onDispatch })
   }
   if (status === 'dispatched' && roles.isRealOwner) {
     actionButtons.push({ label: '完善立项信息', primary: true, onClick: onOwnerSubmit })
@@ -1351,7 +1330,6 @@ export function DetailPanel({
                   key={btn.label}
                   type="button"
                   onClick={btn.onClick}
-                  disabled={dispatching && btn.onClick === onDispatch}
                   className={`w-full rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${
                     btn.primary
                       ? 'bg-slate-900 text-white hover:bg-slate-800'
@@ -1360,7 +1338,7 @@ export function DetailPanel({
                         : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  {dispatching && btn.onClick === onDispatch ? '下发中...' : btn.label}
+                  {btn.label}
                 </button>
               ))}
             </div>
@@ -1424,7 +1402,6 @@ export function DetailPanel({
                   key={btn.label}
                   type="button"
                   onClick={btn.onClick}
-                  disabled={dispatching && btn.onClick === onDispatch}
                   className={`w-full rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
                     btn.primary
                       ? 'bg-slate-900 text-white hover:bg-slate-800'
@@ -1433,7 +1410,7 @@ export function DetailPanel({
                         : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  {dispatching && btn.onClick === onDispatch ? '下发中...' : btn.label}
+                  {btn.label}
                 </button>
               ))}
             </div>

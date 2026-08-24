@@ -17,6 +17,7 @@ from .. import crud, models, schemas
 from ..ai.contracts import AIInvocationContext, Capability
 from ..ai.service import AIService
 from ..domain import task_status as TS
+from ..domain import project_lifecycle as PL
 from ..database import get_db
 
 logger = logging.getLogger("bowei.meetings")
@@ -187,8 +188,8 @@ def create_kickoff_run(
     current_user = require_login(current_user, db)
     require_project_role(current_user, project_id, [PROJECT_ROLE_OWNER_KEY], db)
     project = db.get(models.Project, project_id)
-    if not project or project.status != "pending_kickoff":
-        raise HTTPException(409, "项目不处于待启动会状态")
+    if not project or not PL.is_execution_available(project.status):
+        raise HTTPException(409, "当前项目阶段不可发起启动会")
     account = db.query(models.Account).filter_by(username=current_user).first()
     snapshot = build_kickoff_snapshot(project_id, db)
     try:
@@ -402,8 +403,6 @@ def create_meeting(
     require_project_business_writable(payload.project_id, db)
     _require_skill_run_ready(payload.skill_run_id, payload.project_id, db)
     project = db.get(models.Project, payload.project_id)
-    if project and project.status == "pending_kickoff":
-        raise HTTPException(409, "项目待启动会确认，不能创建普通会议")
 
     account = db.query(models.Account).filter(models.Account.username == current_user).first()
     change_set = None

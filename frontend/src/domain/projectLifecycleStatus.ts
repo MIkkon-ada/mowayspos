@@ -3,6 +3,7 @@ export type ProjectLifecycleStatus =
   | 'pending_review'
   | 'returned'
   | 'dispatched'
+  | 'pending_kickoff'
   | 'active'
   | 'pending_close'
   | 'ended'
@@ -45,6 +46,12 @@ const STATUS_META: Record<string, ProjectStatusBadge> = {
   dispatched: {
     status: 'dispatched',
     label: '已派发',
+    tone: 'info',
+    className: 'bg-blue-100 text-blue-700',
+  },
+  pending_kickoff: {
+    status: 'pending_kickoff',
+    label: '执行中（历史状态）',
     tone: 'info',
     className: 'bg-blue-100 text-blue-700',
   },
@@ -115,7 +122,13 @@ export function isProjectArchived(project?: ProjectLifecycleLike | null): boolea
 }
 
 export function isProjectActive(project?: ProjectLifecycleLike | null): boolean {
-  return getProjectPrimaryStatus(project) === 'active'
+  const status = getProjectPrimaryStatus(project)
+  return status === 'active' || status === 'pending_kickoff'
+}
+
+export function isProjectExecutionAvailable(project?: ProjectLifecycleLike | null): boolean {
+  const status = getProjectPrimaryStatus(project)
+  return status === 'active' || status === 'pending_kickoff' || status === 'dispatched'
 }
 
 export function isProjectPendingClose(project?: ProjectLifecycleLike | null): boolean {
@@ -133,7 +146,7 @@ export function isProjectBusinessFrozen(project?: ProjectLifecycleLike | null): 
 
 export function canShowProjectStartupAction(project?: ProjectLifecycleLike | null): boolean {
   const status = getProjectPrimaryStatus(project)
-  return status === 'dispatched' || status === 'active'
+  return status === 'active' || status === 'pending_kickoff'
 }
 
 export function canShowProjectSubmitAction(project?: ProjectLifecycleLike | null): boolean {

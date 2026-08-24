@@ -24,6 +24,12 @@ ALL_STATUSES = {
 
 CLOSE_FROZEN_STATUSES = {S_PENDING_CLOSE, S_ENDED}
 
+# ``pending_kickoff`` and ``dispatched`` are retained in the compatibility
+# vocabulary because older projects may still carry them in the database. New
+# transitions must not use either state as a lifecycle gate.
+EXECUTION_AVAILABLE_STATUSES = {S_ACTIVE, S_PENDING_KICKOFF, S_DISPATCHED}
+OWNER_PLAN_EDITABLE_STATUSES = {S_DRAFT, S_DISPATCHED, S_RETURNED}
+
 
 def normalize(value: object, default: str = S_DRAFT) -> str:
     normalized = str(value or "").strip().lower()
@@ -36,3 +42,13 @@ def is_close_frozen(value: object) -> bool:
 
 def is_archived(value: object) -> bool:
     return normalize(value) == S_ARCHIVED
+
+
+def is_execution_available(value: object) -> bool:
+    """Whether execution data can be edited for current or legacy projects."""
+    return normalize(value) in EXECUTION_AVAILABLE_STATUSES
+
+
+def is_owner_plan_editable(value: object) -> bool:
+    """Whether the owner can complete or resubmit the project plan."""
+    return normalize(value) in OWNER_PLAN_EDITABLE_STATUSES

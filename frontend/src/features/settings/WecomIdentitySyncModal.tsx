@@ -61,7 +61,7 @@ export function WecomIdentitySyncModal({ onClose, onDone }: Props) {
           <button type="button" onClick={() => !saving && onClose()} className="text-slate-400 hover:text-slate-700 text-xl">×</button>
         </div>
         <div className="overflow-auto px-5 py-4 flex-1">
-          {loading ? <div className="py-12 text-center text-sm text-slate-400">正在读取企业微信通讯录…</div> : (
+          {loading ? <div className="py-12 text-center text-sm text-slate-400">正在读取企业微信通讯录…</div> : <>
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-slate-500 border-b border-slate-100">
@@ -97,14 +97,16 @@ export function WecomIdentitySyncModal({ onClose, onDone }: Props) {
                           </label>
                         )}
                         {item.match_type === 'conflict' && <span className="text-xs text-red-600">姓名重复，需手动处理</span>}
-                        {item.department_source === 'local' || item.position_source === 'local' ? <div className="mt-1 text-[10px] text-orange-600">已有本地覆盖，仅更新企微原始值</div> : null}
                       </td>
                     </tr>
                   )
                 })}
               </tbody>
             </table>
-          )}
+            <p className="mt-3 text-[11px] text-slate-500">
+              确认同步后，企业微信同步后将覆盖系统中的部门和岗位；不会修改系统角色或项目角色。
+            </p>
+          </>}
         </div>
         <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100">
           <span className="text-xs text-slate-500">已选择 {selectedCount} 人</span>

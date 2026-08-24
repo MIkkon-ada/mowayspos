@@ -3,7 +3,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
-from app import models
+from app import models, schemas
 from app.database import Base
 from app.routers.accounts import (
     apply_wecom_identity_record,
@@ -11,6 +11,7 @@ from app.routers.accounts import (
     sync_wecom_identity_records,
 )
 from app.routers.people import reset_wecom_identity_field
+from app.routers import people as people_router
 from app.settings import get_settings, load_local_env
 from app.services import wecom
 
@@ -113,7 +114,7 @@ def test_wecom_department_paths_are_built_from_parent_tree(monkeypatch):
     assert departments[9]["path"] == "博维 / 产品部 / 平台组"
 
 
-def test_wecom_sync_preserves_local_overrides_per_field():
+def test_wecom_sync_overwrites_legacy_local_identity_values():
     person = models.Person(
         name="Alice",
         department="战略部",
@@ -135,9 +136,9 @@ def test_wecom_sync_preserves_local_overrides_per_field():
     assert person.wecom_userid == "alice"
     assert person.wecom_department == "产品部"
     assert person.wecom_position_title == "产品经理"
-    assert person.department == "战略部"
+    assert person.department == "产品部"
     assert person.position_title == "产品经理"
-    assert person.department_source == "local"
+    assert person.department_source == "wecom"
     assert person.position_source == "wecom"
 
 
@@ -223,9 +224,10 @@ def test_confirmed_sync_updates_identity_without_touching_project_roles():
         assert result[0]["person_id"] == person.id
         db.refresh(person)
         db.refresh(member)
-        assert person.department == "战略部"
+        assert person.department == "产品部"
         assert person.wecom_department == "产品部"
         assert person.position_title == "产品经理"
+        assert person.department_source == "wecom"
         assert member.role == "owner"
     finally:
         db.close()
@@ -248,3 +250,59 @@ def test_reset_identity_field_restores_latest_wecom_value_independently():
     assert person.department_source == "wecom"
     assert person.position_title == "产品经理"
     assert person.position_source == "local"
+
+
+def test_narrow_account_management_update_preserves_wecom_identity_and_assignments(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        person = models.Person(
+            name="Alice",
+            role="负责人",
+            department="产品部",
+            position_title="产品经理",
+            system_role="normal_member",
+            permission="审批",
+            contact="alice@example.com",
+            is_active=False,
+        )
+        project = models.Project(
+            name="Project A",
+            coordinator="Alice",
+            owners="Alice",
+            status="active",
+            is_active=True,
+        )
+        db.add_all([person, project])
+        db.flush()
+        db.add(models.ProjectMember(
+            project_id=project.id,
+            person_id=person.id,
+            person_name_snapshot="Alice",
+            role="owner",
+        ))
+        db.commit()
+        monkeypatch.setattr(people_router, "_require_admin", lambda current_user, session: None)
+
+        people_router.update_person(
+            person.id,
+            schemas.PersonPayload(name="Alice Chen", system_role="company_ceo"),
+            current_user="admin",
+            db=db,
+        )
+
+        db.refresh(person)
+        db.refresh(project)
+        member = db.query(models.ProjectMember).filter_by(person_id=person.id).one()
+        assert person.department == "产品部"
+        assert person.position_title == "产品经理"
+        assert person.role == "负责人"
+        assert person.permission == "审批"
+        assert person.contact == "alice@example.com"
+        assert person.is_active is False
+        assert project.coordinator == "Alice Chen"
+        assert project.owners == "Alice Chen"
+        assert member.person_name_snapshot == "Alice Chen"
+    finally:
+        db.close()

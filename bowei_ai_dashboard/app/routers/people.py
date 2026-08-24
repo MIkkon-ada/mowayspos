@@ -143,6 +143,20 @@ def _detach_person_from_projects(db: Session, person_name: str):
     _rebuild_person_duties(db)
 
 
+def _rename_person_in_projects(db: Session, person_id: int, old_name: str, new_name: str):
+    """Keep existing project memberships when a narrow profile update renames a person."""
+    for project in db.query(models.Project).all():
+        if project.coordinator == old_name:
+            project.coordinator = new_name
+        project.owners = _join_names([new_name if name == old_name else name for name in _split_names(project.owners)])
+        project.collaborators = _join_names([new_name if name == old_name else name for name in _split_names(project.collaborators)])
+    db.query(models.ProjectMember).filter(
+        models.ProjectMember.person_id == person_id,
+        models.ProjectMember.person_name_snapshot == old_name,
+    ).update({models.ProjectMember.person_name_snapshot: new_name}, synchronize_session=False)
+    _rebuild_person_duties(db)
+
+
 def _normalize_system_role(role: str | None) -> str:
     """归一化系统角色，兼容旧中文值，非法值回落为普通成员。"""
     return normalize_system_role(role) or ROLE_NORMAL
@@ -384,8 +398,8 @@ def create_person(
         position_title=payload.position_title or "",
         system_role=system_role,
         department=payload.department,
-        department_source="local" if payload.department else "wecom",
-        position_source="local" if payload.position_title else "wecom",
+        department_source="wecom",
+        position_source="wecom",
         special_project_duty=_all_assigned_projects(coordinated, owned, collaborated) or payload.special_project_duty,
         permission=payload.permission,
         contact=payload.contact,
@@ -426,14 +440,19 @@ def update_person(
         raise HTTPException(400, "浜哄憳鍚嶇О宸插瓨鍦?")
     before = crud.to_dict(row)
     old_name = row.name
-    coordinated, owned, collaborated = _payload_project_sets(payload)
-    row.name = payload.name.strip()
-    row.role = payload.role
-    if payload.position_title is not None:
-        if row.position_title != payload.position_title:
-            row.position_source = "local"
-        row.position_title = payload.position_title
-    new_system_role = _normalize_system_role(payload.system_role)
+    new_name = payload.name.strip()
+    explicit_fields = payload.model_fields_set
+    assignment_fields = {"coordinated_projects", "owned_projects", "collaborated_projects"}
+    has_assignment_update = bool(assignment_fields & explicit_fields)
+    if has_assignment_update:
+        _detach_person_from_projects(db, old_name)
+    row.name = new_name
+    if "role" in explicit_fields:
+        row.role = payload.role
+    if "position_title" in explicit_fields:
+        row.position_title = payload.position_title or ""
+        row.position_source = "wecom"
+    new_system_role = _normalize_system_role(payload.system_role if "system_role" in explicit_fields else row.system_role)
     # 禁止降级最后一个超级管理员，防止锁死系统
     if _is_super_admin_role(row.system_role) and not _is_super_admin_role(new_system_role):
         other_supers = db.query(models.Person).filter(
@@ -444,18 +463,24 @@ def update_person(
         if other_supers == 0:
             raise HTTPException(409, "不能降级最后一个超级管理员，请先提升其他人为超级管理员")
     row.system_role = new_system_role
-    if row.department != payload.department:
-        row.department_source = "local"
-    row.department = payload.department
-    row.permission = payload.permission
-    row.contact = payload.contact
-    row.is_active = payload.is_active
+    if "department" in explicit_fields:
+        row.department = payload.department or ""
+        row.department_source = "wecom"
+    if "permission" in explicit_fields:
+        row.permission = payload.permission
+    if "contact" in explicit_fields:
+        row.contact = payload.contact
+    if "is_active" in explicit_fields:
+        row.is_active = payload.is_active
     row.is_admin = _is_super_admin_role(row.system_role)
-    row.special_project_duty = _all_assigned_projects(coordinated, owned, collaborated) or payload.special_project_duty
+    if "special_project_duty" in explicit_fields:
+        row.special_project_duty = payload.special_project_duty
     _sync_person_admin_mirrors(db, row)
-    if old_name != row.name:
-        _detach_person_from_projects(db, old_name)
-    _sync_person_assignments(db, row.name, coordinated, owned, collaborated)
+    if has_assignment_update:
+        coordinated, owned, collaborated = _payload_project_sets(payload)
+        _sync_person_assignments(db, row.name, coordinated, owned, collaborated)
+    elif old_name != row.name:
+        _rename_person_in_projects(db, row.id, old_name, row.name)
     crud.log(db, current_user, "update", "person", row.id, before=before, after=crud.to_dict(row))
     db.commit()
     return _person_to_dict(row)

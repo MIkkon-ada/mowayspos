@@ -921,6 +921,15 @@ class KeyTaskReopenRequest(BaseModel):
             raise ValueError("重新打开原因不能为空")
         return value
 
+
+class KeyTaskRiskRequest(BaseModel):
+    risk_note: str = Field(default="", max_length=500)
+
+    @field_validator("risk_note")
+    @classmethod
+    def normalize_risk_note(cls, value: str) -> str:
+        return value.strip()
+
 # alias：SubTaskPayload 即 KeyTaskPayload
 KeyTaskPayload = SubTaskPayload
 

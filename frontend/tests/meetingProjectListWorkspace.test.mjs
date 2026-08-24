@@ -14,6 +14,17 @@ test('project meeting list uses a compact project strip and a unified workspace 
   assert.doesNotMatch(source, /10 条\/页/)
 })
 
+test('project selector matches the meeting minutes reference hierarchy', () => {
+  assert.match(source, /meeting-project-selector/)
+  assert.match(source, /meeting-project-selector-table/)
+  assert.match(source, /选择项目查看对应的会议记录/)
+  assert.match(source, /搜索项目名称、编号或项目经理/)
+  assert.match(source, /grid-cols-\[minmax\(300px,2\.1fr\)_150px_190px_minmax\(220px,1\.4fr\)_150px\]/)
+  assert.match(source, /border-lime-300 bg-lime-50 text-lime-600/)
+  assert.match(source, /border-slate-200 bg-slate-50 text-slate-500/)
+  assert.match(source, /查看会议纪要/)
+})
+
 test('meeting API exposes the existing delete endpoint', () => {
   const api = readFileSync(new URL('../src/api/meetings.ts', import.meta.url), 'utf8')
   assert.match(api, /import \{[^}]*apiDelete[^}]*\} from '\.\/client'/)

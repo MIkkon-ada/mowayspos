@@ -442,3 +442,12 @@ test('archived project details suppress task and subtask write controls', () => 
   assert.match(page, /subCanEdit\s*=\s*selectedSubTask\s*&&\s*!isProjectArchived\(selectedSubProject\)/)
   assert.match(page, /!selectedTaskArchived\s*&&\s*\(\s*<div className="border-t px-4 py-3 flex gap-2/s)
 })
+
+test('work-progress assignee filter uses key-task assignees instead of project owners', () => {
+  const source = read(PAGE_FILE)
+
+  assert.match(source, /getKeyTaskAssigneeNames\(tasks, taskSubMap\)/)
+  assert.match(source, /taskHasKeyTaskAssignee\(t, taskSubMap, filterOwner\)/)
+  assert.match(source, /assigneeNames\.map\(\(name\) => <option key=\{name\} value=\{name\}>\{name\}<\/option>\)/)
+  assert.doesNotMatch(source, /resolvedTaskProjects\.flatMap\(\(p\) => p\.owners/)
+})

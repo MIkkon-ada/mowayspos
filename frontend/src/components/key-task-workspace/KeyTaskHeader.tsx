@@ -45,12 +45,6 @@ export function KeyTaskHeader({ workspace, onSubmitUpdate, onConfirmCompletion, 
         {permissions.can_manage_risk && <button type="button" onClick={onChangeRisk} className="rounded-sm border border-orange-300 bg-white px-4 py-2 text-sm font-semibold text-orange-700">{task.risk_note ? '解除风险' : '标记风险'}</button>}
         {permissions.can_confirm_completion && !isCompleted && eligibility.state === 'eligible' && <button type="button" onClick={onConfirmCompletion} className="rounded-sm border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700">确认完成</button>}
         {permissions.can_operate && isCompleted && <button type="button" onClick={onReopen} className="rounded-sm border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700">重新打开</button>}
-        <details className="app-disclosure relative">
-          <summary className="cursor-pointer list-none rounded-sm border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700">更多操作</summary>
-          <div className="absolute right-0 z-10 mt-2 w-56 rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
-            <p className="px-2 py-1 text-xs text-slate-500">{eligibility.state === 'eligible' ? '所有有效任务计划已完成，等待负责人确认。' : eligibility.state === 'no_execution_plan' ? '尚无有效任务计划；不会自动完成。' : '任务计划尚未全部完成。'}</p>
-          </div>
-        </details>
       </div>
     </div>
 

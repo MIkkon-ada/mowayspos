@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..database import get_db
-from ..permissions import get_current_user_name, require_tech_admin
+from ..permissions import get_current_user_name, require_login, require_tech_admin
 
 router = APIRouter(prefix="/api/platform-settings", tags=["platform-settings"])
 
@@ -46,7 +46,7 @@ def get_settings(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    require_tech_admin(current_user, db)
+    require_login(current_user, db)
     row = _get_row(db)
     data = _without_retired_settings({**_DEFAULTS, **json.loads(row.data_json or "{}")})
     return data

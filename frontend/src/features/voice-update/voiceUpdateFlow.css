@@ -228,7 +228,12 @@
 .voice-update-progress-field textarea { height: 82px; min-height: 76px; resize: vertical; }
 .voice-update-progress-field:has(.is-risk) { border-color: #fecaca; background: #fffafa; }
 .voice-update-progress-field:has(.is-achievement) { border-color: #e5eaf1; }
-.voice-update-structured-empty textarea { resize: none; background: #fbfcfe; color: #94a3b8; }
+.voice-update-clean-empty { display: grid; min-height: 280px; place-content: center; justify-items: center; gap: 9px; padding: 28px; text-align: center; }
+.voice-update-clean-empty-icon { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 50%; background: #eef6ff; color: #1677d2; font-size: 20px; }
+.voice-update-clean-empty h3 { margin: 4px 0 0; color: #1e293b; font-size: 16px; font-weight: 800; }
+.voice-update-clean-empty p { max-width: 320px; margin: 0; color: #7c8aa0; font-size: 13px; line-height: 1.65; }
+.voice-update-clean-empty-tags { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; margin-top: 7px; }
+.voice-update-clean-empty-tags span { border-radius: 999px; background: #f4f7fb; padding: 5px 9px; color: #60708a; font-size: 12px; }
 .voice-update-status-options { display: flex; min-height: 0; flex-wrap: wrap; align-items: center; gap: 14px; border: 0; border-radius: 0; padding: 4px 0; }
 .voice-update-status-options label { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; border: 0; border-radius: 999px; padding: 5px 0; color: #111827; font-size: 13px; font-weight: 800; white-space: nowrap; cursor: pointer; }
 .voice-update-status-options input { width: 13px; height: 13px; margin: 0; accent-color: #1677d2; }

@@ -105,7 +105,7 @@ def _account_to_dict(row: models.Account, person: models.Person | None = None) -
 
 
 def apply_wecom_identity_record(person: models.Person, record: dict) -> models.Person:
-    """Apply the latest WeCom identity values without breaking local overrides."""
+    """Apply confirmed WeCom identity values as the effective identity."""
     userid = str(record.get("userid") or record.get("wecom_userid") or "").strip()
     department = str(record.get("department_path") or record.get("department") or "").strip()
     position = str(record.get("position") or record.get("wecom_position_title") or "").strip()
@@ -113,12 +113,10 @@ def apply_wecom_identity_record(person: models.Person, record: dict) -> models.P
     person.wecom_userid = userid
     person.wecom_department = department
     person.wecom_position_title = position
-    if (person.department_source or "wecom") != "local":
-        person.department = department
-        person.department_source = "wecom"
-    if (person.position_source or "wecom") != "local":
-        person.position_title = position
-        person.position_source = "wecom"
+    person.department = department
+    person.position_title = position
+    person.department_source = "wecom"
+    person.position_source = "wecom"
     return person
 
 

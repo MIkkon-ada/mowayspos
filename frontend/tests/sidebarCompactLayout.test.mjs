@@ -25,16 +25,18 @@ test('sidebar uses 64px compact width and expands to 176px at xl', () => {
   assert.doesNotMatch(sidebarSource, /window\.innerWidth/)
 })
 
-test('brand header renders only the existing logo or fallback and notification bell', () => {
+test('brand header renders a borderless MOWAYS logo on white with a notification bell', () => {
   assert.doesNotMatch(sidebarSource, /SYSTEM_NAME_CN/)
   assert.match(sidebarSource, /platformName\?: string/)
   assert.doesNotMatch(sidebarSource, /\{platformName\s*\}/)
-  assert.match(sidebarSource, /<img src=\{logoUrl\} alt="logo"/)
-  assert.match(sidebarSource, /linear-gradient\(135deg,var\(--brand-accent/)
+  assert.match(sidebarSource, /const effectiveLogoUrl = logoUrl \|\| '\/moways-logo-transparent\.png'/)
+  assert.match(sidebarSource, /background: '#FFFFFF'/)
+  assert.match(sidebarSource, /borderBottom: '1px solid #E2E8F0'/)
+  assert.match(sidebarSource, /<img src=\{effectiveLogoUrl\} alt="MOWAYS 博维咨询"/)
   assert.match(sidebarSource, /className="hidden xl:block"[\s\S]*?<NotificationBell \/>/)
   assert.match(sidebarSource, /className="flex items-center justify-center xl:justify-between px-3 h-14 flex-shrink-0"/)
   assert.match(sidebarSource, /className="h-8 max-w-8 xl:max-w-\[90px\] object-contain flex-shrink-0"/)
-  assert.doesNotMatch(sidebarSource, /maxWidth\s*:/)
+  assert.doesNotMatch(sidebarSource, /linear-gradient\(135deg,var\(--brand-accent/)
 })
 
 test('navigation keeps every existing item and permission boundary', () => {

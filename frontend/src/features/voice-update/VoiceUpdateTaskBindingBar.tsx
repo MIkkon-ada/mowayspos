@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ChevronDownIcon } from '../../components/icons/ChevronDownIcon'
 import type { Project } from '../../types'
 import type { VoiceTaskContext } from './useVoiceTaskBinding'
 import type { VoiceReportScope } from './voiceUpdateResultTypes'
@@ -54,7 +55,7 @@ export function VoiceUpdateTaskBindingBar({
     <section className="voice-update-binding" aria-label="汇报任务绑定">
       <div className="voice-update-scope-menu" onMouseLeave={() => setHoveredScope(null)}>
         <button type="button" className="voice-update-scope-trigger" disabled={controlsLocked} onClick={() => setScopeMenuOpen((open) => !open)} aria-expanded={scopeMenuOpen}>
-          <span>{scopeLabel}</span><span className="voice-update-binding-scope-arrow" aria-hidden="true" />
+          <span>{scopeLabel}</span><ChevronDownIcon className="voice-update-binding-scope-arrow" />
         </button>
         {scopeMenuOpen && <div className="voice-update-scope-options">
           <button type="button" className={scope === 'all' ? 'is-selected' : ''} onClick={() => chooseScope('all')}>我的全部工作</button>

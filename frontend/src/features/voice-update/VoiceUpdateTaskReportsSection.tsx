@@ -276,7 +276,7 @@ export function VoiceUpdateTaskReportsSection({
           )}
         </div>
         {(
-          <details className="voice-update-ownership-details">
+          <details className="app-disclosure voice-update-ownership-details">
             <summary>调整任务归属及成果链接</summary>
             {renderOwnership(report, index)}
             {(report.achievements ?? []).map((achievement, achievementIndex) => (

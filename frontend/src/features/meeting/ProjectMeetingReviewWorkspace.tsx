@@ -83,7 +83,7 @@ function EvidenceBlock({ evidence }: { evidence?: ProjectMeetingEvidence | Array
   const quotes = evidenceQuotes(spans)
   const blocked = !Array.isArray(evidence) && evidence?.validation.state === 'blocked'
   if (!quotes.length) return null
-  return <details className="mt-2 text-xs text-slate-500">
+  return <details className="app-disclosure mt-2 text-xs text-slate-500">
     <summary className="cursor-pointer font-medium text-sky-700">查看原文依据{blocked ? '（待核验）' : ''}</summary>
     <ul className="mt-2 space-y-1 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3 text-slate-600">{quotes.map((quote, index) => <li key={`${quote}-${index}`}>“{quote}”</li>)}</ul>
   </details>
@@ -103,7 +103,7 @@ function LineageTrace({ change }: { change: ExecutionScheduleChange }) {
   const lineage = change.lineage
   if (!lineage) return null
   const meetingQuotes = Object.values(lineage.meeting_evidence ?? {}).flatMap((spans) => spans.map((span) => span.quote)).filter(Boolean)
-  return <details className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">
+  return <details className="app-disclosure mt-3 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">
     <summary className="cursor-pointer font-semibold text-slate-700">查看分析与来源追溯</summary>
     <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
       <section><h4 className="font-semibold text-slate-700">会议事实</h4><p className="mt-1">{lineage.source_fact_id}</p><p className="mt-1 text-slate-500">{meetingQuotes.length ? meetingQuotes.join('；') : '无字段级会议证据'}</p></section>

@@ -31,7 +31,7 @@ export function ProjectSelector({ dark }: { dark?: boolean }) {
           dark
             ? {
                 width: '100%',
-                background: 'rgba(15, 23, 42, 0.6)',
+                backgroundColor: 'rgba(15, 23, 42, 0.6)',
                 color: '#E2E8F0',
                 border: '1px solid rgba(148, 163, 184, 0.2)',
                 borderRadius: 6,
@@ -43,7 +43,7 @@ export function ProjectSelector({ dark }: { dark?: boolean }) {
               }
             : {
                 maxWidth: 220,
-                background: '#F8FAFC',
+                backgroundColor: '#F8FAFC',
                 color: '#334155',
                 border: '1px solid #E2E8F0',
                 borderRadius: 8,

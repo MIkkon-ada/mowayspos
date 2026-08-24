@@ -1807,9 +1807,8 @@ export function ApprovalMaterialsWorkbenchModal({
                     </div>
                   </section>
 
-                  <details className="group mt-4">
+                  <details className="app-disclosure group mt-4">
                     <summary className="projects-approval-supplement-summary flex cursor-pointer select-none items-center gap-2 rounded-lg border border-orange-100 bg-orange-50/40 px-3 py-2 text-sm font-semibold text-orange-700 outline-none transition-colors hover:bg-orange-50 focus-visible:ring-2 focus-visible:ring-orange-200">
-                      <span className="text-base leading-none transition-transform group-open:rotate-90">›</span>
                       补充详细信息
                     </summary>
                     <div className="mt-4 space-y-4 border-t border-slate-200/80 pt-4 text-sm text-slate-700">

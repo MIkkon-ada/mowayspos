@@ -3,6 +3,7 @@ import type { Project, ProjectCloseRequest, ProjectMember } from '../../types'
 import type { ArchiveMetric } from './projectArchiveViewModel'
 import { formatArchiveDate, getArchiveObjectiveStatus } from './projectArchiveViewModel'
 import { getProjectRoleLabel } from '../../domain/roleLabels'
+import { ChevronDownIcon } from '../../components/icons/ChevronDownIcon'
 
 function DisplayLines({ value, empty, limit }: { value?: string | null; empty: string; limit?: number }) {
   const text = value?.trim()
@@ -118,7 +119,7 @@ export function ArchiveOverview({
             )}
             {members.length > 4 && (
               <button type="button" className="archive-text-link archive-print-hidden" onClick={() => setExpanded((value) => !value)}>
-                {expanded ? '收起成员' : `查看全部（共 ${members.length} 人）`} <span>{expanded ? '⌃' : '⌄'}</span>
+                {expanded ? '收起成员' : `查看全部（共 ${members.length} 人）`} <ChevronDownIcon className={`inline-block h-3.5 w-3.5 align-text-bottom transition-transform ${expanded ? 'rotate-180' : ''}`} />
               </button>
             )}
           </article>

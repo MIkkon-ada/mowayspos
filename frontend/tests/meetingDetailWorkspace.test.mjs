@@ -30,6 +30,12 @@ test('meeting detail follows the reusable minutes template', () => {
   assert.doesNotMatch(detail, /行动清单/)
 })
 
+test('meeting detail uses the standard SVG chevron for the more-actions menu', () => {
+  assert.match(detail, /import \{ ChevronDownIcon \} from '\.\.\/\.\.\/components\/icons\/ChevronDownIcon'/)
+  assert.match(detail, /<summary[^>]*>\s*<span>更多<\/span>\s*<ChevronDownIcon\s*\/>/)
+  assert.doesNotMatch(detail, /更多⌄/)
+})
+
 test('standard minutes detail keeps the source agenda and both tracker table shapes', () => {
   const source = readFileSync(new URL('../src/features/meeting/MeetingDetailWorkspace.tsx', import.meta.url), 'utf8')
 

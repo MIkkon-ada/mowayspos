@@ -163,3 +163,10 @@ test('workspace uses the approved reference card hierarchy and empty states', ()
   assert.match(timeline, /暂无已确认的推进记录/)
   assert.match(context, /所属关系/)
 })
+
+test('empty execution plan state does not expose an inert add-plan button', () => {
+  const plan = read('src/components/key-task-workspace/ExecutionPlanTable.tsx')
+
+  assert.match(plan, /添加计划/)
+  assert.doesNotMatch(plan, /<button[^>]*>添加计划<\/button>/)
+})

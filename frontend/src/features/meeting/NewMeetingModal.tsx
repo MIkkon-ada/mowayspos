@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   analyzeMeeting,
   createProjectMeetingDocumentRun,
@@ -15,7 +15,8 @@ import {
   updateMeeting,
   type MeetingAnalyzeResult,
 } from '../../api/meetings'
-import type { MeetingItem } from '../../types'
+import { getProjectMembers } from '../../api/projects'
+import type { MeetingItem, ProjectMember } from '../../types'
 import { ErrorBar, Field, JsonListSection, SectionTitle } from './meetingShared'
 import { ReportsSection } from './MeetingReportsSection'
 import { MeetingChangeSetReviewModal } from './MeetingChangeSetReviewModal'
@@ -52,7 +53,7 @@ function emptyForm(): ReviewForm {
     host: '',
     participants: '',
     organizer: '',
-    copied_to: '',
+    copied_to: '项目全体成员',
     agenda_items_json: '[]',
     prior_action_items_json: '[]',
     source_mode: 'ai_analysis',
@@ -142,6 +143,8 @@ export function NewMeetingModal({
   const [skillRun, setSkillRun] = useState<MeetingSkillRun | null>(null)
   const [clarificationValues, setClarificationValues] = useState<Record<number, string>>({})
   const [documentUploading, setDocumentUploading] = useState(false)
+  const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
+  const [membersLoadFailed, setMembersLoadFailed] = useState(false)
   const documentRef = useRef<HTMLInputElement>(null)
   const [form, setForm] = useState<ReviewForm>(() => {
     if (editItem) {
@@ -168,6 +171,22 @@ export function NewMeetingModal({
     }
     return emptyForm()
   })
+
+  useEffect(() => {
+    let active = true
+    setProjectMembers([])
+    setMembersLoadFailed(false)
+    void getProjectMembers(projectId)
+      .then((members) => {
+        if (active) setProjectMembers(members)
+      })
+      .catch(() => {
+        if (active) setMembersLoadFailed(true)
+      })
+    return () => {
+      active = false
+    }
+  }, [projectId])
 
   const analysisText = useMemo(
     () => combineAnalysisSources({ documentText }),
@@ -381,6 +400,41 @@ export function NewMeetingModal({
     { key: 'review' as ModalStep, label: '确认保存' },
   ]
   const currentIdx = isEdit ? 2 : steps.findIndex((item) => item.key === step)
+  const memberNames = Array.from(new Set(
+    projectMembers
+      .map((member) => member.person_name_snapshot.trim())
+      .filter(Boolean),
+  ))
+
+  const singleMemberField = (
+    label: '主持人' | '整理人',
+    key: 'host' | 'organizer',
+    placeholder: string,
+  ) => (
+    <div>
+      <label className="mb-1 block text-xs font-semibold text-slate-700">{label}</label>
+      {membersLoadFailed ? (
+        <input
+          aria-label={label}
+          type="text"
+          value={form[key]}
+          onChange={(event) => setField(key, event.target.value)}
+          placeholder={placeholder}
+          className="w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-sky-500"
+        />
+      ) : (
+        <select
+          aria-label={label}
+          value={form[key]}
+          onChange={(event) => setField(key, event.target.value)}
+          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-sky-500"
+        >
+          <option value="">{memberNames.length ? placeholder : '暂无可选成员'}</option>
+          {memberNames.map((name) => <option key={name} value={name}>{name}</option>)}
+        </select>
+      )}
+    </div>
+  )
 
   if (reviewMeetingId !== null && savedMeeting) {
     const finishReview = () => onCreated(savedMeeting)
@@ -390,12 +444,12 @@ export function NewMeetingModal({
   return (
     <>
           <div className="meeting-workbench-shell flex min-h-0 flex-1 flex-col overflow-hidden bg-[#F5F8FC]" style={{ fontFamily: 'Inter, sans-serif' }}>
-            <header className="flex min-h-[72px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 py-3 lg:px-7">
+            <header className="flex min-h-[80px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 py-3 lg:px-7">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-sky-500 text-lg text-white">▤</div>
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#0069b4] text-lg text-white">▤</div>
             <div>
-              <h1 className="text-lg font-semibold text-slate-900">{isEdit ? '编辑会议纪要' : '新建会议纪要'}</h1>
-              <p className="mt-0.5 text-sm text-slate-400">上传会议纪要 Word，AI 将结合冻结项目上下文生成草稿</p>
+              <h1 className="text-2xl font-bold text-slate-900">{isEdit ? '编辑会议纪要' : '新建会议纪要'}</h1>
+              <p className="mt-0.5 text-sm text-slate-500">上传会议纪要 Word，AI 将结合项目上下文生成草稿</p>
             </div>
           </div>
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-800">关闭</button>
@@ -409,7 +463,7 @@ export function NewMeetingModal({
               return (
                 <div key={item.key} className="flex items-center gap-2">
                   {index > 0 && <span className="mx-2 h-px w-10 bg-slate-200" />}
-                  <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${done ? 'bg-sky-500 text-white' : active ? 'border-2 border-sky-500 bg-sky-50 text-sky-700' : 'bg-slate-100 text-slate-400'}`}>{done ? '✓' : index + 1}</span>
+                  <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${done || active ? 'bg-sky-600 text-white' : 'bg-slate-100 text-slate-400'}`}>{done ? '✓' : index + 1}</span>
                   <span className={`text-sm ${active ? 'font-medium text-sky-700' : 'text-slate-400'}`}>{item.label}</span>
                 </div>
               )
@@ -419,21 +473,26 @@ export function NewMeetingModal({
 
             <main className="meeting-workbench-main min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
           {step === 'input' && (
-            <div className="mx-auto max-w-[1180px] space-y-7 px-8 py-8 pb-32">
-              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mx-auto max-w-[1280px] space-y-8 px-5 py-7 pb-32 lg:px-7">
+              <section className="meeting-new-information-card rounded-2xl border border-slate-300 bg-white p-6 shadow-sm">
                 <SectionTitle>会议信息</SectionTitle>
-                <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <div className="mt-5 grid gap-x-5 gap-y-4 lg:grid-cols-3">
                   <Field label="会议主题" value={form.title} onChange={(value) => setField('title', value)} placeholder="例如：项目推进周例会" />
-                  <Field label="会议日期" value={form.meeting_date} onChange={(value) => setField('meeting_date', value)} placeholder="YYYY-MM-DD" />
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-700">会议日期</label>
+                    <input type="date" value={form.meeting_date} onChange={(event) => setField('meeting_date', event.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-sky-500" />
+                  </div>
                   <Field label="会议地点" value={form.location} onChange={(value) => setField('location', value)} placeholder="线上会议或具体地点" />
-                  <Field label="主持人" value={form.host} onChange={(value) => setField('host', value)} placeholder="单独填写主持人" />
-                  <Field label="参会人员" value={form.participants} onChange={(value) => setField('participants', value)} placeholder="多人用顿号或逗号分隔" />
-                  <Field label="整理人" value={form.organizer} onChange={(value) => setField('organizer', value)} placeholder="可选" />
-                  <Field label="抄送" value={form.copied_to} onChange={(value) => setField('copied_to', value)} placeholder="可选，多人用顿号或逗号分隔" />
+                  {singleMemberField('主持人', 'host', '请选择主持人')}
+                  <Field label="参会人员" value={form.participants} onChange={(value) => setField('participants', value)} placeholder="可选，多人用顿号或逗号分隔" />
+                  {singleMemberField('整理人', 'organizer', '请选择整理人')}
+                  <div className="lg:col-span-3">
+                    <Field label="抄送" value={form.copied_to} onChange={(value) => setField('copied_to', value)} placeholder="项目全体成员" />
+                  </div>
                 </div>
               </section>
 
-              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <section className="meeting-new-material-card rounded-2xl border border-slate-300 bg-white p-6 shadow-sm">
                 <div className="flex items-center justify-between">
                   <div>
                     <SectionTitle>会议材料</SectionTitle>
@@ -515,14 +574,14 @@ export function NewMeetingModal({
         </main>
 
         {step === 'clarifying' && (
-          <footer className="flex shrink-0 items-center justify-between border-t border-slate-200 bg-white px-8 py-4 shadow-[0_-6px_18px_rgba(15,23,42,0.04)]">
+          <footer className="meeting-new-footer flex shrink-0 items-center justify-between border-t border-slate-200 bg-white px-5 py-4 shadow-[0_-6px_18px_rgba(15,23,42,0.04)] lg:px-7">
             <button onClick={() => setStep('input')} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">返回修改材料</button>
             <button onClick={() => void handleClarificationContinue()} disabled={documentUploading} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40">确认并继续</button>
           </footer>
         )}
 
         {step !== 'analyzing' && step !== 'clarifying' && (
-          <footer className="flex shrink-0 items-center justify-between border-t border-slate-200 bg-white px-8 py-4 shadow-[0_-6px_18px_rgba(15,23,42,0.04)]">
+          <footer className="meeting-new-footer flex shrink-0 items-center justify-between border-t border-slate-200 bg-white px-5 py-4 shadow-[0_-6px_18px_rgba(15,23,42,0.04)] lg:px-7">
             {step === 'review' ? <button onClick={() => (isEdit ? onClose() : setStep('input'))} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">{isEdit ? '取消' : '返回修改'}</button> : <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">取消</button>}
             {step === 'input' ? <button onClick={() => void handleAnalyze()} disabled={!analysisText.trim() || documentUploading} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40">AI 生成草稿</button> : <button onClick={() => void handleSave()} disabled={saving} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">{saving ? '保存中…' : isEdit ? '保存修改' : '保存草稿'}</button>}
           </footer>

@@ -116,3 +116,23 @@ test('execution plan drawer reuses DetailDrawer and keeps actions outside table'
   assert.match(drawer, /提交更新/)
   assert.match(drawer, /标记完成/)
 })
+
+test('workspace uses the approved reference card hierarchy and empty states', () => {
+  const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
+  const header = read('src/components/key-task-workspace/KeyTaskHeader.tsx')
+  const plan = read('src/components/key-task-workspace/ExecutionPlanTable.tsx')
+  const current = read('src/components/key-task-workspace/CurrentProgressCard.tsx')
+  const achievements = read('src/components/key-task-workspace/AchievementList.tsx')
+  const issues = read('src/components/key-task-workspace/IssueList.tsx')
+  const timeline = read('src/components/key-task-workspace/ExecutionTimeline.tsx')
+  const context = read('src/components/key-task-workspace/KeyTaskContextCard.tsx')
+
+  assert.match(workspace, /md:grid-cols-2/)
+  assert.match(header, /bg-blue-50/)
+  assert.match(plan, /添加计划/)
+  assert.match(current, /暂无已确认的有效推进事实/)
+  assert.match(achievements, /暂无关联成果/)
+  assert.match(issues, /暂无关联问题或风险/)
+  assert.match(timeline, /暂无已确认的推进记录/)
+  assert.match(context, /所属关系/)
+})

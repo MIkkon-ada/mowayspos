@@ -12,6 +12,10 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import inspect, text
 
+from .settings import get_settings, load_local_env
+
+load_local_env()
+
 from . import models
 from .auth import (
     _check_password,
@@ -64,7 +68,6 @@ from .routers import (
     wecom_auth,
 )
 from .seed import EXCEL_SEED, seed
-from .settings import get_settings
 from .time_utils import utc_now
 
 logging.basicConfig(

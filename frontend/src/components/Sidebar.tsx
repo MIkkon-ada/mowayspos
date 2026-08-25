@@ -42,6 +42,7 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
   const roleText = highestRole ? getProjectRoleLabel(highestRole) : systemRoleLabel(currentUser?.system_role)
   const avatarChar = userName.slice(0, 1) || '我'
   const userIdentityLabel = `${userName || '未登录'} · ${roleText || '暂无角色'}`
+  const effectiveLogoUrl = logoUrl || '/moways-logo-transparent.png'
 
   const isCEO = !!(currentUser?.is_ceo || globalUserRoles.includes('project_ceo'))
 
@@ -138,19 +139,9 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
     <aside className="app-sidebar w-16 xl:w-44 flex-shrink-0 flex flex-col overflow-hidden" style={{ background: '#0F172A' }}>
       <div
         className="flex items-center justify-center xl:justify-between px-3 h-14 flex-shrink-0"
-        style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
+        style={{ background: '#FFFFFF', borderBottom: '1px solid #E2E8F0' }}
       >
-        {logoUrl
-          ? <img src={logoUrl} alt="logo" className="h-8 max-w-8 xl:max-w-[90px] object-contain flex-shrink-0" />
-          : <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-              style={{ background: 'linear-gradient(135deg,var(--brand-accent,#0EA5E9),var(--brand-primary,#0369A1))' }}
-            >
-              <svg style={{ width: 18, height: 18, color: 'white' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-            </div>
-        }
+        <img src={effectiveLogoUrl} alt="MOWAYS 博维咨询" className="h-8 max-w-8 xl:max-w-[90px] object-contain flex-shrink-0" />
         <div className="hidden xl:block">
           <NotificationBell />
         </div>

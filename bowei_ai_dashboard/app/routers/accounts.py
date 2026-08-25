@@ -679,7 +679,7 @@ def list_wecom_users(
         raise HTTPException(503, "wecom_login_disabled")
 
     try:
-        wecom_users = wecom.list_department_users(department_id=1, fetch_child=True)
+        wecom_users, _ = wecom.list_visible_department_users()
     except wecom.WecomError as e:
         raise HTTPException(502, str(e))
 
@@ -802,8 +802,7 @@ def preview_wecom_directory(
     if not get_settings().wecom_directory_enabled:
         raise HTTPException(503, "wecom_directory_disabled")
     try:
-        users = wecom.list_department_user_details(department_id=1, fetch_child=True)
-        departments = wecom.list_departments()
+        users, departments = wecom.list_visible_department_users(details=True)
     except wecom.WecomError as exc:
         raise HTTPException(502, str(exc)) from exc
     department_paths = wecom.build_department_paths(departments)
@@ -831,8 +830,7 @@ def sync_wecom_directory(
     if not payload.items:
         raise HTTPException(422, "至少选择一名企业微信成员")
     try:
-        users = wecom.list_department_user_details(department_id=1, fetch_child=True)
-        departments = wecom.list_departments()
+        users, departments = wecom.list_visible_department_users(details=True)
     except wecom.WecomError as exc:
         raise HTTPException(502, str(exc)) from exc
     department_paths = wecom.build_department_paths(departments)
@@ -864,8 +862,7 @@ def provision_wecom_directory_accounts_endpoint(
     if not get_settings().wecom_directory_enabled:
         raise HTTPException(503, "wecom_directory_disabled")
     try:
-        users = wecom.list_department_user_details(department_id=1, fetch_child=True)
-        departments = wecom.list_departments()
+        users, departments = wecom.list_visible_department_users(details=True)
     except wecom.WecomError as exc:
         raise HTTPException(502, str(exc)) from exc
 

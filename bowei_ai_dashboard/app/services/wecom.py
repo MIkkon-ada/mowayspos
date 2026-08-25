@@ -169,7 +169,7 @@ def list_department_users(department_id: int = 1, fetch_child: bool = True) -> l
         # 60011 表示无通讯录权限，给个明确提示
         if data.get("errcode") == 60011:
             raise WecomError(
-                "wecom no contact permission: 请在企业微信管理后台给应用授予通讯录读取权限"
+                "wecom department permission denied: 应用对所请求部门无查看权限，或该部门不在应用可见范围"
             )
         raise WecomError(f"wecom simplelist failed: {data}")
     return data.get("userlist") or []
@@ -188,7 +188,7 @@ def list_department_user_details(department_id: int = 1, fetch_child: bool = Tru
     )
     if data.get("errcode") != 0:
         if data.get("errcode") == 60011:
-            raise WecomError("wecom no contact permission: 请在企业微信管理后台给应用授予通讯录读取权限")
+            raise WecomError("wecom department permission denied: 应用对所请求部门无查看权限，或该部门不在应用可见范围")
         raise WecomError(f"wecom user detail list failed: {data}")
     return data.get("userlist") or []
 
@@ -201,9 +201,39 @@ def list_departments() -> list[dict]:
     )
     if data.get("errcode") != 0:
         if data.get("errcode") == 60011:
-            raise WecomError("wecom no contact permission: 请在企业微信管理后台给应用授予通讯录读取权限")
+            raise WecomError("wecom department permission denied: 应用对所请求部门无查看权限，或该部门不在应用可见范围")
         raise WecomError(f"wecom department list failed: {data}")
     return data.get("department") or []
+
+
+def list_visible_department_users(*, details: bool = False) -> tuple[list[dict], list[dict]]:
+    """读取应用可见的非根部门成员，避免请求企业根部门全员。"""
+    departments = list_departments()
+    department_ids: list[int] = []
+    seen_department_ids: set[int] = set()
+    for department in departments:
+        try:
+            department_id = int(department.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if department_id == 1 or department_id in seen_department_ids:
+            continue
+        seen_department_ids.add(department_id)
+        department_ids.append(department_id)
+    if not department_ids:
+        raise WecomError("wecom no visible departments: 请在企业微信管理后台将至少一个业务部门加入应用可见范围")
+
+    fetch_users = list_department_user_details if details else list_department_users
+    users: list[dict] = []
+    seen_userids: set[str] = set()
+    for department_id in department_ids:
+        for user in fetch_users(department_id=department_id, fetch_child=False):
+            userid = str(user.get("userid") or "").strip()
+            if not userid or userid in seen_userids:
+                continue
+            seen_userids.add(userid)
+            users.append(user)
+    return users, departments
 
 
 def build_department_paths(departments: list[dict]) -> dict[int, dict]:

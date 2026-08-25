@@ -87,7 +87,7 @@ test('project summary stays compact while preserving the horizontal three-field 
   assert.match(source, /mb-1\.5[^>]*>项目资料/)
   assert.match(source, /md:grid-cols-\[minmax\(160px,0\.8fr\)_minmax\(260px,1fr\)_minmax\(360px,2fr\)\]/)
   assert.match(source, /rows=\{2\}/)
-  assert.match(source, /<details className="group mt-1">/)
+  assert.match(source, /<details className="app-disclosure group mt-1">/)
 })
 
 test('screenshot reference keeps the project summary display-first and task cards scanable', () => {

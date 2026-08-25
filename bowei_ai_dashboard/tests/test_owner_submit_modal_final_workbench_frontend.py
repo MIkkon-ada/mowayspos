@@ -11,15 +11,15 @@ def _frontend_source(relative_path: str) -> str:
     return (_repo_root() / "frontend" / "src" / relative_path).read_text(encoding="utf-8")
 
 
-def test_owner_submit_modal_uses_final_workbench_structure():
+def test_owner_submit_modal_uses_current_single_column_workbench_structure():
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
     for expected in [
-        "项目核心信息",
+        "填写项目方案",
         "项目名称",
-        "项目周期 / 时间段",
+        "项目周期",
         "项目完成准则 / 验收标准",
-        "补充详细信息",
+        "更多项目资料",
         "客户名称",
         "项目背景",
         "补充说明",
@@ -28,6 +28,9 @@ def test_owner_submit_modal_uses_final_workbench_structure():
         assert expected in source
 
     assert "<details" in source, "补充详细信息应使用默认折叠区域"
+    assert "owner-submit-project-summary" in source
+    assert "owner-submit-left-pane" not in source
+    assert "owner-submit-workbench-columns" not in source
     assert "预期交付物" not in source, "不应再把预期交付物作为显眼字段"
 
 
@@ -38,10 +41,10 @@ def test_owner_submit_modal_task_and_subtask_semantics_are_finalized():
         "重点工作名称",
         "目标成果 / 验收标准",
         "关键任务",
-        "责任人",
+        "负责人",
         "协助人",
         "时间段",
-        "备注 / 标准",
+        "验收标准 / 备注",
     ]:
         assert expected in source
 

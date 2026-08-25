@@ -8,57 +8,57 @@ def _frontend_source(relative_path: str) -> str:
     return (root / "frontend" / "src" / relative_path).read_text(encoding="utf-8")
 
 
-def test_owner_submit_modal_has_current_three_zone_workbench_layout():
+def test_owner_submit_modal_has_current_page_local_single_column_workbench_layout():
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
     for expected in [
         "owner-submit-workbench-shell",
         "owner-submit-workbench-header",
         "owner-submit-workbench-main",
-        "owner-submit-workbench-columns",
         "owner-submit-workbench-footer",
-        "bg-[#f7f9fc]",
+        "bg-slate-50",
         "overflow-y-auto",
         "shrink-0",
     ]:
         assert expected in source
-    assert "h-[72px]" not in source
+    assert "fixed inset-0" not in source
+    assert "owner-submit-workbench-columns" not in source
 
 
-def test_owner_submit_modal_width_uses_current_workbench_limits():
+def test_owner_submit_modal_width_uses_current_page_local_limits():
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
-    assert "w-[96vw]" in source
-    assert "max-w-[1560px]" in source
-    assert "mx-auto" in source
+    assert "owner-submit-workbench-shell flex min-h-0 w-full flex-1" in source
+    assert "max-w-[1560px] flex-col" in source
+    assert "w-[96vw]" not in source
     assert "w-[820px]" not in source
     assert "max-w-[1280px]" not in source
 
 
-def test_project_core_info_is_current_left_sidebar():
+def test_project_info_is_current_horizontal_summary():
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
     for expected in [
-        "owner-submit-left-pane",
-        "lg:w-[280px]",
-        "xl:w-[300px]",
-        "owner-submit-right-pane",
-        "flex-1 min-w-0",
-        "sticky",
+        "owner-submit-project-summary",
+        "owner-submit-project-summary-display",
+        "owner-submit-project-period-display",
+        "md:grid-cols-[minmax(160px,0.8fr)_minmax(260px,1fr)_minmax(360px,2fr)]",
+        "项目资料",
+        "项目周期",
     ]:
         assert expected in source
+    assert "owner-submit-left-pane" not in source
+    assert "owner-submit-right-pane" not in source
 
 
-def test_project_info_area_uses_current_compact_card_style():
+def test_project_info_area_uses_current_compact_summary_style():
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
     for expected in [
-        "owner-submit-core-card",
-        "rounded-2xl border border-slate-200 bg-white",
-        "shadow-[0_8px_24px_rgba(15,23,42,0.05)]",
-        "space-y-5",
-        "rows={3}",
+        "owner-submit-project-summary owner-submit-project-summary-display rounded-xl border border-slate-200 bg-white px-5 py-3",
+        "rows={2}",
         "项目完成准则 / 验收标准",
+        "更多项目资料",
     ]:
         assert expected in source
 
@@ -77,10 +77,10 @@ def test_task_group_uses_current_compact_card_style():
     for expected in [
         "owner-submit-workplan-heading",
         "owner-submit-task-group",
-        "overflow-hidden rounded-2xl border border-slate-200 bg-white",
+        "owner-submit-task-group rounded-xl border border-slate-200 bg-white",
         "owner-submit-task-group-header",
-        "bg-slate-50",
-        "md:grid-cols-2",
+        "bg-white px-4 py-3",
+        "flex flex-wrap items-center",
     ]:
         assert expected in source
 
@@ -94,11 +94,11 @@ def test_subtask_uses_current_table_like_layout():
         "border-separate border-spacing-0",
         "thead",
         "tbody",
-        "border-none bg-transparent p-0",
         "时间段",
-        "备注 / 标准",
+        "验收标准 / 备注",
     ]:
         assert expected in source
+    assert "max-w-[180px]" not in source
 
 
 def test_owner_submit_modal_keeps_task_and_subtask_semantics():

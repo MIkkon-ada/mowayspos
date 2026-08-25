@@ -20,3 +20,13 @@ test('confirmed WeCom identity sync remains preview-first and has no local overr
   assert.match(modal, /企业微信同步后将覆盖系统中的部门和岗位/)
   assert.doesNotMatch(modal, /本地覆盖/)
 })
+
+test('WeCom modal exposes full-directory account provisioning', () => {
+  assert.match(accountsApi, /provisionWecomDirectoryAccounts/)
+  assert.match(accountsApi, /wecom-directory\/provision-all/)
+  assert.match(modal, /同步全员并创建账号/)
+  assert.match(modal, /初始密码为 123456/)
+  assert.match(modal, /created_accounts/)
+  assert.match(modal, /conflicts/)
+  assert.match(modal, /duplicate_account_userid/)
+})

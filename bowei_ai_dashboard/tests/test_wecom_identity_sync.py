@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
@@ -13,6 +14,7 @@ from app.routers.accounts import (
     sync_wecom_identity_records,
 )
 from app.routers.people import reset_wecom_identity_field
+from app.routers import accounts as accounts_router
 from app.routers import people as people_router
 from app.settings import get_settings, load_local_env
 from app.services import wecom
@@ -270,6 +272,33 @@ def test_provision_wecom_directory_creates_accounts_and_skips_ambiguous_names():
             "created_accounts": 2,
             "conflicts": [{"userid": "zhangsan", "name": "张三", "reason": "ambiguous_name"}],
         }
+    finally:
+        db.close()
+
+
+def test_provision_wecom_directory_endpoint_reads_children_and_returns_stats(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        monkeypatch.setattr(accounts_router, "_require_admin", lambda current_user, session: None)
+        monkeypatch.setattr(accounts_router, "get_settings", lambda: SimpleNamespace(wecom_directory_enabled=True))
+        monkeypatch.setattr(
+            accounts_router.wecom,
+            "list_department_user_details",
+            lambda **kwargs: [{"userid": "alice", "name": "Alice", "department": [7], "position": "产品经理"}],
+        )
+        monkeypatch.setattr(
+            accounts_router.wecom,
+            "list_departments",
+            lambda: [{"id": 1, "name": "博维", "parentid": 0}, {"id": 7, "name": "产品部", "parentid": 1}],
+        )
+
+        response = accounts_router.provision_wecom_directory_accounts_endpoint(current_user="admin", db=db)
+
+        assert response["created_people"] == 1
+        assert response["created_accounts"] == 1
+        assert db.query(models.Person).filter_by(wecom_userid="alice").one().department == "博维 / 产品部"
     finally:
         db.close()
 

@@ -83,6 +83,14 @@ class WecomDirectorySyncRequest(BaseModel):
     items: list[WecomDirectorySyncItem]
 
 
+class WecomDirectoryProvisionResult(BaseModel):
+    updated: int
+    linked_by_name: int
+    created_people: int
+    created_accounts: int
+    conflicts: list[dict]
+
+
 def _account_to_dict(row: models.Account, person: models.Person | None = None) -> dict:
     def iso(value):
         return value.isoformat() if value else None
@@ -838,3 +846,25 @@ def sync_wecom_directory(
     )
     db.commit()
     return {"synced": len(result), "items": result}
+
+
+@router.post("/wecom-directory/provision-all", response_model=WecomDirectoryProvisionResult)
+def provision_wecom_directory_accounts_endpoint(
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """Sync all safe WeCom members and create ordinary local accounts as needed."""
+    _require_admin(current_user, db)
+    if not get_settings().wecom_directory_enabled:
+        raise HTTPException(503, "wecom_directory_disabled")
+    try:
+        users = wecom.list_department_user_details(department_id=1, fetch_child=True)
+        departments = wecom.list_departments()
+    except wecom.WecomError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+    records = _normalize_wecom_directory_records(users, wecom.build_department_paths(departments))
+    result = provision_wecom_directory_accounts(db, records)
+    crud.log(db, current_user, "provision_wecom_directory_accounts", "people", None, after=result)
+    db.commit()
+    return result

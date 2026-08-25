@@ -18,6 +18,7 @@ EXPECTED_DIRECT_DEPENDENCIES = {
     "pydantic",
     "pypdf",
     "python-docx",
+    "python-dotenv",
     "python-multipart",
     "python-pptx",
     "sqlalchemy",

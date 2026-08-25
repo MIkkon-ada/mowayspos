@@ -28,4 +28,5 @@ test('WeCom modal exposes full-directory account provisioning', () => {
   assert.match(modal, /初始密码为 123456/)
   assert.match(modal, /created_accounts/)
   assert.match(modal, /conflicts/)
+  assert.match(modal, /duplicate_account_userid/)
 })

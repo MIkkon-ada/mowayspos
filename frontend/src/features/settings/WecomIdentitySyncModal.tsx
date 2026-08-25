@@ -10,6 +10,7 @@ type Props = {
 
 const provisionConflictReason: Record<string, string> = {
   ambiguous_name: '本地存在同名人员',
+  duplicate_account_userid: '企业微信身份被多个本地账号重复绑定',
   orphaned_account_binding: '企业微信已绑定到未关联人员的账号',
   userid_bound_to_other_account: '企业微信已绑定到其他账号',
   person_bound_to_other_userid: '本地人员已绑定其他企业微信身份',

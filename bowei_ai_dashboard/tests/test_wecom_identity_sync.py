@@ -276,6 +276,39 @@ def test_provision_wecom_directory_creates_accounts_and_skips_ambiguous_names():
         db.close()
 
 
+def test_provision_wecom_directory_skips_duplicate_account_userid_bindings():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        first = models.Person(name="Alice", department="原部门")
+        second = models.Person(name="Bob", department="原部门")
+        db.add_all([first, second])
+        db.flush()
+        db.add_all([
+            models.Account(username="alice", password_hash="password", person_id=first.id, wecom_userid="shared"),
+            models.Account(username="bob", password_hash="password", person_id=second.id, wecom_userid="shared"),
+        ])
+        db.commit()
+
+        result = provision_wecom_directory_accounts(db, [
+            {"userid": "shared", "name": "企微成员", "department_path": "博维 / 产品部", "position": "产品经理"},
+        ])
+
+        db.refresh(first)
+        db.refresh(second)
+        assert result == {
+            "updated": 0,
+            "linked_by_name": 0,
+            "created_people": 0,
+            "created_accounts": 0,
+            "conflicts": [{"userid": "shared", "name": "企微成员", "reason": "duplicate_account_userid"}],
+        }
+        assert first.department == second.department == "原部门"
+    finally:
+        db.close()
+
+
 def test_provision_wecom_directory_endpoint_reads_children_and_returns_stats(monkeypatch):
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

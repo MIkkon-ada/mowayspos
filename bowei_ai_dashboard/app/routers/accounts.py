@@ -177,7 +177,7 @@ def provision_wecom_directory_accounts(db: Session, records: list[dict]) -> dict
     by_userid = {str(person.wecom_userid).strip(): person for person in people if person.wecom_userid}
     by_name: dict[str, list[models.Person]] = {}
     accounts_by_person: dict[int, list[models.Account]] = {}
-    account_by_userid = {str(account.wecom_userid).strip(): account for account in accounts if account.wecom_userid}
+    accounts_by_userid: dict[str, list[models.Account]] = {}
     for person in people:
         name = str(person.name or "").strip()
         if name:
@@ -185,6 +185,8 @@ def provision_wecom_directory_accounts(db: Session, records: list[dict]) -> dict
     for account in accounts:
         if account.person_id:
             accounts_by_person.setdefault(account.person_id, []).append(account)
+        if account.wecom_userid:
+            accounts_by_userid.setdefault(str(account.wecom_userid).strip(), []).append(account)
 
     result = {
         "updated": 0,
@@ -199,7 +201,11 @@ def provision_wecom_directory_accounts(db: Session, records: list[dict]) -> dict
         if not userid:
             continue
 
-        account_owner = account_by_userid.get(userid)
+        matching_accounts = accounts_by_userid.get(userid, [])
+        if len(matching_accounts) > 1:
+            result["conflicts"].append({"userid": userid, "name": name, "reason": "duplicate_account_userid"})
+            continue
+        account_owner = matching_accounts[0] if matching_accounts else None
         if account_owner and not account_owner.person_id:
             result["conflicts"].append({"userid": userid, "name": name, "reason": "orphaned_account_binding"})
             continue
@@ -245,7 +251,7 @@ def provision_wecom_directory_accounts(db: Session, records: list[dict]) -> dict
         if person_accounts:
             for account in person_accounts:
                 account.wecom_userid = userid
-                account_by_userid[userid] = account
+                accounts_by_userid[userid] = [account]
         else:
             account = models.Account(
                 username=_next_wecom_username(db, userid),
@@ -259,7 +265,7 @@ def provision_wecom_directory_accounts(db: Session, records: list[dict]) -> dict
             )
             db.add(account)
             accounts_by_person[person.id] = [account]
-            account_by_userid[userid] = account
+            accounts_by_userid[userid] = [account]
             result["created_accounts"] += 1
         result["updated"] += 1
     return result

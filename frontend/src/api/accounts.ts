@@ -112,6 +112,18 @@ export function syncWecomDirectory(items: WecomDirectorySyncItem[]): Promise<{ s
   return apiPost('/api/accounts/wecom-directory/sync', { items })
 }
 
+export type WecomDirectoryProvisionResult = {
+  updated: number
+  linked_by_name: number
+  created_people: number
+  created_accounts: number
+  conflicts: Array<{ userid: string; name: string; reason: string }>
+}
+
+export function provisionWecomDirectoryAccounts(): Promise<WecomDirectoryProvisionResult> {
+  return apiPost<WecomDirectoryProvisionResult>('/api/accounts/wecom-directory/provision-all', {})
+}
+
 export function changeMyPassword(oldPassword: string, newPassword: string): Promise<{ ok: boolean }> {
   return apiPost<{ ok: boolean }>('/api/auth/change-password', {
     old_password: oldPassword,

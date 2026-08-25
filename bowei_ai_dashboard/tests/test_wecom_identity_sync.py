@@ -98,6 +98,48 @@ def test_wecom_detailed_directory_uses_member_detail_endpoint(monkeypatch):
     assert calls[0][1] == {"access_token": "token", "department_id": 1, "fetch_child": 1}
 
 
+def test_visible_department_members_query_each_non_root_department_without_children(monkeypatch):
+    calls = []
+    departments = [
+        {"id": 1, "name": "公司", "parentid": 0},
+        {"id": 2, "name": "咨询部", "parentid": 1},
+        {"id": 3, "name": "商务部", "parentid": 1},
+    ]
+    monkeypatch.setattr(wecom, "list_departments", lambda: departments)
+
+    def fake_list_users(department_id, fetch_child):
+        calls.append((department_id, fetch_child))
+        return (
+            [{"userid": "alice", "name": "Alice"}]
+            if department_id == 2
+            else [{"userid": "alice", "name": "Alice"}, {"userid": "bob", "name": "Bob"}]
+        )
+
+    monkeypatch.setattr(wecom, "list_department_users", fake_list_users)
+
+    users, returned_departments = wecom.list_visible_department_users()
+
+    assert calls == [(2, False), (3, False)]
+    assert [item["userid"] for item in users] == ["alice", "bob"]
+    assert returned_departments == departments
+
+
+def test_visible_department_details_use_detail_endpoint_for_each_visible_department(monkeypatch):
+    calls = []
+    monkeypatch.setattr(wecom, "list_departments", lambda: [{"id": 1}, {"id": 8}, {"id": 9}])
+
+    def fake_details(department_id, fetch_child):
+        calls.append((department_id, fetch_child))
+        return [{"userid": f"user-{department_id}", "department": [department_id]}]
+
+    monkeypatch.setattr(wecom, "list_department_user_details", fake_details)
+
+    users, _ = wecom.list_visible_department_users(details=True)
+
+    assert calls == [(8, False), (9, False)]
+    assert [item["userid"] for item in users] == ["user-8", "user-9"]
+
+
 def test_wecom_department_paths_are_built_from_parent_tree(monkeypatch):
     def fake_get(url, params=None, timeout=10.0):
         assert url.endswith("/department/list")

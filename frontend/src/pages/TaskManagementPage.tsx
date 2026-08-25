@@ -332,7 +332,7 @@ export function TaskManagementPage() {
       setAutoSelectedTaskProjectId(null)
       return
     }
-    if (availableTaskProjects.length === 1) {
+    if (availableTaskProjects.length > 0) {
       setAutoSelectedTaskProjectId(availableTaskProjects[0].id)
       return
     }

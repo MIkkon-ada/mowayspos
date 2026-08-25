@@ -435,6 +435,38 @@ def test_workspace_api_returns_one_contract_without_percentages():
     assert "percent" not in str(result).lower()
 
 
+def test_workspace_uses_workstream_plan_time_when_key_task_time_is_blank():
+    from app.routers import key_tasks
+
+    db = _db()
+    _project, workstream, key_task = _seed_workspace(db)
+    workstream.plan_time = "7.3-7.10"
+    key_task.plan_time = ""
+    db.commit()
+
+    result = key_tasks.get_execution_workspace(
+        key_task.id, current_user="owner", db=db
+    )
+
+    assert result["key_task"]["plan_time"] == "7.3-7.10"
+
+
+def test_workspace_uses_legacy_note_collaborator_when_structured_list_is_empty():
+    from app.routers import key_tasks
+
+    db = _db()
+    _project, _workstream, key_task = _seed_workspace(db)
+    key_task.collaborator_ids = []
+    key_task.notes = "协同人：郭瑞彬\n完成系统模块梳理迭代"
+    db.commit()
+
+    result = key_tasks.get_execution_workspace(
+        key_task.id, current_user="owner", db=db
+    )
+
+    assert result["key_task"]["collaborators"] == [{"id": None, "name": "郭瑞彬"}]
+
+
 def test_authorized_manual_achievement_enters_timeline_without_becoming_progress():
     from app.routers import achievements
     from app.services.key_task_execution import current_progress_dict, timeline_dicts

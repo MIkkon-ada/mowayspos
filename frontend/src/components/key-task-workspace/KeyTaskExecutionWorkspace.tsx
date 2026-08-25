@@ -71,18 +71,19 @@ export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId }: { ke
 
   if (loading) return <main className="p-8 text-sm text-slate-500">正在加载关键任务执行工作台…</main>
   if (error || !workspace) return <main className="p-8"><p className="text-sm text-red-700">{error || '工作台数据不可用'}</p><button type="button" onClick={refresh} className="mt-3 rounded border px-3 py-2 text-sm">重新加载</button>{onBack && <button type="button" onClick={onBack} className="ml-2 rounded border px-3 py-2 text-sm">返回</button>}</main>
-
   return (
     <main className="flex-1 min-h-0 overflow-y-auto bg-slate-50">
-      <div className="mx-auto max-w-[1440px] space-y-4 p-4 pb-24 min-[800px]:p-6">
-        {onBack && <button type="button" onClick={onBack} className="text-sm font-medium text-slate-500 hover:text-blue-600">← 返回</button>}
+      <div className="mx-auto max-w-[1440px] space-y-5 pb-24">
+        {onBack && <button type="button" onClick={onBack} className="ml-4 mt-4 text-sm font-medium text-slate-500 hover:text-blue-600 min-[800px]:ml-6">← 返回</button>}
         <KeyTaskHeader workspace={workspace} onSubmitUpdate={submitUpdate} onConfirmCompletion={() => void confirm()} onReopen={() => void reopen()} onChangeRisk={() => void changeRisk()} />
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_330px]">
+        <div className="grid gap-4 px-4 min-[800px]:px-6 xl:grid-cols-[minmax(0,1fr)_330px]">
           <div className="space-y-4">
             <CurrentProgressCard progress={workspace.current_progress} />
             <ExecutionPlanTable plans={workspace.execution_plans} summary={workspace.plan_summary} onOpen={setSelectedPlan} />
-            <AchievementList items={workspace.achievements} />
-            <IssueList items={workspace.issues} />
+            <div className="grid gap-4 md:grid-cols-2">
+              <AchievementList items={workspace.achievements} />
+              <IssueList items={workspace.issues} />
+            </div>
             <ExecutionTimeline events={workspace.timeline} />
           </div>
           <div className="xl:sticky xl:top-4 xl:self-start"><KeyTaskContextCard workspace={workspace} /></div>

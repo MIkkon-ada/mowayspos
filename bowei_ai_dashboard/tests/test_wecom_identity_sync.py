@@ -1,16 +1,21 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
-from app import models
+from app import models, schemas
 from app.database import Base
+from app.permissions import ROLE_NORMAL
 from app.routers.accounts import (
     apply_wecom_identity_record,
     build_wecom_directory_preview,
+    provision_wecom_directory_accounts,
     sync_wecom_identity_records,
 )
 from app.routers.people import reset_wecom_identity_field
+from app.routers import accounts as accounts_router
+from app.routers import people as people_router
 from app.settings import get_settings, load_local_env
 from app.services import wecom
 
@@ -113,7 +118,7 @@ def test_wecom_department_paths_are_built_from_parent_tree(monkeypatch):
     assert departments[9]["path"] == "博维 / 产品部 / 平台组"
 
 
-def test_wecom_sync_preserves_local_overrides_per_field():
+def test_wecom_sync_overwrites_legacy_local_identity_values():
     person = models.Person(
         name="Alice",
         department="战略部",
@@ -135,9 +140,9 @@ def test_wecom_sync_preserves_local_overrides_per_field():
     assert person.wecom_userid == "alice"
     assert person.wecom_department == "产品部"
     assert person.wecom_position_title == "产品经理"
-    assert person.department == "战略部"
+    assert person.department == "产品部"
     assert person.position_title == "产品经理"
-    assert person.department_source == "local"
+    assert person.department_source == "wecom"
     assert person.position_source == "wecom"
 
 
@@ -223,10 +228,110 @@ def test_confirmed_sync_updates_identity_without_touching_project_roles():
         assert result[0]["person_id"] == person.id
         db.refresh(person)
         db.refresh(member)
-        assert person.department == "战略部"
+        assert person.department == "产品部"
         assert person.wecom_department == "产品部"
         assert person.position_title == "产品经理"
+        assert person.department_source == "wecom"
         assert member.role == "owner"
+    finally:
+        db.close()
+
+
+def test_provision_wecom_directory_creates_accounts_and_skips_ambiguous_names():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        db.add_all([
+            models.Person(name="王伟", system_role=ROLE_NORMAL),
+            models.Person(name="张三"),
+            models.Person(name="张三"),
+            models.Account(username="lihua", password_hash="existing", status="active"),
+        ])
+        db.commit()
+
+        result = provision_wecom_directory_accounts(db, [
+            {"userid": "lihua", "name": "李华", "department_path": "博维 / 产品部", "position": "产品经理"},
+            {"userid": "wangwei", "name": "王伟", "department_path": "博维 / 研发部", "position": "工程师"},
+            {"userid": "zhangsan", "name": "张三", "department_path": "博维 / 销售部", "position": "销售"},
+        ])
+
+        new_person = db.query(models.Person).filter_by(wecom_userid="lihua").one()
+        linked_person = db.query(models.Person).filter_by(wecom_userid="wangwei").one()
+        new_account = db.query(models.Account).filter_by(person_id=new_person.id).one()
+        linked_account = db.query(models.Account).filter_by(person_id=linked_person.id).one()
+        assert (new_person.department, new_person.wecom_department, new_person.position_title) == ("博维 / 产品部", "博维 / 产品部", "产品经理")
+        assert (new_account.username, new_account.password_hash, new_account.wecom_userid) == ("lihua-2", "123456", "lihua")
+        assert new_account.status == "active"
+        assert new_account.must_change_password is False
+        assert linked_account.username == "wangwei"
+        assert result == {
+            "updated": 2,
+            "linked_by_name": 1,
+            "created_people": 1,
+            "created_accounts": 2,
+            "conflicts": [{"userid": "zhangsan", "name": "张三", "reason": "ambiguous_name"}],
+        }
+    finally:
+        db.close()
+
+
+def test_provision_wecom_directory_skips_duplicate_account_userid_bindings():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        first = models.Person(name="Alice", department="原部门")
+        second = models.Person(name="Bob", department="原部门")
+        db.add_all([first, second])
+        db.flush()
+        db.add_all([
+            models.Account(username="alice", password_hash="password", person_id=first.id, wecom_userid="shared"),
+            models.Account(username="bob", password_hash="password", person_id=second.id, wecom_userid="shared"),
+        ])
+        db.commit()
+
+        result = provision_wecom_directory_accounts(db, [
+            {"userid": "shared", "name": "企微成员", "department_path": "博维 / 产品部", "position": "产品经理"},
+        ])
+
+        db.refresh(first)
+        db.refresh(second)
+        assert result == {
+            "updated": 0,
+            "linked_by_name": 0,
+            "created_people": 0,
+            "created_accounts": 0,
+            "conflicts": [{"userid": "shared", "name": "企微成员", "reason": "duplicate_account_userid"}],
+        }
+        assert first.department == second.department == "原部门"
+    finally:
+        db.close()
+
+
+def test_provision_wecom_directory_endpoint_reads_children_and_returns_stats(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        monkeypatch.setattr(accounts_router, "_require_admin", lambda current_user, session: None)
+        monkeypatch.setattr(accounts_router, "get_settings", lambda: SimpleNamespace(wecom_directory_enabled=True))
+        monkeypatch.setattr(
+            accounts_router.wecom,
+            "list_department_user_details",
+            lambda **kwargs: [{"userid": "alice", "name": "Alice", "department": [7], "position": "产品经理"}],
+        )
+        monkeypatch.setattr(
+            accounts_router.wecom,
+            "list_departments",
+            lambda: [{"id": 1, "name": "博维", "parentid": 0}, {"id": 7, "name": "产品部", "parentid": 1}],
+        )
+
+        response = accounts_router.provision_wecom_directory_accounts_endpoint(current_user="admin", db=db)
+
+        assert response["created_people"] == 1
+        assert response["created_accounts"] == 1
+        assert db.query(models.Person).filter_by(wecom_userid="alice").one().department == "博维 / 产品部"
     finally:
         db.close()
 
@@ -248,3 +353,59 @@ def test_reset_identity_field_restores_latest_wecom_value_independently():
     assert person.department_source == "wecom"
     assert person.position_title == "产品经理"
     assert person.position_source == "local"
+
+
+def test_narrow_account_management_update_preserves_wecom_identity_and_assignments(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        person = models.Person(
+            name="Alice",
+            role="负责人",
+            department="产品部",
+            position_title="产品经理",
+            system_role="normal_member",
+            permission="审批",
+            contact="alice@example.com",
+            is_active=False,
+        )
+        project = models.Project(
+            name="Project A",
+            coordinator="Alice",
+            owners="Alice",
+            status="active",
+            is_active=True,
+        )
+        db.add_all([person, project])
+        db.flush()
+        db.add(models.ProjectMember(
+            project_id=project.id,
+            person_id=person.id,
+            person_name_snapshot="Alice",
+            role="owner",
+        ))
+        db.commit()
+        monkeypatch.setattr(people_router, "_require_admin", lambda current_user, session: None)
+
+        people_router.update_person(
+            person.id,
+            schemas.PersonPayload(name="Alice Chen", system_role="company_ceo"),
+            current_user="admin",
+            db=db,
+        )
+
+        db.refresh(person)
+        db.refresh(project)
+        member = db.query(models.ProjectMember).filter_by(person_id=person.id).one()
+        assert person.department == "产品部"
+        assert person.position_title == "产品经理"
+        assert person.role == "负责人"
+        assert person.permission == "审批"
+        assert person.contact == "alice@example.com"
+        assert person.is_active is False
+        assert project.coordinator == "Alice Chen"
+        assert project.owners == "Alice Chen"
+        assert member.person_name_snapshot == "Alice Chen"
+    finally:
+        db.close()

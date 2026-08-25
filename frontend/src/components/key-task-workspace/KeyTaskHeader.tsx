@@ -26,7 +26,7 @@ export function KeyTaskHeader({ workspace, onSubmitUpdate, onConfirmCompletion, 
   const isCompleted = task.status === '已完成'
   const collaborators = task.collaborators.length ? task.collaborators.map((person) => person.name).join('、') : '—'
 
-  return <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+  return <header className="border-y border-blue-200 bg-blue-50 px-5 py-6 shadow-sm sm:px-7">
     <nav className="truncate text-sm text-slate-500" aria-label="关键任务路径">
       <span>{project?.name || '项目'}</span><span className="mx-2">/</span><span>{workstream?.name || '重点工作'}</span><span className="mx-2">/</span><span className="text-slate-700">关键任务</span>
     </nav>
@@ -34,21 +34,21 @@ export function KeyTaskHeader({ workspace, onSubmitUpdate, onConfirmCompletion, 
     <div className="mt-4 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">{task.title}</h1>
-          <span className={`rounded-full px-3 py-1 text-sm font-semibold ${statusTone(task.status)}`}>{task.status || '未开始'}</span>
-          {task.risk_note && <span title={task.risk_note} className="rounded-full bg-orange-50 px-3 py-1 text-sm font-semibold text-orange-700">有风险</span>}
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">{task.title}</h1>
+          <span className={`rounded-sm px-3 py-1 text-sm font-semibold ${statusTone(task.status)}`}>{task.status || '未开始'}</span>
+          {task.risk_note && <span title={task.risk_note} className="rounded-sm bg-orange-50 px-3 py-1 text-sm font-semibold text-orange-700">有风险</span>}
         </div>
       </div>
 
       <div className="flex shrink-0 flex-wrap gap-2">
-        {permissions.can_submit_update && <button type="button" onClick={onSubmitUpdate} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">提交更新</button>}
-        {permissions.can_manage_risk && <button type="button" onClick={onChangeRisk} className="rounded-lg border border-orange-300 px-4 py-2 text-sm font-semibold text-orange-700">{task.risk_note ? '解除风险' : '标记风险'}</button>}
-        {permissions.can_confirm_completion && !isCompleted && eligibility.state === 'eligible' && <button type="button" onClick={onConfirmCompletion} className="rounded-lg border border-emerald-300 px-4 py-2 text-sm font-semibold text-emerald-700">确认完成</button>}
-        {permissions.can_operate && isCompleted && <button type="button" onClick={onReopen} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700">重新打开</button>}
+        {permissions.can_submit_update && <button type="button" onClick={onSubmitUpdate} className="rounded-sm bg-blue-700 px-4 py-2 text-sm font-semibold text-white shadow-sm">提交更新</button>}
+        {permissions.can_manage_risk && <button type="button" onClick={onChangeRisk} className="rounded-sm border border-orange-300 bg-white px-4 py-2 text-sm font-semibold text-orange-700">{task.risk_note ? '解除风险' : '标记风险'}</button>}
+        {permissions.can_confirm_completion && !isCompleted && eligibility.state === 'eligible' && <button type="button" onClick={onConfirmCompletion} className="rounded-sm border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700">确认完成</button>}
+        {permissions.can_operate && isCompleted && <button type="button" onClick={onReopen} className="rounded-sm border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700">重新打开</button>}
       </div>
     </div>
 
-    <div className="mt-5 grid items-center gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2 xl:grid-cols-3" aria-label="关键任务元信息">
+    <div className="mt-4 grid items-center gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3" aria-label="关键任务元信息">
       <MetaItem label="负责人" value={task.owner.name || '未指定'} marker={(task.owner.name || '?').slice(0, 1)} markerTone="blue" />
       <MetaItem label="协同人" value={collaborators} marker="协" />
       <MetaItem label="计划时间" value={formatKeyTaskPlanTime(task)} marker="时" />

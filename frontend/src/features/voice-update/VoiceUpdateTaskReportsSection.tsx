@@ -276,7 +276,7 @@ export function VoiceUpdateTaskReportsSection({
           )}
         </div>
         {(
-          <details className="voice-update-ownership-details">
+          <details className="app-disclosure voice-update-ownership-details">
             <summary>调整任务归属及成果链接</summary>
             {renderOwnership(report, index)}
             {(report.achievements ?? []).map((achievement, achievementIndex) => (
@@ -306,37 +306,14 @@ export function VoiceUpdateTaskReportsSection({
 
   if (taskReports.length === 0) {
     return (
-      <div className="voice-update-task-reports voice-update-structured-empty" aria-label="待提取的结构化汇报字段">
-        <article className="voice-update-report-card is-primary">
-          <div className="voice-update-progress-editor">
-            {[
-              ['本次完成', 'AI 提取后将在此展示本次完成的工作', 'is-complete', '✓'],
-              ['下一步计划', 'AI 提取后将在此展示下一步计划', 'is-next', '→'],
-              ['问题与风险', 'AI 提取后将在此展示问题与风险', 'is-risk', '!'],
-              ['取得的成果', 'AI 提取后将在此展示取得的成果', 'is-achievement', '★'],
-            ].map(([label, placeholder, tone, icon]) => (
-              <div className="voice-update-progress-field" key={label}>
-                <label className="voice-update-field-label"><span className={tone}>{icon}</span>{label}</label>
-                <div className="voice-update-field-control">
-                  <textarea value="" disabled placeholder={placeholder} readOnly />
-                  <span>0/1000</span>
-                </div>
-              </div>
-            ))}
-            <div className="voice-update-progress-field">
-              <label className="voice-update-field-label"><span className="is-status">⚑</span>任务状态建议</label>
-              <div className="voice-update-status-options" role="radiogroup" aria-label="任务状态建议">
-                {STATUS_OPTIONS.map((status) => (
-                  <label key={status}>
-                    <input type="radio" name="voice-update-status" value={status} disabled />
-                    <span>{status}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-        </article>
-      </div>
+      <section className="voice-update-clean-empty" aria-label="等待 AI 提取结果">
+        <div className="voice-update-clean-empty-icon" aria-hidden="true">✦</div>
+        <h3>等待 AI 提取汇报结果</h3>
+        <p>填写左侧工作汇报并点击“AI 提取”后，这里将展示结构化结果。</p>
+        <div className="voice-update-clean-empty-tags" aria-label="AI 将提取的结果类别">
+          {['本次完成', '下一步计划', '问题与风险', '取得的成果'].map((label) => <span key={label}>{label}</span>)}
+        </div>
+      </section>
     )
   }
 

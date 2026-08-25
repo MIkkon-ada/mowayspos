@@ -17,7 +17,7 @@ test('mobile navigation has four primaries and a more drawer', () => {
   const source = readFileSync(mobileUrl, 'utf8')
   for (const label of ['首页', '任务', '确认', '更多']) assert.match(source, new RegExp(label))
   assert.match(source, /aria-label="更多功能"/)
-  assert.doesNotMatch(source, /window\.innerWidth|matchMedia\(|addEventListener\(\s*['"]resize['"]/) 
+  assert.doesNotMatch(source, /window\.innerWidth|matchMedia\(|addEventListener\(\s*['"]resize['"]/)
 })
 
 test('desktop and mobile use the same permission-aware navigation entries', () => {

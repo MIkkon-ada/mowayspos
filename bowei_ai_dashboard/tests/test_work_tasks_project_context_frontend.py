@@ -34,15 +34,23 @@ def test_work_tasks_without_project_context_does_not_fetch_global_task_list():
     assert "fetchTasks(pid, effectiveDeleted)" not in source
 
 
-def test_work_tasks_project_context_handles_single_and_multiple_projects():
+def test_work_tasks_without_context_defaults_to_first_available_project():
     source = _frontend_source("pages/TaskManagementPage.tsx")
 
     assert "availableTaskProjects" in source
-    assert "availableTaskProjects.length === 1" in source
+    assert "availableTaskProjects.length > 0" in source
     assert "setAutoSelectedTaskProjectId(availableTaskProjects[0].id)" in source
+    assert "availableTaskProjects.length === 1" not in source
     assert "<select" in source
     assert "value={String(effectiveTaskProjectId ?? '')}" in source
     assert "onChange={(event) => {" in source
+
+
+def test_work_tasks_explicit_project_context_overrides_default_selection():
+    source = _frontend_source("pages/TaskManagementPage.tsx")
+
+    assert "if (viewProjectId != null || currentProjectId != null)" in source
+    assert "setAutoSelectedTaskProjectId(null)" in source
 
 
 def test_work_tasks_error_messages_are_project_context_aware():

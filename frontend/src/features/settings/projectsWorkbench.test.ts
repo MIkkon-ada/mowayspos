@@ -35,11 +35,12 @@ describe('projects workbench pure helpers', () => {
       project('ended'),
       project('archived'),
     ])
-    expect(result).toEqual({ all: 8, toComplete: 2, toApprove: 1, active: 1, archived: 1 })
+    expect(result).toEqual({ all: 8, toComplete: 3, toApprove: 1, active: 1, archived: 1 })
   })
 
   it('maps real statuses to business stages without creating startup status', () => {
     expect(getProjectLifecycleStage('dispatched')).toMatchObject({ key: 'planning', label: '立项准备阶段', activeIndex: 0 })
+    expect(getProjectLifecycleStage('pending_kickoff')).toMatchObject({ key: 'execution', activeIndex: 2 })
     expect(getProjectLifecycleStage('active')).toMatchObject({ key: 'execution', label: '执行阶段', activeIndex: 2 })
     expect(getProjectLifecycleStage('pending_close')).toMatchObject({ key: 'closing', activeIndex: 3 })
     expect(getProjectLifecycleStage('archived')).toMatchObject({ key: 'archive', activeIndex: 4 })
@@ -67,7 +68,7 @@ describe('projects workbench pure helpers', () => {
   it('shows only role-authorized todo items', () => {
     expect(getProjectTodo(project('draft'), {
       isSuperAdmin: false, isCompanyCeo: false, isRealProjectCeo: false, isRealOwner: true,
-    }, [], [])).toBeNull()
+    }, [], [])).toMatchObject({ action: 'ownerSubmit', actionLabel: '完善立项信息' })
     expect(getProjectTodo(project('draft'), {
       isSuperAdmin: false, isCompanyCeo: true, isRealProjectCeo: false, isRealOwner: false,
     }, [], [])).toMatchObject({ action: 'edit', actionLabel: '继续完善项目' })

@@ -194,6 +194,47 @@ export type MemberChangeRequest = {
 
 // ── P0-2：主链路 API 类型 ──────────────────────────────────
 
+export type GovernanceActionKind = 'decision' | 'coordination' | 'owner_confirmation'
+export type GovernanceHealth = 'healthy' | 'watch' | 'risk' | 'unstarted'
+
+export type GovernanceAction = {
+  id: string
+  project_id: number | null
+  kind: GovernanceActionKind
+  title: string
+  accountable_owner: string
+  due_at: string | null
+  waiting_days: number | null
+  route: string | null
+}
+
+export type GovernanceInitiative = {
+  key_task_id: number
+  workstream_id: number
+  workstream_title: string
+  project_id: number | null
+  project_name: string
+  title: string
+  accountable_owner: string
+  collaborators: Array<{ id?: number; name: string }>
+  official_progress: number | null
+  next_milestone: string | null
+  next_milestone_at: string | null
+  health: GovernanceHealth
+  evidence_confirmed: number
+  evidence_total: number
+}
+
+export type GovernanceDashboardOverview = {
+  signals: {
+    pending_decisions: number
+    pending_coordination: number
+    pending_owner_confirmation: number
+  }
+  actions: GovernanceAction[]
+  initiatives: GovernanceInitiative[]
+}
+
 // GET /api/dashboard/overview?project_id=X（项目模式，字段做兜底容错）
 export type DashboardOverview = {
   project?: { id: number | null; name: string }
@@ -224,6 +265,7 @@ export type DashboardOverview = {
     tasks?: Array<Record<string, unknown>>
     issues?: Array<Record<string, unknown>>
   }
+  governance?: GovernanceDashboardOverview
   [key: string]: unknown
 }
 

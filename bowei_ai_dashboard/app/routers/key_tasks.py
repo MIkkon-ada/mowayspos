@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -68,6 +70,18 @@ def _people_names(person_ids: list[int] | None, db: Session) -> list[str]:
     return [names[person_id] for person_id in ids if person_id in names]
 
 
+def _legacy_note_collaborators(notes: str | None) -> list[dict[str, str | None]]:
+    first_line = (notes or "").splitlines()[0] if notes else ""
+    match = re.match(r"^\s*(?:协同人|协助人)\s*[:：]\s*(.+?)\s*$", first_line)
+    if not match:
+        return []
+    return [
+        {"id": None, "name": name.strip()}
+        for name in re.split(r"[、，,/／]", match.group(1))
+        if name.strip()
+    ]
+
+
 @router.get("/{row_id}/execution-workspace")
 def get_execution_workspace(
     row_id: int,
@@ -122,13 +136,13 @@ def get_execution_workspace(
             {"id": person_id, "name": collaborator_name_by_id[person_id]}
             for person_id in collaborator_ids
             if person_id in collaborator_name_by_id
-        ],
+        ] or _legacy_note_collaborators(key_task.notes),
         "start_date": key_task.start_date.isoformat() if key_task.start_date else None,
         "due_kind": key_task.due_kind or "unknown",
         "due_date": key_task.due_date.isoformat() if key_task.due_date else None,
         "due_label": key_task.due_label or None,
         "due_reference_date": key_task.due_reference_date.isoformat() if key_task.due_reference_date else None,
-        "plan_time": key_task.plan_time or "",
+        "plan_time": key_task.plan_time or workstream.plan_time or "",
         "completion_definition": key_task.completion_criteria or "",
         "risk_note": key_task.risk_note or "",
         "risk_marked_by": key_task.risk_marked_by or "",

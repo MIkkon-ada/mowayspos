@@ -350,7 +350,7 @@ test('target visual replica uses one compact header and keeps existing controls'
   assert.match(source, /\.voice-update-header\s*\{[^}]*grid-template-columns:\s*auto minmax\(0,\s*1fr\) auto/s)
   assert.match(source, /\.voice-update-header\s*\{[^}]*min-height:\s*72px/s)
   assert.match(source, /\.voice-update-binding\s*\{[^}]*border:\s*0|\.voice-update-binding\s*\{[^}]*min-width:\s*0/s)
-  assert.match(source, /\.voice-update-workspace\s*\{[^}]*gap:\s*0/s)
+  assert.match(source, /\.voice-update-workspace\s*\{[^}]*gap:\s*20px/s)
   assert.match(source, /\.voice-update-mode-tabs button\s*\{[^}]*height:\s*40px/s)
   assert.match(source, /\.voice-update-history-drawer\s*\{[^}]*width:\s*292px/s)
 })
@@ -358,10 +358,10 @@ test('target visual replica uses one compact header and keeps existing controls'
 test('work report scope selector uses a compact chevron matching other project selectors', () => {
   const binding = read(BINDING_BAR)
   const css = read(CSS)
-  assert.match(binding, /voice-update-binding-scope-arrow/)
+  assert.match(binding, /import \{ ChevronDownIcon \} from '\.\.\/\.\.\/components\/icons\/ChevronDownIcon'/)
+  assert.match(binding, /<ChevronDownIcon className="voice-update-binding-scope-arrow"\s*\/>/)
   assert.match(css, /\.voice-update-binding-field\.is-scope \{ position: relative/)
-  assert.match(css, /\.voice-update-binding-scope-arrow \{[^}]*width: 8px[^}]*height: 8px[^}]*border-right: 2px solid #94a3b8[^}]*transform: translateY\(-65%\) rotate\(45deg\)/s)
-  assert.match(css, /\.voice-update-binding-field\.is-scope select \{[^}]*appearance: none[^}]*padding-right: 36px/s)
+  assert.match(css, /\.voice-update-binding-scope-arrow \{[^}]*width: 14px[^}]*height: 14px[^}]*color: #94a3b8[^}]*transform: translateY\(-50%\)/s)
 })
 
 test('work report scope menu previews project and key-task candidates on hover', () => {
@@ -386,16 +386,21 @@ test('input and result panels expose plain headings and the re-extract action', 
   assert.match(result, /重新提取/)
 })
 
-test('AI result keeps all five structured fields mounted before extraction', () => {
+test('AI result uses a clean empty state before extraction', () => {
   const result = read(RESULT)
   const reports = read(REPORTS)
+  const emptyStart = reports.indexOf('if (taskReports.length === 0)')
+  const emptyEnd = reports.indexOf('\n  return (', emptyStart)
+  const emptyState = reports.slice(emptyStart, emptyEnd)
+
   assert.match(result, /<VoiceUpdateTaskReportsSection/)
   assert.doesNotMatch(result, /\{result\s*&&\s*\([\s\S]*?<VoiceUpdateTaskReportsSection/)
-  for (const label of ['本次完成', '下一步计划', '问题与风险', '取得的成果', '任务状态建议']) {
-    assert.match(reports, new RegExp(label))
-  }
-  assert.match(reports, /voice-update-structured-empty/)
-  assert.doesNotMatch(result, /voice-update-result-empty[^>]*><strong>\{emptyMessage\}/)
+  assert.match(emptyState, /voice-update-clean-empty/)
+  assert.match(emptyState, /等待 AI 提取汇报结果/)
+  for (const label of ['本次完成', '下一步计划', '问题与风险', '取得的成果']) assert.match(emptyState, new RegExp(label))
+  assert.doesNotMatch(emptyState, /<textarea/)
+  assert.doesNotMatch(emptyState, /0\/1000/)
+  assert.doesNotMatch(emptyState, /type="radio"/)
 })
 
 test('task status suggestion uses the five target radio options', () => {
@@ -533,14 +538,26 @@ test('editor uses one cohesive SaaS workspace with a compact visible footer', ()
   assert.match(page, /voice-update-editor-shell[\s\S]*voice-update-workspace[\s\S]*<\/main>\s*<VoiceUpdateSubmitPanel/)
   assert.match(css, /\.voice-update-editor-shell\s*\{[^}]*overflow:\s*hidden[^}]*border:[^}]*border-radius:\s*10px/s)
   assert.match(css, /\.voice-update-footer\s*\{[^}]*margin:\s*0[^}]*border-top:/s)
-  assert.match(css, /\.voice-update-main-scroll\s*\{[^}]*padding:\s*0/s)
+  assert.match(css, /\.voice-update-main-scroll\s*\{[^}]*padding:\s*20px/s)
   assert.match(css, /\.voice-update-footer-bar\s*\{[^}]*height:\s*56px/s)
 })
 
-test('result panel declares its border in one rule to avoid shorthand conflicts', () => {
+test('work report uses independent two-column cards while keeping the footer below the workspace', () => {
+  const page = read(PAGE)
   const css = read(CSS)
-  assert.match(css, /\.voice-update-result-panel\s*\{[^}]*border:\s*0[^}]*border-left:\s*1px solid/s)
-  assert.doesNotMatch(css, /\.voice-update-result-panel\s*\{[^}]*\}\s*\.voice-update-result-panel\s*\{[^}]*border-left:/s)
+
+  assert.match(page, /voice-update-workspace[\s\S]*<VoiceUpdateInputPanel[\s\S]*<VoiceUpdateResultPanel[\s\S]*<\/main>\s*<VoiceUpdateSubmitPanel/)
+  assert.match(css, /\.voice-update-workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*40fr\)\s+minmax\(0,\s*60fr\)[^}]*gap:\s*20px/s)
+  assert.match(css, /\.voice-update-left-column\s*\{[^}]*border:\s*1px solid #e1e7ef[^}]*border-radius:\s*10px/s)
+  assert.match(css, /\.voice-update-result-panel\s*\{[^}]*border:\s*1px solid #e1e7ef[^}]*border-radius:\s*10px/s)
+  assert.match(css, /\.voice-update-progress-field\s*\{[^}]*border:\s*1px solid #e5eaf1[^}]*border-radius:\s*10px/s)
+  assert.match(css, /@media \(max-width:\s*899px\)[\s\S]*\.voice-update-workspace\s*\{[^}]*grid-template-columns:\s*1fr/s)
+})
+
+test('result panel declares its independent card border in one rule', () => {
+  const css = read(CSS)
+  assert.match(css, /\.voice-update-result-panel\s*\{[^}]*border:\s*1px solid #e1e7ef[^}]*border-radius:\s*10px/s)
+  assert.doesNotMatch(css, /\.voice-update-result-panel\s*\{[^}]*border-left:/s)
 })
 
 test('unconfirmed Agent ownership blocks formal submission without changing createUpdate', async () => {
@@ -611,7 +628,7 @@ test('compact work report panels use plain titles without numbered step badges',
 test('compact work report modules use natural height without large filler gaps', () => {
   const css = read(CSS)
   assert.match(css, /\.voice-update-workspace\s*\{[^}]*align-items:\s*start/s)
-  assert.match(css, /\.voice-update-workspace\s*\{[^}]*gap:\s*0/s)
+  assert.match(css, /\.voice-update-workspace\s*\{[^}]*gap:\s*20px/s)
   assert.doesNotMatch(css, /\.voice-update-workspace\s*\{[^}]*min-height:\s*650px/s)
   assert.match(css, /\.voice-update-textarea\s*\{[^}]*height:\s*240px[^}]*min-height:\s*240px/s)
 })

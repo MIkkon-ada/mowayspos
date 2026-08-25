@@ -29,6 +29,7 @@ import { buildConfirmationAssetProjection } from '../domain/confirmationAssets'
 import { getProjectDisplayName } from '../domain/projectDisplay'
 import { AiConfirmationIssueActions } from '../features/confirmations/AiConfirmationIssueActions'
 import { MobileConfirmationStream } from '../features/mobile-core-pages/MobileConfirmationStream'
+import { ChevronDownIcon } from '../components/icons/ChevronDownIcon'
 
 type WriteMode = 'task_new' | 'subtask_update' | 'subtask_new'
 type ConfirmViewMode = 'all' | 'coordinator' | 'ceo'
@@ -36,13 +37,6 @@ type ConfirmViewMode = 'all' | 'coordinator' | 'ceo'
 const REVIEWER_PROJECT_ROLES = new Set(['owner', 'coordinator', 'project_ceo', 'super_admin'])
 
 // Inline icon helpers (avoid react-icons dependency)
-function IconChevronDown({ size = 12, className = '' }: { size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="m6 9 6 6 6-6" />
-    </svg>
-  )
-}
 function IconSearch({ size = 12, className = '' }: { size?: number; className?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -1319,7 +1313,7 @@ export function ConfirmPage() {
                         <span className="text-xs font-bold text-slate-700">操作日志</span>
                         <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500">{opLogs.length}</span>
                       </div>
-                      <IconChevronDown size={12} className={`text-slate-400 transition-transform ${opLogsOpen ? 'rotate-180' : ''}`} />
+                      <ChevronDownIcon className={`h-3 w-3 text-slate-400 transition-transform ${opLogsOpen ? 'rotate-180' : ''}`} />
                     </button>
                     {opLogsOpen && (
                       <div className="mt-2 max-h-40 overflow-y-auto space-y-1">

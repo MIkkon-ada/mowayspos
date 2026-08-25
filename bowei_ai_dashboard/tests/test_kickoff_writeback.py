@@ -132,23 +132,7 @@ def test_run_creator_cannot_review_own_kickoff_proposal():
     assert exc_info.value.status_code == 403
 
 
-def test_pending_kickoff_project_rejects_normal_meeting_creation():
-    db = _db()
-    db.add_all([
-        models.Person(id=1, name="Owner", is_active=True),
-        models.Account(username="owner", password_hash="x", person_id=1, status="active"),
-        models.Project(id=1, name="P", status="pending_kickoff"),
-        models.ProjectMember(project_id=1, person_id=1, person_name_snapshot="Owner", role="owner"),
-    ])
-    db.commit()
-
-    with pytest.raises(HTTPException) as exc_info:
-        create_meeting(schemas.MeetingPayload(project_id=1, title="Normal meeting"), current_user="owner", db=db)
-
-    assert exc_info.value.status_code == 409
-
-
-def test_active_project_rejects_a_second_kickoff_run_before_agent_execution():
+def test_active_project_allows_normal_meeting_creation():
     db = _db()
     db.add_all([
         models.Person(id=1, name="Owner", is_active=True),
@@ -158,7 +142,41 @@ def test_active_project_rejects_a_second_kickoff_run_before_agent_execution():
     ])
     db.commit()
 
-    with pytest.raises(HTTPException) as exc_info:
-        create_kickoff_run(1, schemas.KickoffRunCreatePayload(transcript_text="Kickoff"), current_user="owner", db=db)
+    meeting = create_meeting(schemas.MeetingPayload(project_id=1, title="Normal meeting"), current_user="owner", db=db)
 
-    assert exc_info.value.status_code == 409
+    assert meeting["project_id"] == 1
+
+
+def test_active_project_allows_kickoff_event(monkeypatch):
+    db = _db()
+    db.add_all([
+        models.Person(id=1, name="Owner", is_active=True),
+        models.Account(username="owner", password_hash="x", person_id=1, status="active"),
+        models.Project(id=1, name="P", status="active"),
+        models.ProjectMember(project_id=1, person_id=1, person_name_snapshot="Owner", role="owner"),
+    ])
+    db.commit()
+
+    monkeypatch.setattr(
+        "app.routers.meetings.run_kickoff_agent",
+        lambda *_args: {"summary": "Kickoff", "proposals": []},
+    )
+    run = create_kickoff_run(1, schemas.KickoffRunCreatePayload(transcript_text="Kickoff"), current_user="owner", db=db)
+
+    assert run["project_id"] == 1
+    assert db.get(models.Project, 1).status == "active"
+
+
+def test_legacy_pending_kickoff_project_allows_normal_meeting_creation():
+    db = _db()
+    db.add_all([
+        models.Person(id=1, name="Owner", is_active=True),
+        models.Account(username="owner", password_hash="x", person_id=1, status="active"),
+        models.Project(id=1, name="P", status="pending_kickoff"),
+        models.ProjectMember(project_id=1, person_id=1, person_name_snapshot="Owner", role="owner"),
+    ])
+    db.commit()
+
+    meeting = create_meeting(schemas.MeetingPayload(project_id=1, title="Legacy project meeting"), current_user="owner", db=db)
+
+    assert meeting["project_id"] == 1

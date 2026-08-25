@@ -12,7 +12,7 @@ import { MeetingProgressReviewSection } from '../features/meeting/MeetingProgres
 import { MeetingDetailWorkspace } from '../features/meeting/MeetingDetailWorkspace'
 import { STATUS_CONFIG, fmtTime, getStatus, type PublishStatus } from '../features/meeting/meetingUtils'
 import { getProjectDisplayName } from '../domain/projectDisplay'
-import { isProjectArchived } from '../domain/projectLifecycleStatus'
+import { isProjectArchived, isProjectExecutionAvailable } from '../domain/projectLifecycleStatus'
 import { ProjectMeetingReviewWorkspace } from '../features/meeting/ProjectMeetingReviewWorkspace'
 import { MobileMeetingTimeline } from '../features/mobile-core-pages/MobileMeetingTimeline'
 
@@ -32,6 +32,7 @@ export function MeetingPage() {
   const [returnNote, setReturnNote] = useState('')
   const [showReturnInput, setShowReturnInput] = useState(false)
   const [showNewModal, setShowNewModal] = useState(false)
+  const [showKickoffWorkspace, setShowKickoffWorkspace] = useState(false)
   const [editingItem, setEditingItem] = useState<MeetingItem | null>(null)
   const [projectQuery, setProjectQuery] = useState('')
   const [meetingQuery, setMeetingQuery] = useState('')
@@ -45,8 +46,8 @@ export function MeetingPage() {
 
   const currentProject = projects.find((p) => p.id === currentProjectId) ?? null
   const effectiveProject = projects.find((p) => p.id === effectiveProjectId) ?? null
-  const pending_kickoff = String(effectiveProject?.lifecycle_status ?? effectiveProject?.status ?? '') === 'pending_kickoff'
   const projectArchived = isProjectArchived(effectiveProject)
+  const canOpenKickoff = Boolean(effectiveProjectId && !projectArchived && isProjectExecutionAvailable(effectiveProject))
   const canDeleteMeeting = Boolean(currentUser?.is_tech_admin || (effectiveProject?.user_roles ?? currentProjectRoles).includes('owner'))
   const legacySelected = selected as MeetingItem
   const noProject = !effectiveProjectId
@@ -199,7 +200,7 @@ export function MeetingPage() {
   const statusCfg = STATUS_CONFIG[selStatus]
   const projectMemberCount = effectiveProject ? Object.values(effectiveProject.member_counts ?? {}).reduce((sum, count) => sum + count, 0) : 0
   const projectDate = (value?: string) => value ? value.slice(0, 10).replace(/-/g, '/') : '-'
-  const meetingEditor = effectiveProjectId && !pending_kickoff && (showNewModal || editingItem)
+  const meetingEditor = effectiveProjectId && (showNewModal || editingItem)
      ? <NewMeetingModal
          projectId={effectiveProjectId}
          editItem={editingItem ?? undefined}
@@ -214,6 +215,15 @@ export function MeetingPage() {
   if (meetingEditor) return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {meetingEditor}
+    </div>
+  )
+
+  if (showKickoffWorkspace && effectiveProjectId) return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-slate-50 p-4 lg:p-6">
+      <div className="mx-auto w-full max-w-[1180px]">
+        <button type="button" onClick={() => setShowKickoffWorkspace(false)} className="mb-4 text-sm font-medium text-slate-500 hover:text-sky-600">← 返回会议列表</button>
+        <KickoffAgentWorkspace projectId={effectiveProjectId} onClose={() => setShowKickoffWorkspace(false)} />
+      </div>
     </div>
   )
 
@@ -389,7 +399,7 @@ export function MeetingPage() {
   )
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className={`flex flex-1 flex-col overflow-hidden ${effectiveProjectId ? '' : 'meeting-project-selector'}`}>
       <header className="min-h-16 flex flex-wrap items-center px-4 py-3 lg:px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
         <div className="flex-1 min-w-0">
           {effectiveProjectId ? (
@@ -442,26 +452,39 @@ export function MeetingPage() {
             <svg style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
             </svg>
-            {pending_kickoff ? '发起启动会确认' : '新建会议纪要'}
+            新建会议纪要
           </button>
+          {effectiveProjectId && (
+            <button
+              onClick={() => setShowKickoffWorkspace(true)}
+              disabled={!canOpenKickoff}
+              title={!canOpenKickoff ? '项目进入执行阶段后可记录启动会' : '启动会作为执行事件留痕，不改变项目阶段'}
+              className="cursor-pointer rounded-lg border border-sky-200 bg-white px-4 py-2 text-sm font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              记录启动会
+            </button>
+          )}
         </div>
       </header>
 
-      <main className={`flex-1 overflow-y-auto p-4 lg:p-6 ${effectiveProjectId ? 'meeting-list-view' : ''}`} style={{ background: '#F1F5F9' }}>
+      <main
+        className={`flex-1 overflow-y-auto p-4 lg:p-6 ${effectiveProjectId ? 'meeting-list-view' : ''}`}
+        style={{ background: effectiveProjectId ? '#F1F5F9' : '#F8F9FB' }}
+      >
         {!effectiveProjectId && !loading && (
-          <div className="mx-auto mt-4 w-full max-w-[1280px]">
-            <div className="p-2 sm:p-4">
-              <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+          <div className="meeting-project-selector-content mx-auto w-full max-w-[1280px] px-0 sm:px-4">
+            <div className="py-4 sm:py-5">
+              <div className="mb-9 flex flex-wrap items-end justify-between gap-4">
                 <div>
-                  <h2 className="text-2xl font-bold text-slate-800 mb-2">选择项目</h2>
-                  <p className="text-sm text-slate-500">选择项目查看对应的会议记录</p>
+                  <h2 className="mb-2 text-[28px] font-bold tracking-[-0.02em] text-slate-900">选择项目</h2>
+                  <p className="text-sm text-slate-600">选择项目查看对应的会议记录</p>
                 </div>
-                <span className="text-sm text-slate-400">共 {visibleProjects.length} 个项目</span>
+                <span className="text-sm text-slate-600">共 {visibleProjects.length} 个项目</span>
               </div>
-              <div className="project-selector-table overflow-hidden rounded-xl border border-slate-200 bg-white text-left shadow-sm">
+              <div className="meeting-project-selector-table overflow-hidden rounded-2xl border border-slate-100 bg-white text-left shadow-[0_4px_14px_rgba(15,23,42,0.06)]">
                 <div className="overflow-x-auto">
-                  <div className="min-w-[880px]">
-                    <div className="grid grid-cols-[minmax(280px,2fr)_120px_150px_minmax(220px,1.4fr)_150px] items-center gap-4 border-b border-slate-200 bg-slate-50/70 px-5 py-3 text-xs font-medium text-slate-500">
+                  <div className="min-w-[960px]">
+                    <div className="grid grid-cols-[minmax(300px,2.1fr)_150px_190px_minmax(220px,1.4fr)_150px] items-center border-b border-slate-100 px-6 py-5 text-[15px] font-semibold text-slate-900">
                       <span>项目名称</span>
                       <span>状态</span>
                       <span>项目经理</span>
@@ -483,30 +506,34 @@ export function MeetingPage() {
                     const bTime = b.meeting_date ? new Date(b.meeting_date).getTime() : Number.NEGATIVE_INFINITY
                     return bTime - aTime
                   })[0]
-                  const iconClass = ['bg-sky-500', 'bg-violet-500', 'bg-orange-500'][index % 3]
+                  const iconClass = ['bg-[#2375F6]', 'bg-[#7827D6]', 'bg-[#FF8A16]', 'bg-[#0E9DA8]'][index % 4]
 
                   return (
                     <button
                       key={p.id}
                       onClick={() => setSearchParams((prev) => { prev.set('projectId', String(p.id)); return prev })}
-                      className="grid w-full grid-cols-[minmax(280px,2fr)_120px_150px_minmax(220px,1.4fr)_150px] items-center gap-4 border-b border-slate-100 px-5 py-4 text-left transition-colors last:border-b-0 hover:bg-sky-50/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400"
+                      type="button"
+                      className="grid w-full grid-cols-[minmax(300px,2.1fr)_150px_190px_minmax(220px,1.4fr)_150px] items-center border-b border-slate-100 px-6 py-[19px] text-left transition-colors last:border-b-0 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500"
                     >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${iconClass} text-white shadow-sm`}>
+                      <div className="flex min-w-0 items-center gap-4">
+                        <div className={`flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-lg ${iconClass} text-white shadow-sm`}>
                           <svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M12 3v3m0 12v3M3 12h3m12 0h3M5.64 5.64l2.12 2.12m8.48 8.48 2.12 2.12m0-12.72-2.12 2.12m-8.48 8.48-2.12 2.12M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
                           </svg>
                         </div>
-                        <div className="min-w-0 truncate text-base font-semibold text-slate-800" title={p.name}>{p.name}</div>
+                        <div className="min-w-0 truncate text-[15px] font-semibold text-slate-900" title={p.name}>{p.name}</div>
                       </div>
-                      <span className={`w-fit rounded-full px-2.5 py-1 text-[11px] font-medium ${p.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>{statusLabel}</span>
+                      <span className={`w-fit rounded-full border px-3 py-1 text-xs font-medium ${p.is_active ? 'border-lime-300 bg-lime-50 text-lime-600' : 'border-slate-200 bg-slate-50 text-slate-500'}`}>{statusLabel}</span>
                       <span className="truncate text-sm text-slate-700" title={manager}>{manager}</span>
                       {recentMeeting ? (
                         <span className="truncate text-sm text-slate-700" title={`${recentMeeting.title ?? '未命名会议'} · ${shortDate(recentMeeting.meeting_date)}`}>
                           {recentMeeting.title ?? '未命名会议'} <span className="text-slate-400">· {shortDate(recentMeeting.meeting_date)}</span>
                         </span>
                       ) : <span className="text-sm text-slate-400">暂无会议记录</span>}
-                      <span className="text-right text-sm font-medium text-sky-600">查看会议纪要　→</span>
+                      <span className="ml-auto flex max-w-[92px] items-center justify-end gap-2 text-right text-sm font-semibold leading-5 text-[#005DCE]">
+                        <span>查看会议纪要</span>
+                        <span aria-hidden="true">→</span>
+                      </span>
                     </button>
                   )
                     })}
@@ -550,7 +577,6 @@ export function MeetingPage() {
               </section>
             </div>
 
-            {pending_kickoff && showNewModal && <KickoffAgentWorkspace projectId={effectiveProjectId} onClose={() => setShowNewModal(false)} />}
             {loading && (
               <div className="mx-auto w-full max-w-[1180px] rounded-xl border bg-white p-4" style={{ borderColor: '#E9EFF6' }}>
                 <table className="w-full text-sm"><tbody><SkeletonTableRows rows={6} cols={6} /></tbody></table>
@@ -706,7 +732,7 @@ export function MeetingPage() {
                   <span>只读版本</span>
                 </div>
                 <p className="whitespace-pre-wrap leading-6">{selectedRevision.summary || '暂无摘要'}</p>
-                <details className="mt-2">
+                <details className="app-disclosure mt-2">
                   <summary className="cursor-pointer text-sky-700">查看该版本原始转写</summary>
                   <p className="mt-2 whitespace-pre-wrap leading-6">{selectedRevision.transcript_text}</p>
                 </details>

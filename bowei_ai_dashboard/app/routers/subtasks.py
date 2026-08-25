@@ -252,8 +252,8 @@ def _check_subtask_struct_write(context: dict, task: models.Task, db: Session) -
         raise HTTPException(403, "permission denied")
     project = db.get(models.Project, project_id)
     require_project_business_writable(project_id, db)
-    if project and PL.normalize(project.status) != PL.S_ACTIVE:
-        raise HTTPException(409, "项目待启动会确认，暂不能调整执行期关键任务")
+    if project and not PL.is_execution_available(project.status):
+        raise HTTPException(409, "当前项目阶段暂不能调整执行期关键任务")
     if context.get("is_tech_admin"):
         return
     person_id = context.get("person_id")

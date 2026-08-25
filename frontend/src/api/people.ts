@@ -23,6 +23,24 @@ export function updatePerson(id: number, payload: PersonPayload): Promise<Person
   return apiPut<Person>(`/api/people/${id}`, payload)
 }
 
+export type PersonCreateForAccountManagement = {
+  name: string
+  system_role: string
+}
+
+export type PersonUpdateForAccountManagement = {
+  name: string
+  system_role: string
+}
+
+export function createAccountManagementPerson(payload: PersonCreateForAccountManagement): Promise<Person> {
+  return apiPost<Person>('/api/people', payload)
+}
+
+export function updateAccountManagementPerson(id: number, payload: PersonUpdateForAccountManagement): Promise<Person> {
+  return apiPut<Person>(`/api/people/${id}`, payload)
+}
+
 export function resetIdentityField(id: number, field: 'department' | 'position'): Promise<Person> {
   return apiPost<Person>(`/api/people/${id}/identity-reset`, { field })
 }

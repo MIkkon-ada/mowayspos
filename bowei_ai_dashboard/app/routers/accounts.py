@@ -148,6 +148,115 @@ def _normalize_wecom_directory_records(users: list[dict], department_paths: dict
     return result
 
 
+_INITIAL_WECOM_PASSWORD = "123456"
+
+
+def _next_wecom_username(db: Session, userid: str) -> str:
+    base = (userid.strip() or "wecom-user")[:50]
+    candidate = base
+    suffix = 2
+    while db.query(models.Account.id).filter(models.Account.username == candidate).first():
+        ending = f"-{suffix}"
+        candidate = f"{base[:50 - len(ending)]}{ending}"
+        suffix += 1
+    return candidate
+
+
+def provision_wecom_directory_accounts(db: Session, records: list[dict]) -> dict:
+    """Sync all safe WeCom records and create ordinary accounts when absent."""
+    people = db.query(models.Person).all()
+    accounts = db.query(models.Account).all()
+    by_userid = {str(person.wecom_userid).strip(): person for person in people if person.wecom_userid}
+    by_name: dict[str, list[models.Person]] = {}
+    accounts_by_person: dict[int, list[models.Account]] = {}
+    account_by_userid = {str(account.wecom_userid).strip(): account for account in accounts if account.wecom_userid}
+    for person in people:
+        name = str(person.name or "").strip()
+        if name:
+            by_name.setdefault(name, []).append(person)
+    for account in accounts:
+        if account.person_id:
+            accounts_by_person.setdefault(account.person_id, []).append(account)
+
+    result = {
+        "updated": 0,
+        "linked_by_name": 0,
+        "created_people": 0,
+        "created_accounts": 0,
+        "conflicts": [],
+    }
+    for record in records:
+        userid = str(record.get("userid") or "").strip()
+        name = str(record.get("name") or "").strip()
+        if not userid:
+            continue
+
+        account_owner = account_by_userid.get(userid)
+        if account_owner and not account_owner.person_id:
+            result["conflicts"].append({"userid": userid, "name": name, "reason": "orphaned_account_binding"})
+            continue
+
+        person = by_userid.get(userid)
+        if person is None and account_owner:
+            person = db.get(models.Person, account_owner.person_id)
+        if person is None:
+            name_matches = by_name.get(name, [])
+            if len(name_matches) > 1:
+                result["conflicts"].append({"userid": userid, "name": name, "reason": "ambiguous_name"})
+                continue
+            if name_matches:
+                person = name_matches[0]
+                result["linked_by_name"] += 1
+            else:
+                person = models.Person(name=name or userid, system_role=ROLE_NORMAL, is_active=True)
+                db.add(person)
+                db.flush()
+                by_name.setdefault(str(person.name or "").strip(), []).append(person)
+                result["created_people"] += 1
+
+        if account_owner and account_owner.person_id != person.id:
+            result["conflicts"].append({"userid": userid, "name": name, "reason": "userid_bound_to_other_account"})
+            continue
+        person_accounts = accounts_by_person.get(person.id, [])
+        if person.wecom_userid and person.wecom_userid != userid:
+            result["conflicts"].append({"userid": userid, "name": name, "reason": "person_bound_to_other_userid"})
+            continue
+        if any(account.wecom_userid and account.wecom_userid != userid for account in person_accounts):
+            result["conflicts"].append({"userid": userid, "name": name, "reason": "account_bound_to_other_userid"})
+            continue
+        duplicate = db.query(models.Person).filter(
+            models.Person.wecom_userid == userid,
+            models.Person.id != person.id,
+        ).first()
+        if duplicate:
+            result["conflicts"].append({"userid": userid, "name": name, "reason": "userid_bound_to_other_person"})
+            continue
+
+        apply_wecom_identity_record(person, record)
+        by_userid[userid] = person
+        if person_accounts:
+            for account in person_accounts:
+                account.wecom_userid = userid
+                account_by_userid[userid] = account
+        else:
+            account = models.Account(
+                username=_next_wecom_username(db, userid),
+                password_hash=hash_password(_INITIAL_WECOM_PASSWORD),
+                person_id=person.id,
+                status="active",
+                is_tech_admin=False,
+                must_change_password=False,
+                last_password_changed_at=utc_now(),
+                wecom_userid=userid,
+            )
+            db.add(account)
+            accounts_by_person[person.id] = [account]
+            account_by_userid[userid] = account
+            result["created_accounts"] += 1
+        result["updated"] += 1
+    return result
+
+
 def build_wecom_directory_preview(
     users: list[dict],
     department_paths: dict[int, dict],

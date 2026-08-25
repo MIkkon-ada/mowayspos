@@ -5,9 +5,11 @@ from sqlalchemy.orm import sessionmaker
 
 from app import models, schemas
 from app.database import Base
+from app.permissions import ROLE_NORMAL
 from app.routers.accounts import (
     apply_wecom_identity_record,
     build_wecom_directory_preview,
+    provision_wecom_directory_accounts,
     sync_wecom_identity_records,
 )
 from app.routers.people import reset_wecom_identity_field
@@ -229,6 +231,45 @@ def test_confirmed_sync_updates_identity_without_touching_project_roles():
         assert person.position_title == "产品经理"
         assert person.department_source == "wecom"
         assert member.role == "owner"
+    finally:
+        db.close()
+
+
+def test_provision_wecom_directory_creates_accounts_and_skips_ambiguous_names():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        db.add_all([
+            models.Person(name="王伟", system_role=ROLE_NORMAL),
+            models.Person(name="张三"),
+            models.Person(name="张三"),
+            models.Account(username="lihua", password_hash="existing", status="active"),
+        ])
+        db.commit()
+
+        result = provision_wecom_directory_accounts(db, [
+            {"userid": "lihua", "name": "李华", "department_path": "博维 / 产品部", "position": "产品经理"},
+            {"userid": "wangwei", "name": "王伟", "department_path": "博维 / 研发部", "position": "工程师"},
+            {"userid": "zhangsan", "name": "张三", "department_path": "博维 / 销售部", "position": "销售"},
+        ])
+
+        new_person = db.query(models.Person).filter_by(wecom_userid="lihua").one()
+        linked_person = db.query(models.Person).filter_by(wecom_userid="wangwei").one()
+        new_account = db.query(models.Account).filter_by(person_id=new_person.id).one()
+        linked_account = db.query(models.Account).filter_by(person_id=linked_person.id).one()
+        assert (new_person.department, new_person.wecom_department, new_person.position_title) == ("博维 / 产品部", "博维 / 产品部", "产品经理")
+        assert (new_account.username, new_account.password_hash, new_account.wecom_userid) == ("lihua-2", "123456", "lihua")
+        assert new_account.status == "active"
+        assert new_account.must_change_password is False
+        assert linked_account.username == "wangwei"
+        assert result == {
+            "updated": 2,
+            "linked_by_name": 1,
+            "created_people": 1,
+            "created_accounts": 2,
+            "conflicts": [{"userid": "zhangsan", "name": "张三", "reason": "ambiguous_name"}],
+        }
     finally:
         db.close()
 

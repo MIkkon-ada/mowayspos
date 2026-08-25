@@ -17,10 +17,10 @@ def test_owner_submit_modal_contains_work_progress_draft_controls():
         "新增关键任务",
         "重点工作名称",
         "目标成果 / 验收标准",
-        "负责人",
+        "责任人",
         "协助人",
         "时间段",
-        "验收标准 / 备注",
+        "备注 / 标准",
         "work_progress_draft",
     ]:
         assert expected in source

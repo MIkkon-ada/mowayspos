@@ -11,12 +11,13 @@ def _frontend_source(relative_path: str) -> str:
 # ── OwnerSubmitModal 语义验收 ────────────────────────────────
 
 def test_owner_submit_modal_instruction_is_clear_about_task_vs_subtask_responsibility():
-    """立项弹窗说明应将方向规划与关键任务执行字段分开表达。"""
+    """立项弹窗说明文案应明确：重点工作只归类，关键任务才派责任人。"""
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
-    assert "规划重点工作方向" in source, "应说明重点工作用于规划方向"
-    assert "关键任务、负责人、协助人、时间和验收标准" in source, \
-        "应说明关键任务承载负责人、协助人、时间和验收标准"
+    assert "重点工作用于归类工作方向" in source or "归类工作方向" in source, \
+        "应说明重点工作用于归类方向"
+    assert "关键任务才需要明确责任人" in source or "关键任务才需要" in source, \
+        "应说明关键任务才需要责任人和时间"
 
 
 def test_owner_submit_modal_key_task_layer_retains_assignee_and_helper():

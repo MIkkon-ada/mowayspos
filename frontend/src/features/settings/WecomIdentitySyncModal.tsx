@@ -67,10 +67,10 @@ export function WecomIdentitySyncModal({ onClose, onDone, onProvisioned }: Props
     try {
       const result = await provisionWecomDirectoryAccounts()
       setProvisionResult(result)
-      toast.success(`已同步 ${result.updated} 人，创建 ${result.created_people} 名人员和 ${result.created_accounts} 个账号`)
+      toast.success(`已同步范围内 ${result.updated} 人，创建 ${result.created_people} 名人员和 ${result.created_accounts} 个账号`)
       onProvisioned()
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '同步企业微信全员失败')
+      toast.error(error instanceof Error ? error.message : '同步企业微信范围内人员失败')
     } finally {
       setSaving(false)
     }
@@ -142,7 +142,7 @@ export function WecomIdentitySyncModal({ onClose, onDone, onProvisioned }: Props
           <span className="text-xs text-slate-500">已选择 {selectedCount} 人</span>
           <div className="flex items-center gap-2">
             <button type="button" onClick={onClose} disabled={saving} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 border border-slate-200">取消</button>
-            <button type="button" onClick={() => void handleProvisionAll()} disabled={loading || saving} className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-sky-700 disabled:opacity-50">{saving ? '同步中…' : '同步全员并创建账号'}</button>
+            <button type="button" onClick={() => void handleProvisionAll()} disabled={loading || saving} className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-sky-700 disabled:opacity-50">{saving ? '同步中…' : '同步范围内人员并创建账号'}</button>
             <button type="button" onClick={handleSync} disabled={loading || saving} className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 disabled:opacity-50">{saving ? '同步中…' : '确认同步'}</button>
           </div>
         </div>

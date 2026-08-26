@@ -26,6 +26,7 @@ export type NewProjectForm = {
 type TeamRole = 'project_ceo' | 'owner' | 'coordinator' | 'member'
 
 const TEAM_ROLES: TeamRole[] = ['project_ceo', 'owner', 'coordinator', 'member']
+const REQUIRED_TEAM_ROLES: TeamRole[] = ['project_ceo', 'owner']
 
 const ROLE_LABELS: Record<TeamRole, string> = {
   project_ceo: getProjectRoleLabel('project_ceo'),
@@ -91,10 +92,14 @@ export function ProjectInitModal({
   onSubmit,
 }: ProjectInitModalProps) {
   const [picker, setPicker] = useState<PickerState | null>(null)
+  const [endDatePending, setEndDatePending] = useState(false)
   const roleOrder: TeamRole[] = TEAM_ROLES
 
   useEffect(() => {
-    if (!open) setPicker(null)
+    if (!open) {
+      setPicker(null)
+      setEndDatePending(false)
+    }
   }, [open])
 
   // 允许同一人兼任多个角色，不再互斥过滤
@@ -117,6 +122,13 @@ export function ProjectInitModal({
 
   function removeMember(role: keyof TeamMap, personId: number) {
     setTeam((prev) => ({ ...prev, [role]: prev[role].filter((id) => id !== personId) }))
+  }
+
+  function toggleEndDatePending() {
+    setEndDatePending((pending) => {
+      if (!pending) setForm((prev) => ({ ...prev, end_date: '' }))
+      return !pending
+    })
   }
 
   if (!open) return null
@@ -153,7 +165,16 @@ export function ProjectInitModal({
               </label>
               <div className="grid grid-cols-2 gap-3">
                 <label className="block text-xs font-semibold text-slate-600">开始日期 <span className="text-red-500">*</span><input type="date" value={form.start_date} onChange={(event) => setForm((prev) => ({ ...prev, start_date: event.target.value }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 px-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500" /></label>
-                <label className="block text-xs font-semibold text-slate-600">结束日期 <input type="date" value={form.end_date} onChange={(event) => setForm((prev) => ({ ...prev, end_date: event.target.value }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 px-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500" /></label>
+                <div className="text-xs font-semibold text-slate-600">
+                  <label className="block">结束日期</label>
+                  <input type="date" value={form.end_date} disabled={endDatePending} onChange={(event) => setForm((prev) => ({ ...prev, end_date: event.target.value }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 px-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400" />
+                  <button type="button" aria-pressed={endDatePending} onClick={toggleEndDatePending} className={`mt-2 flex w-full items-center justify-center gap-1.5 text-[11px] font-semibold transition-colors ${endDatePending ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                    <span aria-hidden="true" className={`flex h-3.5 w-3.5 items-center justify-center rounded-full border ${endDatePending ? 'border-blue-600 bg-blue-600' : 'border-slate-300 bg-white'}`}>
+                      {endDatePending && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                    </span>
+                    暂不填写
+                  </button>
+                </div>
               </div>
               <label className={`block text-xs font-semibold text-slate-600 ${form.project_type === '博维内部项目' ? 'opacity-50' : ''}`}>客户名称
                 <input value={form.client_name} disabled={form.project_type === '博维内部项目'} onChange={(event) => setForm((prev) => ({ ...prev, client_name: event.target.value }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 px-2.5 text-sm font-normal text-slate-700 outline-none focus:border-blue-500 disabled:bg-slate-50" />
@@ -177,7 +198,7 @@ export function ProjectInitModal({
                 const selectedPeople = people.filter((person) => team[role].includes(person.id))
                 return (
                   <div key={role}>
-                    <div className="mb-1.5 flex items-center justify-between"><span className="text-xs font-semibold text-slate-600">{ROLE_LABELS[role]} {role === 'owner' ? <span className="text-red-500">*</span> : null}</span><button type="button" onClick={(event) => setPicker({ role, anchorEl: event.currentTarget })} className="text-lg leading-none text-blue-600 hover:text-blue-800" aria-label={`添加${ROLE_LABELS[role]}`}>＋</button></div>
+                    <div className="mb-1.5 flex items-center justify-between"><span className="text-xs font-semibold text-slate-600">{ROLE_LABELS[role]} {REQUIRED_TEAM_ROLES.includes(role) ? <span className="text-red-500">*</span> : null}</span><button type="button" onClick={(event) => setPicker({ role, anchorEl: event.currentTarget })} className="text-lg leading-none text-blue-600 hover:text-blue-800" aria-label={`添加${ROLE_LABELS[role]}`}>＋</button></div>
                     {selectedPeople.length > 0 ? (
                       <div className="flex min-h-10 flex-wrap items-start gap-1.5">
                         {selectedPeople.map((person) => (

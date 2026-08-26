@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { ownerSubmitProfile } from '../../api/projects'
 import { applyInitAnalysisRun } from '../../api/projectInitAi'
 import { fetchPeople } from '../../api/people'
-import type { ProjectProfilePayload, ProjectWorkProgressTaskDraft } from '../../api/projects'
+import type { ProjectWorkProgressTaskDraft } from '../../api/projects'
 import { toast } from '../../utils/toast'
 import type { Person, Project } from '../../types'
 import { OwnerSubmitAiPanel, type ProjectInitAiDecision } from './OwnerSubmitAiPanel'
@@ -88,10 +88,6 @@ function composeProjectPeriod(startDate?: string, endDate?: string): string {
   const end = (endDate ?? '').trim()
   if (start && end) return `${start} 至 ${end}`
   return start || end
-}
-
-function parseProjectPeriod(value: string): ParsedPeriod {
-  return parsePeriodValue(value)
 }
 
 function composeTaskPeriod(startDate?: string, endDate?: string): string {
@@ -433,16 +429,6 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
   const [people, setPeople] = useState<Person[]>([])
   const [peopleLoading, setPeopleLoading] = useState(true)
   const [peopleError, setPeopleError] = useState('')
-  const [fillForm, setFillForm] = useState<ProjectProfilePayload>(() => ({
-    project_type: project.project_type ?? '',
-    client_name: project.client_name ?? '',
-    background: project.background ?? '',
-    objectives: project.objectives ?? '',
-    expected_outcomes: project.expected_outcomes ?? '',
-    start_date: project.start_date ?? '',
-    end_date: project.end_date ?? '',
-  }))
-  const [projectPeriod, setProjectPeriod] = useState(() => composeProjectPeriod(project.start_date, project.end_date))
   const [draftTasks, setDraftTasks] = useState<LocalTaskDraft[]>([cloneEmptyTask()])
   const [expandedTaskIndexes, setExpandedTaskIndexes] = useState<Set<number>>(() => new Set([0]))
   const [fillLoading, setFillLoading] = useState(false)
@@ -795,13 +781,9 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
       toast.error('工作推进表已经提交，请先补记 AI 审计，不要重复提交')
       return
     }
-    const parsedProjectPeriod = parseProjectPeriod(projectPeriod)
     setFillLoading(true)
     try {
       const result = await ownerSubmitProfile(project.id, {
-        ...fillForm,
-        start_date: parsedProjectPeriod.start,
-        end_date: parsedProjectPeriod.end,
         work_progress_draft: workProgressDraft,
       })
       submittedResultRef.current = result
@@ -830,7 +812,7 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
   }
 
   return (
-      <section className="owner-submit-workbench-shell mx-auto flex min-h-0 w-[96vw] max-w-[1560px] flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-[#f7f9fc] text-slate-900 shadow-[0_18px_50px_rgba(15,23,42,0.16)]">
+      <section className="owner-submit-workbench-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#f7f9fc] text-slate-900">
         <header className="owner-submit-workbench-header flex min-h-[64px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 py-3 sm:px-7">
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2.5">
@@ -862,35 +844,25 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
             <aside className="owner-submit-left-pane sticky top-4 self-start lg:w-[280px] xl:w-[300px]">
             <section className="owner-submit-project-summary owner-submit-project-summary-display owner-submit-core-card space-y-5 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-[0_8px_24px_rgba(15,23,42,0.05)] sm:px-6">
               <h3 className="mb-1.5 text-sm font-bold text-slate-800">项目核心信息</h3>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(160px,0.8fr)_minmax(260px,1fr)_minmax(360px,2fr)] md:items-start md:gap-0">
+              <p className="text-xs text-slate-500">基础信息由管理层维护</p>
+              <div className="grid grid-cols-1 gap-3">
                 <div className="min-w-0">
                   <span className="block text-[11px] font-semibold text-slate-500">项目名称</span>
                   <p className="mt-2 truncate text-lg font-bold tracking-[-0.01em] text-slate-900">{project.name}</p>
                 </div>
-                <div className="owner-submit-project-period-display min-w-0 md:border-l md:border-slate-100 md:px-6">
-                  <label className="block text-[11px] font-semibold text-slate-500">项目周期 / 时间段</label>
-                  <div className="relative mt-1.5">
+                <div className="owner-submit-project-period-display min-w-0">
+                  <span className="block text-[11px] font-semibold text-slate-500">项目周期 / 时间段</span>
+                  <div className="relative mt-2 flex min-h-5 items-center pl-7 text-sm font-medium text-slate-700">
                     <svg aria-hidden="true" viewBox="0 0 24 24" className="pointer-events-none absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8">
                       <rect x="3" y="5" width="18" height="16" rx="2" />
                       <path d="M16 3v4M8 3v4M3 10h18" />
                     </svg>
-                      <input
-                        value={projectPeriod}
-                        onChange={(e) => setProjectPeriod(e.target.value)}
-                        placeholder="例如：2026-07-01 至 2026-12-31"
-                        className="h-9 w-full border-0 border-b border-slate-200 bg-transparent pl-7 pr-1 text-sm font-medium text-slate-700 outline-none placeholder:text-slate-400 focus:border-blue-400 focus:ring-0"
-                      />
+                    <span>{composeProjectPeriod(project.start_date, project.end_date) || '未设置'}</span>
                   </div>
                 </div>
-                <div className="min-w-0 md:border-l md:border-slate-100 md:px-6">
-                  <label className="block text-[11px] font-semibold text-slate-500">项目完成准则 / 验收标准</label>
-                      <textarea
-                        value={fillForm.objectives ?? ''}
-                        onChange={(e) => setFillForm((prev) => ({ ...prev, objectives: e.target.value }))}
-                        placeholder="描述项目完成后如何验收，例如关键结果、通过标准、交付边界等"
-                    rows={3}
-                    className="mt-1 w-full resize-none border-0 bg-transparent px-0 py-0 text-sm leading-5 text-slate-700 placeholder:text-slate-400 outline-none focus:ring-0"
-                      />
+                <div className="min-w-0">
+                  <span className="block text-[11px] font-semibold text-slate-500">项目完成准则 / 验收标准</span>
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-700">{project.objectives?.trim() || '未填写'}</p>
                 </div>
               </div>
 
@@ -900,42 +872,24 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
                     </summary>
                 <div className="mt-3 grid grid-cols-1 gap-4 border-t border-slate-200 pt-4 md:grid-cols-2">
                       <div className="space-y-1.5">
-                        <label className="block text-[11px] font-semibold text-slate-500">客户名称</label>
-                        <input
-                          value={fillForm.client_name ?? ''}
-                          onChange={(e) => setFillForm((prev) => ({ ...prev, client_name: e.target.value }))}
-                          placeholder="内部项目可留空"
-                          className="h-9 w-full rounded border border-slate-200 bg-white px-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                        />
+                        <span className="block text-[11px] font-semibold text-slate-500">客户名称</span>
+                        <p className="text-sm text-slate-700">{project.client_name?.trim() || '未填写'}</p>
                       </div>
                       <div className="space-y-1.5">
-                        <label className="block text-[11px] font-semibold text-slate-500">项目类型</label>
-                        <input
-                          value={fillForm.project_type ?? ''}
-                          onChange={(e) => setFillForm((prev) => ({ ...prev, project_type: e.target.value }))}
-                          placeholder="博维内部项目"
-                          className="h-9 w-full rounded border border-slate-200 bg-white px-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                        />
+                        <span className="block text-[11px] font-semibold text-slate-500">项目类型</span>
+                        <p className="text-sm text-slate-700">{project.project_type?.trim() || '未填写'}</p>
                       </div>
                       <div className="space-y-1.5">
-                        <label className="block text-[11px] font-semibold text-slate-500">项目背景</label>
-                        <textarea
-                          value={fillForm.background ?? ''}
-                          onChange={(e) => setFillForm((prev) => ({ ...prev, background: e.target.value }))}
-                          placeholder="说明项目来源及必要性，可选"
-                          rows={3}
-                          className="w-full resize-none rounded border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                        />
+                        <span className="block text-[11px] font-semibold text-slate-500">项目背景</span>
+                        <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{project.background?.trim() || '未填写'}</p>
                       </div>
                       <div className="space-y-1.5">
-                        <label className="block text-[11px] font-semibold text-slate-500">补充说明</label>
-                        <textarea
-                          value={fillForm.expected_outcomes ?? ''}
-                          onChange={(e) => setFillForm((prev) => ({ ...prev, expected_outcomes: e.target.value }))}
-                          placeholder="其他需要备注的信息，可选"
-                          rows={3}
-                          className="w-full resize-none rounded border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-700 placeholder:text-slate-400 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
-                        />
+                        <span className="block text-[11px] font-semibold text-slate-500">补充说明</span>
+                        <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{project.expected_outcomes?.trim() || '未填写'}</p>
+                      </div>
+                      <div className="space-y-1.5 md:col-span-2">
+                        <span className="block text-[11px] font-semibold text-slate-500">项目说明</span>
+                        <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{project.description?.trim() || '未填写'}</p>
                       </div>
                 </div>
               </details>

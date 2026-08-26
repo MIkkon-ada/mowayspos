@@ -151,7 +151,7 @@ export function canShowProjectStartupAction(project?: ProjectLifecycleLike | nul
 
 export function canShowProjectSubmitAction(project?: ProjectLifecycleLike | null): boolean {
   const status = getProjectPrimaryStatus(project)
-  return status === 'draft' || status === 'dispatched' || status === 'returned'
+  return status === 'dispatched' || status === 'returned'
 }
 
 export function canShowProjectApproveAction(project?: ProjectLifecycleLike | null): boolean {

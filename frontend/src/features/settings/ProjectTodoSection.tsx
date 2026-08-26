@@ -49,20 +49,20 @@ export function ProjectTodoSection({
           return (
             <article key={todo.project.id} className="relative overflow-hidden rounded-xl border border-amber-200 bg-amber-50/40 px-4 py-3">
               <div className="absolute inset-y-0 left-0 w-1 bg-amber-400" aria-hidden="true" />
-              <div className="pl-1">
+              <div className="relative pl-1">
                 <div className="project-todo-summary flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs font-semibold text-amber-700">{stage.label}</span>
                       <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${badge.className}`}>{badge.label}</span>
                     </div>
-                    <h3 className="mt-1 text-base font-bold text-slate-900">{todo.project.name}</h3>
-                    <p className="mt-1 text-sm font-medium text-slate-700">{todo.title}</p>
+                    <h3 className="absolute left-1/2 top-0 -translate-x-1/2 text-base font-bold text-slate-900">{todo.project.name}</h3>
+                    <p className="mt-7 text-sm font-medium text-slate-700">{todo.title}</p>
                     <p className="mt-1 text-xs leading-relaxed text-slate-500">{todo.description}</p>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 lg:max-w-xs lg:justify-end">
                     <span>项目负责人：{ownerName || '未配置'}</span>
-                    <span>Coach：{coachName || '未配置'}</span>
+                    <span>企业教练：{coachName || '未配置'}</span>
                   </div>
                 </div>
                 <div className="project-todo-action-row mt-3 flex flex-col gap-3 border-t border-amber-200 pt-3 sm:flex-row sm:items-center sm:justify-between">

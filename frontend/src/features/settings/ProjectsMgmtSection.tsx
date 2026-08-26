@@ -1099,17 +1099,21 @@ function LifecycleCard({
       style={{ boxShadow: '0 1px 4px rgba(15,23,42,0.05)' }}
     >
       <div className={`absolute left-0 top-0 bottom-0 w-1 ${isSelected ? 'bg-sky-600' : 'bg-transparent'}`} />
-      <div className="projects-lifecycle-card-title-row flex items-start justify-between gap-3">
+      <div className="projects-lifecycle-card-title-row relative flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-sm font-bold text-slate-800">{project.name}</h3>
+            <h3 className="truncate text-sm font-bold text-slate-800 lg:absolute lg:left-1/2 lg:top-0 lg:max-w-[30%] lg:-translate-x-1/2">{project.name}</h3>
             <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusBadge.className}`}>{statusBadge.label}</span>
             {projectType && <span className="flex-shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-500">{projectType}</span>}
           </div>
         </div>
+        <div className="mr-10 hidden shrink-0 flex-wrap justify-end gap-x-3 gap-y-1 text-[11px] text-slate-600 lg:flex">
+          <span>项目负责人：{teamLine.ownerText}</span>
+          <span>企业教练：{teamLine.ceoText}</span>
+        </div>
         {hasMore && (
           <button type="button" onClick={(e) => { e.stopPropagation(); onOpenMore(e.currentTarget) }}
-            className="cursor-pointer rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-400 hover:bg-slate-50">
+            className="absolute right-0 top-0 cursor-pointer rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-400 hover:bg-slate-50">
             ⋯
           </button>
         )}
@@ -1121,7 +1125,7 @@ function LifecycleCard({
         <span><span className="font-semibold text-slate-800">{lifecycleStage.label}</span> · {stageDesc || lifecycleStage.detail}</span>
       </p>
 
-      <div className="projects-lifecycle-card-people-line mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-600">
+      <div className="projects-lifecycle-card-people-line mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-600 lg:hidden">
         <span>项目负责人：{teamLine.ownerText}</span>
         <span>企业教练：{teamLine.ceoText}</span>
       </div>

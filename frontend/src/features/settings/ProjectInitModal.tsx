@@ -123,6 +123,100 @@ export function ProjectInitModal({
 
   return createPortal(
     <div
+      className="project-init-workbench fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4"
+      onClick={() => { if (!creating) closeModal() }}
+    >
+      <div
+        className="flex max-h-[92vh] w-full max-w-[1400px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="flex shrink-0 items-center justify-between border-b border-slate-200 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-lg text-white">＋</div>
+            <h1 className="text-xl font-semibold tracking-tight text-slate-900">{mode === 'edit' ? '编辑项目' : '项目立项'}</h1>
+          </div>
+          <button type="button" onClick={closeModal} className="flex h-8 w-8 items-center justify-center rounded-md text-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="关闭弹窗">×</button>
+        </header>
+
+        <main className="project-init-workbench-columns grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-3">
+          <section className="border-b border-slate-200 px-6 py-5 lg:border-b-0 lg:border-r">
+            <h2 className="mb-5 text-base font-semibold text-slate-800">1. 基本信息</h2>
+            <div className="space-y-4">
+              <label className="block text-xs font-semibold text-slate-600">项目类型 <span className="text-red-500">*</span>
+                <select value={form.project_type} onChange={(event) => setForm((prev) => ({ ...prev, project_type: event.target.value, client_name: event.target.value === '博维内部项目' ? '' : prev.client_name }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm font-normal text-slate-700 outline-none focus:border-blue-500">
+                  <option value="博维内部项目">博维内部项目</option>
+                  <option value="博维-客户项目">博维-客户项目</option>
+                </select>
+              </label>
+              <label className="block text-xs font-semibold text-slate-600">项目名称 <span className="text-red-500">*</span>
+                <input autoFocus value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 px-2.5 text-sm font-normal text-slate-700 outline-none focus:border-blue-500" />
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block text-xs font-semibold text-slate-600">开始日期 <span className="text-red-500">*</span><input type="date" value={form.start_date} onChange={(event) => setForm((prev) => ({ ...prev, start_date: event.target.value }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 px-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500" /></label>
+                <label className="block text-xs font-semibold text-slate-600">结束日期 <input type="date" value={form.end_date} onChange={(event) => setForm((prev) => ({ ...prev, end_date: event.target.value }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 px-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500" /></label>
+              </div>
+              <label className={`block text-xs font-semibold text-slate-600 ${form.project_type === '博维内部项目' ? 'opacity-50' : ''}`}>客户名称
+                <input value={form.client_name} disabled={form.project_type === '博维内部项目'} onChange={(event) => setForm((prev) => ({ ...prev, client_name: event.target.value }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 px-2.5 text-sm font-normal text-slate-700 outline-none focus:border-blue-500 disabled:bg-slate-50" />
+              </label>
+            </div>
+          </section>
+
+          <section className="border-b border-slate-200 px-6 py-5 lg:border-b-0 lg:border-r">
+            <h2 className="mb-5 text-base font-semibold text-slate-800">2. 战略背景与目标</h2>
+            <div className="space-y-4">
+              <label className="block text-xs font-semibold text-slate-600">项目背景<textarea value={form.background} onChange={(event) => setForm((prev) => ({ ...prev, background: event.target.value }))} className="mt-1.5 h-24 w-full resize-none rounded-md border border-slate-300 px-2.5 py-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500" /></label>
+              <label className="block text-xs font-semibold text-slate-600">项目目标 <span className="text-red-500">*</span><textarea value={form.objectives} onChange={(event) => setForm((prev) => ({ ...prev, objectives: event.target.value }))} className="mt-1.5 h-24 w-full resize-none rounded-md border border-slate-300 px-2.5 py-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500" /></label>
+              <label className="block text-xs font-semibold text-slate-600">预期交付物 <span className="text-red-500">*</span><textarea value={form.expected_outcomes} onChange={(event) => setForm((prev) => ({ ...prev, expected_outcomes: event.target.value }))} className="mt-1.5 h-24 w-full resize-none rounded-md border border-slate-300 px-2.5 py-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500" /></label>
+            </div>
+          </section>
+
+          <section className="px-6 py-5">
+            <h2 className="mb-5 text-base font-semibold text-slate-800">3. 团队配置</h2>
+            <div className="space-y-4">
+              {roleOrder.map((role) => {
+                const selectedPeople = people.filter((person) => team[role].includes(person.id))
+                return (
+                  <div key={role}>
+                    <div className="mb-1.5 flex items-center justify-between"><span className="text-xs font-semibold text-slate-600">{ROLE_LABELS[role]} {role === 'owner' ? <span className="text-red-500">*</span> : null}</span><button type="button" onClick={(event) => setPicker({ role, anchorEl: event.currentTarget })} className="text-lg leading-none text-blue-600 hover:text-blue-800" aria-label={`添加${ROLE_LABELS[role]}`}>＋</button></div>
+                    {selectedPeople.length > 0 ? (
+                      <div className="flex min-h-10 flex-wrap items-start gap-1.5">
+                        {selectedPeople.map((person) => (
+                          <div key={person.id} className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-slate-50 px-2 py-1">
+                            <span className="text-xs font-medium text-slate-700">{person.name}</span>
+                            <button type="button" onClick={() => removeMember(role, person.id)} className="text-sm leading-none text-slate-400 hover:text-red-500" aria-label={`移除${person.name}`}>×</button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <div className="flex h-10 items-center justify-center border border-dashed border-slate-300 text-xs text-slate-400">未配置</div>}
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        </main>
+
+        <footer className="flex shrink-0 justify-end gap-2 border-t border-slate-200 px-6 py-3">
+          <button type="button" onClick={closeModal} disabled={creating} className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">取消</button>
+          <button type="button" onClick={onSubmit} disabled={creating || !form.name.trim() || (form.project_type === '博维-客户项目' && !form.client_name.trim())} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{creating ? (mode === 'edit' ? '保存中…' : '创建中…') : mode === 'edit' ? '保存修改' : '确认立项'} →</button>
+        </footer>
+        {picker && (
+          <ProjectPeoplePickerPopover
+            anchorEl={picker.anchorEl}
+            people={people}
+            selectedIds={team[picker.role]}
+            takenIds={allSelectedIds}
+            onTogglePerson={(personId) => toggleMember(picker.role, personId)}
+            onClose={() => setPicker(null)}
+            roleLabel={ROLE_LABELS[picker.role]}
+          />
+        )}
+      </div>
+    </div>,
+    document.body,
+  )
+
+  return createPortal(
+    <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-3 backdrop-blur-[2px]"
       onClick={() => {
         if (!creating) closeModal()
@@ -390,13 +484,13 @@ export function ProjectInitModal({
       {/* Person Picker Popover - 新设计 */}
       {picker && (
         <ProjectPeoplePickerPopover
-          anchorEl={picker.anchorEl}
+          anchorEl={picker!.anchorEl}
           people={people}
-          selectedIds={team[picker.role]}
+          selectedIds={team[picker!.role]}
           takenIds={allSelectedIds}
-          onTogglePerson={(personId) => toggleMember(picker.role, personId)}
+          onTogglePerson={(personId) => toggleMember(picker!.role, personId)}
           onClose={() => setPicker(null)}
-          roleLabel={ROLE_LABELS[picker.role]}
+          roleLabel={ROLE_LABELS[picker!.role]}
         />
       )}
     </div>,
@@ -540,7 +634,7 @@ export function ProjectPeoplePickerPopover({
         { width: Math.max(320, panelWidth), height: Math.min(400, panelHeight) },
         { width: window.innerWidth, height: window.innerHeight },
       )
-      if (mounted) setPosition({ top: next.top, left: Math.min(next.left, window.innerWidth - 340) })
+      if (mounted) setPosition({ top: next.top, left: next.left })
     }
 
     updatePosition()
@@ -591,7 +685,7 @@ export function ProjectPeoplePickerPopover({
   return createPortal(
     <div
       ref={panelRef}
-      className="picker-animate fixed z-[9999] w-[320px] overflow-hidden rounded-2xl border border-gray-200 bg-white/95 shadow-[0_8px_30px_rgba(0,0,0,0.12),0_4px_12px_rgba(0,0,0,0.08)] backdrop-blur-[10px]"
+      className="picker-animate fixed z-[9999] w-[640px] max-w-[calc(100vw-24px)] overflow-hidden rounded-2xl border border-gray-200 bg-white/95 shadow-[0_8px_30px_rgba(0,0,0,0.12),0_4px_12px_rgba(0,0,0,0.08)] backdrop-blur-[10px]"
       style={{ top: position.top, left: position.left, maxHeight: 450 }}
       role="dialog"
       aria-label={`选择${roleLabel}`}
@@ -620,9 +714,9 @@ export function ProjectPeoplePickerPopover({
       </div>
 
       {/* People Grid - 卡片式布局 */}
-      <div className="custom-scrollbar grid grid-cols-2 gap-2 overflow-y-auto p-3" style={{ maxHeight: 340 }}>
+      <div className="custom-scrollbar grid grid-cols-1 gap-2 overflow-y-auto p-3 sm:grid-cols-2 lg:grid-cols-3" style={{ maxHeight: 340 }}>
         {filteredPeople.length === 0 ? (
-          <p className="col-span-2 py-8 text-center text-xs text-gray-400">没有可选人员</p>
+          <p className="col-span-1 py-8 text-center text-xs text-gray-400 sm:col-span-2 lg:col-span-3">没有可选人员</p>
         ) : (
           filteredPeople.map((person) => {
             const checked = selectedIds.includes(person.id)
@@ -643,20 +737,11 @@ export function ProjectPeoplePickerPopover({
                 }`}
                 data-id={person.id}
               >
-                <div className="flex items-center gap-2.5">
-                  {/* Avatar */}
-                  <div
-                    className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl text-sm font-bold shadow-md bg-gradient-to-br ${getAvatarColor(person.name)} text-white ${
-                      checked ? 'ring-2 ring-blue-500 ring-offset-2' : ''
-                    }`}
-                  >
-                    {person.name.slice(0, 1)}
-                  </div>
-                  
+                <div className="flex items-center gap-3">
                   {/* Info */}
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-semibold truncate text-gray-800">{person.name}</div>
-                    {person.department && <div className="mt-0.5 text-xs truncate text-gray-500">{person.department}</div>}
+                    <div className="text-sm font-semibold whitespace-nowrap text-gray-800">{person.name}</div>
+                    {person.department && <div className="mt-0.5 text-xs whitespace-nowrap text-gray-500">{person.department}</div>}
                   </div>
 
                   {/* Check Mark */}

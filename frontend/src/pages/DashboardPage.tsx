@@ -10,6 +10,7 @@ import {
   getProjectPrimaryStatus,
   getProjectStatusBadge,
 } from '../domain/projectLifecycleStatus'
+import { projectOwnerSubmitPath } from '../domain/projectEntryRoutes'
 import type { DashboardOverview, GovernanceAction, GovernanceInitiative, Project } from '../types'
 import { fmtMonth, fmtPlanTime } from '../utils/time'
 import { Skel, SkeletonStatCard } from '../components/Skeleton'
@@ -341,7 +342,7 @@ export function DashboardPage() {
 
   function openFillModal(project?: Project | null) {
     const target = project ?? dashboardProject
-    if (target) navigate(`/home/projects/${target.id}/owner-submit`)
+    if (target) navigate(projectOwnerSubmitPath(target.id))
   }
 
   const now = new Date()

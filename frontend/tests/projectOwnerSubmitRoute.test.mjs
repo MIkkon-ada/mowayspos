@@ -23,8 +23,11 @@ test('owner submit is a guarded project-detail child route rather than an overla
 
 test('all existing owner-submit entries navigate to the project child page', () => {
   assert.doesNotMatch(dashboardSource, /OwnerSubmitModal/)
-  assert.match(dashboardSource, /navigate\(`\/home\/projects\/\$\{[^}]+\.id\}\/owner-submit`\)/)
   assert.doesNotMatch(projectsSource, /OwnerSubmitModal/)
-  assert.match(projectsSource, /navigate\(`\/home\/projects\/\$\{project\.id\}\/owner-submit`\)/)
-  assert.match(detailSource, /onOwnerSubmit=\{\(\) => navigate\(`\/home\/projects\/\$\{project\.id\}\/owner-submit`\)\}/)
+  for (const source of [dashboardSource, projectsSource, detailSource]) {
+    assert.match(source, /projectOwnerSubmitPath/)
+  }
+  assert.match(detailSource, /projectEditPath/)
+  assert.doesNotMatch(dashboardSource, /\?edit=/)
+  assert.doesNotMatch(projectsSource, /\?edit=/)
 })

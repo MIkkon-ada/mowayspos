@@ -83,6 +83,15 @@ test('workbench is page-local while retaining a scrollable main boundary', () =>
   assert.match(workbenchMainClassName, /overflow-y-auto/)
 })
 
+test('workbench fills the right-side page area without modal card framing', () => {
+  assert.match(workbenchShellClassName, /owner-submit-workbench-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-\[#f7f9fc\]/)
+  assert.doesNotMatch(workbenchShellClassName, /mx-auto/)
+  assert.doesNotMatch(workbenchShellClassName, /w-\[96vw\]/)
+  assert.doesNotMatch(workbenchShellClassName, /max-w-\[1560px\]/)
+  assert.doesNotMatch(workbenchShellClassName, /rounded-xl/)
+  assert.doesNotMatch(workbenchShellClassName, /shadow-\[/)
+})
+
 test('project core card shows management-maintained base information as read-only', () => {
   assert.match(source, /owner-submit-project-summary[^\n]*owner-submit-core-card[^\n]*py-4/)
   assert.match(source, /mb-1\.5[^>]*>项目核心信息/)

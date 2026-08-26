@@ -812,7 +812,7 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
   }
 
   return (
-      <section className="owner-submit-workbench-shell mx-auto flex min-h-0 w-[96vw] max-w-[1560px] flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-[#f7f9fc] text-slate-900 shadow-[0_18px_50px_rgba(15,23,42,0.16)]">
+      <section className="owner-submit-workbench-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#f7f9fc] text-slate-900">
         <header className="owner-submit-workbench-header flex min-h-[64px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 py-3 sm:px-7">
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2.5">

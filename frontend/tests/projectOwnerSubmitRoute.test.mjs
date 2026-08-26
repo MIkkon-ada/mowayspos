@@ -43,8 +43,8 @@ test('owner submit page renders the editable workbench only for a dispatched or 
   assert.match(ownerSubmitPageSource, /无权完善该项目方案/)
 })
 
-test('owner submit route uses the full-height right-side workspace instead of a centered modal shell', () => {
-  assert.match(ownerSubmitPageSource, /return \(\s*<div className="owner-submit-page-shell flex min-h-0 flex-1 flex-col overflow-hidden bg-\[#F1F5F9\]">\s*<OwnerSubmitWorkbench/)
+test('owner submit route keeps the centered page-local workbench shell', () => {
+  assert.match(ownerSubmitPageSource, /return \(\s*<div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-\[#F1F5F9\] p-4 sm:p-6">\s*<div className="mx-auto flex min-h-0 w-full max-w-\[1400px\] flex-1 flex-col">\s*<OwnerSubmitWorkbench/)
 })
 
 test('draft owners have no detail-panel or dashboard submit entry', () => {

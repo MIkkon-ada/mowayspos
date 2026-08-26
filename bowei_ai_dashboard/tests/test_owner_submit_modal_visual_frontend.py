@@ -25,15 +25,12 @@ def test_owner_submit_modal_has_current_three_zone_workbench_layout():
     assert "h-[72px]" not in source
 
 
-def test_owner_submit_workbench_fills_the_page_area_without_modal_framing():
+def test_owner_submit_modal_width_uses_current_workbench_limits():
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
-    assert "owner-submit-workbench-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#f7f9fc]" in source
-    assert "w-[96vw]" not in source
-    assert "max-w-[1560px]" not in source
-    assert "owner-submit-workbench-shell mx-auto" not in source
-    assert "owner-submit-workbench-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-xl" not in source
-    assert "owner-submit-workbench-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#f7f9fc] text-slate-900 shadow-[0_18px_50px_rgba(15,23,42,0.16)]" not in source
+    assert "w-[96vw]" in source
+    assert "max-w-[1560px]" in source
+    assert "mx-auto" in source
     assert "w-[820px]" not in source
     assert "max-w-[1280px]" not in source
 

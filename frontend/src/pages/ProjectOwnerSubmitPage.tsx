@@ -131,14 +131,12 @@ export function ProjectOwnerSubmitPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#F1F5F9] p-4 sm:p-6">
-      <div className="mx-auto flex min-h-0 w-full max-w-[1400px] flex-1 flex-col">
-        <OwnerSubmitWorkbench
-          project={project}
-          onClose={goToProjectDetail}
-          onSuccess={goToProjectDetail}
-        />
-      </div>
+    <div className="owner-submit-page-shell flex min-h-0 flex-1 flex-col overflow-hidden bg-[#F1F5F9]">
+      <OwnerSubmitWorkbench
+        project={project}
+        onClose={goToProjectDetail}
+        onSuccess={goToProjectDetail}
+      />
     </div>
   )
 }

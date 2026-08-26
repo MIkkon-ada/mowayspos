@@ -70,6 +70,9 @@ describe('projects workbench pure helpers', () => {
       isSuperAdmin: false, isCompanyCeo: false, isRealProjectCeo: false, isRealOwner: true,
     }, [], [])).toMatchObject({ action: 'ownerSubmit', actionLabel: '完善立项信息' })
     expect(getProjectTodo(project('draft'), {
+      isSuperAdmin: false, isCompanyCeo: true, isRealProjectCeo: false, isRealOwner: true,
+    }, [], [])).toMatchObject({ action: 'ownerSubmit', actionLabel: '完善立项信息' })
+    expect(getProjectTodo(project('draft'), {
       isSuperAdmin: false, isCompanyCeo: true, isRealProjectCeo: false, isRealOwner: false,
     }, [], [])).toMatchObject({ action: 'edit', actionLabel: '继续完善项目' })
     expect(getProjectTodo(project('dispatched'), {

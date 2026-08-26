@@ -23,6 +23,7 @@ import { fetchSubtasksByProject } from '../../api/subtasks'
 import { fmtPlanTime, fmtDate } from '../../utils/time'
 import { toast } from '../../utils/toast'
 import { canManageProjects } from '../../domain/permissions'
+import { projectOwnerSubmitPath } from '../../domain/projectEntryRoutes'
 import {
   getProjectPrimaryStatus,
   getProjectStatusBadge,
@@ -723,7 +724,7 @@ export function ProjectsMgmtSection() {
     const roles = getProjectRoles(project.id)
     const mainAction = getMainAction(status, roles.isSuperAdmin, roles.isCompanyCeo, roles.isRealProjectCeo, roles.isRealOwner)
     if (mainAction.type === 'edit') void openProjectEditor(project)
-    else if (mainAction.type === 'ownerSubmit') navigate(`/home/projects/${project.id}/owner-submit`)
+    else if (mainAction.type === 'ownerSubmit') navigate(projectOwnerSubmitPath(project.id))
     else if (mainAction.type === 'approvalMaterials') setApprovalMaterialsProject(project)
     else if (mainAction.type === 'workProgress') navigate(`/work/tasks?projectId=${project.id}`)
     else if (mainAction.type === 'projectArchive') navigate(`/home/projects/${project.id}/archive`)
@@ -733,7 +734,7 @@ export function ProjectsMgmtSection() {
 
   function handleTodoAction(todo: ProjectTodoViewModel['todo']) {
     if (todo.action === 'edit') void openProjectEditor(todo.project)
-    else if (todo.action === 'ownerSubmit') navigate(`/home/projects/${todo.project.id}/owner-submit`)
+    else if (todo.action === 'ownerSubmit') navigate(projectOwnerSubmitPath(todo.project.id))
     else if (todo.action === 'approvalMaterials') setApprovalMaterialsProject(todo.project)
   }
 
@@ -870,7 +871,7 @@ export function ProjectsMgmtSection() {
 
                       const handleAction = () => {
                         if (mainAction.type === 'edit') void openProjectEditor(project)
-                        else if (mainAction.type === 'ownerSubmit') navigate(`/home/projects/${project.id}/owner-submit`)
+                        else if (mainAction.type === 'ownerSubmit') navigate(projectOwnerSubmitPath(project.id))
                         else if (mainAction.type === 'approvalMaterials') { setApprovalMaterialsProject(project) }
                         else if (mainAction.type === 'workProgress') navigate(`/work/tasks?projectId=${project.id}`)
                         else if (mainAction.type === 'projectArchive') navigate(`/home/projects/${project.id}/archive`)

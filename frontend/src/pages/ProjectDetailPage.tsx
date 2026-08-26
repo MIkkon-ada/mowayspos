@@ -4,6 +4,7 @@ import { getProject, getProjectMembers } from '../api/projects'
 import { fetchTasks } from '../api/tasks'
 import { fetchSubTasksBatch } from '../api/subtasks'
 import { useProject } from '../context/ProjectContext'
+import { projectEditPath, projectOwnerSubmitPath } from '../domain/projectEntryRoutes'
 import { DetailPanel } from '../features/settings/ProjectsMgmtSection'
 import { ApprovalMaterialsWorkbenchModal } from '../features/settings/ProjectsMgmtSection'
 import type { Project, ProjectMember, TaskItem, SubTaskWithParent } from '../types'
@@ -145,8 +146,8 @@ export default function ProjectDetailPage() {
           roles={roles}
           wide
           onClose={goBack}
-          onEdit={() => navigate(`/home/projects?edit=${project.id}`)}
-          onOwnerSubmit={() => navigate(`/home/projects/${project.id}/owner-submit`)}
+          onEdit={() => navigate(projectEditPath(project.id))}
+          onOwnerSubmit={() => navigate(projectOwnerSubmitPath(project.id))}
           onOpenApprovalMaterials={() => {
             setApprovalMaterialsProject(project)
           }}

@@ -57,7 +57,9 @@ def test_project_info_area_uses_current_compact_card_style():
         "rounded-2xl border border-slate-200 bg-white",
         "shadow-[0_8px_24px_rgba(15,23,42,0.05)]",
         "space-y-5",
-        "rows={3}",
+        "基础信息由管理层维护",
+        "owner-submit-project-summary-display",
+        "owner-submit-project-period-display",
         "项目完成准则 / 验收标准",
     ]:
         assert expected in source

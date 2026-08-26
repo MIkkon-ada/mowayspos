@@ -27,4 +27,16 @@ for (const label of [
 
 assert.ok(!source.includes('完善材料'), 'obsolete materials wording must be removed')
 assert.ok(source.includes('完善项目计划'), 'project-plan wording must be present')
+for (const label of [
+  'project-todo-summary flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between',
+  'project-todo-action-row',
+  '待补充：',
+  '已完成 ',
+  '尚有 ${missingCount} 项信息待完善',
+  'check.label.trim()',
+  '.filter((check) => check.label)',
+  'flex-1',
+]) {
+  assert.ok(source.includes(label), `expected ProjectTodoSection hierarchy to contain ${label}`)
+}
 console.log('projects management workbench structure contract passed')

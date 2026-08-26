@@ -135,6 +135,7 @@ def test_owner_submit_saves_work_progress_draft_without_activating_project():
                         title="Confirm scope",
                         evaluation_standard="Scope signed off",
                         assignee="Owner Person",
+                        assignee_id=1,
                         helper="Member Person",
                         plan_start="2026-08-01",
                         plan_end="2026-08-03",
@@ -192,7 +193,17 @@ def test_company_ceo_without_project_coach_role_cannot_approve_project():
     owner_submit_project_profile(
         1,
         schemas.ProjectProfilePayload(
-            work_progress_draft=[schemas.ProjectWorkProgressTaskDraft(title="Ready for review")]
+            work_progress_draft=[
+                schemas.ProjectWorkProgressTaskDraft(
+                    title="Ready for review",
+                    subtasks=[
+                        schemas.ProjectWorkProgressSubTaskDraft(
+                            title="Coach review task",
+                            assignee_id=1,
+                        )
+                    ],
+                )
+            ]
         ),
         current_user="owner",
         db=db,

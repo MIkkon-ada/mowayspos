@@ -1,5 +1,6 @@
 import { apiGet, apiPost, apiPatch, apiDelete } from './client'
 import type { Project, ProjectCapabilities, ProjectMember, MemberChangeRequest, ProjectCloseRequest, ProjectCloseRequestCreatePayload, ProjectCloseRequestUpdatePayload, ProjectCloseReviewPayload } from '../types'
+import type { ProjectLifecycleStatus } from '../domain/projectLifecycleStatus'
 
 // 当前用户可见项目：GET /api/projects[?include_archived=true]
 export function getProjects(includeArchived = false): Promise<Project[]> {
@@ -139,7 +140,7 @@ export function ownerSubmitProfile(
   return apiPost(`/api/projects/${projectId}/owner-submit`, payload)
 }
 
-export function notifyProjectOwner(projectId: number): Promise<{ ok: boolean; notified_to: number; status: string }> {
+export function dispatchProject(projectId: number): Promise<{ ok: boolean; notified_to: number; status: ProjectLifecycleStatus }> {
   return apiPost(`/api/projects/${projectId}/dispatch`, {})
 }
 

@@ -83,12 +83,21 @@ test('workbench is page-local while retaining a scrollable main boundary', () =>
   assert.match(workbenchMainClassName, /overflow-y-auto/)
 })
 
-test('project core card stays compact while preserving the editable summary fields', () => {
+test('project core card shows management-maintained base information as read-only', () => {
   assert.match(source, /owner-submit-project-summary[^\n]*owner-submit-core-card[^\n]*py-4/)
   assert.match(source, /mb-1\.5[^>]*>项目核心信息/)
-  assert.match(source, /md:grid-cols-\[minmax\(160px,0\.8fr\)_minmax\(260px,1fr\)_minmax\(360px,2fr\)\]/)
-  assert.match(source, /rows=\{3\}/)
+  assert.match(source, /基础信息由管理层维护/)
+  assert.match(source, /\{project\.name\}/)
+  assert.match(source, /composeProjectPeriod\(project\.start_date, project\.end_date\)/)
+  assert.match(source, /\{project\.objectives[^}]*\}/)
+  assert.match(source, /项目说明/)
+  assert.match(source, /\{project\.description[^}]*\}/)
+  assert.match(source, /className="grid grid-cols-1 gap-3"/)
+  assert.doesNotMatch(source, /md:grid-cols-\[minmax\(160px,0\.8fr\)_minmax\(260px,1fr\)_minmax\(360px,2fr\)\]/)
   assert.match(source, /<details className="app-disclosure group mt-1">/)
+  assert.doesNotMatch(source, /setFillForm/)
+  assert.doesNotMatch(source, /setProjectPeriod/)
+  assert.doesNotMatch(source, /ownerSubmitProfile\(project\.id, \{[\s\S]{0,240}(?:objectives|start_date|end_date)/)
 })
 
 test('screenshot reference keeps the project summary display-first and task cards scanable', () => {

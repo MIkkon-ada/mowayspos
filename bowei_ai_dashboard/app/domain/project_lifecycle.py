@@ -28,7 +28,7 @@ CLOSE_FROZEN_STATUSES = {S_PENDING_CLOSE, S_ENDED}
 # vocabulary because older projects may still carry them in the database. New
 # transitions must not use either state as a lifecycle gate.
 EXECUTION_AVAILABLE_STATUSES = {S_ACTIVE, S_PENDING_KICKOFF, S_DISPATCHED}
-OWNER_PLAN_EDITABLE_STATUSES = {S_DRAFT, S_DISPATCHED, S_RETURNED}
+OWNER_PLAN_EDITABLE_STATUSES = {S_DISPATCHED, S_RETURNED}
 
 
 def normalize(value: object, default: str = S_DRAFT) -> str:

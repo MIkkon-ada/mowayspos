@@ -17,7 +17,7 @@ export type ProjectTodoRoles = {
   isRealOwner: boolean
 }
 
-export type ProjectTodoAction = 'edit' | 'ownerSubmit' | 'approvalMaterials'
+export type ProjectTodoAction = 'edit' | 'dispatch' | 'ownerSubmit' | 'approvalMaterials'
 export type ProjectMaterialKey = 'objectives' | 'period' | 'tasks' | 'subtasks'
 export type ProjectMaterialCheck = { key: ProjectMaterialKey; label: string; complete: boolean }
 
@@ -25,6 +25,8 @@ export type ProjectTodo = {
   project: Project
   action: ProjectTodoAction
   actionLabel: string
+  secondaryAction?: ProjectTodoAction
+  secondaryActionLabel?: string
   title: string
   description: string
   materialChecks: ProjectMaterialCheck[]
@@ -38,6 +40,24 @@ export type ProjectLifecycleStage = {
 }
 
 const STAGE_NODES = ['立项准备', '启动', '执行', '结束', '归档'] as const
+
+export function isProjectDispatchReady(project: Pick<Project, 'objectives' | 'start_date' | 'end_date'>): boolean {
+  const startDate = parseCalendarDate(project.start_date)
+  const endDate = parseCalendarDate(project.end_date)
+  return Boolean(project.objectives?.trim() && startDate && endDate && startDate <= endDate)
+}
+
+function parseCalendarDate(value?: string): string | null {
+  const date = value?.trim() ?? ''
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  if (!match) return null
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) return null
+  return date
+}
 
 export function getProjectOverviewStats(projects: readonly Project[]): ProjectWorkbenchOverviewStats {
   return projects.reduce<ProjectWorkbenchOverviewStats>((stats, project) => {
@@ -74,25 +94,20 @@ export function getProjectTodo(
   const materialChecks = status === 'draft' || status === 'dispatched' || status === 'returned'
     ? getProjectMaterialChecklist(project, tasks, subtasks)
     : []
+  const isManagement = roles.isSuperAdmin || roles.isCompanyCeo
 
-  if (status === 'draft' && roles.isRealOwner) {
+  if (status === 'draft' && isManagement) {
+    const dispatchReady = isProjectDispatchReady(project)
     return {
       project,
-      action: 'ownerSubmit',
-      actionLabel: '完善立项信息',
-      title: '项目待负责人完善立项信息',
-      description: '请补充项目目标、项目周期、重点工作和关键任务等信息。',
-      materialChecks,
-    }
-  }
-
-  if (status === 'draft' && (roles.isSuperAdmin || roles.isCompanyCeo)) {
-    return {
-      project,
-      action: 'edit',
-      actionLabel: '继续完善项目',
-      title: '项目已完成团队配置',
-      description: '可继续编辑项目资料和团队配置，负责人会收到待完善通知。',
+      action: dispatchReady ? 'dispatch' : 'edit',
+      actionLabel: dispatchReady ? '下发给负责人' : '完善基础信息',
+      secondaryAction: dispatchReady ? 'edit' : undefined,
+      secondaryActionLabel: dispatchReady ? '修改基础信息' : undefined,
+      title: dispatchReady ? '项目已完成基础信息' : '请先完善项目基础信息',
+      description: dispatchReady
+        ? '项目目标和项目周期已齐全，可下发给负责人完善项目计划。'
+        : '请先完善项目目标、开始日期和结束日期，再下发给负责人。',
       materialChecks,
     }
   }

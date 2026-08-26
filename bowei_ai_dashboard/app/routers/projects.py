@@ -1,5 +1,6 @@
 import json
 import re
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
@@ -88,6 +89,28 @@ def _person_id_for_name(name: str | None, db: Session) -> int | None:
 def _helper_note(helper: str | None) -> str:
     value = (helper or "").strip()
     return f"协助人：{value}" if value else ""
+
+
+def _validate_work_progress_draft(payload: schemas.ProjectProfilePayload) -> None:
+    """Require the same minimum work-plan structure as the owner-submit UI."""
+    workstreams = [
+        task_draft
+        for task_draft in payload.work_progress_draft or []
+        if (task_draft.title or "").strip()
+    ]
+    if not workstreams:
+        raise HTTPException(422, "请至少新增一条重点工作")
+
+    for task_draft in workstreams:
+        subtasks = [
+            sub_draft
+            for sub_draft in task_draft.subtasks or []
+            if (sub_draft.title or "").strip()
+        ]
+        if not subtasks:
+            raise HTTPException(422, "请至少添加一个关键任务")
+        if any(sub_draft.assignee_id is None for sub_draft in subtasks):
+            raise HTTPException(422, "请选择关键任务负责人")
 
 
 def _resolve_work_progress_people(
@@ -2085,7 +2108,9 @@ def dispatch_project(
     """CEO 下发项目给负责人。"""
     _require_ceo_or_tech_admin(current_user, db)
 
-    project = db.get(models.Project, project_id)
+    project = db.execute(
+        select(models.Project).where(models.Project.id == project_id).with_for_update()
+    ).scalar_one_or_none()
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
@@ -2094,6 +2119,8 @@ def dispatch_project(
         raise HTTPException(409, "已归档项目不可下发")
     if lifecycle == "active":
         raise HTTPException(409, "项目已启动，无需重新下发")
+    if lifecycle != PL.S_DRAFT:
+        raise HTTPException(409, "当前项目阶段不可下发")
 
     # 兜底校验：下发前必须已配置企业教练(project_ceo)和负责人(owner)
     # super_admin / company_ceo 也不能绕过此业务校验
@@ -2102,8 +2129,23 @@ def dispatch_project(
         raise HTTPException(409, "请先配置企业教练后再下发项目。")
     if _role_counts.get("owner", 0) <= 0:
         raise HTTPException(409, "请先配置项目负责人后再下发项目。")
+    objectives = (project.objectives or "").strip()
+    start_date = (project.start_date or "").strip()
+    end_date = (project.end_date or "").strip()
+    if not objectives or not start_date or not end_date:
+        raise HTTPException(409, "请先填写项目目标和项目周期后再下发项目。")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start_date) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", end_date):
+        raise HTTPException(409, "项目周期必须使用 YYYY-MM-DD 格式。")
+    try:
+        parsed_start_date = date.fromisoformat(start_date)
+        parsed_end_date = date.fromisoformat(end_date)
+    except ValueError:
+        raise HTTPException(409, "项目周期必须使用 YYYY-MM-DD 格式。")
+    if parsed_end_date < parsed_start_date:
+        raise HTTPException(409, "项目结束日期不得早于开始日期。")
 
-    recipient_ids = project_owner_ids(project_id, db)
+    _set_project_lifecycle(project, PL.S_DISPATCHED, db=db, project_id=project_id)
+    recipient_ids = project_strict_owner_ids(project_id, db)
     _notify_people(
         db,
         recipient_ids,
@@ -2113,9 +2155,9 @@ def dispatch_project(
         link=f"/home/dashboard?projectId={project_id}",
         project_id=project_id,
     )
-    crud.log(db, current_user, "notify_project_owner", "project", project_id, {"status": lifecycle}, {"status": lifecycle})
+    crud.log(db, current_user, "dispatch_project", "project", project_id, {"status": lifecycle}, {"status": PL.S_DISPATCHED})
     db.commit()
-    return {"ok": True, "notified_to": len(recipient_ids), "status": lifecycle}
+    return {"ok": True, "notified_to": len(recipient_ids), "status": PL.S_DISPATCHED}
 
 
 @router.post("/{project_id}/owner-submit")
@@ -2140,21 +2182,10 @@ def owner_submit_project_profile(
             raise HTTPException(409, "项目已在审核中")
         raise HTTPException(409, "当前项目阶段不可提交立项信息")
 
+    _validate_work_progress_draft(payload)
     resolved_people = _resolve_work_progress_people(payload, db)
 
     _set_project_lifecycle(project, "pending_review", db=db, project_id=project_id)
-    _update_project_columns(
-        db,
-        project_id,
-        project_type=(payload.project_type or "").strip() if payload.project_type is not None else None,
-        client_name=(payload.client_name or "").strip() if payload.client_name is not None else None,
-        background=(payload.background or "").strip() if payload.background is not None else None,
-        objectives=(payload.objectives or "").strip() if payload.objectives is not None else None,
-        expected_outcomes=(payload.expected_outcomes or "").strip() if payload.expected_outcomes is not None else None,
-        start_date=(payload.start_date or "").strip() if payload.start_date is not None else None,
-        end_date=(payload.end_date or "").strip() if payload.end_date is not None else None,
-        description=(payload.description or "").strip() if payload.description is not None else None,
-    )
     _save_work_progress_draft(
         project,
         payload,

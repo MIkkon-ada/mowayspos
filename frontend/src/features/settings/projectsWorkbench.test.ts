@@ -4,6 +4,7 @@ import {
   getProjectLifecycleStage,
   getProjectMaterialChecklist,
   getProjectOverviewStats,
+  isProjectDispatchReady,
   getProjectTodo,
 } from './projectsWorkbench'
 
@@ -65,16 +66,49 @@ describe('projects workbench pure helpers', () => {
     ])
   })
 
+  it('requires a trimmed objective and ordered calendar dates before dispatch', () => {
+    expect(isProjectDispatchReady(project('draft', {
+      objectives: '目标', start_date: '2026-08-01', end_date: '2026-08-31',
+    }))).toBe(true)
+    expect(isProjectDispatchReady(project('draft', {
+      objectives: '   ', start_date: '2026-08-01', end_date: '2026-08-31',
+    }))).toBe(false)
+    expect(isProjectDispatchReady(project('draft', {
+      objectives: '目标', start_date: '2026-8-01', end_date: '2026-08-31',
+    }))).toBe(false)
+    expect(isProjectDispatchReady(project('draft', {
+      objectives: '目标', start_date: '2026-02-30', end_date: '2026-08-31',
+    }))).toBe(false)
+    expect(isProjectDispatchReady(project('draft', {
+      objectives: '目标', start_date: '2026-09-01', end_date: '2026-08-31',
+    }))).toBe(false)
+  })
+
   it('shows only role-authorized todo items', () => {
     expect(getProjectTodo(project('draft'), {
       isSuperAdmin: false, isCompanyCeo: false, isRealProjectCeo: false, isRealOwner: true,
-    }, [], [])).toMatchObject({ action: 'ownerSubmit', actionLabel: '完善立项信息' })
+    }, [], [])).toBeNull()
     expect(getProjectTodo(project('draft'), {
       isSuperAdmin: false, isCompanyCeo: true, isRealProjectCeo: false, isRealOwner: true,
-    }, [], [])).toMatchObject({ action: 'ownerSubmit', actionLabel: '完善立项信息' })
+    }, [], [])).toMatchObject({ action: 'edit', actionLabel: '完善基础信息' })
     expect(getProjectTodo(project('draft'), {
       isSuperAdmin: false, isCompanyCeo: true, isRealProjectCeo: false, isRealOwner: false,
-    }, [], [])).toMatchObject({ action: 'edit', actionLabel: '继续完善项目' })
+    }, [], [])).toMatchObject({ action: 'edit', actionLabel: '完善基础信息' })
+    expect(getProjectTodo(project('draft', {
+      objectives: '明确项目目标', start_date: '2026-08-01', end_date: '2026-08-31',
+    }), {
+      isSuperAdmin: true, isCompanyCeo: false, isRealProjectCeo: false, isRealOwner: false,
+    }, [], [])).toMatchObject({
+      action: 'dispatch',
+      actionLabel: '下发给负责人',
+      secondaryAction: 'edit',
+      secondaryActionLabel: '修改基础信息',
+    })
+    expect(getProjectTodo(project('draft', {
+      objectives: '明确项目目标', start_date: '2026-08-01', end_date: '2026-08-31',
+    }), {
+      isSuperAdmin: false, isCompanyCeo: true, isRealProjectCeo: false, isRealOwner: true,
+    }, [], [])).toMatchObject({ action: 'dispatch', actionLabel: '下发给负责人' })
     expect(getProjectTodo(project('dispatched'), {
       isSuperAdmin: false, isCompanyCeo: false, isRealProjectCeo: false, isRealOwner: true,
     }, [], [])).toMatchObject({ action: 'ownerSubmit', actionLabel: '继续完善项目' })

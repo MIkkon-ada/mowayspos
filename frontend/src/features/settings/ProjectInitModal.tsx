@@ -123,11 +123,11 @@ export function ProjectInitModal({
 
   return createPortal(
     <div
-      className="project-init-workbench fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4"
+      className="project-init-workbench fixed inset-0 z-50 flex items-center justify-end bg-slate-900/35 p-4 pl-16 xl:pl-44"
       onClick={() => { if (!creating) closeModal() }}
     >
       <div
-        className="flex max-h-[92vh] w-full max-w-[1400px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+        className="flex max-h-[92vh] w-full max-w-none flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         <header className="flex shrink-0 items-center justify-between border-b border-slate-200 px-6 py-4">

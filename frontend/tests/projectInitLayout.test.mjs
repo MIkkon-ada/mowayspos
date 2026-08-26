@@ -9,6 +9,9 @@ const activeLayout = source.slice(activeStart, activeEnd)
 
 test('project initiation uses the new three-column workbench layout', () => {
   assert.match(activeLayout, /project-init-workbench/)
+  assert.match(activeLayout, /xl:pl-44/)
+  assert.match(activeLayout, /max-w-none/)
+  assert.match(activeLayout, /justify-end/)
   assert.match(activeLayout, /基本信息/)
   assert.match(activeLayout, /战略背景与目标/)
   assert.match(activeLayout, /团队配置/)

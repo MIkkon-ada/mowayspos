@@ -13,7 +13,7 @@ import {
   addProjectMember,
   removeProjectMember,
   batchImportProjects,
-  deleteDraftProject,
+  deleteProject,
 } from '../../api/projects'
 import type { BatchImportRow, ProjectProfilePayload } from '../../api/projects'
 import type { CurrentUser, Person, Project, ProjectMember, TaskItem } from '../../types'
@@ -30,7 +30,7 @@ import {
   getProjectStatusBadge,
 } from '../../domain/projectLifecycleStatus'
 import { getProjectRoleLabel } from '../../domain/roleLabels'
-import { canPermanentlyDeleteDraftProject, isProjectDeletionConfirmed } from '../../domain/projectDeletionPolicy'
+import { canPermanentlyDeleteProject, isProjectDeletionConfirmed } from '../../domain/projectDeletionPolicy'
 import { NewProjectForm, ProjectInitModal, type TeamMap } from './ProjectInitModal'
 import { getPickerPosition } from './projectPickerPosition.js'
 import { ProjectCloseFlowDrawer } from './ProjectCloseFlowDrawer'
@@ -374,6 +374,7 @@ export function ProjectsMgmtSection() {
   const [menuState, setMenuState] = useState<{ pid: number; anchorEl: HTMLButtonElement } | null>(null)
   const [deleteCandidate, setDeleteCandidate] = useState<Project | null>(null)
   const [deleteConfirmation, setDeleteConfirmation] = useState('')
+  const [deletePhrase, setDeletePhrase] = useState('')
   const [deletingProject, setDeletingProject] = useState(false)
 
   // ── 初始加载 ──
@@ -729,14 +730,15 @@ export function ProjectsMgmtSection() {
     if (deletingProject) return
     setDeleteCandidate(null)
     setDeleteConfirmation('')
+    setDeletePhrase('')
   }
 
   async function handleDeleteProject() {
-    if (!deleteCandidate || !isProjectDeletionConfirmed(deleteCandidate.name, deleteConfirmation)) return
+    if (!deleteCandidate || !isProjectDeletionConfirmed(deleteCandidate.name, deleteConfirmation, deletePhrase)) return
     const projectId = deleteCandidate.id
     setDeletingProject(true)
     try {
-      await deleteDraftProject(projectId, deleteConfirmation)
+      const result = await deleteProject(projectId, deleteConfirmation, deletePhrase)
       setProjects((prev) => prev.filter((project) => project.id !== projectId))
       setMembers((prev) => {
         const { [projectId]: _removed, ...rest } = prev
@@ -753,7 +755,9 @@ export function ProjectsMgmtSection() {
       reloadProjects()
       setDeleteCandidate(null)
       setDeleteConfirmation('')
-      toast.success('项目已永久删除')
+      setDeletePhrase('')
+      if (result.cleanup_pending) toast.warning('项目数据已删除，附件文件正在等待清理')
+      else toast.success('项目已永久删除')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '删除项目失败')
     } finally {
@@ -1099,13 +1103,14 @@ export function ProjectsMgmtSection() {
               if (roles.isSuperAdmin || (roles.isCompanyCeo && status === 'draft')) {
                 items.push({ label: '编辑项目', onClick: () => { setMenuState(null); void openProjectEditor(menuProject) } })
               }
-              if (canPermanentlyDeleteDraftProject(status, roles.isSuperAdmin)) {
+              if (canPermanentlyDeleteProject(status, roles.isSuperAdmin)) {
                 items.push({
                   label: '永久删除项目',
                   tone: 'danger',
                   onClick: () => {
                     setMenuState(null)
                     setDeleteConfirmation('')
+                    setDeletePhrase('')
                     setDeleteCandidate(menuProject)
                   },
                 })
@@ -1120,8 +1125,10 @@ export function ProjectsMgmtSection() {
         <DeleteDraftProjectDialog
           project={deleteCandidate}
           confirmation={deleteConfirmation}
+          phrase={deletePhrase}
           deleting={deletingProject}
           onConfirmationChange={setDeleteConfirmation}
+          onPhraseChange={setDeletePhrase}
           onClose={closeDeleteDialog}
           onConfirm={() => void handleDeleteProject()}
         />
@@ -1239,19 +1246,23 @@ function LifecycleCard({
 function DeleteDraftProjectDialog({
   project,
   confirmation,
+  phrase,
   deleting,
   onConfirmationChange,
+  onPhraseChange,
   onClose,
   onConfirm,
 }: {
   project: Project
   confirmation: string
+  phrase: string
   deleting: boolean
   onConfirmationChange: (value: string) => void
+  onPhraseChange: (value: string) => void
   onClose: () => void
   onConfirm: () => void
 }) {
-  const confirmed = isProjectDeletionConfirmed(project.name, confirmation)
+  const confirmed = isProjectDeletionConfirmed(project.name, confirmation, phrase)
 
   return (
     <div
@@ -1283,6 +1294,18 @@ function DeleteDraftProjectDialog({
           className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100 disabled:bg-slate-100"
         />
         <p className="mt-2 text-xs text-slate-500">必须与项目名称完全一致，不能有多余空格。</p>
+        <label className="mt-4 block text-sm font-semibold text-slate-700" htmlFor="delete-project-phrase">
+          请输入“永久删除”以确认
+        </label>
+        <input
+          id="delete-project-phrase"
+          value={phrase}
+          onChange={(event) => onPhraseChange(event.target.value)}
+          placeholder="永久删除"
+          autoComplete="off"
+          disabled={deleting}
+          className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100 disabled:bg-slate-100"
+        />
         <div className="mt-6 flex justify-end gap-3">
           <button
             type="button"

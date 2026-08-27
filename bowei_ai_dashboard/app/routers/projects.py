@@ -1,6 +1,9 @@
 import json
+import os
 import re
 from datetime import date
+from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
@@ -37,6 +40,13 @@ from ..services.project_close import (
     evaluate_project_close,
     material_values,
     serialize_residual_items,
+)
+from ..services.project_purge_storage import (
+    ProjectPurgeStorageError,
+    destroy_staged_project_payloads,
+    restore_staged_project_payloads,
+    retry_project_payload_cleanup,
+    stage_project_payloads,
 )
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -2061,8 +2071,8 @@ def reject_project_close_request(
     return _close_request_response(request, project, db)
 
 
-def _delete_draft_project_data(project: models.Project, db: Session) -> None:
-    """Delete project rows required by the draft-project purge endpoint.
+def _delete_project_data(project: models.Project, db: Session) -> None:
+    """Delete project rows required by the permanent project purge endpoint.
 
     The caller owns the transaction and must finish by deleting the project.
     """
@@ -2174,6 +2184,9 @@ def _delete_draft_project_data(project: models.Project, db: Session) -> None:
         synchronize_session=False
     )
     db.query(models.Issue).filter(models.Issue.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.ProjectCloseRequest).filter(models.ProjectCloseRequest.project_id == project_id).delete(
+        synchronize_session=False
+    )
     db.query(models.Notification).filter(models.Notification.project_id == project_id).delete(synchronize_session=False)
     db.query(models.SubTaskDraft).filter(models.SubTaskDraft.project_id == project_id).delete(synchronize_session=False)
     db.query(models.UpdateSubmission).filter(models.UpdateSubmission.project_id == project_id).delete(synchronize_session=False)
@@ -2187,41 +2200,123 @@ def _delete_draft_project_data(project: models.Project, db: Session) -> None:
     db.delete(project)
 
 
+def _project_purge_storage_roots() -> list[tuple[str, Path]]:
+    meeting_root = os.getenv("PROJECT_MEETING_DOCUMENT_ROOT", "").strip()
+    return [
+        ("achievement", Path(os.getenv("ACHIEVEMENT_ATTACHMENT_ROOT", "/app/data/achievement-attachments"))),
+        ("project_init", Path(os.getenv("PROJECT_INIT_ATTACHMENT_ROOT", "/app/data/project-init-attachments"))),
+        (
+            "meeting_document",
+            Path(meeting_root) if meeting_root else Path(__file__).resolve().parents[2] / "data" / "meeting_documents",
+        ),
+    ]
+
+
+def _project_purge_payload_entries(project_id: int, db: Session) -> list[tuple[str, Path, str]]:
+    roots = dict(_project_purge_storage_roots())
+    entries: list[tuple[str, Path, str]] = []
+    for row in db.query(models.AchievementAttachment).filter(models.AchievementAttachment.project_id == project_id).all():
+        entries.append(("achievement", roots["achievement"], row.storage_key))
+    for row in db.query(models.ProjectInitAttachment).filter(models.ProjectInitAttachment.project_id == project_id).all():
+        entries.append(("project_init", roots["project_init"], row.storage_key))
+    for row in db.query(models.MeetingDocumentSource).filter(models.MeetingDocumentSource.project_id == project_id).all():
+        entries.append(("meeting_document", roots["meeting_document"], row.storage_key))
+    return entries
+
+
+def _lock_project_for_delete(project_id: int, db: Session) -> models.Project | None:
+    statement = (
+        select(models.Project)
+        .where(models.Project.id == project_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return db.execute(statement).scalar_one_or_none()
+
+
 @router.delete("/{project_id}")
-def delete_draft_project(
+def delete_project(
     project_id: int,
     payload: schemas.ProjectDeletePayload,
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """Permanently remove a draft-only project after exact-name confirmation."""
+    """Permanently remove a project of any lifecycle after double confirmation."""
     _require_super_admin(current_user, db)
-    project = db.get(models.Project, project_id)
+    project = _lock_project_for_delete(project_id, db)
     if not project:
         raise HTTPException(404, "项目不存在")
-    if PL.normalize(project.status) != PL.S_DRAFT:
-        raise HTTPException(409, "仅草稿项目可以永久删除")
     if payload.confirm_name != project.name:
         raise HTTPException(422, "确认名称与项目名称不一致")
+    if payload.confirm_phrase != "永久删除":
+        raise HTTPException(422, "请准确输入“永久删除”")
 
     project_name = project.name
+    status_before = PL.normalize(project.status)
+    cleanup_key = str(uuid4())
+    staged = []
     try:
-        _delete_draft_project_data(project, db)
+        staged = stage_project_payloads(cleanup_key, _project_purge_payload_entries(project_id, db))
+        _delete_project_data(project, db)
         crud.log(
             db,
             current_user,
             "delete_project",
             "project",
             project_id,
-            {"name": project_name, "status": "draft"},
+            {"name": project_name, "status": status_before, "cleanup_key": cleanup_key},
             {},
             project_id=project_id,
         )
         db.commit()
     except Exception:
         db.rollback()
+        restore_staged_project_payloads(staged)
         raise
-    return {"ok": True, "project_id": project_id}
+    try:
+        destroy_staged_project_payloads(staged)
+    except ProjectPurgeStorageError:
+        crud.log(
+            db,
+            current_user,
+            "delete_project_cleanup_pending",
+            "project_purge_cleanup",
+            None,
+            {"cleanup_key": cleanup_key},
+            {},
+        )
+        db.commit()
+        return {"ok": True, "project_id": project_id, "cleanup_pending": True, "cleanup_key": cleanup_key}
+    return {"ok": True, "project_id": project_id, "cleanup_pending": False, "cleanup_key": None}
+
+
+@router.post("/purge-cleanups/{cleanup_key}/retry")
+def retry_project_purge_cleanup(
+    cleanup_key: str,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    _require_super_admin(current_user, db)
+    try:
+        cleaned = retry_project_payload_cleanup(
+            cleanup_key,
+            [root for _, root in _project_purge_storage_roots()],
+        )
+    except ProjectPurgeStorageError as exc:
+        if str(exc).startswith("invalid"):
+            raise HTTPException(422, "清理标识无效") from exc
+        return {"ok": True, "cleanup_key": cleanup_key, "cleanup_pending": True}
+    crud.log(
+        db,
+        current_user,
+        "retry_project_cleanup",
+        "project_purge_cleanup",
+        None,
+        {"cleanup_key": cleanup_key},
+        {"cleaned": cleaned},
+    )
+    db.commit()
+    return {"ok": True, "cleanup_key": cleanup_key, "cleanup_pending": not cleaned}
 
 
 @router.post("/{project_id}/archive")

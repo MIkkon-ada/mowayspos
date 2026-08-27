@@ -359,6 +359,10 @@ class ProjectPatchPayload(BaseModel):
     lifecycle_status: str | None = None
 
 
+class ProjectDeletePayload(BaseModel):
+    confirm_name: str = Field(..., min_length=1, max_length=100)
+
+
 class ProjectCloseResidualItem(BaseModel):
     description: str
     reason: str

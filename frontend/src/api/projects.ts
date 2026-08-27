@@ -72,6 +72,10 @@ export function archiveProject(projectId: number): Promise<{ ok: boolean; status
   return apiPost(`/api/projects/${projectId}/archive`)
 }
 
+export function deleteDraftProject(projectId: number, confirmName: string): Promise<{ ok: boolean; project_id: number }> {
+  return apiDelete(`/api/projects/${projectId}`, { confirm_name: confirmName })
+}
+
 export function createProjectCloseRequest(projectId: number, payload: ProjectCloseRequestCreatePayload): Promise<ProjectCloseRequest> {
   return apiPost<ProjectCloseRequest>(`/api/projects/${projectId}/close-requests`, payload)
 }

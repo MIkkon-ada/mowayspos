@@ -2061,6 +2061,169 @@ def reject_project_close_request(
     return _close_request_response(request, project, db)
 
 
+def _delete_draft_project_data(project: models.Project, db: Session) -> None:
+    """Delete project rows required by the draft-project purge endpoint.
+
+    The caller owns the transaction and must finish by deleting the project.
+    """
+    project_id = project.id
+    task_ids = [row[0] for row in db.query(models.Task.id).filter(models.Task.project_id == project_id).all()]
+    subtask_ids = [
+        row[0]
+        for row in db.query(models.SubTask.id).filter(models.SubTask.task_id.in_(task_ids)).all()
+    ]
+    schedule_ids = [
+        row[0]
+        for row in db.query(models.ExecutionSchedule.id).filter(models.ExecutionSchedule.subtask_id.in_(subtask_ids)).all()
+    ]
+    meeting_ids = [row[0] for row in db.query(models.Meeting.id).filter(models.Meeting.project_id == project_id).all()]
+    transcript_source_ids = [
+        row[0]
+        for row in db.query(models.MeetingTranscriptSource.id)
+        .filter(models.MeetingTranscriptSource.meeting_id.in_(meeting_ids))
+        .all()
+    ]
+    analysis_run_ids = [
+        row[0]
+        for row in db.query(models.MeetingAnalysisRun.id).filter(models.MeetingAnalysisRun.project_id == project_id).all()
+    ]
+    skill_run_ids = [
+        row[0]
+        for row in db.query(models.MeetingSkillRun.id).filter(models.MeetingSkillRun.project_id == project_id).all()
+    ]
+    clarification_ids = [
+        row[0]
+        for row in db.query(models.MeetingSkillClarification.id)
+        .filter(models.MeetingSkillClarification.run_id.in_(skill_run_ids))
+        .all()
+    ]
+    change_set_ids = [
+        row[0]
+        for row in db.query(models.MeetingChangeSet.id).filter(models.MeetingChangeSet.project_id == project_id).all()
+    ]
+
+    db.query(models.ExecutionScheduleReminder).filter(
+        models.ExecutionScheduleReminder.schedule_id.in_(schedule_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.KeyTaskExecutionEvent).filter(models.KeyTaskExecutionEvent.project_id == project_id).delete(
+        synchronize_session=False
+    )
+
+    db.query(models.MeetingSkillClarificationAnswerRevision).filter(
+        models.MeetingSkillClarificationAnswerRevision.question_id.in_(clarification_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.MeetingSkillResolvedFact).filter(
+        models.MeetingSkillResolvedFact.run_id.in_(skill_run_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.MeetingSkillClarification).filter(
+        models.MeetingSkillClarification.run_id.in_(skill_run_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.MeetingSkillInputSnapshot).filter(
+        models.MeetingSkillInputSnapshot.run_id.in_(skill_run_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.MeetingSkillRun).filter(models.MeetingSkillRun.id.in_(skill_run_ids)).delete(synchronize_session=False)
+    db.query(models.MeetingAnalysisCandidate).filter(
+        models.MeetingAnalysisCandidate.run_id.in_(analysis_run_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.MeetingRevision).filter(models.MeetingRevision.meeting_id.in_(meeting_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(models.MeetingReviewEvent).filter(models.MeetingReviewEvent.meeting_id.in_(meeting_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(models.MeetingTranscriptRevision).filter(
+        models.MeetingTranscriptRevision.source_id.in_(transcript_source_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.MeetingTranscriptSource).filter(models.MeetingTranscriptSource.meeting_id.in_(meeting_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(models.MeetingChangeProposal).filter(models.MeetingChangeProposal.change_set_id.in_(change_set_ids)).delete(
+        synchronize_session=False
+    )
+
+    db.query(models.AchievementAttachment).filter(models.AchievementAttachment.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.AchievementSubmission).filter(models.AchievementSubmission.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.Achievement).filter(models.Achievement.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.ProjectMeetingRun).filter(models.ProjectMeetingRun.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.MeetingAnalysisRun).filter(models.MeetingAnalysisRun.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.MeetingProgressReview).filter(models.MeetingProgressReview.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.MeetingChangeSet).filter(models.MeetingChangeSet.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.KickoffAgentRun).filter(models.KickoffAgentRun.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.Meeting).filter(models.Meeting.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.MeetingDocumentSource).filter(models.MeetingDocumentSource.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.ProjectInitAnalysisRun).filter(models.ProjectInitAnalysisRun.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.ProjectInitAttachment).filter(models.ProjectInitAttachment.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.Issue).filter(models.Issue.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.Notification).filter(models.Notification.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.SubTaskDraft).filter(models.SubTaskDraft.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.UpdateSubmission).filter(models.UpdateSubmission.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.MemberChangeRequest).filter(models.MemberChangeRequest.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.ProjectMember).filter(models.ProjectMember.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.ExecutionSchedule).filter(models.ExecutionSchedule.id.in_(schedule_ids)).delete(synchronize_session=False)
+    db.query(models.SubTask).filter(models.SubTask.id.in_(subtask_ids)).delete(synchronize_session=False)
+    db.query(models.Task).filter(models.Task.project_id == project_id).delete(synchronize_session=False)
+    db.delete(project)
+
+
+@router.delete("/{project_id}")
+def delete_draft_project(
+    project_id: int,
+    payload: schemas.ProjectDeletePayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """Permanently remove a draft-only project after exact-name confirmation."""
+    _require_super_admin(current_user, db)
+    project = db.get(models.Project, project_id)
+    if not project:
+        raise HTTPException(404, "项目不存在")
+    if PL.normalize(project.status) != PL.S_DRAFT:
+        raise HTTPException(409, "仅草稿项目可以永久删除")
+    if payload.confirm_name != project.name:
+        raise HTTPException(422, "确认名称与项目名称不一致")
+
+    project_name = project.name
+    try:
+        _delete_draft_project_data(project, db)
+        crud.log(
+            db,
+            current_user,
+            "delete_project",
+            "project",
+            project_id,
+            {"name": project_name, "status": "draft"},
+            {},
+            project_id=project_id,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {"ok": True, "project_id": project_id}
+
+
 @router.post("/{project_id}/archive")
 def archive_project(
     project_id: int,

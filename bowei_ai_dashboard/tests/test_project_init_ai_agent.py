@@ -286,6 +286,7 @@ def test_ignores_model_supplied_server_owned_fields():
             "duplicate_of": "stale-task-id",
             "duplicate_reason": 123,
             "warnings": "not-a-warning-list",
+            "source": {"must": "be server generated"},
         }
     )
     payload["subtasks"][0].update(
@@ -297,6 +298,7 @@ def test_ignores_model_supplied_server_owned_fields():
             "duplicate_of": "stale-subtask-id",
             "duplicate_reason": 123,
             "warnings": "not-a-warning-list",
+            "source": {"must": "be server generated"},
         }
     )
 
@@ -317,6 +319,8 @@ def test_ignores_model_supplied_server_owned_fields():
     assert subtask.duplicate_of is None
     assert task.warnings == []
     assert subtask.warnings == []
+    assert task.source == "plan.txt · lines 1-2"
+    assert subtask.source == "plan.txt · lines 1-2"
 
 
 def test_missing_subtasks_remains_rejected():

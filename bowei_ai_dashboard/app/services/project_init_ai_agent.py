@@ -647,10 +647,10 @@ def _context_prompt(
         "Evidence 必须引用本批来源目录；attachment_id、file_name、location 必须完全一致。"
         "来源目录中的 attachment_id 为 null 时，evidence 的 attachment_id 必须为 null，禁止伪造非空 ID。"
         "日期字段使用 plan_start、plan_end，不使用 deadline。"
-        "输出字段必须严格遵循：task 只能包含 title、description、owner_name、priority、status、plan_start、plan_end、evidence、source、subtasks；"
-        "subtask 只能包含 title、description、assignee_name、helper_names、priority、status、plan_start、plan_end、evaluation_standard、evidence、source。"
+        "输出字段必须严格遵循：task 只能包含 title、description、owner_name、priority、status、plan_start、plan_end、evidence、subtasks；"
+        "subtask 只能包含 title、description、assignee_name、helper_names、priority、status、plan_start、plan_end、evaluation_standard、evidence。"
         "evidence 只能包含 attachment_id、file_name、location；不要输出 excerpt 或 source_label，服务端会生成真实摘录。"
-        "不要输出任何人员 ID、confidence、merge_status、duplicate_of、duplicate_reason 或 warnings；这些字段由服务端统一计算。"
+        "不要输出 source、任何人员 ID、confidence、merge_status、duplicate_of、duplicate_reason 或 warnings；这些字段由服务端统一计算。"
         "每个 task 必须至少包含一个 subtasks 项；未知或空缺的可选字符串字段使用空字符串，不要使用 null。"
         "人员姓名只作为待匹配文本，服务端会重新匹配人员 ID；不要自动合并已有任务。"
         f"\n本地预计算人员候选：{json.dumps(people_context, ensure_ascii=False)}"
@@ -679,7 +679,7 @@ def _final_merge_prompt(
         "不得发明任务、人员或来源，也不得删除唯一来源。每条 evidence 必须引用下方候选或来源目录中的真实 attachment_id、file_name、location；null attachment_id 不得改为非空。"
         "日期字段使用 plan_start、plan_end，不使用 deadline。"
         "evidence 只能包含 attachment_id、file_name、location；不要输出 excerpt 或 source_label，服务端会生成真实摘录。每个 task 必须至少包含一个 subtasks 项；可选字符串为空时使用空字符串，不要使用 null。"
-        "不要输出任何人员 ID、confidence、merge_status、duplicate_of、duplicate_reason 或 warnings；这些字段由服务端统一计算。"
+        "不要输出 source、任何人员 ID、confidence、merge_status、duplicate_of、duplicate_reason 或 warnings；这些字段由服务端统一计算。"
         f"\n候选任务：{json.dumps([task.model_dump() for task in tasks], ensure_ascii=False)}"
         f"\n允许的来源目录：{json.dumps(source_catalog, ensure_ascii=False)}"
     )
@@ -713,7 +713,6 @@ _TASK_TEXT_FIELD_LIMITS = {
     "status": 50,
     "plan_start": 50,
     "plan_end": 50,
-    "source": 255,
 }
 _SUBTASK_TEXT_FIELD_LIMITS = {
     "title": 200,
@@ -724,7 +723,6 @@ _SUBTASK_TEXT_FIELD_LIMITS = {
     "plan_start": 50,
     "plan_end": 50,
     "evaluation_standard": 1_000,
-    "source": 255,
 }
 
 _TASK_SERVER_OWNED_FIELDS = {
@@ -734,6 +732,7 @@ _TASK_SERVER_OWNED_FIELDS = {
     "duplicate_of",
     "duplicate_reason",
     "warnings",
+    "source",
 }
 _SUBTASK_SERVER_OWNED_FIELDS = {
     "assignee_id",
@@ -743,6 +742,7 @@ _SUBTASK_SERVER_OWNED_FIELDS = {
     "duplicate_of",
     "duplicate_reason",
     "warnings",
+    "source",
 }
 
 

@@ -120,7 +120,7 @@ class Evidence(BaseModel):
     attachment_id: _POSITIVE_ID | None = None
     file_name: str = Field(min_length=1, max_length=255)
     location: str = Field(min_length=1, max_length=200)
-    excerpt: str = Field(min_length=1, max_length=300)
+    excerpt: str = Field(default="", max_length=300)
 
     @property
     def source_label(self) -> str:
@@ -412,7 +412,6 @@ def _safe_evidence(raw: Evidence, sources: list[tuple[str, str, str, int | None]
         for source in sources
         if source[0] == raw.file_name
         and source[1] == raw.location
-        and raw.excerpt in source[2]
         and source[3] == raw.attachment_id
     ]
     if not matches:
@@ -422,7 +421,7 @@ def _safe_evidence(raw: Evidence, sources: list[tuple[str, str, str, int | None]
         attachment_id=raw.attachment_id,
         file_name=source[0],
         location=source[1],
-        excerpt=raw.excerpt,
+        excerpt=source[2].strip()[:300],
     )
 
 
@@ -644,13 +643,13 @@ def _context_prompt(
         "你是项目初始化工作推进表草稿提取 Agent。只返回 JSON 对象，结构必须是 {\"tasks\": [...] }。"
         "不要输出 Markdown、解释文字或代码围栏。"
         "不执行数据库、项目或成员修改；不得发明人员、日期或人员 ID。"
-        "所有任务和子任务必须来自来源文本，并保留 evidence 的 attachment_id、file_name、location、excerpt。"
-        "Evidence 只能逐字引用本批来源目录；attachment_id、file_name、location 必须完全一致。"
+        "所有任务和子任务必须来自来源文本，并提供 evidence 的 attachment_id、file_name、location 定位器。"
+        "Evidence 必须引用本批来源目录；attachment_id、file_name、location 必须完全一致。"
         "来源目录中的 attachment_id 为 null 时，evidence 的 attachment_id 必须为 null，禁止伪造非空 ID。"
         "日期字段使用 plan_start、plan_end，不使用 deadline。"
         "输出字段必须严格遵循：task 只能包含 title、description、owner_name、priority、status、plan_start、plan_end、evidence、source、subtasks；"
         "subtask 只能包含 title、description、assignee_name、helper_names、priority、status、plan_start、plan_end、evaluation_standard、evidence、source。"
-        "evidence 只能包含 attachment_id、file_name、location、excerpt；不要输出 source_label。"
+        "evidence 只能包含 attachment_id、file_name、location；不要输出 excerpt 或 source_label，服务端会生成真实摘录。"
         "不要输出任何人员 ID、confidence、merge_status、duplicate_of、duplicate_reason 或 warnings；这些字段由服务端统一计算。"
         "每个 task 必须至少包含一个 subtasks 项；未知或空缺的可选字符串字段使用空字符串，不要使用 null。"
         "人员姓名只作为待匹配文本，服务端会重新匹配人员 ID；不要自动合并已有任务。"
@@ -677,9 +676,9 @@ def _final_merge_prompt(
     return (
         "你是项目初始化工作推进表的最终合并 Agent。只返回严格 JSON 对象，结构必须是 {\"tasks\": [...] }。"
         "请将批次候选中归一化标题相同的任务合并为一条，保留全部 evidence 和 subtasks；"
-        "不得发明任务、人员或来源，也不得删除唯一来源。每条 evidence 必须逐字引用下方候选或来源目录中的真实 attachment_id、file_name、location 和 excerpt；null attachment_id 不得改为非空。"
+        "不得发明任务、人员或来源，也不得删除唯一来源。每条 evidence 必须引用下方候选或来源目录中的真实 attachment_id、file_name、location；null attachment_id 不得改为非空。"
         "日期字段使用 plan_start、plan_end，不使用 deadline。"
-        "evidence 只能包含 attachment_id、file_name、location、excerpt；不要输出 source_label。每个 task 必须至少包含一个 subtasks 项；可选字符串为空时使用空字符串，不要使用 null。"
+        "evidence 只能包含 attachment_id、file_name、location；不要输出 excerpt 或 source_label，服务端会生成真实摘录。每个 task 必须至少包含一个 subtasks 项；可选字符串为空时使用空字符串，不要使用 null。"
         "不要输出任何人员 ID、confidence、merge_status、duplicate_of、duplicate_reason 或 warnings；这些字段由服务端统一计算。"
         f"\n候选任务：{json.dumps([task.model_dump() for task in tasks], ensure_ascii=False)}"
         f"\n允许的来源目录：{json.dumps(source_catalog, ensure_ascii=False)}"
@@ -856,8 +855,6 @@ def _evidence_traceability_error(raw: Evidence, sources: list[tuple[str, str, st
     attachment_matches = [source for source in location_matches if source[3] == raw.attachment_id]
     if not attachment_matches:
         return "untraceable_attachment"
-    if not any(raw.excerpt in source[2] for source in attachment_matches):
-        return "untraceable_excerpt"
     return None
 
 

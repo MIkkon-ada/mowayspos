@@ -372,10 +372,25 @@ def test_invalid_draft_exposes_only_safe_validation_field_metadata():
     ]
 
 
-def test_invalid_evidence_exposes_a_safe_untraceable_excerpt_code():
+def test_model_evidence_locator_is_replaced_with_a_canonical_source_excerpt():
     payload = raw_task()
     payload["evidence"][0]["excerpt"] = "模型杜撰的摘录"
     payload["subtasks"][0]["evidence"][0]["excerpt"] = "模型杜撰的摘录"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付来源原文")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].evidence[0].excerpt == "实施交付来源原文"
+    assert result.tasks[0].subtasks[0].evidence[0].excerpt == "实施交付来源原文"
+
+
+def test_invalid_evidence_locator_remains_rejected_with_a_safe_reason_code():
+    payload = raw_task()
+    payload["evidence"][0]["file_name"] = "not-a-source.txt"
 
     with pytest.raises(ProjectInitAiInvalidDraft) as error:
         generate_project_init_draft(
@@ -386,7 +401,7 @@ def test_invalid_evidence_exposes_a_safe_untraceable_excerpt_code():
         )
 
     assert error.value.validation_errors == [
-        {"path": "tasks[0].evidence[0]", "type": "untraceable_excerpt"}
+        {"path": "tasks[0].evidence[0]", "type": "untraceable_file"}
     ]
 
 

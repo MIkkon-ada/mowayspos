@@ -121,8 +121,8 @@ def test_legacy_dashscope_project_init_policy_uses_deepseek_fallback(db, tmp_pat
         capability_key=Capability.PROJECT_INIT_ANALYSIS
     ).one()
 
-    assert policy.primary_model_id == dashscope.id
-    assert json.loads(policy.fallback_model_ids_json) == [deepseek.id]
+    assert policy.primary_model_id == deepseek.id
+    assert json.loads(policy.fallback_model_ids_json) == [dashscope.id]
     assert policy.max_attempts == 2
 
 

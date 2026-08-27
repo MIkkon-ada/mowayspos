@@ -201,9 +201,10 @@ def import_legacy_llm_config(
 
     for capability_key in (Capability.MEETING_ANALYSIS, Capability.TASK_EXTRACTION):
         _save_missing_migration_policy(repo, db, report, capability_key, primary_chat)
+    project_init_primary = chat_models.get("deepseek") or primary_chat
     project_init_fallback = (
-        chat_models.get("deepseek")
-        if primary_chat is not None and primary_chat.provider == "dashscope"
+        chat_models.get("dashscope")
+        if project_init_primary is not None and project_init_primary.provider == "deepseek"
         else None
     )
     _save_missing_migration_policy(
@@ -211,7 +212,7 @@ def import_legacy_llm_config(
         db,
         report,
         Capability.PROJECT_INIT_ANALYSIS,
-        primary_chat,
+        project_init_primary,
         fallback_models=[project_init_fallback] if project_init_fallback is not None else [],
     )
     _save_missing_migration_policy(repo, db, report, Capability.SPEECH_REALTIME, asr_model)

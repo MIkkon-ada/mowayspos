@@ -7,7 +7,7 @@
 ## 范围与权限
 
 - 仅 `is_tech_admin`（项目能力中的 `super_admin`）可看到入口和调用删除接口。
-- 项目状态不构成限制：`draft`、`dispatched`、`active`、`pending_close`、`ended`、`archived` 均可删除。
+- 项目状态不构成限制：当前已识别的 `draft`、`dispatched`、`pending_kickoff`、`pending_review`、`returned`、`active`、`pending_close`、`ended`、`archived` 均可删除；未来新增状态也不应因状态值本身被该接口拒绝。
 - 不提供批量删除、模糊名称删除或绕过确认的接口。
 - 现有非技术管理员无权删除，前端不显示入口，后端仍返回 403。
 

@@ -226,6 +226,20 @@ def test_normalizes_overlong_evidence_excerpt_without_breaking_source_validation
     assert len(result.tasks[0].evidence[0].excerpt) == 300
 
 
+def test_normalizes_string_helper_names_to_a_name_list():
+    payload = raw_task()
+    payload["subtasks"][0]["helper_names"] = "李四、王五, 赵六\n钱七"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].subtasks[0].helper_names == ["李四", "王五", "赵六", "钱七"]
+
+
 def test_ignores_model_supplied_server_owned_fields():
     payload = raw_task()
     payload.update(

@@ -741,6 +741,12 @@ def _normalise_task_payload(value: object, *, is_subtask: bool = False) -> objec
     result = dict(value)
     for key in _SUBTASK_SERVER_OWNED_FIELDS if is_subtask else _TASK_SERVER_OWNED_FIELDS:
         result.pop(key, None)
+    if is_subtask and isinstance(result.get("helper_names"), str):
+        result["helper_names"] = [
+            name.strip()
+            for name in re.split(r"[、,，;；\r\n]+", result["helper_names"])
+            if name.strip()
+        ]
     for key in _SUBTASK_OPTIONAL_TEXT_FIELDS if is_subtask else _TASK_OPTIONAL_TEXT_FIELDS:
         if result.get(key) is None:
             result[key] = ""

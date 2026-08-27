@@ -372,6 +372,24 @@ def test_invalid_draft_exposes_only_safe_validation_field_metadata():
     ]
 
 
+def test_invalid_evidence_exposes_a_safe_untraceable_excerpt_code():
+    payload = raw_task()
+    payload["evidence"][0]["excerpt"] = "模型杜撰的摘录"
+    payload["subtasks"][0]["evidence"][0]["excerpt"] = "模型杜撰的摘录"
+
+    with pytest.raises(ProjectInitAiInvalidDraft) as error:
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+    assert error.value.validation_errors == [
+        {"path": "tasks[0].evidence[0]", "type": "untraceable_excerpt"}
+    ]
+
+
 def test_empty_llm_result_is_a_safe_business_error():
     with pytest.raises(ProjectInitAiEmptyResult):
         generate_project_init_draft([chunk("没有明确任务")], [], [], llm_call=fake_llm({"tasks": []}))

@@ -846,14 +846,53 @@ def _parse_json_response(raw: str | dict[str, Any]) -> Any:
     return values[0]
 
 
+def _evidence_traceability_error(raw: Evidence, sources: list[tuple[str, str, str, int | None]]) -> str | None:
+    file_matches = [source for source in sources if source[0] == raw.file_name]
+    if not file_matches:
+        return "untraceable_file"
+    location_matches = [source for source in file_matches if source[1] == raw.location]
+    if not location_matches:
+        return "untraceable_location"
+    attachment_matches = [source for source in location_matches if source[3] == raw.attachment_id]
+    if not attachment_matches:
+        return "untraceable_attachment"
+    if not any(raw.excerpt in source[2] for source in attachment_matches):
+        return "untraceable_excerpt"
+    return None
+
+
+def _validate_evidence_group(
+    evidence: list[Evidence],
+    *,
+    path: str,
+    batch: list[tuple[str, str, str, int | None]],
+) -> None:
+    for index, item in enumerate(evidence):
+        error_type = _evidence_traceability_error(item, batch)
+        if error_type:
+            raise ProjectInitAiInvalidDraft(
+                "AI 返回了无法追溯的来源",
+                validation_errors=[{"path": f"{path}[{index}]", "type": error_type}],
+            )
+
+
 def _validate_batch_sources(tasks: Iterable[AgentTask], batch: list[tuple[str, str, str, int | None]]) -> None:
     """Fail closed if one batch cites a file/location from another batch."""
-    for task in tasks:
+    for task_index, task in enumerate(tasks):
+        task_path = f"tasks[{task_index}]"
         if not task.evidence and not any(subtask.evidence for subtask in task.subtasks):
-            raise ProjectInitAiError("AI 任务缺少来源证据")
-        _safe_evidence_list(task.evidence, batch)
-        for subtask in task.subtasks:
-            _safe_evidence_list(subtask.evidence or task.evidence, batch)
+            raise ProjectInitAiInvalidDraft(
+                "AI 任务缺少来源证据",
+                validation_errors=[{"path": f"{task_path}.evidence", "type": "missing_evidence"}],
+            )
+        _validate_evidence_group(task.evidence, path=f"{task_path}.evidence", batch=batch)
+        for subtask_index, subtask in enumerate(task.subtasks):
+            if subtask.evidence:
+                _validate_evidence_group(
+                    subtask.evidence,
+                    path=f"{task_path}.subtasks[{subtask_index}].evidence",
+                    batch=batch,
+                )
 
 
 def _invoke_llm(llm_call: Callable[..., Any], prompt: str, provider: str) -> Any:

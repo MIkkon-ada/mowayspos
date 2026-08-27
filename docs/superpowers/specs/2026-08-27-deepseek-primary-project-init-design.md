@@ -14,7 +14,7 @@ The active local `project.init.analysis` policy will use model 4 (`migrated-deep
 
 ## Output Contract
 
-The extraction prompt will contain the exact allowed task, subtask, and evidence keys. It will require at least one subtask per task, require empty strings rather than `null` for optional string fields, and state that evidence uses only `attachment_id`, `file_name`, `location`, and `excerpt`. The prompt will no longer ask the model to emit `source_label`.
+The extraction prompt will contain the exact model-owned task, subtask, and evidence keys. A model task contains only `title`, `description`, `owner_name`, `priority`, `status`, `plan_start`, `plan_end`, `evidence`, `source`, and `subtasks`; a model subtask contains only `title`, `description`, `assignee_name`, `helper_names`, `priority`, `status`, `plan_start`, `plan_end`, `evaluation_standard`, `evidence`, and `source`. It will require at least one subtask per task, require empty strings rather than `null` for optional string fields, and state that evidence uses only `attachment_id`, `file_name`, `location`, and `excerpt`. The prompt will no longer ask the model to emit `source_label`.
 
 The DeepSeek model configuration will enable the OpenAI-compatible `response_format: {"type":"json_object"}` request parameter. This is activated only when a model configuration explicitly enables it; DashScope is not changed. The prompt retains an explicit JSON envelope example because DeepSeek requires a JSON instruction when JSON Output is enabled. This prevents multi-object or explanatory chat output before the strict draft schema is evaluated.
 
@@ -22,8 +22,9 @@ Before Pydantic validation, the server will normalize only presentation-equivale
 
 - Remove `source_label` from evidence objects because it is deterministically derived from `file_name` and `location`.
 - Convert `null` to an empty string for optional string fields such as `plan_start` and `plan_end`.
+- Remove the known server-owned fields `owner_id`, `assignee_id`, `helper_ids`, `confidence`, `merge_status`, `duplicate_of`, `duplicate_reason`, and `warnings` when a model includes them. The reconciliation layer recomputes personnel matches, duplicate status, confidence-independent warnings, and identifiers from trusted local data.
 
-The server will not invent subtasks, rewrite role labels into personnel assignments, accept unknown business fields, or relax evidence verification. A response that lacks a subtask or contains unsupported business data remains invalid and is safely rejected.
+The server will not invent subtasks, rewrite role labels into personnel assignments, accept arbitrary unknown business fields, or relax evidence verification. A response that lacks a subtask or contains unsupported business data remains invalid and is safely rejected.
 
 ## Observability
 
@@ -36,6 +37,7 @@ Tests will prove:
 1. Prompt text and the `Evidence` schema no longer contradict each other.
 2. Redundant evidence labels and null optional strings normalize successfully.
 3. Missing subtasks and unknown business fields remain rejected.
-4. An enabled model JSON-response configuration is forwarded as `response_format` while models without it retain the current request shape.
-5. Legacy policy generation chooses DeepSeek first when both migrated providers exist.
-6. A recorded validation failure is categorized without storing raw response data.
+4. Model-supplied server-owned fields are ignored and recomputed rather than trusted.
+5. An enabled model JSON-response configuration is forwarded as `response_format` while models without it retain the current request shape.
+6. Legacy policy generation chooses DeepSeek first when both migrated providers exist.
+7. A recorded validation failure is categorized without storing raw response data.

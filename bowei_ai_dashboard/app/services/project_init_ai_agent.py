@@ -577,6 +577,10 @@ def _context_prompt(
         "Evidence 只能逐字引用本批来源目录；attachment_id、source_label、file_name、location 必须完全一致。"
         "来源目录中的 attachment_id 为 null 时，evidence 的 attachment_id 必须为 null，禁止伪造非空 ID。"
         "日期字段使用 plan_start、plan_end，不使用 deadline。"
+        "输出字段必须严格遵循：task 只能包含 title、description、owner_name、owner_id、priority、status、plan_start、plan_end、evidence、source、confidence、merge_status、duplicate_of、duplicate_reason、warnings、subtasks；"
+        "subtask 只能包含 title、description、assignee_name、assignee_id、helper_names、helper_ids、priority、status、plan_start、plan_end、evaluation_standard、confidence、evidence、source、merge_status、duplicate_of、duplicate_reason、warnings。"
+        "evidence 只能包含 attachment_id、file_name、location、excerpt；不要输出 source_label。"
+        "每个 task 必须至少包含一个 subtasks 项；未知或空缺的可选字符串字段使用空字符串，不要使用 null。"
         "人员姓名只作为待匹配文本，服务端会重新匹配人员 ID；不要自动合并已有任务。"
         f"\n本地预计算人员候选：{json.dumps(people_context, ensure_ascii=False)}"
         f"\n本地已有任务重复索引：{json.dumps(existing_tasks, ensure_ascii=False)}"
@@ -601,11 +605,68 @@ def _final_merge_prompt(
     return (
         "你是项目初始化工作推进表的最终合并 Agent。只返回严格 JSON 对象，结构必须是 {\"tasks\": [...] }。"
         "请将批次候选中归一化标题相同的任务合并为一条，保留全部 evidence、warnings 和 subtasks；"
-        "不得发明任务、人员 ID 或来源，也不得删除唯一来源。每条 evidence 必须逐字引用下方候选或来源目录中的真实 attachment_id、source_label、file_name、location 和 excerpt；null attachment_id 不得改为非空。"
+        "不得发明任务、人员 ID 或来源，也不得删除唯一来源。每条 evidence 必须逐字引用下方候选或来源目录中的真实 attachment_id、file_name、location 和 excerpt；null attachment_id 不得改为非空。"
         "日期字段使用 plan_start、plan_end，不使用 deadline。"
+        "evidence 只能包含 attachment_id、file_name、location、excerpt；不要输出 source_label。每个 task 必须至少包含一个 subtasks 项；可选字符串为空时使用空字符串，不要使用 null。"
         f"\n候选任务：{json.dumps([task.model_dump() for task in tasks], ensure_ascii=False)}"
         f"\n允许的来源目录：{json.dumps(source_catalog, ensure_ascii=False)}"
     )
+
+
+_TASK_OPTIONAL_TEXT_FIELDS = {
+    "description",
+    "owner_name",
+    "priority",
+    "status",
+    "plan_start",
+    "plan_end",
+    "source",
+    "duplicate_reason",
+}
+_SUBTASK_OPTIONAL_TEXT_FIELDS = {
+    "description",
+    "assignee_name",
+    "priority",
+    "status",
+    "plan_start",
+    "plan_end",
+    "evaluation_standard",
+    "source",
+    "duplicate_reason",
+}
+
+
+def _normalise_evidence_payload(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+    result = dict(value)
+    result.pop("source_label", None)
+    return result
+
+
+def _normalise_task_payload(value: object, *, is_subtask: bool = False) -> object:
+    if not isinstance(value, dict):
+        return value
+    result = dict(value)
+    for key in _SUBTASK_OPTIONAL_TEXT_FIELDS if is_subtask else _TASK_OPTIONAL_TEXT_FIELDS:
+        if result.get(key) is None:
+            result[key] = ""
+    if isinstance(result.get("evidence"), list):
+        result["evidence"] = [_normalise_evidence_payload(item) for item in result["evidence"]]
+    if not is_subtask and isinstance(result.get("subtasks"), list):
+        result["subtasks"] = [
+            _normalise_task_payload(item, is_subtask=True) for item in result["subtasks"]
+        ]
+    return result
+
+
+def _normalise_llm_payload(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+    result = dict(value)
+    if isinstance(result.get("tasks"), list):
+        result["tasks"] = [_normalise_task_payload(item) for item in result["tasks"]]
+    return result
 
 
 def _parse_json_response(raw: str | dict[str, Any]) -> Any:
@@ -718,7 +779,7 @@ def generate_project_init_draft(
         try:
             raw = _invoke_llm(caller, prompt, provider)
             payload = _parse_json_response(raw)
-            envelope = _RawEnvelope.model_validate(payload)
+            envelope = _RawEnvelope.model_validate(_normalise_llm_payload(payload))
         except ProjectInitAiError:
             raise
         except ValidationError as exc:
@@ -733,7 +794,7 @@ def generate_project_init_draft(
         try:
             merge_raw = _invoke_llm(caller, _final_merge_prompt(all_tasks, canonical_sources), provider)
             merge_payload = _parse_json_response(merge_raw)
-            merge_envelope = _RawEnvelope.model_validate(merge_payload)
+            merge_envelope = _RawEnvelope.model_validate(_normalise_llm_payload(merge_payload))
             _validate_batch_sources(merge_envelope.tasks, canonical_sources)
         except ProjectInitAiError:
             raise

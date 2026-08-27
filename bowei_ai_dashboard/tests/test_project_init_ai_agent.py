@@ -186,6 +186,49 @@ def test_invalid_or_fenced_llm_json_is_rejected_as_business_error():
         generate_project_init_draft([chunk("x")], [], [], llm_call=bad_llm)
 
 
+def test_normalizes_redundant_evidence_label_and_null_optional_text():
+    payload = raw_task()
+    payload["plan_end"] = None
+    payload["evidence"][0]["source_label"] = "plan.txt · lines 1-2"
+    payload["subtasks"][0]["plan_end"] = None
+    payload["subtasks"][0]["evidence"][0]["source_label"] = "plan.txt · lines 1-2"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].plan_end == ""
+    assert result.tasks[0].subtasks[0].plan_end == ""
+    assert result.tasks[0].evidence[0].source_label == "plan.txt · lines 1-2"
+
+
+def test_missing_subtasks_remains_rejected():
+    payload = raw_task() | {"subtasks": []}
+
+    with pytest.raises(ProjectInitAiError):
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+
+def test_unknown_business_key_remains_rejected():
+    payload = raw_task() | {"负责人": "张三"}
+
+    with pytest.raises(ProjectInitAiError):
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+
 def test_empty_llm_result_is_a_safe_business_error():
     with pytest.raises(ProjectInitAiEmptyResult):
         generate_project_init_draft([chunk("没有明确任务")], [], [], llm_call=fake_llm({"tasks": []}))

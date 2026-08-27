@@ -77,9 +77,14 @@ class OpenAICompatibleChatAdapter:
         timeout_seconds: int,
     ) -> str:
         try:
-            from openai import OpenAI
+            from openai import APIConnectionError, APITimeoutError, OpenAI
 
-            client = OpenAI(api_key=api_key, base_url=model.base_url, timeout=timeout_seconds)
+            client = OpenAI(
+                api_key=api_key,
+                base_url=model.base_url,
+                timeout=timeout_seconds,
+                max_retries=0,
+            )
             request = {
                 "model": model.model_name,
                 "messages": [{"role": "user", "content": prompt}],
@@ -93,6 +98,10 @@ class OpenAICompatibleChatAdapter:
                 request["max_tokens"] = max_output_tokens
             response = client.chat.completions.create(**request)
             return str(response.choices[0].message.content or "")
+        except APITimeoutError as exc:
+            raise AIUpstreamError("AI_UPSTREAM_TIMEOUT", retryable=True) from exc
+        except APIConnectionError as exc:
+            raise AIUpstreamError("AI_UPSTREAM_CONNECTION", retryable=True) from exc
         except AIUpstreamError:
             raise
         except Exception as exc:

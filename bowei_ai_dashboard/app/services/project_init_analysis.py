@@ -461,6 +461,11 @@ def process_analysis_run(run_id: int) -> None:
                             "warnings": 0,
                             "attempted_models": _attempted_models(db, run_id),
                             "failure_category": failure_category,
+                            "validation_errors": (
+                                exc.validation_errors
+                                if isinstance(exc, ProjectInitAiInvalidDraft)
+                                else []
+                            ),
                         }
                     ),
                     "file_results_json": _json_dump(file_results),

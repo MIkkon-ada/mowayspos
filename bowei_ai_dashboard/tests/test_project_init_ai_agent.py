@@ -8,6 +8,7 @@ from app.services.project_init_ai_agent import (
     Evidence,
     ProjectInitAiEmptyResult,
     ProjectInitAiError,
+    ProjectInitAiInvalidDraft,
     _merge_tasks,
     _parse_json_response,
     generate_project_init_draft,
@@ -205,6 +206,26 @@ def test_normalizes_redundant_evidence_label_and_null_optional_text():
     assert result.tasks[0].evidence[0].source_label == "plan.txt · lines 1-2"
 
 
+def test_normalizes_overlong_evidence_excerpt_without_breaking_source_validation():
+    excerpt = "实施交付" * 101
+    payload = raw_task(evidence=[{
+        "attachment_id": 7,
+        "file_name": "plan.txt",
+        "location": "lines 1-2",
+        "excerpt": excerpt,
+    }])
+
+    result = generate_project_init_draft(
+        [chunk(excerpt)],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].evidence[0].excerpt == excerpt[:300]
+    assert len(result.tasks[0].evidence[0].excerpt) == 300
+
+
 def test_ignores_model_supplied_server_owned_fields():
     payload = raw_task()
     payload.update(
@@ -282,6 +303,23 @@ def test_arbitrary_unknown_business_key_remains_rejected():
             [],
             llm_call=fake_llm({"tasks": [payload]}),
         )
+
+
+def test_invalid_draft_exposes_only_safe_validation_field_metadata():
+    payload = raw_task()
+    payload["evidence"][0]["attachment_id"] = "not-an-integer"
+
+    with pytest.raises(ProjectInitAiInvalidDraft) as error:
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+    assert error.value.validation_errors == [
+        {"path": "tasks[0].evidence[0].attachment_id", "type": "int_type"}
+    ]
 
 
 def test_empty_llm_result_is_a_safe_business_error():

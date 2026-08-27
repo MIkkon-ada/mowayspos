@@ -233,7 +233,14 @@ def test_worker_records_invalid_draft_schema_without_leaking_details(monkeypatch
     monkeypatch.setattr(
         service,
         "generate_project_init_draft",
-        lambda *args, **kwargs: (_ for _ in ()).throw(ProjectInitAiInvalidDraft("invalid model response")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ProjectInitAiInvalidDraft(
+                "invalid model response",
+                validation_errors=[
+                    {"path": "tasks[0].evidence[0].attachment_id", "type": "int_type"}
+                ],
+            )
+        ),
     )
 
     service.process_analysis_run(run_id)
@@ -242,6 +249,9 @@ def test_worker_records_invalid_draft_schema_without_leaking_details(monkeypatch
     result = json.loads(stored.result_json)
 
     assert result["failure_category"] == "invalid_draft_schema"
+    assert result["validation_errors"] == [
+        {"path": "tasks[0].evidence[0].attachment_id", "type": "int_type"}
+    ]
     assert stored.error_summary == "AI analysis failed; please retry later"
     assert "invalid model response" not in stored.result_json
 

@@ -38,6 +38,73 @@ class ProjectInitAiEmptyResult(ProjectInitAiError):
 class ProjectInitAiInvalidDraft(ProjectInitAiError):
     """The model response was parseable but violated the draft contract."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        validation_errors: list[dict[str, str]] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.validation_errors = validation_errors or []
+
+
+_VALIDATION_PATH_SEGMENTS = {
+    "tasks",
+    "subtasks",
+    "title",
+    "description",
+    "owner_name",
+    "owner_id",
+    "assignee_name",
+    "assignee_id",
+    "helper_names",
+    "helper_ids",
+    "priority",
+    "status",
+    "plan_start",
+    "plan_end",
+    "evaluation_standard",
+    "evidence",
+    "attachment_id",
+    "file_name",
+    "location",
+    "excerpt",
+    "source",
+    "confidence",
+    "merge_status",
+    "duplicate_of",
+    "duplicate_reason",
+    "warnings",
+}
+
+
+def _safe_validation_errors(error: ValidationError) -> list[dict[str, str]]:
+    """Expose bounded structural diagnostics without storing model input values."""
+    diagnostics: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in error.errors()[:20]:
+        location = item.get("loc")
+        parts: list[str] = []
+        for segment in location if isinstance(location, (list, tuple)) else ():
+            if isinstance(segment, int):
+                if parts:
+                    parts[-1] = f"{parts[-1]}[{segment}]"
+                else:
+                    parts.append(f"[{segment}]")
+            elif isinstance(segment, str) and segment in _VALIDATION_PATH_SEGMENTS:
+                parts.append(segment)
+            else:
+                parts.append("<unexpected_field>")
+        path = ".".join(parts) or "<invalid_location>"
+        error_type = str(item.get("type") or "invalid")
+        if not re.fullmatch(r"[a-z0-9_]+", error_type):
+            error_type = "invalid"
+        diagnostic = (path, error_type)
+        if diagnostic not in seen:
+            seen.add(diagnostic)
+            diagnostics.append({"path": path, "type": error_type})
+    return diagnostics
+
 
 class AgentWarning(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -663,6 +730,8 @@ def _normalise_evidence_payload(value: object) -> object:
         return value
     result = dict(value)
     result.pop("source_label", None)
+    if isinstance(result.get("excerpt"), str):
+        result["excerpt"] = result["excerpt"][:300]
     return result
 
 
@@ -807,7 +876,10 @@ def generate_project_init_draft(
         except ProjectInitAiError:
             raise
         except ValidationError as exc:
-            raise ProjectInitAiInvalidDraft("AI 草稿结构或字段类型无效") from exc
+            raise ProjectInitAiInvalidDraft(
+                "AI 草稿结构或字段类型无效",
+                validation_errors=_safe_validation_errors(exc),
+            ) from exc
         except Exception as exc:
             raise ProjectInitAiError("AI 草稿处理失败") from exc
         _validate_batch_sources(envelope.tasks, batch)
@@ -823,7 +895,10 @@ def generate_project_init_draft(
         except ProjectInitAiError:
             raise
         except ValidationError as exc:
-            raise ProjectInitAiInvalidDraft("AI 最终合并结构或字段类型无效") from exc
+            raise ProjectInitAiInvalidDraft(
+                "AI 最终合并结构或字段类型无效",
+                validation_errors=_safe_validation_errors(exc),
+            ) from exc
         except Exception as exc:
             raise ProjectInitAiError("AI 最终合并处理失败") from exc
         all_tasks = _merge_tasks([*all_tasks, *_merge_tasks(merge_envelope.tasks)])

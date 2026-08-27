@@ -64,3 +64,16 @@ test('panel exposes attachment actions, complete warnings, partial file results,
   assert.match(source, /unmatched/)
   assert.match(source, /apply error|application failed|errorMessage\(nextError\)/i)
 })
+
+test('panel shows configured and attempted AI models for every analysis result', () => {
+  assert.match(source, /模型策略/)
+  assert.match(source, /本次尝试/)
+  assert.match(source, /实际模型/)
+  assert.match(source, /model_strategy/)
+  assert.match(source, /attempted_models/)
+})
+
+test('panel labels historical runs that lack a model strategy snapshot', () => {
+  assert.match(source, /历史记录未保存策略/)
+  assert.match(source, /model_strategy_status/)
+})

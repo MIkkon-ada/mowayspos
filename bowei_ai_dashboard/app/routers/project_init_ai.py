@@ -299,6 +299,19 @@ def _analysis_run_response(run: models.ProjectInitAnalysisRun) -> dict:
     file_results = _json_value(run.file_results_json, [])
     if isinstance(file_results, list):
         metadata = {**metadata, "file_results": file_results}
+    snapshot = _json_value(run.snapshot_json, {})
+    if isinstance(snapshot, dict):
+        strategy = snapshot.get("model_strategy")
+        if isinstance(strategy, list):
+            metadata = {
+                **metadata,
+                "model_strategy": strategy,
+                "model_strategy_status": "recorded",
+            }
+        else:
+            metadata = {**metadata, "model_strategy_status": "historical_unavailable"}
+    else:
+        metadata = {**metadata, "model_strategy_status": "historical_unavailable"}
     return {
         "id": run.id,
         "project_id": run.project_id,

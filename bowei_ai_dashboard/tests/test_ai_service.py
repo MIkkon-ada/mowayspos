@@ -82,12 +82,21 @@ def fake_adapters():
     return FakeAdapters()
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        "AI_UPSTREAM_TIMEOUT",
+        "AI_UPSTREAM_CONNECTION",
+        "AI_UPSTREAM_RATE_LIMIT",
+        "AI_UPSTREAM_5XX",
+    ],
+)
 def test_chat_uses_primary_then_retryable_fallback_and_logs_each_attempt(
-    db, configured_chat_policy, fake_adapters
+    db, configured_chat_policy, fake_adapters, code
 ):
     primary, fallback = configured_chat_policy
     fake_adapters.chat_errors[primary.id] = AIUpstreamError(
-        "AI_UPSTREAM_TIMEOUT", retryable=True
+        code, retryable=True
     )
     fake_adapters.chat_results[fallback.id] = '{"title":"ok"}'
 
@@ -103,7 +112,7 @@ def test_chat_uses_primary_then_retryable_fallback_and_logs_each_attempt(
     assert result.model_code == "fallback"
     logs = db.query(models.AIInvocationLog).order_by(models.AIInvocationLog.attempt_no).all()
     assert [(row.status, row.error_code, row.fallback_used) for row in logs] == [
-        ("failed", "AI_UPSTREAM_TIMEOUT", False),
+        ("failed", code, False),
         ("succeeded", "", True),
     ]
     assert [(row.actor, row.resource_type, row.resource_id) for row in logs] == [
@@ -112,10 +121,11 @@ def test_chat_uses_primary_then_retryable_fallback_and_logs_each_attempt(
     ]
 
 
-def test_non_retryable_error_does_not_try_fallback(db, configured_chat_policy, fake_adapters):
+@pytest.mark.parametrize("code", ["AI_UPSTREAM_AUTH", "AI_UPSTREAM_BAD_REQUEST"])
+def test_non_retryable_error_does_not_try_fallback(db, configured_chat_policy, fake_adapters, code):
     primary, _fallback = configured_chat_policy
     fake_adapters.chat_errors[primary.id] = AIUpstreamError(
-        "AI_UPSTREAM_BAD_REQUEST", retryable=False
+        code, retryable=False
     )
 
     with pytest.raises(AIUpstreamError, match="AI upstream request failed"):

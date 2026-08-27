@@ -8,6 +8,7 @@ from app.services.project_init_ai_agent import (
     Evidence,
     ProjectInitAiEmptyResult,
     ProjectInitAiError,
+    ProjectInitAiInvalidDraft,
     _merge_tasks,
     _parse_json_response,
     generate_project_init_draft,
@@ -81,6 +82,25 @@ def test_unique_active_person_is_bound_but_ambiguous_and_inactive_are_not():
     assert subtask.assignee_id == 1
     assert subtask.helper_ids == []
     assert {warning.code for warning in subtask.warnings} == {"ambiguous_person", "inactive_person"}
+
+
+def test_full_person_snapshot_is_reduced_to_candidate_fields():
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [{
+            "id": 1,
+            "name": "张三",
+            "is_active": True,
+            "department": "交付部",
+            "system_role": "normal_member",
+            "special_project_duty": "项目负责人",
+        }],
+        [],
+        llm_call=fake_llm({"tasks": [raw_task()]}),
+    )
+
+    assert result.tasks[0].owner_id == 1
+    assert result.tasks[0].subtasks[0].assignee_id == 1
 
 
 def test_unmatched_person_name_is_preserved_without_an_id():
@@ -165,6 +185,228 @@ def test_invalid_or_fenced_llm_json_is_rejected_as_business_error():
 
     with pytest.raises(ProjectInitAiError):
         generate_project_init_draft([chunk("x")], [], [], llm_call=bad_llm)
+
+
+def test_normalizes_redundant_evidence_label_and_null_optional_text():
+    payload = raw_task()
+    payload["plan_end"] = None
+    payload["evidence"][0]["source_label"] = "plan.txt · lines 1-2"
+    payload["subtasks"][0]["plan_end"] = None
+    payload["subtasks"][0]["evidence"][0]["source_label"] = "plan.txt · lines 1-2"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].plan_end == ""
+    assert result.tasks[0].subtasks[0].plan_end == ""
+    assert result.tasks[0].evidence[0].source_label == "plan.txt · lines 1-2"
+
+
+def test_normalizes_overlong_evidence_excerpt_without_breaking_source_validation():
+    excerpt = "实施交付" * 101
+    payload = raw_task(evidence=[{
+        "attachment_id": 7,
+        "file_name": "plan.txt",
+        "location": "lines 1-2",
+        "excerpt": excerpt,
+    }])
+
+    result = generate_project_init_draft(
+        [chunk(excerpt)],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].evidence[0].excerpt == excerpt[:300]
+    assert len(result.tasks[0].evidence[0].excerpt) == 300
+
+
+def test_normalizes_string_helper_names_to_a_name_list():
+    payload = raw_task()
+    payload["subtasks"][0]["helper_names"] = "李四、王五, 赵六\n钱七"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].subtasks[0].helper_names == ["李四", "王五", "赵六", "钱七"]
+
+
+def test_normalizes_model_owned_text_fields_to_contract_limits():
+    payload = raw_task()
+    payload.update(
+        {
+            "title": "T" * 201,
+            "description": "D" * 2001,
+            "plan_end": "E" * 51,
+        }
+    )
+    payload["subtasks"][0].update(
+        {
+            "title": "S" * 201,
+            "description": "D" * 2001,
+            "plan_end": "E" * 51,
+            "evaluation_standard": "V" * 1001,
+        }
+    )
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    subtask = task.subtasks[0]
+    assert len(task.title) == 200
+    assert len(task.description) == 2000
+    assert len(task.plan_end) == 50
+    assert len(subtask.title) == 200
+    assert len(subtask.description) == 2000
+    assert len(subtask.plan_end) == 50
+    assert len(subtask.evaluation_standard) == 1000
+
+
+def test_ignores_model_supplied_server_owned_fields():
+    payload = raw_task()
+    payload.update(
+        {
+            "owner_id": "not-a-person-id",
+            "confidence": "certain",
+            "merge_status": "definite_duplicate",
+            "duplicate_of": "stale-task-id",
+            "duplicate_reason": 123,
+            "warnings": "not-a-warning-list",
+            "source": {"must": "be server generated"},
+        }
+    )
+    payload["subtasks"][0].update(
+        {
+            "assignee_id": "not-a-person-id",
+            "helper_ids": "not-an-id-list",
+            "confidence": "certain",
+            "merge_status": "definite_duplicate",
+            "duplicate_of": "stale-subtask-id",
+            "duplicate_reason": 123,
+            "warnings": "not-a-warning-list",
+            "source": {"must": "be server generated"},
+        }
+    )
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [{"id": 1, "name": "张三", "is_active": True}],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    subtask = task.subtasks[0]
+    assert task.owner_id == 1
+    assert subtask.assignee_id == 1
+    assert task.merge_status == "new"
+    assert subtask.merge_status == "new"
+    assert task.duplicate_of is None
+    assert subtask.duplicate_of is None
+    assert task.warnings == []
+    assert subtask.warnings == []
+    assert task.source == "plan.txt · lines 1-2"
+    assert subtask.source == "plan.txt · lines 1-2"
+
+
+def test_missing_subtasks_remains_rejected():
+    payload = raw_task() | {"subtasks": []}
+
+    with pytest.raises(ProjectInitAiError):
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+
+def test_unknown_business_key_remains_rejected():
+    payload = raw_task() | {"负责人": "张三"}
+
+    with pytest.raises(ProjectInitAiError):
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+
+def test_arbitrary_unknown_business_key_remains_rejected():
+    payload = raw_task() | {"not_a_contract_field": "must not be silently ignored"}
+
+    with pytest.raises(ProjectInitAiError):
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+
+def test_invalid_draft_exposes_only_safe_validation_field_metadata():
+    payload = raw_task()
+    payload["evidence"][0]["attachment_id"] = "not-an-integer"
+
+    with pytest.raises(ProjectInitAiInvalidDraft) as error:
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+    assert error.value.validation_errors == [
+        {"path": "tasks[0].evidence[0].attachment_id", "type": "int_type"}
+    ]
+
+
+def test_model_evidence_locator_is_replaced_with_a_canonical_source_excerpt():
+    payload = raw_task()
+    payload["evidence"][0]["excerpt"] = "模型杜撰的摘录"
+    payload["subtasks"][0]["evidence"][0]["excerpt"] = "模型杜撰的摘录"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付来源原文")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].evidence[0].excerpt == "实施交付来源原文"
+    assert result.tasks[0].subtasks[0].evidence[0].excerpt == "实施交付来源原文"
+
+
+def test_invalid_evidence_locator_remains_rejected_with_a_safe_reason_code():
+    payload = raw_task()
+    payload["evidence"][0]["file_name"] = "not-a-source.txt"
+
+    with pytest.raises(ProjectInitAiInvalidDraft) as error:
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+    assert error.value.validation_errors == [
+        {"path": "tasks[0].evidence[0]", "type": "untraceable_file"}
+    ]
 
 
 def test_empty_llm_result_is_a_safe_business_error():

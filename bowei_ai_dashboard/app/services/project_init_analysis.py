@@ -21,8 +21,9 @@ from sqlalchemy.orm import Session, object_session
 from .. import crud, models
 from ..database import SessionLocal
 from ..time_utils import utc_now
-from .project_init_ai_agent import generate_project_init_draft
+from .project_init_ai_agent import ProjectInitAiInvalidDraft, generate_project_init_draft
 from ..ai.service import AIService
+from ..ai.contracts import AIInvocationContext
 from .project_init_file_parser import parse_project_init_file
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,27 @@ def build_project_init_snapshot(
     attachments: Iterable[models.ProjectInitAttachment],
     current_draft: Any = None,
 ) -> dict[str, Any]:
+    policy = (
+        db.query(models.AICapabilityPolicy)
+        .filter_by(capability_key="project.init.analysis", enabled=True)
+        .one_or_none()
+    )
+    model_ids = [] if policy is None or policy.primary_model_id is None else [
+        policy.primary_model_id,
+        *(_json_load(policy.fallback_model_ids_json, [])),
+    ]
+    model_rows = {item.id: item for item in db.query(models.AIModel).filter(models.AIModel.id.in_(model_ids)).all()} if model_ids else {}
+    model_strategy = [
+        {
+            "id": model.id,
+            "code": model.code,
+            "display_name": model.display_name,
+            "provider": model.provider,
+            "model_name": model.model_name,
+        }
+        for model_id in model_ids
+        if (model := model_rows.get(model_id)) is not None
+    ]
     member_rows = (
         db.query(models.ProjectMember)
         .filter(models.ProjectMember.project_id == project.id)
@@ -126,6 +148,7 @@ def build_project_init_snapshot(
             for item in attachments
         ],
         "current_draft": current_draft if current_draft is not None else [],
+        "model_strategy": model_strategy,
     }
 
 
@@ -298,7 +321,24 @@ def _draft_payload(result: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {"tasks": []}
 
 
-def _result_metadata(draft: dict[str, Any], *, provider: str = "", model_name: str = "", file_results=None) -> dict[str, Any]:
+def _attempted_models(db: Session, run_id: int) -> list[dict[str, Any]]:
+    rows = (
+        db.query(models.AIInvocationLog, models.AIModel)
+        .join(models.AIModel, models.AIInvocationLog.model_id == models.AIModel.id)
+        .filter(
+            models.AIInvocationLog.resource_type == "project_init",
+            models.AIInvocationLog.resource_id == run_id,
+        )
+        .order_by(models.AIInvocationLog.id.asc())
+        .all()
+    )
+    return [
+        {"id": model.id, "code": model.code, "display_name": model.display_name, "provider": model.provider, "model_name": model.model_name}
+        for _, model in rows
+    ]
+
+
+def _result_metadata(draft: dict[str, Any], *, provider: str = "", model_name: str = "", file_results=None, attempted_models=None) -> dict[str, Any]:
     tasks = draft.get("tasks") if isinstance(draft.get("tasks"), list) else []
     warnings = draft.get("warnings") if isinstance(draft.get("warnings"), list) else []
     return {
@@ -307,6 +347,8 @@ def _result_metadata(draft: dict[str, Any], *, provider: str = "", model_name: s
         "task_count": len(tasks),
         "warning_count": len(warnings),
         "file_count": len(file_results or []),
+        "attempted_models": attempted_models or [],
+        "final_model": attempted_models[-1] if attempted_models else {},
     }
 
 
@@ -392,9 +434,15 @@ def process_analysis_run(run_id: int) -> None:
                 people,
                 existing_tasks,
                 ai_service=AIService(db),
+                invocation_context=AIInvocationContext(resource_type="project_init", resource_id=run_id),
             )
             draft = _draft_payload(result)
         except Exception as exc:
+            failure_category = (
+                "invalid_draft_schema"
+                if isinstance(exc, ProjectInitAiInvalidDraft)
+                else "ai_processing_failed"
+            )
             logger.warning(
                 "project_init_provider_failure run_id=%s error_type=%s code=provider_failure",
                 run_id,
@@ -407,7 +455,19 @@ def process_analysis_run(run_id: int) -> None:
                 progress=100,
                 values={
                     "current_draft_json": _json_dump({"tasks": [], "warnings": []}),
-                    "result_json": _json_dump({"tasks": 0, "warnings": 0}),
+                    "result_json": _json_dump(
+                        {
+                            "tasks": 0,
+                            "warnings": 0,
+                            "attempted_models": _attempted_models(db, run_id),
+                            "failure_category": failure_category,
+                            "validation_errors": (
+                                exc.validation_errors
+                                if isinstance(exc, ProjectInitAiInvalidDraft)
+                                else []
+                            ),
+                        }
+                    ),
                     "file_results_json": _json_dump(file_results),
                     "status": "failed",
                     "finished_at": utc_now(),
@@ -433,7 +493,7 @@ def process_analysis_run(run_id: int) -> None:
                 "provider": provider,
                 "model_name": model_name,
                 "result_json": _json_dump(
-                    _result_metadata(draft, provider=provider, model_name=model_name, file_results=file_results)
+                    _result_metadata(draft, provider=provider, model_name=model_name, file_results=file_results, attempted_models=_attempted_models(db, run_id))
                 ),
                 "file_results_json": _json_dump(file_results),
                 "status": "partial_failed" if failed_files else "completed",

@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app import models
+from app.ai.contracts import Capability
 from app.database import Base
 from app.services.ai_legacy_migration import import_legacy_llm_config
 
@@ -87,6 +88,42 @@ def test_legacy_dashscope_import_creates_chat_and_asr_models(db, tmp_path):
         "realtime_model": "fun-asr-realtime",
     }
     assert report.policy_states["speech.realtime"] == "enabled"
+
+
+def test_legacy_dashscope_project_init_policy_uses_deepseek_fallback(db, tmp_path):
+    legacy = tmp_path / "llm_configs.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                "default_provider": "dashscope",
+                "dashscope": {
+                    "enabled": True,
+                    "api_key": "dashscope-key",
+                    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "model": "qwen-plus",
+                },
+                "deepseek": {
+                    "enabled": True,
+                    "api_key": "deepseek-key",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-chat",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import_legacy_llm_config(db, legacy, cipher_key=TEST_FERNET_KEY)
+
+    dashscope = db.query(models.AIModel).filter_by(code="migrated-dashscope-chat").one()
+    deepseek = db.query(models.AIModel).filter_by(code="migrated-deepseek-chat").one()
+    policy = db.query(models.AICapabilityPolicy).filter_by(
+        capability_key=Capability.PROJECT_INIT_ANALYSIS
+    ).one()
+
+    assert policy.primary_model_id == deepseek.id
+    assert json.loads(policy.fallback_model_ids_json) == [dashscope.id]
+    assert policy.max_attempts == 2
 
 
 def test_legacy_import_uses_first_chat_model_when_default_provider_is_missing(db, tmp_path):

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date
+from pathlib import Path
 
 from fastapi import HTTPException
 import pytest
@@ -122,6 +124,188 @@ def test_superadmin_archive_allows_only_ended_to_archived():
     result = projects.archive_project(1, current_user="moways", db=db)
     assert result["status"] == "archived"
     assert db.get(models.Project, 1).status == "archived"
+
+
+def test_superadmin_can_permanently_delete_draft_project_and_direct_records():
+    db, task_id, submission_id, change_id = _seed("draft")
+
+    result = projects.delete_draft_project(
+        1,
+        schemas.ProjectDeletePayload(confirm_name="Project"),
+        current_user="moways",
+        db=db,
+    )
+
+    assert result == {"ok": True, "project_id": 1}
+    assert db.get(models.Project, 1) is None
+    assert db.get(models.Task, task_id) is None
+    assert db.get(models.UpdateSubmission, submission_id) is None
+    assert db.get(models.MemberChangeRequest, change_id) is None
+    assert db.query(models.ProjectMember).filter_by(project_id=1).count() == 0
+
+
+@pytest.mark.parametrize("status", ["dispatched", "active", "pending_close", "ended", "archived"])
+def test_delete_rejects_non_draft_project(status: str):
+    db, *_ = _seed(status)
+
+    with pytest.raises(HTTPException) as exc:
+        projects.delete_draft_project(
+            1,
+            schemas.ProjectDeletePayload(confirm_name="Project"),
+            current_user="moways",
+            db=db,
+        )
+
+    assert exc.value.status_code == 409
+    assert db.get(models.Project, 1) is not None
+
+
+def test_delete_requires_exact_project_name_confirmation():
+    db, *_ = _seed("draft")
+
+    with pytest.raises(HTTPException) as exc:
+        projects.delete_draft_project(
+            1,
+            schemas.ProjectDeletePayload(confirm_name="Project "),
+            current_user="moways",
+            db=db,
+        )
+
+    assert exc.value.status_code == 422
+    assert db.get(models.Project, 1) is not None
+
+
+def test_delete_requires_tech_admin():
+    db, *_ = _seed("draft")
+
+    with pytest.raises(HTTPException) as exc:
+        projects.delete_draft_project(
+            1,
+            schemas.ProjectDeletePayload(confirm_name="Project"),
+            current_user="owner",
+            db=db,
+        )
+
+    assert exc.value.status_code == 403
+    assert db.get(models.Project, 1) is not None
+
+
+def test_delete_rolls_back_when_dependency_cleanup_fails(monkeypatch):
+    db, *_ = _seed("draft")
+
+    def fail_after_cleanup(project, session):
+        session.query(models.ProjectMember).filter_by(project_id=project.id).delete()
+        raise RuntimeError("simulated cleanup failure")
+
+    monkeypatch.setattr(projects, "_delete_draft_project_data", fail_after_cleanup)
+
+    with pytest.raises(RuntimeError, match="simulated cleanup failure"):
+        projects.delete_draft_project(
+            1,
+            schemas.ProjectDeletePayload(confirm_name="Project"),
+            current_user="moways",
+            db=db,
+        )
+
+    assert db.get(models.Project, 1) is not None
+    assert db.query(models.ProjectMember).filter_by(project_id=1).count() == 3
+
+
+def test_delete_purges_project_scoped_records_and_task_descendants():
+    db, task_id, *_ = _seed("draft")
+    task = db.get(models.Task, task_id)
+    subtask = models.SubTask(task_id=task.id, title="Key task", assignee="Owner")
+    achievement = models.Achievement(project_id=1, name="Asset")
+    submission = models.AchievementSubmission(project_id=1, name="Asset submission")
+    source = models.MeetingDocumentSource(
+        project_id=1,
+        original_name="meeting.docx",
+        storage_key="purge-meeting-source",
+        mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        size_bytes=1,
+        content_hash="a" * 64,
+    )
+    db.add_all([subtask, achievement, submission, source])
+    db.flush()
+    schedule = models.ExecutionSchedule(subtask_id=subtask.id, plan_type="week", title="Schedule")
+    db.add(schedule)
+    db.flush()
+    subtask_id = subtask.id
+    schedule_id = schedule.id
+    db.add_all(
+        [
+            models.ExecutionScheduleReminder(
+                schedule_id=schedule.id,
+                reminder_kind="due",
+                due_on=date(2026, 8, 27),
+                recipient_id=1,
+            ),
+            models.AchievementAttachment(
+                project_id=1,
+                achievement_id=achievement.id,
+                storage_key="purge-achievement-attachment",
+                original_name="asset.txt",
+                mime_type="text/plain",
+                size_bytes=1,
+            ),
+            models.ProjectInitAttachment(
+                project_id=1,
+                storage_key="purge-init-attachment",
+                original_name="init.txt",
+                mime_type="text/plain",
+                size_bytes=1,
+                uploaded_by="moways",
+            ),
+            models.ProjectInitAnalysisRun(project_id=1, created_by="moways"),
+            models.Issue(project_id=1, description="Issue"),
+            models.ProjectMeetingRun(project_id=1, document_source_id=source.id),
+            models.MeetingSkillRun(project_id=1, skill_name="summary", skill_version="1"),
+            models.KickoffAgentRun(project_id=1),
+            models.MeetingChangeSet(project_id=1),
+            models.Notification(type="project_notice", title="Project notice", project_id=1),
+        ]
+    )
+    db.commit()
+
+    projects.delete_draft_project(
+        1,
+        schemas.ProjectDeletePayload(confirm_name="Project"),
+        current_user="moways",
+        db=db,
+    )
+
+    assert db.query(models.SubTask).filter_by(task_id=task_id).count() == 0
+    assert db.query(models.ExecutionSchedule).filter_by(subtask_id=subtask_id).count() == 0
+    assert db.query(models.ExecutionScheduleReminder).filter_by(schedule_id=schedule_id).count() == 0
+    for model in (
+        models.Achievement,
+        models.AchievementSubmission,
+        models.AchievementAttachment,
+        models.ProjectInitAttachment,
+        models.ProjectInitAnalysisRun,
+        models.Issue,
+        models.MeetingDocumentSource,
+        models.ProjectMeetingRun,
+        models.MeetingSkillRun,
+        models.KickoffAgentRun,
+        models.MeetingChangeSet,
+        models.Notification,
+    ):
+        assert db.query(model).filter_by(project_id=1).count() == 0
+
+
+def test_project_purge_deletes_task_references_before_subtasks():
+    source = (Path(__file__).resolve().parents[1] / "app" / "routers" / "projects.py").read_text(encoding="utf-8")
+    subtask_delete = source.index("db.query(models.SubTask).filter(models.SubTask.id.in_(subtask_ids)).delete")
+    for reference_delete in (
+        "db.query(models.UpdateSubmission).filter(models.UpdateSubmission.project_id == project_id).delete",
+        "db.query(models.AchievementAttachment).filter(models.AchievementAttachment.project_id == project_id).delete",
+        "db.query(models.AchievementSubmission).filter(models.AchievementSubmission.project_id == project_id).delete",
+        "db.query(models.Achievement).filter(models.Achievement.project_id == project_id).delete",
+        "db.query(models.Issue).filter(models.Issue.project_id == project_id).delete",
+        "db.query(models.MeetingProgressReview).filter(models.MeetingProgressReview.project_id == project_id).delete",
+    ):
+        assert source.index(reference_delete) < subtask_delete
 
 
 def _project_action(db, task_id: int, submission_id: int, change_id: int, action: str):

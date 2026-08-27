@@ -13,6 +13,7 @@ import {
   addProjectMember,
   removeProjectMember,
   batchImportProjects,
+  deleteDraftProject,
 } from '../../api/projects'
 import type { BatchImportRow, ProjectProfilePayload } from '../../api/projects'
 import type { CurrentUser, Person, Project, ProjectMember, TaskItem } from '../../types'
@@ -29,6 +30,7 @@ import {
   getProjectStatusBadge,
 } from '../../domain/projectLifecycleStatus'
 import { getProjectRoleLabel } from '../../domain/roleLabels'
+import { canPermanentlyDeleteDraftProject, isProjectDeletionConfirmed } from '../../domain/projectDeletionPolicy'
 import { NewProjectForm, ProjectInitModal, type TeamMap } from './ProjectInitModal'
 import { getPickerPosition } from './projectPickerPosition.js'
 import { ProjectCloseFlowDrawer } from './ProjectCloseFlowDrawer'
@@ -370,6 +372,9 @@ export function ProjectsMgmtSection() {
 
   // 更多菜单
   const [menuState, setMenuState] = useState<{ pid: number; anchorEl: HTMLButtonElement } | null>(null)
+  const [deleteCandidate, setDeleteCandidate] = useState<Project | null>(null)
+  const [deleteConfirmation, setDeleteConfirmation] = useState('')
+  const [deletingProject, setDeletingProject] = useState(false)
 
   // ── 初始加载 ──
   useEffect(() => {
@@ -720,6 +725,42 @@ export function ProjectsMgmtSection() {
     return { isSuperAdmin, isCompanyCeo, isRealProjectCeo, isRealOwner }
   }
 
+  function closeDeleteDialog() {
+    if (deletingProject) return
+    setDeleteCandidate(null)
+    setDeleteConfirmation('')
+  }
+
+  async function handleDeleteProject() {
+    if (!deleteCandidate || !isProjectDeletionConfirmed(deleteCandidate.name, deleteConfirmation)) return
+    const projectId = deleteCandidate.id
+    setDeletingProject(true)
+    try {
+      await deleteDraftProject(projectId, deleteConfirmation)
+      setProjects((prev) => prev.filter((project) => project.id !== projectId))
+      setMembers((prev) => {
+        const { [projectId]: _removed, ...rest } = prev
+        return rest
+      })
+      setProjectTasksMap((prev) => {
+        const { [projectId]: _removed, ...rest } = prev
+        return rest
+      })
+      setProjectSubtasksMap((prev) => {
+        const { [projectId]: _removed, ...rest } = prev
+        return rest
+      })
+      reloadProjects()
+      setDeleteCandidate(null)
+      setDeleteConfirmation('')
+      toast.success('项目已永久删除')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '删除项目失败')
+    } finally {
+      setDeletingProject(false)
+    }
+  }
+
   async function handleDispatch(project: Project) {
     if (!isProjectDispatchReady(project)) {
       toast.warning('请先完善项目目标、开始日期和结束日期，再下发给负责人')
@@ -1058,9 +1099,31 @@ export function ProjectsMgmtSection() {
               if (roles.isSuperAdmin || (roles.isCompanyCeo && status === 'draft')) {
                 items.push({ label: '编辑项目', onClick: () => { setMenuState(null); void openProjectEditor(menuProject) } })
               }
+              if (canPermanentlyDeleteDraftProject(status, roles.isSuperAdmin)) {
+                items.push({
+                  label: '永久删除项目',
+                  tone: 'danger',
+                  onClick: () => {
+                    setMenuState(null)
+                    setDeleteConfirmation('')
+                    setDeleteCandidate(menuProject)
+                  },
+                })
+              }
               return items
             })()
           }
+        />
+      )}
+
+      {deleteCandidate && (
+        <DeleteDraftProjectDialog
+          project={deleteCandidate}
+          confirmation={deleteConfirmation}
+          deleting={deletingProject}
+          onConfirmationChange={setDeleteConfirmation}
+          onClose={closeDeleteDialog}
+          onConfirm={() => void handleDeleteProject()}
         />
       )}
     </div>
@@ -1172,6 +1235,76 @@ function LifecycleCard({
 }
 
 // ── 更多菜单 ──────────────────────────────────────────────────
+
+function DeleteDraftProjectDialog({
+  project,
+  confirmation,
+  deleting,
+  onConfirmationChange,
+  onClose,
+  onConfirm,
+}: {
+  project: Project
+  confirmation: string
+  deleting: boolean
+  onConfirmationChange: (value: string) => void
+  onClose: () => void
+  onConfirm: () => void
+}) {
+  const confirmed = isProjectDeletionConfirmed(project.name, confirmation)
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 px-4"
+      role="presentation"
+      onMouseDown={() => { if (!deleting) onClose() }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-draft-project-title"
+        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <h2 id="delete-draft-project-title" className="text-lg font-bold text-slate-900">永久删除项目</h2>
+        <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-800">
+          将永久删除“{project.name}”及其成员、重点工作、关键任务、附件、AI 分析和其他关联数据。此操作不可恢复。
+        </p>
+        <label className="mt-5 block text-sm font-semibold text-slate-700" htmlFor="delete-project-confirmation">
+          请输入项目名称以确认
+        </label>
+        <input
+          id="delete-project-confirmation"
+          value={confirmation}
+          onChange={(event) => onConfirmationChange(event.target.value)}
+          placeholder={project.name}
+          autoComplete="off"
+          disabled={deleting}
+          className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100 disabled:bg-slate-100"
+        />
+        <p className="mt-2 text-xs text-slate-500">必须与项目名称完全一致，不能有多余空格。</p>
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={deleting}
+            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={!confirmed || deleting}
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {deleting ? '删除中…' : '永久删除'}
+          </button>
+        </div>
+      </section>
+    </div>
+  )
+}
 
 function LifecycleMoreMenu({
   anchorEl, onClose, items,

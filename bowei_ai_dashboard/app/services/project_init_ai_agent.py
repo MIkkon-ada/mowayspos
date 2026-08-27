@@ -706,6 +706,28 @@ _SUBTASK_OPTIONAL_TEXT_FIELDS = {
     "source",
 }
 
+_TASK_TEXT_FIELD_LIMITS = {
+    "title": 200,
+    "description": 2_000,
+    "owner_name": 50,
+    "priority": 30,
+    "status": 50,
+    "plan_start": 50,
+    "plan_end": 50,
+    "source": 255,
+}
+_SUBTASK_TEXT_FIELD_LIMITS = {
+    "title": 200,
+    "description": 2_000,
+    "assignee_name": 50,
+    "priority": 30,
+    "status": 50,
+    "plan_start": 50,
+    "plan_end": 50,
+    "evaluation_standard": 1_000,
+    "source": 255,
+}
+
 _TASK_SERVER_OWNED_FIELDS = {
     "owner_id",
     "confidence",
@@ -741,6 +763,11 @@ def _normalise_task_payload(value: object, *, is_subtask: bool = False) -> objec
     result = dict(value)
     for key in _SUBTASK_SERVER_OWNED_FIELDS if is_subtask else _TASK_SERVER_OWNED_FIELDS:
         result.pop(key, None)
+    for key, limit in (
+        _SUBTASK_TEXT_FIELD_LIMITS if is_subtask else _TASK_TEXT_FIELD_LIMITS
+    ).items():
+        if isinstance(result.get(key), str):
+            result[key] = result[key][:limit]
     if is_subtask and isinstance(result.get("helper_names"), str):
         result["helper_names"] = [
             name.strip()

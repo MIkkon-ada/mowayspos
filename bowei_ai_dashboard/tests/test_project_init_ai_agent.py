@@ -240,6 +240,42 @@ def test_normalizes_string_helper_names_to_a_name_list():
     assert result.tasks[0].subtasks[0].helper_names == ["李四", "王五", "赵六", "钱七"]
 
 
+def test_normalizes_model_owned_text_fields_to_contract_limits():
+    payload = raw_task()
+    payload.update(
+        {
+            "title": "T" * 201,
+            "description": "D" * 2001,
+            "plan_end": "E" * 51,
+        }
+    )
+    payload["subtasks"][0].update(
+        {
+            "title": "S" * 201,
+            "description": "D" * 2001,
+            "plan_end": "E" * 51,
+            "evaluation_standard": "V" * 1001,
+        }
+    )
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    subtask = task.subtasks[0]
+    assert len(task.title) == 200
+    assert len(task.description) == 2000
+    assert len(task.plan_end) == 50
+    assert len(subtask.title) == 200
+    assert len(subtask.description) == 2000
+    assert len(subtask.plan_end) == 50
+    assert len(subtask.evaluation_standard) == 1000
+
+
 def test_ignores_model_supplied_server_owned_fields():
     payload = raw_task()
     payload.update(

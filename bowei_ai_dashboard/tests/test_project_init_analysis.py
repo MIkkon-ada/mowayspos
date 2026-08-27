@@ -205,6 +205,47 @@ def test_worker_all_failure_is_failed_and_does_not_leak_provider_secret(monkeypa
     assert "prompt body" not in stored.error_summary
 
 
+def test_worker_records_invalid_draft_schema_without_leaking_details(monkeypatch, tmp_path):
+    from app.services import project_init_analysis as service
+    from app.services.project_init_ai_agent import ProjectInitAiInvalidDraft
+
+    db = make_session()
+    project, _owner = add_project_graph(db)
+    add_attachment(db, project_id=project.id, attachment_id=1)
+    run = models.ProjectInitAnalysisRun(
+        project_id=project.id,
+        attachment_ids_json="[1]",
+        snapshot_json=json.dumps({"project": {}, "tasks": [], "people": []}),
+        created_by="owner",
+    )
+    db.add(run)
+    db.commit()
+    run_id = run.id
+    (tmp_path / "source-1.txt").write_text("source", encoding="utf-8")
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(service, "AIService", lambda _db: object())
+    monkeypatch.setattr(
+        service,
+        "parse_project_init_file",
+        lambda *args, **kwargs: [{"file_name": "source-1.txt", "location": "lines 1", "text": "source"}],
+    )
+    monkeypatch.setattr(service, "_attachment_path", lambda row: tmp_path / "source-1.txt")
+    monkeypatch.setattr(
+        service,
+        "generate_project_init_draft",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ProjectInitAiInvalidDraft("invalid model response")),
+    )
+
+    service.process_analysis_run(run_id)
+    db.expire_all()
+    stored = db.get(models.ProjectInitAnalysisRun, run_id)
+    result = json.loads(stored.result_json)
+
+    assert result["failure_category"] == "invalid_draft_schema"
+    assert stored.error_summary == "AI analysis failed; please retry later"
+    assert "invalid model response" not in stored.result_json
+
+
 def test_worker_partial_attachment_failure_preserves_successful_draft(monkeypatch, tmp_path):
     from app.services import project_init_analysis as service
 

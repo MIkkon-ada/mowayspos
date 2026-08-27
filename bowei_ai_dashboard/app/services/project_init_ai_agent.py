@@ -35,6 +35,10 @@ class ProjectInitAiEmptyResult(ProjectInitAiError):
     """The model returned a valid envelope without any usable tasks."""
 
 
+class ProjectInitAiInvalidDraft(ProjectInitAiError):
+    """The model response was parseable but violated the draft contract."""
+
+
 class AgentWarning(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -783,7 +787,7 @@ def generate_project_init_draft(
         except ProjectInitAiError:
             raise
         except ValidationError as exc:
-            raise ProjectInitAiError("AI 草稿结构或字段类型无效") from exc
+            raise ProjectInitAiInvalidDraft("AI 草稿结构或字段类型无效") from exc
         except Exception as exc:
             raise ProjectInitAiError("AI 草稿处理失败") from exc
         _validate_batch_sources(envelope.tasks, batch)
@@ -799,7 +803,7 @@ def generate_project_init_draft(
         except ProjectInitAiError:
             raise
         except ValidationError as exc:
-            raise ProjectInitAiError("AI 最终合并结构或字段类型无效") from exc
+            raise ProjectInitAiInvalidDraft("AI 最终合并结构或字段类型无效") from exc
         except Exception as exc:
             raise ProjectInitAiError("AI 最终合并处理失败") from exc
         all_tasks = _merge_tasks([*all_tasks, *_merge_tasks(merge_envelope.tasks)])

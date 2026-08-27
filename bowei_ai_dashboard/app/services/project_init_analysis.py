@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session, object_session
 from .. import crud, models
 from ..database import SessionLocal
 from ..time_utils import utc_now
-from .project_init_ai_agent import generate_project_init_draft
+from .project_init_ai_agent import ProjectInitAiInvalidDraft, generate_project_init_draft
 from ..ai.service import AIService
 from ..ai.contracts import AIInvocationContext
 from .project_init_file_parser import parse_project_init_file
@@ -438,6 +438,11 @@ def process_analysis_run(run_id: int) -> None:
             )
             draft = _draft_payload(result)
         except Exception as exc:
+            failure_category = (
+                "invalid_draft_schema"
+                if isinstance(exc, ProjectInitAiInvalidDraft)
+                else "ai_processing_failed"
+            )
             logger.warning(
                 "project_init_provider_failure run_id=%s error_type=%s code=provider_failure",
                 run_id,
@@ -450,7 +455,14 @@ def process_analysis_run(run_id: int) -> None:
                 progress=100,
                 values={
                     "current_draft_json": _json_dump({"tasks": [], "warnings": []}),
-                    "result_json": _json_dump({"tasks": 0, "warnings": 0, "attempted_models": _attempted_models(db, run_id)}),
+                    "result_json": _json_dump(
+                        {
+                            "tasks": 0,
+                            "warnings": 0,
+                            "attempted_models": _attempted_models(db, run_id),
+                            "failure_category": failure_category,
+                        }
+                    ),
                     "file_results_json": _json_dump(file_results),
                     "status": "failed",
                     "finished_at": utc_now(),

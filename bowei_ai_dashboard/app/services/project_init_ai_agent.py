@@ -578,12 +578,13 @@ def _context_prompt(
         "不要输出 Markdown、解释文字或代码围栏。"
         "不执行数据库、项目或成员修改；不得发明人员、日期或人员 ID。"
         "所有任务和子任务必须来自来源文本，并保留 evidence 的 attachment_id、file_name、location、excerpt。"
-        "Evidence 只能逐字引用本批来源目录；attachment_id、source_label、file_name、location 必须完全一致。"
+        "Evidence 只能逐字引用本批来源目录；attachment_id、file_name、location 必须完全一致。"
         "来源目录中的 attachment_id 为 null 时，evidence 的 attachment_id 必须为 null，禁止伪造非空 ID。"
         "日期字段使用 plan_start、plan_end，不使用 deadline。"
-        "输出字段必须严格遵循：task 只能包含 title、description、owner_name、owner_id、priority、status、plan_start、plan_end、evidence、source、confidence、merge_status、duplicate_of、duplicate_reason、warnings、subtasks；"
-        "subtask 只能包含 title、description、assignee_name、assignee_id、helper_names、helper_ids、priority、status、plan_start、plan_end、evaluation_standard、confidence、evidence、source、merge_status、duplicate_of、duplicate_reason、warnings。"
+        "输出字段必须严格遵循：task 只能包含 title、description、owner_name、priority、status、plan_start、plan_end、evidence、source、subtasks；"
+        "subtask 只能包含 title、description、assignee_name、helper_names、priority、status、plan_start、plan_end、evaluation_standard、evidence、source。"
         "evidence 只能包含 attachment_id、file_name、location、excerpt；不要输出 source_label。"
+        "不要输出任何人员 ID、confidence、merge_status、duplicate_of、duplicate_reason 或 warnings；这些字段由服务端统一计算。"
         "每个 task 必须至少包含一个 subtasks 项；未知或空缺的可选字符串字段使用空字符串，不要使用 null。"
         "人员姓名只作为待匹配文本，服务端会重新匹配人员 ID；不要自动合并已有任务。"
         f"\n本地预计算人员候选：{json.dumps(people_context, ensure_ascii=False)}"
@@ -608,10 +609,11 @@ def _final_merge_prompt(
     ]
     return (
         "你是项目初始化工作推进表的最终合并 Agent。只返回严格 JSON 对象，结构必须是 {\"tasks\": [...] }。"
-        "请将批次候选中归一化标题相同的任务合并为一条，保留全部 evidence、warnings 和 subtasks；"
-        "不得发明任务、人员 ID 或来源，也不得删除唯一来源。每条 evidence 必须逐字引用下方候选或来源目录中的真实 attachment_id、file_name、location 和 excerpt；null attachment_id 不得改为非空。"
+        "请将批次候选中归一化标题相同的任务合并为一条，保留全部 evidence 和 subtasks；"
+        "不得发明任务、人员或来源，也不得删除唯一来源。每条 evidence 必须逐字引用下方候选或来源目录中的真实 attachment_id、file_name、location 和 excerpt；null attachment_id 不得改为非空。"
         "日期字段使用 plan_start、plan_end，不使用 deadline。"
         "evidence 只能包含 attachment_id、file_name、location、excerpt；不要输出 source_label。每个 task 必须至少包含一个 subtasks 项；可选字符串为空时使用空字符串，不要使用 null。"
+        "不要输出任何人员 ID、confidence、merge_status、duplicate_of、duplicate_reason 或 warnings；这些字段由服务端统一计算。"
         f"\n候选任务：{json.dumps([task.model_dump() for task in tasks], ensure_ascii=False)}"
         f"\n允许的来源目录：{json.dumps(source_catalog, ensure_ascii=False)}"
     )
@@ -625,7 +627,6 @@ _TASK_OPTIONAL_TEXT_FIELDS = {
     "plan_start",
     "plan_end",
     "source",
-    "duplicate_reason",
 }
 _SUBTASK_OPTIONAL_TEXT_FIELDS = {
     "description",
@@ -636,7 +637,24 @@ _SUBTASK_OPTIONAL_TEXT_FIELDS = {
     "plan_end",
     "evaluation_standard",
     "source",
+}
+
+_TASK_SERVER_OWNED_FIELDS = {
+    "owner_id",
+    "confidence",
+    "merge_status",
+    "duplicate_of",
     "duplicate_reason",
+    "warnings",
+}
+_SUBTASK_SERVER_OWNED_FIELDS = {
+    "assignee_id",
+    "helper_ids",
+    "confidence",
+    "merge_status",
+    "duplicate_of",
+    "duplicate_reason",
+    "warnings",
 }
 
 
@@ -652,6 +670,8 @@ def _normalise_task_payload(value: object, *, is_subtask: bool = False) -> objec
     if not isinstance(value, dict):
         return value
     result = dict(value)
+    for key in _SUBTASK_SERVER_OWNED_FIELDS if is_subtask else _TASK_SERVER_OWNED_FIELDS:
+        result.pop(key, None)
     for key in _SUBTASK_OPTIONAL_TEXT_FIELDS if is_subtask else _TASK_OPTIONAL_TEXT_FIELDS:
         if result.get(key) is None:
             result[key] = ""

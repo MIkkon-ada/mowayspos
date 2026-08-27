@@ -205,6 +205,49 @@ def test_normalizes_redundant_evidence_label_and_null_optional_text():
     assert result.tasks[0].evidence[0].source_label == "plan.txt · lines 1-2"
 
 
+def test_ignores_model_supplied_server_owned_fields():
+    payload = raw_task()
+    payload.update(
+        {
+            "owner_id": "not-a-person-id",
+            "confidence": "certain",
+            "merge_status": "definite_duplicate",
+            "duplicate_of": "stale-task-id",
+            "duplicate_reason": 123,
+            "warnings": "not-a-warning-list",
+        }
+    )
+    payload["subtasks"][0].update(
+        {
+            "assignee_id": "not-a-person-id",
+            "helper_ids": "not-an-id-list",
+            "confidence": "certain",
+            "merge_status": "definite_duplicate",
+            "duplicate_of": "stale-subtask-id",
+            "duplicate_reason": 123,
+            "warnings": "not-a-warning-list",
+        }
+    )
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [{"id": 1, "name": "张三", "is_active": True}],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    subtask = task.subtasks[0]
+    assert task.owner_id == 1
+    assert subtask.assignee_id == 1
+    assert task.merge_status == "new"
+    assert subtask.merge_status == "new"
+    assert task.duplicate_of is None
+    assert subtask.duplicate_of is None
+    assert task.warnings == []
+    assert subtask.warnings == []
+
+
 def test_missing_subtasks_remains_rejected():
     payload = raw_task() | {"subtasks": []}
 
@@ -219,6 +262,18 @@ def test_missing_subtasks_remains_rejected():
 
 def test_unknown_business_key_remains_rejected():
     payload = raw_task() | {"负责人": "张三"}
+
+    with pytest.raises(ProjectInitAiError):
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+
+def test_arbitrary_unknown_business_key_remains_rejected():
+    payload = raw_task() | {"not_a_contract_field": "must not be silently ignored"}
 
     with pytest.raises(ProjectInitAiError):
         generate_project_init_draft(

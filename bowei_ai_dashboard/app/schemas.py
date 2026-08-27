@@ -361,6 +361,7 @@ class ProjectPatchPayload(BaseModel):
 
 class ProjectDeletePayload(BaseModel):
     confirm_name: str = Field(..., min_length=1, max_length=100)
+    confirm_phrase: str = Field(..., min_length=1, max_length=20)
 
 
 class ProjectCloseResidualItem(BaseModel):

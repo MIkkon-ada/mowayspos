@@ -22,9 +22,11 @@ from app.routers import (
     tasks,
     updates,
 )
+from app.services.project_purge_storage import ProjectPurgeStorageError
 
 
 FROZEN_MESSAGE = "项目正在结束审核或已经结束，不允许执行该操作。"
+DELETE_PHRASE = "永久删除"
 
 
 def _seed(status: str):
@@ -126,17 +128,21 @@ def test_superadmin_archive_allows_only_ended_to_archived():
     assert db.get(models.Project, 1).status == "archived"
 
 
-def test_superadmin_can_permanently_delete_draft_project_and_direct_records():
-    db, task_id, submission_id, change_id = _seed("draft")
+@pytest.mark.parametrize(
+    "status",
+    ["draft", "dispatched", "pending_kickoff", "pending_review", "returned", "active", "pending_close", "ended", "archived"],
+)
+def test_superadmin_can_permanently_delete_every_project_status_and_direct_records(status: str):
+    db, task_id, submission_id, change_id = _seed(status)
 
-    result = projects.delete_draft_project(
+    result = projects.delete_project(
         1,
-        schemas.ProjectDeletePayload(confirm_name="Project"),
+        schemas.ProjectDeletePayload(confirm_name="Project", confirm_phrase=DELETE_PHRASE),
         current_user="moways",
         db=db,
     )
 
-    assert result == {"ok": True, "project_id": 1}
+    assert result == {"ok": True, "project_id": 1, "cleanup_pending": False, "cleanup_key": None}
     assert db.get(models.Project, 1) is None
     assert db.get(models.Task, task_id) is None
     assert db.get(models.UpdateSubmission, submission_id) is None
@@ -144,29 +150,24 @@ def test_superadmin_can_permanently_delete_draft_project_and_direct_records():
     assert db.query(models.ProjectMember).filter_by(project_id=1).count() == 0
 
 
-@pytest.mark.parametrize("status", ["dispatched", "active", "pending_close", "ended", "archived"])
-def test_delete_rejects_non_draft_project(status: str):
-    db, *_ = _seed(status)
+def test_delete_requires_exact_project_name_and_destroy_phrase():
+    db, *_ = _seed("draft")
 
     with pytest.raises(HTTPException) as exc:
-        projects.delete_draft_project(
+        projects.delete_project(
             1,
-            schemas.ProjectDeletePayload(confirm_name="Project"),
+            schemas.ProjectDeletePayload(confirm_name="Project ", confirm_phrase=DELETE_PHRASE),
             current_user="moways",
             db=db,
         )
 
-    assert exc.value.status_code == 409
+    assert exc.value.status_code == 422
     assert db.get(models.Project, 1) is not None
 
-
-def test_delete_requires_exact_project_name_confirmation():
-    db, *_ = _seed("draft")
-
     with pytest.raises(HTTPException) as exc:
-        projects.delete_draft_project(
+        projects.delete_project(
             1,
-            schemas.ProjectDeletePayload(confirm_name="Project "),
+            schemas.ProjectDeletePayload(confirm_name="Project", confirm_phrase="删除"),
             current_user="moways",
             db=db,
         )
@@ -179,9 +180,9 @@ def test_delete_requires_tech_admin():
     db, *_ = _seed("draft")
 
     with pytest.raises(HTTPException) as exc:
-        projects.delete_draft_project(
+        projects.delete_project(
             1,
-            schemas.ProjectDeletePayload(confirm_name="Project"),
+            schemas.ProjectDeletePayload(confirm_name="Project", confirm_phrase=DELETE_PHRASE),
             current_user="owner",
             db=db,
         )
@@ -197,12 +198,12 @@ def test_delete_rolls_back_when_dependency_cleanup_fails(monkeypatch):
         session.query(models.ProjectMember).filter_by(project_id=project.id).delete()
         raise RuntimeError("simulated cleanup failure")
 
-    monkeypatch.setattr(projects, "_delete_draft_project_data", fail_after_cleanup)
+    monkeypatch.setattr(projects, "_delete_project_data", fail_after_cleanup, raising=False)
 
     with pytest.raises(RuntimeError, match="simulated cleanup failure"):
-        projects.delete_draft_project(
+        projects.delete_project(
             1,
-            schemas.ProjectDeletePayload(confirm_name="Project"),
+            schemas.ProjectDeletePayload(confirm_name="Project", confirm_phrase=DELETE_PHRASE),
             current_user="moways",
             db=db,
         )
@@ -258,6 +259,13 @@ def test_delete_purges_project_scoped_records_and_task_descendants():
             ),
             models.ProjectInitAnalysisRun(project_id=1, created_by="moways"),
             models.Issue(project_id=1, description="Issue"),
+            models.ProjectCloseRequest(
+                project_id=1,
+                summary="Close summary",
+                objective_result="Objective result",
+                handover_plan="Handover plan",
+                retrospective="Retrospective",
+            ),
             models.ProjectMeetingRun(project_id=1, document_source_id=source.id),
             models.MeetingSkillRun(project_id=1, skill_name="summary", skill_version="1"),
             models.KickoffAgentRun(project_id=1),
@@ -267,9 +275,9 @@ def test_delete_purges_project_scoped_records_and_task_descendants():
     )
     db.commit()
 
-    projects.delete_draft_project(
+    projects.delete_project(
         1,
-        schemas.ProjectDeletePayload(confirm_name="Project"),
+        schemas.ProjectDeletePayload(confirm_name="Project", confirm_phrase=DELETE_PHRASE),
         current_user="moways",
         db=db,
     )
@@ -284,6 +292,7 @@ def test_delete_purges_project_scoped_records_and_task_descendants():
         models.ProjectInitAttachment,
         models.ProjectInitAnalysisRun,
         models.Issue,
+        models.ProjectCloseRequest,
         models.MeetingDocumentSource,
         models.ProjectMeetingRun,
         models.MeetingSkillRun,
@@ -292,6 +301,95 @@ def test_delete_purges_project_scoped_records_and_task_descendants():
         models.Notification,
     ):
         assert db.query(model).filter_by(project_id=1).count() == 0
+
+
+def _seed_project_purge_files(db, tmp_path: Path, monkeypatch):
+    achievement_root = tmp_path / "achievement"
+    init_root = tmp_path / "init"
+    meeting_root = tmp_path / "meeting"
+    monkeypatch.setenv("ACHIEVEMENT_ATTACHMENT_ROOT", str(achievement_root))
+    monkeypatch.setenv("PROJECT_INIT_ATTACHMENT_ROOT", str(init_root))
+    monkeypatch.setenv("PROJECT_MEETING_DOCUMENT_ROOT", str(meeting_root))
+    db.add_all(
+        [
+            models.AchievementAttachment(
+                project_id=1,
+                storage_key="1/achievement.bin",
+                original_name="achievement.bin",
+                mime_type="application/octet-stream",
+                size_bytes=1,
+            ),
+            models.ProjectInitAttachment(
+                project_id=1,
+                storage_key="1/init.bin",
+                original_name="init.bin",
+                mime_type="application/octet-stream",
+                size_bytes=1,
+                uploaded_by="moways",
+            ),
+            models.MeetingDocumentSource(
+                project_id=1,
+                storage_key="1/meeting.docx",
+                original_name="meeting.docx",
+                mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                size_bytes=1,
+                content_hash="b" * 64,
+            ),
+        ]
+    )
+    db.commit()
+    paths = [
+        achievement_root / "1" / "achievement.bin",
+        init_root / "1" / "init.bin",
+        meeting_root / "1" / "meeting.docx",
+    ]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+    return paths, [achievement_root, init_root, meeting_root]
+
+
+def test_delete_physically_removes_project_attachment_payloads(tmp_path: Path, monkeypatch):
+    db, *_ = _seed("active")
+    paths, _roots = _seed_project_purge_files(db, tmp_path, monkeypatch)
+
+    result = projects.delete_project(
+        1,
+        schemas.ProjectDeletePayload(confirm_name="Project", confirm_phrase=DELETE_PHRASE),
+        current_user="moways",
+        db=db,
+    )
+
+    assert result["cleanup_pending"] is False
+    assert db.get(models.Project, 1) is None
+    assert all(not path.exists() for path in paths)
+
+
+def test_delete_reports_pending_cleanup_and_allows_safe_retry(tmp_path: Path, monkeypatch):
+    db, *_ = _seed("active")
+    paths, roots = _seed_project_purge_files(db, tmp_path, monkeypatch)
+    real_destroy = projects.destroy_staged_project_payloads
+
+    def fail_destroy(_staged):
+        raise ProjectPurgeStorageError("simulated cleanup failure")
+
+    monkeypatch.setattr(projects, "destroy_staged_project_payloads", fail_destroy, raising=False)
+    result = projects.delete_project(
+        1,
+        schemas.ProjectDeletePayload(confirm_name="Project", confirm_phrase=DELETE_PHRASE),
+        current_user="moways",
+        db=db,
+    )
+
+    assert db.get(models.Project, 1) is None
+    assert result["cleanup_pending"] is True
+    assert result["cleanup_key"]
+    assert all(not path.exists() for path in paths)
+
+    monkeypatch.setattr(projects, "destroy_staged_project_payloads", real_destroy)
+    retry = projects.retry_project_purge_cleanup(result["cleanup_key"], current_user="moways", db=db)
+    assert retry == {"ok": True, "cleanup_key": result["cleanup_key"], "cleanup_pending": False}
+    assert all(not (root / ".project-purge").exists() for root in roots)
 
 
 def test_project_purge_deletes_task_references_before_subtasks():

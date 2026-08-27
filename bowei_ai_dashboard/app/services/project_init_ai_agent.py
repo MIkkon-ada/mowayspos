@@ -139,7 +139,13 @@ def _person_candidates(values: Iterable[PersonCandidate | dict[str, Any]]) -> li
     seen_ids: set[int] = set()
     for value in values:
         try:
-            person = value if isinstance(value, PersonCandidate) else PersonCandidate.model_validate(value)
+            person = value if isinstance(value, PersonCandidate) else PersonCandidate.model_validate(
+                {
+                    "id": value.get("id"),
+                    "name": value.get("name"),
+                    "is_active": value.get("is_active", True),
+                }
+            )
         except ValidationError as exc:
             raise ProjectInitAiError("人员候选包含非法 ID 或字段") from exc
         if person.id in seen_ids:
@@ -684,6 +690,7 @@ def generate_project_init_draft(
     existing_tasks: Iterable[dict[str, Any]],
     llm_call: Callable[..., Any] | None = None,
     ai_service: AIService | None = None,
+    invocation_context: AIInvocationContext | None = None,
 ) -> ProjectInitAiResult:
     """Extract and reconcile a review-only project-init draft without DB writes."""
     source_values = _source_index(chunks)
@@ -699,7 +706,7 @@ def generate_project_init_draft(
         caller = lambda prompt: ai_service.invoke_chat(
             Capability.PROJECT_INIT_ANALYSIS,
             prompt,
-            AIInvocationContext(resource_type="project_init"),
+            invocation_context or AIInvocationContext(resource_type="project_init"),
         ).text
     else:
         raise ProjectInitAiError("AI capability service is required")

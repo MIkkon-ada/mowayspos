@@ -158,6 +158,38 @@ function fileResults(run: ProjectInitAnalysisRun): FileResult[] {
   })
 }
 
+type ModelUsage = { display_name?: string; model_name?: string; code?: string }
+
+function modelUsages(run: ProjectInitAnalysisRun, key: 'model_strategy' | 'attempted_models'): ModelUsage[] {
+  const value = run.result_metadata[key]
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is ModelUsage => item !== null && typeof item === 'object')
+}
+
+function modelLabel(model: ModelUsage): string {
+  return model.display_name || model.model_name || model.code || '未记录'
+}
+
+function ModelUsageSummary({ run }: { run: ProjectInitAnalysisRun }) {
+  const strategy = modelUsages(run, 'model_strategy')
+  const attempted = modelUsages(run, 'attempted_models')
+  const strategyStatus = run.result_metadata.model_strategy_status
+  const strategyLabel = strategy.length
+    ? strategy.map(modelLabel).join(' → ')
+    : strategyStatus === 'historical_unavailable'
+      ? '历史记录未保存策略'
+      : '未记录'
+  const finalModel = run.result_metadata.final_model
+  const finalLabel = finalModel && typeof finalModel === 'object'
+    ? modelLabel(finalModel as ModelUsage)
+    : ''
+  return <div className="space-y-1 text-xs text-slate-500">
+    <p>模型策略：{strategyLabel}</p>
+    {attempted.length > 0 && <p>本次尝试：{attempted.map(modelLabel).join(' → ')}</p>}
+    {finalLabel && <p>实际模型：{finalLabel}</p>}
+  </div>
+}
+
 function requiredDecisionKeys(draft: ProjectInitAiDraft): string[] {
   const keys: string[] = []
   draft.tasks.forEach((task, taskIndex) => {
@@ -643,18 +675,20 @@ export function OwnerSubmitAiPanel({
       {panelState === 'analyzing' && run && (
         <div className="space-y-4 rounded-xl bg-slate-50 p-4" aria-live="polite">
           <div className="flex items-center justify-between gap-3"><span className="text-sm font-semibold text-slate-800">{stageLabel(run.stage)}</span><span className="text-xs text-slate-500">{statusLabel(run.status)} · {run.progress}%</span></div>
+          <ModelUsageSummary run={run} />
           <progress className="h-2 w-full" max={100} value={run.progress} aria-label="AI 分析进度" />
           <p className="text-xs text-slate-500">分析会自动轮询最新进度，请不要关闭此面板。</p>
         </div>
       )}
 
       {panelState === 'failed' && run && (
-        <div className="space-y-3 rounded-xl border border-red-100 bg-red-50 p-4"><p className="text-sm font-semibold text-red-800">分析失败</p><p className="text-xs text-red-700">{run.error_message || error || '未能生成草稿'}</p><button type="button" onClick={() => void retryAnalysis()} disabled={disabled} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-50">重新分析</button></div>
+        <div className="space-y-3 rounded-xl border border-red-100 bg-red-50 p-4"><p className="text-sm font-semibold text-red-800">分析失败</p><ModelUsageSummary run={run} /><p className="text-xs text-red-700">{run.error_message || error || '未能生成草稿'}</p><button type="button" onClick={() => void retryAnalysis()} disabled={disabled} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-50">重新分析</button></div>
       )}
 
       {panelState === 'preview' && run && draft && (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 p-3"><div><span className="text-sm font-semibold text-slate-800">{stageLabel(run.stage)}</span><span className="ml-2 text-xs text-slate-500">{statusLabel(run.status)} · {run.progress}%</span></div><span className="text-xs text-slate-500">{draft.tasks.length} 项重点工作待确认</span></div>
+          <ModelUsageSummary run={run} />
           {draft.warnings && renderWarningMessages(draft.warnings.map((warning) => `${warning.code}: ${warning.message}`))}
           {run.status === 'partial_failed' && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">部分文件分析失败，下面仅展示已成功生成的结果。</div>}
           {renderFileResults(run)}

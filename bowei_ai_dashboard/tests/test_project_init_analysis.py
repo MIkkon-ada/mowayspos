@@ -35,6 +35,23 @@ def add_project_graph(db, *, project_id: int = 1, status: str = "dispatched"):
     return project, owner
 
 
+def test_analysis_run_response_labels_legacy_snapshot_without_model_strategy():
+    from app.routers import project_init_ai
+
+    run = models.ProjectInitAnalysisRun(
+        project_id=1,
+        attachment_ids_json="[]",
+        current_draft_json="{}",
+        result_json="{}",
+        file_results_json="[]",
+        snapshot_json=json.dumps({"attachments": []}),
+    )
+
+    response = project_init_ai._analysis_run_response(run)
+
+    assert response["result_metadata"]["model_strategy_status"] == "historical_unavailable"
+
+
 def add_attachment(db, *, project_id: int, attachment_id: int, size: int = 10, deleted_at=None):
     row = models.ProjectInitAttachment(
         id=attachment_id,

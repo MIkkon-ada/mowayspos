@@ -83,6 +83,25 @@ def test_unique_active_person_is_bound_but_ambiguous_and_inactive_are_not():
     assert {warning.code for warning in subtask.warnings} == {"ambiguous_person", "inactive_person"}
 
 
+def test_full_person_snapshot_is_reduced_to_candidate_fields():
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [{
+            "id": 1,
+            "name": "张三",
+            "is_active": True,
+            "department": "交付部",
+            "system_role": "normal_member",
+            "special_project_duty": "项目负责人",
+        }],
+        [],
+        llm_call=fake_llm({"tasks": [raw_task()]}),
+    )
+
+    assert result.tasks[0].owner_id == 1
+    assert result.tasks[0].subtasks[0].assignee_id == 1
+
+
 def test_unmatched_person_name_is_preserved_without_an_id():
     result = generate_project_init_draft(
         [chunk("安排外部顾问")],

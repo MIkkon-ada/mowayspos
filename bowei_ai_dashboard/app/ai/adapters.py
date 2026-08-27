@@ -96,6 +96,9 @@ class OpenAICompatibleChatAdapter:
             max_output_tokens = config.get("max_output_tokens") if isinstance(config, dict) else None
             if isinstance(max_output_tokens, int) and not isinstance(max_output_tokens, bool) and max_output_tokens > 0:
                 request["max_tokens"] = max_output_tokens
+            response_format = config.get("response_format") if isinstance(config, dict) else None
+            if response_format == {"type": "json_object"}:
+                request["response_format"] = response_format
             response = client.chat.completions.create(**request)
             return str(response.choices[0].message.content or "")
         except APITimeoutError as exc:

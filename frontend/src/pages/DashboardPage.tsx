@@ -87,9 +87,13 @@ function aggregateDashboardOverviews(projects: Project[], overviews: DashboardOv
 }
 
 export function DashboardPage() {
-  const { currentProjectId, projects, currentProject, currentProjectRoles, currentUser } = useProject()
+  const { currentProjectId, projects, currentProject, currentProjectRoles, currentUser, reloadProjects } = useProject()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+
+  useEffect(() => {
+    void reloadProjects()
+  }, [reloadProjects])
 
   const rawProjectId = searchParams.get('projectId')
   const urlProjectId = rawProjectId && Number.isFinite(Number(rawProjectId)) ? Number(rawProjectId) : null

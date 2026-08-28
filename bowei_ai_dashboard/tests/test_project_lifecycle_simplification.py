@@ -32,7 +32,7 @@ def _db(status: str = "draft"):
 
 def _set_dispatch_base_info(db):
     project = db.get(models.Project, 1)
-    project.objectives = "项目目标"
+    project.objectives = "\u9879\u76ee\u76ee\u6807"
     project.start_date = "2026-08-01"
     project.end_date = "2026-08-31"
     db.commit()
@@ -61,6 +61,21 @@ def test_dispatch_changes_draft_to_dispatched_and_notifies_owner():
     project = db.get(models.Project, 1)
     assert project.status == "dispatched"
     assert project.is_active is False
+    assert db.query(models.Notification).filter_by(type="project_owner_notify", project_id=1).count() == 1
+
+
+def test_dispatch_allows_a_missing_end_date_and_notifies_owner():
+    db = _db("draft")
+    project = db.get(models.Project, 1)
+    project.objectives = "项目目标"
+    project.start_date = "2026-08-01"
+    project.end_date = ""
+    db.commit()
+
+    result = projects.dispatch_project(1, current_user="company_ceo", db=db)
+
+    assert result == {"ok": True, "notified_to": 1, "status": "dispatched"}
+    assert db.get(models.Project, 1).status == "dispatched"
     assert db.query(models.Notification).filter_by(type="project_owner_notify", project_id=1).count() == 1
 
 
@@ -114,7 +129,8 @@ def test_dispatch_rejects_non_draft_lifecycle_without_changing_state_or_notifyin
 @pytest.mark.parametrize(
     ("start_date", "end_date", "message"),
     [
-        ("2026-08-xx", "2026-08-31", "项目周期必须使用 YYYY-MM-DD 格式。"),
+        ("2026-08-xx", "2026-08-31", "\u9879\u76ee\u5f00\u59cb\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002"),
+        ("2026-08-01", "2026-08-xx", "\u9879\u76ee\u7ed3\u675f\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002"),
         ("2026-09-01", "2026-08-31", "项目结束日期不得早于开始日期。"),
     ],
 )
@@ -141,10 +157,9 @@ def test_dispatch_requires_valid_chronological_iso_period(start_date, end_date, 
         ("", "2026-08-01", "2026-08-31"),
         ("   ", "2026-08-01", "2026-08-31"),
         ("项目目标", "", "2026-08-31"),
-        ("项目目标", "2026-08-01", ""),
     ],
 )
-def test_dispatch_requires_nonblank_objectives_and_complete_period(objectives, start_date, end_date):
+def test_dispatch_requires_nonblank_objectives_and_start_date(objectives, start_date, end_date):
     db = _db("draft")
     project = db.get(models.Project, 1)
     project.objectives = objectives
@@ -155,7 +170,7 @@ def test_dispatch_requires_nonblank_objectives_and_complete_period(objectives, s
     with pytest.raises(HTTPException) as exc_info:
         projects.dispatch_project(1, current_user="company_ceo", db=db)
 
-    assert exc_info.value.detail == "请先填写项目目标和项目周期后再下发项目。"
+    assert exc_info.value.detail == "\u8bf7\u5148\u586b\u5199\u9879\u76ee\u76ee\u6807\u548c\u5f00\u59cb\u65e5\u671f\u540e\u518d\u4e0b\u53d1\u9879\u76ee\u3002"
     assert db.get(models.Project, 1).status == "draft"
     assert db.query(models.Notification).filter_by(type="project_owner_notify", project_id=1).count() == 0
 

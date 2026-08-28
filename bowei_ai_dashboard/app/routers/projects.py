@@ -865,6 +865,7 @@ def list_projects(
     q = q.order_by(models.Project.sort_order, models.Project.id)
 
     if not context["can_view_all"]:
+        q = q.filter(models.Project.status.notin_(["archived", PL.S_DRAFT]))
         person_id = context.get("person_id")
 
         # 从 project_members 取可见 project_id
@@ -2390,17 +2391,23 @@ def dispatch_project(
     objectives = (project.objectives or "").strip()
     start_date = (project.start_date or "").strip()
     end_date = (project.end_date or "").strip()
-    if not objectives or not start_date or not end_date:
-        raise HTTPException(409, "请先填写项目目标和项目周期后再下发项目。")
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start_date) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", end_date):
-        raise HTTPException(409, "项目周期必须使用 YYYY-MM-DD 格式。")
+    if not objectives or not start_date:
+        raise HTTPException(409, "\u8bf7\u5148\u586b\u5199\u9879\u76ee\u76ee\u6807\u548c\u5f00\u59cb\u65e5\u671f\u540e\u518d\u4e0b\u53d1\u9879\u76ee\u3002")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start_date):
+        raise HTTPException(409, "\u9879\u76ee\u5f00\u59cb\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
     try:
         parsed_start_date = date.fromisoformat(start_date)
-        parsed_end_date = date.fromisoformat(end_date)
     except ValueError:
-        raise HTTPException(409, "项目周期必须使用 YYYY-MM-DD 格式。")
-    if parsed_end_date < parsed_start_date:
-        raise HTTPException(409, "项目结束日期不得早于开始日期。")
+        raise HTTPException(409, "\u9879\u76ee\u5f00\u59cb\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
+    if end_date:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", end_date):
+            raise HTTPException(409, "\u9879\u76ee\u7ed3\u675f\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
+        try:
+            parsed_end_date = date.fromisoformat(end_date)
+        except ValueError:
+            raise HTTPException(409, "\u9879\u76ee\u7ed3\u675f\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
+        if parsed_end_date < parsed_start_date:
+            raise HTTPException(409, "\u9879\u76ee\u7ed3\u675f\u65e5\u671f\u4e0d\u5f97\u65e9\u4e8e\u5f00\u59cb\u65e5\u671f\u3002")
 
     _set_project_lifecycle(project, PL.S_DISPATCHED, db=db, project_id=project_id)
     recipient_ids = project_strict_owner_ids(project_id, db)

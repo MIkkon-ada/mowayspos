@@ -847,13 +847,13 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
               <p className="text-xs text-slate-500">基础信息由管理层维护</p>
               <div className="grid grid-cols-1 gap-3">
                 <div className="min-w-0">
-                  <span className="block text-[11px] font-semibold text-slate-500">项目名称</span>
-                  <p className="mt-2 truncate text-lg font-bold tracking-[-0.01em] text-slate-900">{project.name}</p>
+                  <span className="block text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">项目名称</span>
+                  <p className="mt-2 truncate text-xl font-bold tracking-[-0.01em] text-slate-900">{project.name}</p>
                 </div>
                 <div className="owner-submit-project-period-display min-w-0">
-                  <span className="block text-[11px] font-semibold text-slate-500">项目周期 / 时间段</span>
-                  <div className="relative mt-2 flex min-h-5 items-center pl-7 text-sm font-medium text-slate-700">
-                    <svg aria-hidden="true" viewBox="0 0 24 24" className="pointer-events-none absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <span className="block text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">项目周期 / 时间段</span>
+                  <div className="relative mt-2 flex min-h-10 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 pl-9 text-sm font-semibold text-slate-800">
+                    <svg aria-hidden="true" viewBox="0 0 24 24" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8">
                       <rect x="3" y="5" width="18" height="16" rx="2" />
                       <path d="M16 3v4M8 3v4M3 10h18" />
                     </svg>
@@ -861,8 +861,15 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
                   </div>
                 </div>
                 <div className="min-w-0">
-                  <span className="block text-[11px] font-semibold text-slate-500">项目完成准则 / 验收标准</span>
-                  <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-700">{project.objectives?.trim() || '未填写'}</p>
+                  <span className="block text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">项目完成准则 / 验收标准</span>
+                  <div className="owner-submit-objectives-content mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                    <span className="block text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">内容</span>
+                    {project.objectives?.trim() ? (
+                      <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-800">{project.objectives.trim()}</p>
+                    ) : (
+                      <span className="mt-2 inline-flex rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs font-medium text-slate-400">未填写</span>
+                    )}
+                  </div>
                 </div>
               </div>
 

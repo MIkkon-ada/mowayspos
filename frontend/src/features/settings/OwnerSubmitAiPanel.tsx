@@ -295,6 +295,7 @@ export function OwnerSubmitAiPanel({
   const uploadControllerRef = useRef<AbortController | undefined>(undefined)
   const analysisControllerRef = useRef<AbortController | undefined>(undefined)
   const analysisRequestIdRef = useRef(0)
+  const analysisStartInFlightRef = useRef(false)
 
   const isCurrentAnalysisRequest = useCallback((requestId: number, controller: AbortController) => (
     mountedRef.current && !controller.signal.aborted && analysisRequestIdRef.current === requestId
@@ -476,11 +477,16 @@ export function OwnerSubmitAiPanel({
   }
 
   async function startAnalysis() {
+    if (analysisStartInFlightRef.current) return
     const pending = queue.filter((item) => item.status === 'queued' || ((item.status === 'failed' || item.status === 'cancelled') && item.retryable === true))
     if (pending.length === 0 && successfulAttachmentIds.length === 0) {
       setError('请先选择至少一个有效文件')
       return
     }
+    analysisStartInFlightRef.current = true
+    setDecisions({})
+    setApplySuccess(false)
+    setDraft(undefined)
     setError('')
     setPanelState('uploading')
     const controller = new AbortController()
@@ -523,11 +529,15 @@ export function OwnerSubmitAiPanel({
     } finally {
       if (uploadControllerRef.current === controller) uploadControllerRef.current = undefined
       if (analysisControllerRef.current === analysisController) analysisControllerRef.current = undefined
+      analysisStartInFlightRef.current = false
     }
   }
 
   async function retryAnalysis() {
-    if (!run || run.status !== 'failed') return
+    if (!run || run.status !== 'failed') {
+      await startAnalysis()
+      return
+    }
     setError('')
     setPanelState('analyzing')
     const controller = new AbortController()

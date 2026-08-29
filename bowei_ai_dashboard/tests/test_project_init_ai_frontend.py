@@ -51,3 +51,24 @@ def test_owner_submit_ai_preview_offers_rerun_for_existing_attachments():
 
     assert "重新分析" in preview_source
     assert "onClick={() => void startAnalysis()}" in preview_source
+
+
+def test_owner_submit_ai_rerun_resets_preview_choices_and_rejects_duplicate_starts():
+    source = _frontend_source("features/settings/OwnerSubmitAiPanel.tsx")
+    start_analysis_source = source.split("async function startAnalysis()", maxsplit=1)[1].split("async function retryAnalysis()", maxsplit=1)[0]
+
+    assert "const analysisStartInFlightRef = useRef(false)" in source
+    assert "if (analysisStartInFlightRef.current) return" in start_analysis_source
+    assert "analysisStartInFlightRef.current = true" in start_analysis_source
+    assert "setDecisions({})" in start_analysis_source
+    assert "setApplySuccess(false)" in start_analysis_source
+    assert "setDraft(undefined)" in start_analysis_source
+    assert "analysisStartInFlightRef.current = false" in start_analysis_source
+
+
+def test_owner_submit_ai_failed_rerun_of_completed_preview_starts_a_new_analysis():
+    source = _frontend_source("features/settings/OwnerSubmitAiPanel.tsx")
+    retry_analysis_source = source.split("async function retryAnalysis()", maxsplit=1)[1].split("function setDecision", maxsplit=1)[0]
+
+    assert "if (!run || run.status !== 'failed')" in retry_analysis_source
+    assert "await startAnalysis()" in retry_analysis_source

@@ -71,8 +71,7 @@ def test_owner_submit_persists_xlsx_ai_draft_with_end_only_month_and_raw_importe
     assert "重点工作\t关键任务\t负责人\t协助人\t计划时间" in data_chunk.text
     assert data_chunk.location.endswith("A3:E3")
 
-    def deterministic_llm(prompt: str, provider: str) -> str:
-        assert provider == "injected"
+    def deterministic_llm(prompt: str, _provider: str) -> str:
         assert data_chunk.location in prompt
         return json.dumps(
             {
@@ -90,7 +89,6 @@ def test_owner_submit_persists_xlsx_ai_draft_with_end_only_month_and_raw_importe
                                 "attachment_id": 42,
                                 "file_name": data_chunk.file_name,
                                 "location": data_chunk.location,
-                                "excerpt": "现场部署\t完成现场部署\t王五\t赵六\t2026-06",
                             }
                         ],
                         "subtasks": [
@@ -108,7 +106,6 @@ def test_owner_submit_persists_xlsx_ai_draft_with_end_only_month_and_raw_importe
                                         "attachment_id": 42,
                                         "file_name": data_chunk.file_name,
                                         "location": data_chunk.location,
-                                        "excerpt": "现场部署\t完成现场部署\t王五\t赵六\t2026-06",
                                     }
                                 ],
                             }
@@ -136,8 +133,14 @@ def test_owner_submit_persists_xlsx_ai_draft_with_end_only_month_and_raw_importe
     ai_task = ai_draft.tasks[0]
     ai_subtask = ai_task.subtasks[0]
     assert (ai_task.plan_start, ai_task.plan_end) == ("2026-06-01", "")
-    assert ai_task.evidence[0].location == data_chunk.location
-    assert ai_subtask.evidence[0].location == data_chunk.location
+    expected_evidence = {
+        "attachment_id": 42,
+        "file_name": data_chunk.file_name,
+        "location": data_chunk.location,
+        "excerpt": data_chunk.text.strip()[:300],
+    }
+    assert ai_task.evidence[0].model_dump() == expected_evidence
+    assert ai_subtask.evidence[0].model_dump() == expected_evidence
 
     payload = schemas.ProjectProfilePayload(
         work_progress_draft=[

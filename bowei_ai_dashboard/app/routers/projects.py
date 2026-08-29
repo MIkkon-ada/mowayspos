@@ -197,6 +197,10 @@ def _resolve_work_progress_people(
             if sub_draft.assignee_id is None:
                 assignee = _resolve_imported_name((sub_draft.assignee or "").strip(), assignee=True)
                 sub_draft.assignee_id = assignee.id
+            sub_draft.helper_ids = list(dict.fromkeys(
+                person_id for person_id in sub_draft.helper_ids
+                if person_id != sub_draft.assignee_id
+            ))
             if not sub_draft.helper_ids:
                 helper_ids: list[int] = []
                 for name in _split_names(sub_draft.helper):
@@ -207,11 +211,6 @@ def _resolve_work_progress_people(
                     if person and person.id != sub_draft.assignee_id and person.id not in helper_ids:
                         helper_ids.append(person.id)
                 sub_draft.helper_ids = helper_ids
-            else:
-                sub_draft.helper_ids = list(dict.fromkeys(
-                    person_id for person_id in sub_draft.helper_ids
-                    if person_id != sub_draft.assignee_id
-                ))
             if sub_draft.assignee_id is not None:
                 assignee_name = people[sub_draft.assignee_id].name
                 sub_draft.helper = _join_names(

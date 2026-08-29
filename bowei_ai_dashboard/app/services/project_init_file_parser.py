@@ -512,9 +512,7 @@ def _parse_xls(path: Path, original_name: str) -> Iterable[SourceChunk]:
                         for column_index in range(sheet.ncols)
                     ]
 
-            chunk = _worksheet_chunk(sheet.name, rows, original_name, limits)
-            if chunk is not None:
-                yield chunk
+            yield from _worksheet_chunks(sheet.name, rows, original_name, limits)
     finally:
         release_resources = getattr(workbook, "release_resources", None)
         if callable(release_resources):
@@ -573,9 +571,12 @@ def _parse_xlsx(path: Path, original_name: str) -> Iterable[SourceChunk]:
                         for cached_cell, formula_cell in zip(cached_row, formula_row)
                     ]
 
-            chunk = _worksheet_chunk(formula_sheet.title, rows, original_name, limits)
-            if chunk is not None:
-                yield chunk
+            yield from _worksheet_chunks(
+                formula_sheet.title,
+                rows,
+                original_name,
+                limits,
+            )
     finally:
         try:
             formula_workbook.close()
@@ -709,9 +710,67 @@ def _worksheet_chunk(
         raise TypeError("_worksheet_chunk requires a row factory callable")
     row_factory = rows
     limits = limits or _IncrementalChunkLimits(original_name)
+    bounds = _worksheet_bounds(row_factory, original_name, limits)
+    if bounds is None:
+        return None
+    return _render_worksheet_range(row_factory, sheet_name, bounds, limits)
+
+
+def _worksheet_chunks(
+    sheet_name: str,
+    rows: Callable[[], Iterable[Sequence[Any]]],
+    original_name: str,
+    limits: _IncrementalChunkLimits,
+) -> Iterable[SourceChunk]:
+    if not callable(rows):
+        raise TypeError("_worksheet_chunks requires a row factory callable")
+    bounds = _worksheet_bounds(rows, original_name, limits)
+    if bounds is None:
+        return
+
+    min_row, max_row, min_column, max_column = bounds
+    header = next(
+        _worksheet_row_values(row, min_column, max_column)
+        for row_index, row in enumerate(rows())
+        if row_index == min_row
+    )
+    if not all(_is_non_empty_cell(value) for value in header):
+        yield _render_worksheet_range(rows, sheet_name, bounds, limits)
+        return
+
+    has_data_rows = False
+    for row_index, row in enumerate(rows()):
+        if row_index <= min_row or row_index > max_row:
+            continue
+        values = _worksheet_row_values(row, min_column, max_column)
+        if not any(_is_non_empty_cell(value) for value in values):
+            continue
+        has_data_rows = True
+        builder = limits.builder()
+        _append_worksheet_row(builder, header)
+        builder.append("\n")
+        _append_worksheet_row(builder, values)
+        location = (
+            f"{quote_sheetname(sheet_name)}!"
+            f"{get_column_letter(min_column + 1)}{row_index + 1}:"
+            f"{get_column_letter(max_column + 1)}{row_index + 1}"
+        )
+        chunk = builder.finish(location)
+        if chunk is not None:
+            yield chunk
+
+    if not has_data_rows:
+        yield _render_worksheet_range(rows, sheet_name, bounds, limits)
+
+
+def _worksheet_bounds(
+    rows: Callable[[], Iterable[Sequence[Any]]],
+    original_name: str,
+    limits: _IncrementalChunkLimits,
+) -> tuple[int, int, int, int] | None:
     min_row = max_row = min_column = max_column = None
     worksheet_chars = 0
-    for row_index, row in enumerate(row_factory()):
+    for row_index, row in enumerate(rows()):
         for column_index, value in enumerate(row):
             if not _is_non_empty_cell(value):
                 continue
@@ -733,19 +792,28 @@ def _worksheet_chunk(
             )
     if min_row is None or max_row is None or min_column is None or max_column is None:
         return None
+    return min_row, max_row, min_column, max_column
+
+
+def _render_worksheet_range(
+    rows: Callable[[], Iterable[Sequence[Any]]],
+    sheet_name: str,
+    bounds: tuple[int, int, int, int],
+    limits: _IncrementalChunkLimits,
+) -> SourceChunk | None:
+    min_row, max_row, min_column, max_column = bounds
 
     builder = limits.builder()
     rendered_row_count = 0
-    for row_index, row in enumerate(row_factory()):
+    for row_index, row in enumerate(rows()):
         if row_index < min_row or row_index > max_row:
             continue
         if rendered_row_count:
             builder.append("\n")
-        for column_index in range(min_column, max_column + 1):
-            if column_index > min_column:
-                builder.append("\t")
-            value = row[column_index] if column_index < len(row) else None
-            builder.append(_render_cell(value))
+        _append_worksheet_row(
+            builder,
+            _worksheet_row_values(row, min_column, max_column),
+        )
         rendered_row_count += 1
     location = (
         f"{quote_sheetname(sheet_name)}!"
@@ -753,6 +821,27 @@ def _worksheet_chunk(
         f"{get_column_letter(max_column + 1)}{max_row + 1}"
     )
     return builder.finish(location)
+
+
+def _worksheet_row_values(
+    row: Sequence[Any],
+    min_column: int,
+    max_column: int,
+) -> list[Any]:
+    return [
+        row[column_index] if column_index < len(row) else None
+        for column_index in range(min_column, max_column + 1)
+    ]
+
+
+def _append_worksheet_row(
+    builder: _IncrementalChunkBuilder,
+    values: Sequence[Any],
+) -> None:
+    for column_index, value in enumerate(values):
+        if column_index:
+            builder.append("\t")
+        builder.append(_render_cell(value))
 
 
 def _is_non_empty_cell(value: Any) -> bool:

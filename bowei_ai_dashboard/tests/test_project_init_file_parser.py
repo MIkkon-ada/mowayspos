@@ -377,6 +377,21 @@ def test_xlsx_falls_back_to_formula_when_cached_value_is_absent(tmp_path):
     ]
 
 
+def test_xlsx_emits_header_context_for_each_populated_table_row(tmp_path):
+    path = tmp_path / "plan.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["事项", "负责人"])
+    sheet.append(["部署", "张三"])
+    sheet.append(["验收", "李四"])
+    workbook.save(path)
+
+    assert parse_project_init_file(path, "计划.xlsx") == [
+        SourceChunk("计划.xlsx", "'Sheet'!A2:B2", "事项\t负责人\n部署\t张三"),
+        SourceChunk("计划.xlsx", "'Sheet'!A3:B3", "事项\t负责人\n验收\t李四"),
+    ]
+
+
 def test_xlsx_preserves_formula_text_when_cached_result_exists(tmp_path):
     source_path = tmp_path / "formula.xlsx"
     path = tmp_path / "formula-with-cache.xlsx"

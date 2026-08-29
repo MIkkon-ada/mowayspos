@@ -10,6 +10,8 @@ from app.services.project_init_ai_agent import (
     ProjectInitAiError,
     ProjectInitAiInvalidDraft,
     _merge_tasks,
+    _context_prompt,
+    _final_merge_prompt,
     _parse_json_response,
     generate_project_init_draft,
 )
@@ -223,6 +225,40 @@ def test_reconciles_end_only_month_as_a_start_only_date():
     assert task.plan_end == ""
 
 
+def test_reconciles_end_only_iso_date_as_a_start_only_date():
+    payload = raw_task()
+    payload["plan_start"] = ""
+    payload["plan_end"] = "2026-06-15"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    assert task.plan_start == "2026-06-15"
+    assert task.plan_end == ""
+
+
+def test_preserves_plan_end_when_plan_start_is_present():
+    payload = raw_task()
+    payload["plan_start"] = "2026-06-01"
+    payload["plan_end"] = "2026-06-15"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    assert task.plan_start == "2026-06-01"
+    assert task.plan_end == "2026-06-15"
+
+
 def test_reconciles_parent_description_that_repeats_its_first_subtask_title():
     payload = raw_task()
     payload["description"] = payload["subtasks"][0]["title"]
@@ -235,6 +271,42 @@ def test_reconciles_parent_description_that_repeats_its_first_subtask_title():
     )
 
     assert result.tasks[0].description == ""
+
+
+def test_reconciles_parent_description_with_normalized_first_subtask_title():
+    payload = raw_task()
+    payload["description"] = "完成 方案，确认"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].description == ""
+
+
+def test_parent_description_matching_only_second_subtask_is_preserved():
+    payload = raw_task()
+    payload["subtasks"].append({"title": "完成上线验收"})
+    payload["description"] = "完成上线验收"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].description == "完成上线验收"
+
+
+@pytest.mark.parametrize("prompt", [_context_prompt([], [], []), _final_merge_prompt([], [])])
+def test_prompts_map_project_outline_terms_to_task_fields(prompt: str):
+    assert "专项映射到 task title" in prompt
+    assert "关键任务映射到 subtasks" in prompt
+    assert "关键成果或完成标准映射到父任务 description" in prompt
 
 
 def test_normalizes_overlong_evidence_excerpt_without_breaking_source_validation():

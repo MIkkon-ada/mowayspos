@@ -26,6 +26,7 @@ _POSITIVE_ID = Annotated[int, Field(strict=True, gt=0)]
 _POSITIVE_ID_ADAPTER = TypeAdapter(_POSITIVE_ID)
 _MERGE_STATUSES = Literal["new", "definite_duplicate", "possible_duplicate"]
 _YEAR_MONTH = re.compile(r"\d{4}-(?:0[1-9]|1[0-2])")
+_ISO_DATE = re.compile(r"\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])")
 
 
 class ProjectInitAiError(RuntimeError):
@@ -548,10 +549,12 @@ def _reconcile_task(
         )
         reconciled_subtasks.append(AgentSubTask.model_validate(subtask_data))
     task_data = task.model_dump(mode="python")
-    if not task.plan_start and _YEAR_MONTH.fullmatch(task.plan_end):
-        task_data["plan_start"] = f"{task.plan_end}-01"
+    if not task.plan_start and (_YEAR_MONTH.fullmatch(task.plan_end) or _ISO_DATE.fullmatch(task.plan_end)):
+        task_data["plan_start"] = (
+            f"{task.plan_end}-01" if _YEAR_MONTH.fullmatch(task.plan_end) else task.plan_end
+        )
         task_data["plan_end"] = ""
-    if reconciled_subtasks and task.description == reconciled_subtasks[0].title:
+    if reconciled_subtasks and _normalise_title(task.description) == _normalise_title(reconciled_subtasks[0].title):
         task_data["description"] = ""
     task_data.update(
         {
@@ -654,6 +657,7 @@ def _context_prompt(
         "来源目录中的 attachment_id 为 null 时，evidence 的 attachment_id 必须为 null，禁止伪造非空 ID。"
         "日期字段使用 plan_start、plan_end，不使用 deadline；只有开始月份时，plan_start 写 YYYY-MM-01，plan_end 置为空字符串，不能把开始月份写入 plan_end。"
         "父任务 description 不得重复第一个 subtask 的 title；重复时使用空字符串。"
+        "来源内容层级映射：专项映射到 task title；关键任务映射到 subtasks；关键成果或完成标准映射到父任务 description。"
         "输出字段必须严格遵循：task 只能包含 title、description、owner_name、priority、status、plan_start、plan_end、evidence、subtasks；"
         "subtask 只能包含 title、description、assignee_name、helper_names、priority、status、plan_start、plan_end、evaluation_standard、evidence。"
         "evidence 只能包含 attachment_id、file_name、location；不要输出 excerpt 或 source_label，服务端会生成真实摘录。"
@@ -686,6 +690,7 @@ def _final_merge_prompt(
         "不得发明任务、人员或来源，也不得删除唯一来源。每条 evidence 必须引用下方候选或来源目录中的真实 attachment_id、file_name、location；null attachment_id 不得改为非空。"
         "日期字段使用 plan_start、plan_end，不使用 deadline；只有开始月份时，plan_start 写 YYYY-MM-01，plan_end 置为空字符串，不能把开始月份写入 plan_end。"
         "父任务 description 不得重复第一个 subtask 的 title；重复时使用空字符串。"
+        "来源内容层级映射：专项映射到 task title；关键任务映射到 subtasks；关键成果或完成标准映射到父任务 description。"
         "evidence 只能包含 attachment_id、file_name、location；不要输出 excerpt 或 source_label，服务端会生成真实摘录。每个 task 必须至少包含一个 subtasks 项；可选字符串为空时使用空字符串，不要使用 null。"
         "不要输出 source、任何人员 ID、confidence、merge_status、duplicate_of、duplicate_reason 或 warnings；这些字段由服务端统一计算。"
         f"\n候选任务：{json.dumps([task.model_dump() for task in tasks], ensure_ascii=False)}"

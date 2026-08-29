@@ -28,9 +28,9 @@ def test_owner_submit_modal_has_current_three_zone_workbench_layout():
 def test_owner_submit_modal_width_uses_current_workbench_limits():
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
-    assert "w-[96vw]" in source
-    assert "max-w-[1560px]" in source
-    assert "mx-auto" in source
+    assert "owner-submit-workbench-shell flex min-h-0 w-full flex-1" in source
+    assert "w-[96vw]" not in source
+    assert "max-w-[1560px]" not in source
     assert "w-[820px]" not in source
     assert "max-w-[1280px]" not in source
 

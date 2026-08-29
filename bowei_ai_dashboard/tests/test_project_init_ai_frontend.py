@@ -43,3 +43,11 @@ def test_owner_submit_ai_warning_preview_labels_ambiguous_inactive_and_unmatched
     source = _frontend_source("features/settings/OwnerSubmitAiPanel.tsx")
     for label in ("低置信度", "人员匹配不明确", "人员已停用", "未匹配人员"):
         assert label in source
+
+
+def test_owner_submit_ai_preview_offers_rerun_for_existing_attachments():
+    source = _frontend_source("features/settings/OwnerSubmitAiPanel.tsx")
+    preview_source = source.split("{panelState === 'preview' && run && draft && (", maxsplit=1)[1]
+
+    assert "重新分析" in preview_source
+    assert "onClick={() => void startAnalysis()}" in preview_source

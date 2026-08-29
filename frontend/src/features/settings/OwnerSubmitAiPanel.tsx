@@ -538,6 +538,11 @@ export function OwnerSubmitAiPanel({
       await startAnalysis()
       return
     }
+    if (analysisStartInFlightRef.current) return
+    analysisStartInFlightRef.current = true
+    setDecisions({})
+    setApplySuccess(false)
+    setDraft(undefined)
     setError('')
     setPanelState('analyzing')
     const controller = new AbortController()
@@ -553,6 +558,7 @@ export function OwnerSubmitAiPanel({
       }
     } finally {
       if (analysisControllerRef.current === controller) analysisControllerRef.current = undefined
+      analysisStartInFlightRef.current = false
     }
   }
 

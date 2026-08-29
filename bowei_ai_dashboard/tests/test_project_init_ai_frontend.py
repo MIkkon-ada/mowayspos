@@ -72,3 +72,15 @@ def test_owner_submit_ai_failed_rerun_of_completed_preview_starts_a_new_analysis
 
     assert "if (!run || run.status !== 'failed')" in retry_analysis_source
     assert "await startAnalysis()" in retry_analysis_source
+
+
+def test_owner_submit_ai_failed_run_retry_resets_preview_choices_and_rejects_duplicates():
+    source = _frontend_source("features/settings/OwnerSubmitAiPanel.tsx")
+    retry_analysis_source = source.split("async function retryAnalysis()", maxsplit=1)[1].split("function setDecision", maxsplit=1)[0]
+
+    assert "if (analysisStartInFlightRef.current) return" in retry_analysis_source
+    assert "analysisStartInFlightRef.current = true" in retry_analysis_source
+    assert "setDecisions({})" in retry_analysis_source
+    assert "setApplySuccess(false)" in retry_analysis_source
+    assert "setDraft(undefined)" in retry_analysis_source
+    assert "analysisStartInFlightRef.current = false" in retry_analysis_source

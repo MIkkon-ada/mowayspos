@@ -11,6 +11,7 @@ import inspect
 import json
 import re
 from collections.abc import Callable, Iterable
+from datetime import date
 from difflib import SequenceMatcher
 from typing import Annotated, Any, Literal
 
@@ -201,6 +202,14 @@ def _normalise_name(value: object) -> str:
 
 def _normalise_title(value: object) -> str:
     return re.sub(r"[\W_]+", "", str(value or "").strip().casefold())
+
+
+def _is_calendar_date(value: str) -> bool:
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _source_label(file_name: str, location: str) -> str:
@@ -549,7 +558,9 @@ def _reconcile_task(
         )
         reconciled_subtasks.append(AgentSubTask.model_validate(subtask_data))
     task_data = task.model_dump(mode="python")
-    if not task.plan_start and (_YEAR_MONTH.fullmatch(task.plan_end) or _ISO_DATE.fullmatch(task.plan_end)):
+    is_end_only_month = _YEAR_MONTH.fullmatch(task.plan_end)
+    is_end_only_date = _ISO_DATE.fullmatch(task.plan_end) and _is_calendar_date(task.plan_end)
+    if not task.plan_start and (is_end_only_month or is_end_only_date):
         task_data["plan_start"] = (
             f"{task.plan_end}-01" if _YEAR_MONTH.fullmatch(task.plan_end) else task.plan_end
         )

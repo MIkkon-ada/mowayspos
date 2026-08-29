@@ -242,6 +242,23 @@ def test_reconciles_end_only_iso_date_as_a_start_only_date():
     assert task.plan_end == ""
 
 
+def test_preserves_impossible_end_only_iso_date():
+    payload = raw_task()
+    payload["plan_start"] = ""
+    payload["plan_end"] = "2026-02-31"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    assert task.plan_start == ""
+    assert task.plan_end == "2026-02-31"
+
+
 def test_preserves_plan_end_when_plan_start_is_present():
     payload = raw_task()
     payload["plan_start"] = "2026-06-01"

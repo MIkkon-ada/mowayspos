@@ -54,7 +54,10 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 _VALID_ROLES = {"project_ceo", "owner", "coordinator", "member"}
 _LIFECYCLE_STATUSES = PL.ALL_STATUSES
 _IMPORTABLE_PERSON_NAME = re.compile(r"^[\u4e00-\u9fff]{2,8}$")
-_NON_PERSON_IMPORT_VALUES = {"各项目经理", "咨询部", "mowasyadmin"}
+_NON_PERSON_IMPORT_VALUES = {"mowasyadmin", "moways"}
+_NON_PERSON_IMPORT_PATTERN = re.compile(
+    r"项目经理|负责人|总监|主管|全体|成员|部门|团队|项目组|项目部|[部组中心]$"
+)
 
 # 旧展示常量 → 新 role key（用于 transition period 回落）
 _OLD_ROLE_TO_KEY = {
@@ -127,7 +130,15 @@ def _validate_work_progress_draft(payload: schemas.ProjectProfilePayload) -> Non
 
 def _is_importable_person_name(value: str) -> bool:
     """Allow only short Chinese personal names from imported work-plan text."""
-    return bool(_IMPORTABLE_PERSON_NAME.fullmatch(value)) and value.lower() not in _NON_PERSON_IMPORT_VALUES
+    return (
+        bool(_IMPORTABLE_PERSON_NAME.fullmatch(value))
+        and value.lower() not in _NON_PERSON_IMPORT_VALUES
+        and not _NON_PERSON_IMPORT_PATTERN.search(value)
+    )
+
+
+def _contains_chinese(value: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", value))
 
 
 def _resolve_work_progress_people(
@@ -136,24 +147,13 @@ def _resolve_work_progress_people(
 ) -> dict[int, models.Person]:
     """Resolve safe imported names and validate picker IDs before project mutations."""
     person_ids: set[int] = set()
-    imported_names: set[str] = set()
     for task_draft in payload.work_progress_draft or []:
         for sub_draft in task_draft.subtasks or []:
             if not (sub_draft.title or "").strip():
                 continue
             if sub_draft.assignee_id is not None:
                 person_ids.add(sub_draft.assignee_id)
-            else:
-                assignee_name = (sub_draft.assignee or "").strip()
-                if not _is_importable_person_name(assignee_name):
-                    raise HTTPException(422, "请选择关键任务负责人")
-                imported_names.add(assignee_name)
             person_ids.update(sub_draft.helper_ids or [])
-            if not sub_draft.helper_ids:
-                imported_names.update(
-                    name for name in _split_names(sub_draft.helper)
-                    if _is_importable_person_name(name)
-                )
 
     people = {
         person.id: person
@@ -165,35 +165,45 @@ def _resolve_work_progress_people(
     if invalid_ids:
         raise HTTPException(422, f"存在无效或已停用的人员 ID：{', '.join(map(str, invalid_ids))}")
 
-    existing_people_by_name = {
-        person.name: person
-        for person in db.query(models.Person)
-        .filter(models.Person.name.in_(imported_names), models.Person.is_active.is_(True))
-        .all()
-    } if imported_names else {}
-    for name in imported_names - existing_people_by_name.keys():
-        person = models.Person(name=name, system_role="normal_member", is_active=True)
-        db.add(person)
-        existing_people_by_name[name] = person
-    if imported_names:
-        db.flush()
+    def _resolve_imported_name(name: str, *, assignee: bool = False) -> models.Person:
+        if not _is_importable_person_name(name):
+            raise HTTPException(422, "请选择关键任务负责人" if assignee else "人员姓名必须为具体个人")
+        person = db.query(models.Person).filter(
+            models.Person.name == name,
+            models.Person.is_active.is_(True),
+        ).first()
+        if person is None:
+            person = models.Person(name=name, system_role="normal_member", is_active=True)
+            db.add(person)
+            db.flush()
+        people[person.id] = person
+        return person
 
     for task_draft in payload.work_progress_draft or []:
+        task_owner_name = (task_draft.owner or "").strip()
+        if task_owner_name and _contains_chinese(task_owner_name):
+            _resolve_imported_name(task_owner_name)
         for sub_draft in task_draft.subtasks or []:
             if not (sub_draft.title or "").strip():
                 continue
             if sub_draft.assignee_id is None:
-                assignee = existing_people_by_name[(sub_draft.assignee or "").strip()]
+                assignee = _resolve_imported_name((sub_draft.assignee or "").strip(), assignee=True)
                 sub_draft.assignee_id = assignee.id
-                people[assignee.id] = assignee
             if not sub_draft.helper_ids:
                 helper_ids: list[int] = []
                 for name in _split_names(sub_draft.helper):
-                    person = existing_people_by_name.get(name)
-                    if person and person.id not in helper_ids:
+                    if _contains_chinese(name):
+                        person = _resolve_imported_name(name)
+                    else:
+                        person = None
+                    if person and person.id != sub_draft.assignee_id and person.id not in helper_ids:
                         helper_ids.append(person.id)
-                        people[person.id] = person
                 sub_draft.helper_ids = helper_ids
+            else:
+                sub_draft.helper_ids = list(dict.fromkeys(
+                    person_id for person_id in sub_draft.helper_ids
+                    if person_id != sub_draft.assignee_id
+                ))
     return people
 
 
@@ -703,6 +713,11 @@ def _save_work_progress_draft(
         if (sub_draft.title or "").strip()
         for person_id in ([sub_draft.assignee_id] if sub_draft.assignee_id is not None else []) + (sub_draft.helper_ids or [])
     }
+    selected_ids.update(
+        owner_id
+        for task_draft in drafts
+        if (owner_id := _person_id_for_name(task_draft.owner, db)) is not None
+    )
     for person_id in selected_ids:
         person = resolved_people[person_id]
         existing = db.query(models.ProjectMember).filter_by(
@@ -779,7 +794,11 @@ def _save_work_progress_draft(
             subtask.status = subtask.status or TS.S_NOT_STARTED
             subtask.completion_criteria = (sub_draft.evaluation_standard or "").strip()
             if sub_draft.helper_ids:
-                helper_ids = list(dict.fromkeys(sub_draft.helper_ids))
+                helper_ids = [
+                    person_id
+                    for person_id in dict.fromkeys(sub_draft.helper_ids)
+                    if person_id != subtask.assignee_id
+                ]
                 subtask.collaborator_ids = helper_ids
                 helper_names = _join_names(resolved_people[person_id].name for person_id in helper_ids)
                 subtask.notes = _helper_note(helper_names)
@@ -2498,19 +2517,23 @@ def owner_submit_project_profile(
             raise HTTPException(409, "项目已在审核中")
         raise HTTPException(409, "当前项目阶段不可提交立项信息")
 
-    resolved_people = _resolve_work_progress_people(payload, db)
-    _validate_work_progress_draft(payload)
+    try:
+        resolved_people = _resolve_work_progress_people(payload, db)
+        _validate_work_progress_draft(payload)
 
-    _set_project_lifecycle(project, "pending_review", db=db, project_id=project_id)
-    _save_work_progress_draft(
-        project,
-        payload,
-        current_user=current_user,
-        db=db,
-        resolved_people=resolved_people,
-    )
-    crud.log(db, current_user, "owner_submit_project", "project", project_id, {"status": lifecycle}, {"status": "pending_review"})
-    db.commit()
+        _set_project_lifecycle(project, "pending_review", db=db, project_id=project_id)
+        _save_work_progress_draft(
+            project,
+            payload,
+            current_user=current_user,
+            db=db,
+            resolved_people=resolved_people,
+        )
+        crud.log(db, current_user, "owner_submit_project", "project", project_id, {"status": lifecycle}, {"status": "pending_review"})
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     raw = _read_project_raw(project_id, db)
     result = _project_response(raw, _get_user_roles(project_id, project.name, get_user_context_from_db(current_user, db), db), db)

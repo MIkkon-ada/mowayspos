@@ -188,6 +188,120 @@ def test_owner_submit_creates_named_people_as_normal_members_without_accounts():
     } >= {(assignee.id, "member"), (helper.id, "member")}
 
 
+def test_owner_submit_binds_imported_task_owner_and_adds_project_member():
+    db = _make_session()
+    _seed_project_team(db)
+    payload = schemas.ProjectProfilePayload(
+        work_progress_draft=[
+            schemas.ProjectWorkProgressTaskDraft(
+                title="任务级负责人重点工作",
+                owner="周七",
+                subtasks=[
+                    schemas.ProjectWorkProgressSubTaskDraft(
+                        title="任务级负责人关键任务",
+                        assignee_id=1,
+                    )
+                ],
+            )
+        ]
+    )
+
+    owner_submit_project_profile(1, payload, current_user="owner", db=db)
+
+    owner = db.query(models.Person).filter_by(name="周七").one()
+    task = db.query(models.Task).filter_by(project_id=1).one()
+    assert task.owner == "周七"
+    assert task.owner_id == owner.id
+    assert db.query(models.ProjectMember).filter_by(project_id=1, person_id=owner.id, role="member").one()
+
+
+@pytest.mark.parametrize("invalid_name", ["项目经理", "研发部", "全体成员"])
+def test_owner_submit_rejects_role_department_and_group_assignees(invalid_name):
+    db = _make_session()
+    _seed_project_team(db)
+    payload = schemas.ProjectProfilePayload(
+        work_progress_draft=[
+            schemas.ProjectWorkProgressTaskDraft(
+                title="角色词重点工作",
+                subtasks=[
+                    schemas.ProjectWorkProgressSubTaskDraft(
+                        title="角色词关键任务",
+                        assignee=invalid_name,
+                    )
+                ],
+            )
+        ]
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        owner_submit_project_profile(1, payload, current_user="owner", db=db)
+
+    assert exc.value.status_code == 422
+    assert db.query(models.Person).filter_by(name=invalid_name).count() == 0
+
+
+def test_owner_submit_rolls_back_created_people_when_later_imported_assignee_is_invalid(monkeypatch):
+    db = _make_session()
+    _seed_project_team(db)
+    original_flush = db.flush
+    flushed_new_person = False
+
+    def tracking_flush():
+        nonlocal flushed_new_person
+        original_flush()
+        flushed_new_person = flushed_new_person or any(
+            isinstance(row, models.Person) and row.name == "王五"
+            for row in db.identity_map.values()
+        )
+
+    monkeypatch.setattr(db, "flush", tracking_flush)
+    payload = schemas.ProjectProfilePayload(
+        work_progress_draft=[
+            schemas.ProjectWorkProgressTaskDraft(
+                title="先创建后失败重点工作",
+                subtasks=[
+                    schemas.ProjectWorkProgressSubTaskDraft(title="先创建任务", assignee="王五"),
+                    schemas.ProjectWorkProgressSubTaskDraft(title="后失败任务", assignee="项目经理"),
+                ],
+            )
+        ]
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        owner_submit_project_profile(1, payload, current_user="owner", db=db)
+
+    assert exc.value.status_code == 422
+    assert flushed_new_person is True
+    assert db.query(models.Person).filter_by(name="王五").count() == 0
+    assert db.query(models.Task).filter_by(project_id=1).count() == 0
+    assert db.get(models.Project, 1).status == "dispatched"
+
+
+def test_owner_submit_does_not_save_assignee_as_helper():
+    db = _make_session()
+    _seed_project_team(db)
+    payload = schemas.ProjectProfilePayload(
+        work_progress_draft=[
+            schemas.ProjectWorkProgressTaskDraft(
+                title="负责人协助人去重重点工作",
+                subtasks=[
+                    schemas.ProjectWorkProgressSubTaskDraft(
+                        title="负责人协助人去重关键任务",
+                        assignee="张三",
+                        helper="张三",
+                    )
+                ],
+            )
+        ]
+    )
+
+    owner_submit_project_profile(1, payload, current_user="owner", db=db)
+
+    subtask = db.query(models.SubTask).join(models.Task).filter(models.Task.project_id == 1).one()
+    assert payload.work_progress_draft[0].subtasks[0].helper_ids == []
+    assert subtask.collaborator_ids == []
+
+
 @pytest.mark.parametrize("invalid_name", ["各项目经理", "咨询部", "mowasyadmin"])
 def test_owner_submit_rejects_non_person_imported_assignee_without_creating_person(invalid_name):
     db = _make_session()

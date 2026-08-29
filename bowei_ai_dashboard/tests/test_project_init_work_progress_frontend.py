@@ -115,6 +115,14 @@ def test_owner_submit_modal_requires_at_least_one_subtask_before_submit():
         assert expected in source
 
 
+def test_owner_submit_modal_defers_raw_assignee_resolution_to_submission():
+    source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
+
+    assert "task.subtasks?.some((subtask) => !subtask.assignee_id && !subtask.assignee?.trim())" in source
+    assert "请为每个关键任务填写负责人" in source
+    assert "task.subtasks?.some((subtask) => !subtask.assignee_id)" not in source
+
+
 def test_project_approve_modal_contains_work_progress_draft_summary():
     source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
 

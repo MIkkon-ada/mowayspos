@@ -772,8 +772,8 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
       toast.error('请至少添加一个关键任务')
       return
     }
-    if (workProgressDraft.some((task) => task.subtasks?.some((subtask) => !subtask.assignee_id))) {
-      toast.error('请选择关键任务负责人')
+    if (workProgressDraft.some((task) => task.subtasks?.some((subtask) => !subtask.assignee_id && !subtask.assignee?.trim()))) {
+      toast.error('请为每个关键任务填写负责人')
       return
     }
 

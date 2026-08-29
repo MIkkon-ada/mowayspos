@@ -181,8 +181,16 @@ def _resolve_work_progress_people(
 
     for task_draft in payload.work_progress_draft or []:
         task_owner_name = (task_draft.owner or "").strip()
-        if task_owner_name and _contains_chinese(task_owner_name):
-            _resolve_imported_name(task_owner_name)
+        if task_owner_name:
+            if _contains_chinese(task_owner_name):
+                _resolve_imported_name(task_owner_name)
+            else:
+                existing_owner = db.query(models.Person).filter(
+                    models.Person.name == task_owner_name,
+                    models.Person.is_active.is_(True),
+                ).first()
+                if existing_owner is not None:
+                    people[existing_owner.id] = existing_owner
         for sub_draft in task_draft.subtasks or []:
             if not (sub_draft.title or "").strip():
                 continue

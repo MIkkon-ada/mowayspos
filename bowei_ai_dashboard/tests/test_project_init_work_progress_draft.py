@@ -215,6 +215,32 @@ def test_owner_submit_binds_imported_task_owner_and_adds_project_member():
     assert db.query(models.ProjectMember).filter_by(project_id=1, person_id=owner.id, role="member").one()
 
 
+def test_owner_submit_binds_existing_non_chinese_task_owner_with_different_assignee():
+    db = _make_session()
+    _seed_project_team(db)
+    _add_people_for_picker(db)
+    payload = schemas.ProjectProfilePayload(
+        work_progress_draft=[
+            schemas.ProjectWorkProgressTaskDraft(
+                title="Existing owner task",
+                owner="Owner Person",
+                subtasks=[
+                    schemas.ProjectWorkProgressSubTaskDraft(
+                        title="Different assignee key task",
+                        assignee_id=5,
+                    )
+                ],
+            )
+        ]
+    )
+
+    owner_submit_project_profile(1, payload, current_user="owner", db=db)
+
+    task = db.query(models.Task).filter_by(project_id=1).one()
+    assert task.owner_id == 1
+    assert db.query(models.ProjectMember).filter_by(project_id=1, person_id=1, role="member").one()
+
+
 @pytest.mark.parametrize(
     "invalid_name",
     ["项目经理", "研发部", "全体成员", "总经理", "副总裁", "总工程师", "管理层", "研发科", "采购处"],

@@ -38,6 +38,22 @@ export type ProjectInitAiDecision = {
   title: string
 }
 
+export function canBeginAnalysisRequest(inFlight: boolean): boolean {
+  return !inFlight
+}
+
+export function freshAnalysisPreviewState() {
+  return {
+    decisions: {} as Record<string, ProjectInitAiDecisionAction>,
+    applySuccess: false,
+    draft: undefined,
+  }
+}
+
+export function analysisProgressMessage(retryPending: boolean): string {
+  return retryPending ? '正在重新分析已上传文件…' : 'AI 正在分析文件…'
+}
+
 type UploadItem = {
   id: string
   file: File
@@ -476,17 +492,22 @@ export function OwnerSubmitAiPanel({
     }
   }
 
+  function resetAnalysisPreview() {
+    const nextPreview = freshAnalysisPreviewState()
+    setDecisions(nextPreview.decisions)
+    setApplySuccess(nextPreview.applySuccess)
+    setDraft(nextPreview.draft)
+  }
+
   async function startAnalysis() {
-    if (analysisStartInFlightRef.current) return
+    if (!canBeginAnalysisRequest(analysisStartInFlightRef.current)) return
     const pending = queue.filter((item) => item.status === 'queued' || ((item.status === 'failed' || item.status === 'cancelled') && item.retryable === true))
     if (pending.length === 0 && successfulAttachmentIds.length === 0) {
       setError('请先选择至少一个有效文件')
       return
     }
     analysisStartInFlightRef.current = true
-    setDecisions({})
-    setApplySuccess(false)
-    setDraft(undefined)
+    resetAnalysisPreview()
     setError('')
     setPanelState('uploading')
     const controller = new AbortController()
@@ -538,11 +559,10 @@ export function OwnerSubmitAiPanel({
       await startAnalysis()
       return
     }
-    if (analysisStartInFlightRef.current) return
+    if (!canBeginAnalysisRequest(analysisStartInFlightRef.current)) return
     analysisStartInFlightRef.current = true
-    setDecisions({})
-    setApplySuccess(false)
-    setDraft(undefined)
+    resetAnalysisPreview()
+    setRun(undefined)
     setError('')
     setPanelState('analyzing')
     const controller = new AbortController()
@@ -688,17 +708,18 @@ export function OwnerSubmitAiPanel({
         </div>
       )}
 
-      {panelState === 'analyzing' && run && (
+      {panelState === 'analyzing' && (
         <div className="space-y-4 rounded-xl bg-slate-50 p-4" aria-live="polite">
-          <div className="flex items-center justify-between gap-3"><span className="text-sm font-semibold text-slate-800">{stageLabel(run.stage)}</span><span className="text-xs text-slate-500">{statusLabel(run.status)} · {run.progress}%</span></div>
+          <p className="text-sm font-semibold text-slate-800">{analysisProgressMessage(!run)}</p>
+          {run && <><div className="flex items-center justify-between gap-3"><span className="text-sm font-semibold text-slate-800">{stageLabel(run.stage)}</span><span className="text-xs text-slate-500">{statusLabel(run.status)} · {run.progress}%</span></div>
           <ModelUsageSummary run={run} />
-          <progress className="h-2 w-full" max={100} value={run.progress} aria-label="AI 分析进度" />
+          <progress className="h-2 w-full" max={100} value={run.progress} aria-label="AI 分析进度" /></>}
           <p className="text-xs text-slate-500">分析会自动轮询最新进度，请不要关闭此面板。</p>
         </div>
       )}
 
-      {panelState === 'failed' && run && (
-        <div className="space-y-3 rounded-xl border border-red-100 bg-red-50 p-4"><p className="text-sm font-semibold text-red-800">分析失败</p><ModelUsageSummary run={run} /><p className="text-xs text-red-700">{run.error_message || error || '未能生成草稿'}</p><button type="button" onClick={() => void retryAnalysis()} disabled={disabled} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-50">重新分析</button></div>
+      {panelState === 'failed' && (
+        <div className="space-y-3 rounded-xl border border-red-100 bg-red-50 p-4"><p className="text-sm font-semibold text-red-800">分析失败</p>{run && <ModelUsageSummary run={run} />}<p className="text-xs text-red-700">{run?.error_message || error || '未能生成草稿'}</p><button type="button" onClick={() => void retryAnalysis()} disabled={disabled} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-50">重新分析</button></div>
       )}
 
       {panelState === 'preview' && run && draft && (

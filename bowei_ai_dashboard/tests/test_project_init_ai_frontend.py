@@ -58,11 +58,10 @@ def test_owner_submit_ai_rerun_resets_preview_choices_and_rejects_duplicate_star
     start_analysis_source = source.split("async function startAnalysis()", maxsplit=1)[1].split("async function retryAnalysis()", maxsplit=1)[0]
 
     assert "const analysisStartInFlightRef = useRef(false)" in source
-    assert "if (analysisStartInFlightRef.current) return" in start_analysis_source
+    assert "if (!canBeginAnalysisRequest(analysisStartInFlightRef.current)) return" in start_analysis_source
     assert "analysisStartInFlightRef.current = true" in start_analysis_source
-    assert "setDecisions({})" in start_analysis_source
-    assert "setApplySuccess(false)" in start_analysis_source
-    assert "setDraft(undefined)" in start_analysis_source
+    assert "function resetAnalysisPreview()" in source
+    assert "resetAnalysisPreview()" in start_analysis_source
     assert "analysisStartInFlightRef.current = false" in start_analysis_source
 
 
@@ -78,9 +77,8 @@ def test_owner_submit_ai_failed_run_retry_resets_preview_choices_and_rejects_dup
     source = _frontend_source("features/settings/OwnerSubmitAiPanel.tsx")
     retry_analysis_source = source.split("async function retryAnalysis()", maxsplit=1)[1].split("function setDecision", maxsplit=1)[0]
 
-    assert "if (analysisStartInFlightRef.current) return" in retry_analysis_source
+    assert "if (!canBeginAnalysisRequest(analysisStartInFlightRef.current)) return" in retry_analysis_source
     assert "analysisStartInFlightRef.current = true" in retry_analysis_source
-    assert "setDecisions({})" in retry_analysis_source
-    assert "setApplySuccess(false)" in retry_analysis_source
-    assert "setDraft(undefined)" in retry_analysis_source
+    assert "resetAnalysisPreview()" in retry_analysis_source
+    assert "setRun(undefined)" in retry_analysis_source
     assert "analysisStartInFlightRef.current = false" in retry_analysis_source

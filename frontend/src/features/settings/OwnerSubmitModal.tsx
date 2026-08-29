@@ -183,11 +183,13 @@ function getPickerMenuPosition(rect: DOMRect, minWidth: number): PickerMenuPosit
 function AssigneePicker({
   people,
   value,
+  rawName,
   disabled,
   onChange,
 }: {
   people: Person[]
   value: number | ''
+  rawName: string
   disabled?: boolean
   onChange: (value: string) => void
 }) {
@@ -197,6 +199,7 @@ function AssigneePicker({
   const anchorRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const selected = people.find((person) => person.id === value)
+  const hasPendingRawName = !selected && !value && Boolean(rawName.trim())
   const filtered = people.filter((person) => {
     const haystack = `${person.name} ${person.department ?? ''}`.toLowerCase()
     return haystack.includes(query.trim().toLowerCase())
@@ -238,7 +241,7 @@ function AssigneePicker({
         aria-haspopup="listbox"
         className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-left text-xs font-semibold text-slate-700 outline-none transition-colors hover:border-blue-300 hover:bg-white focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        <span className="truncate">{selected?.name ?? '请选择负责人'}</span>
+        <span className="truncate">{selected?.name ?? (hasPendingRawName ? <>待自动添加：{rawName.trim()}</> : '请选择负责人')}</span>
         <svg
           aria-hidden="true"
           viewBox="0 0 16 16"
@@ -252,6 +255,7 @@ function AssigneePicker({
           <path d="m4 6 4 4 4-4" />
         </svg>
       </button>
+      {hasPendingRawName && <p className="mt-1 text-[10px] leading-4 text-slate-500">将在提交时自动添加或匹配人员</p>}
       {open && menuPosition && createPortal(
         <div
           ref={menuRef}
@@ -1042,7 +1046,7 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
                                             <input value={subtask.title} onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'title', e.target.value)} placeholder="例如：任务名称" className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100" />
                                           </div>
                                         </td>
-                                        <td className="px-2 py-1.5 align-top"><AssigneePicker people={people} value={subtask.assigneeId} disabled={peopleLoading || Boolean(peopleError)} onChange={(value) => updateSubTaskAssignee(taskIndex, subIndex, value)} /></td>
+                                        <td className="px-2 py-1.5 align-top"><AssigneePicker people={people} value={subtask.assigneeId} rawName={subtask.assignee} disabled={peopleLoading || Boolean(peopleError)} onChange={(value) => updateSubTaskAssignee(taskIndex, subIndex, value)} /></td>
                                         <td className="px-2 py-1.5 align-top"><HelperPicker people={people} value={subtask.helperIds} excludedId={subtask.assigneeId} disabled={peopleLoading || Boolean(peopleError)} onChange={(personId) => toggleSubTaskHelper(taskIndex, subIndex, personId)} /></td>
                                         <td className="px-2 py-1.5">
                                           <div className="relative">

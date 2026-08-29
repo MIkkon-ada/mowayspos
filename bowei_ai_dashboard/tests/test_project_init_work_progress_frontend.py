@@ -123,6 +123,14 @@ def test_owner_submit_modal_defers_raw_assignee_resolution_to_submission():
     assert "task.subtasks?.some((subtask) => !subtask.assignee_id)" not in source
 
 
+def test_owner_submit_modal_shows_imported_assignee_pending_server_resolution():
+    source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
+
+    assert "rawName={subtask.assignee}" in source
+    assert "待自动添加：{rawName.trim()}" in source
+    assert "将在提交时自动添加或匹配人员" in source
+
+
 def test_project_approve_modal_contains_work_progress_draft_summary():
     source = _frontend_source("features/settings/ProjectsMgmtSection.tsx")
 

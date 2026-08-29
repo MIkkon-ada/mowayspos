@@ -144,6 +144,9 @@ def _contains_chinese(value: str) -> bool:
 def _resolve_work_progress_people(
     payload: schemas.ProjectProfilePayload,
     db: Session,
+    *,
+    audit_operator: str | None = None,
+    audit_project_id: int | None = None,
 ) -> dict[int, models.Person]:
     """Resolve safe imported names and validate picker IDs before project mutations."""
     person_ids: set[int] = set()
@@ -176,6 +179,23 @@ def _resolve_work_progress_people(
             person = models.Person(name=name, system_role="normal_member", is_active=True)
             db.add(person)
             db.flush()
+            if audit_operator and audit_project_id is not None:
+                crud.log(
+                    db,
+                    audit_operator,
+                    "auto_create_imported_person",
+                    "person",
+                    person.id,
+                    {},
+                    {
+                        "id": person.id,
+                        "name": person.name,
+                        "system_role": person.system_role,
+                        "is_active": person.is_active,
+                        "source": "owner_submit_imported_work_progress",
+                    },
+                    project_id=audit_project_id,
+                )
         people[person.id] = person
         return person
 
@@ -718,7 +738,12 @@ def _save_work_progress_draft(
     if not drafts:
         return
 
-    resolved_people = resolved_people if resolved_people is not None else _resolve_work_progress_people(payload, db)
+    resolved_people = resolved_people if resolved_people is not None else _resolve_work_progress_people(
+        payload,
+        db,
+        audit_operator=current_user,
+        audit_project_id=project.id,
+    )
     selected_ids = {
         person_id
         for task_draft in drafts
@@ -731,20 +756,34 @@ def _save_work_progress_draft(
         for task_draft in drafts
         if (owner_id := _person_id_for_name(task_draft.owner, db)) is not None
     )
+    added_members: list[models.ProjectMember] = []
     for person_id in selected_ids:
         person = resolved_people[person_id]
         existing = db.query(models.ProjectMember).filter_by(
             project_id=project.id, person_id=person.id, role="member"
         ).first()
         if not existing:
-            db.add(models.ProjectMember(
+            member = models.ProjectMember(
                 project_id=project.id,
                 person_id=person.id,
                 person_name_snapshot=person.name,
                 role="member",
                 joined_at=utc_now(),
-            ))
+            )
+            db.add(member)
+            added_members.append(member)
     db.flush()
+    for member in added_members:
+        crud.log(
+            db,
+            current_user,
+            "auto_add_imported_project_member",
+            "project_member",
+            member.id,
+            {},
+            _member_to_dict(member),
+            project_id=project.id,
+        )
     _sync_project_old_fields(project.id, db)
 
     project_name = project.name or ""
@@ -2531,7 +2570,12 @@ def owner_submit_project_profile(
         raise HTTPException(409, "当前项目阶段不可提交立项信息")
 
     try:
-        resolved_people = _resolve_work_progress_people(payload, db)
+        resolved_people = _resolve_work_progress_people(
+            payload,
+            db,
+            audit_operator=current_user,
+            audit_project_id=project_id,
+        )
         _validate_work_progress_draft(payload)
 
         _set_project_lifecycle(project, "pending_review", db=db, project_id=project_id)

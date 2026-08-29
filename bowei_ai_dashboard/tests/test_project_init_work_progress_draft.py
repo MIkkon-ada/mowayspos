@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
@@ -188,6 +190,68 @@ def test_owner_submit_creates_named_people_as_normal_members_without_accounts():
     } >= {(assignee.id, "member"), (helper.id, "member")}
 
 
+def test_owner_submit_audits_created_imported_people_and_project_members():
+    db = _make_session()
+    _seed_project_team(db)
+    payload = schemas.ProjectProfilePayload(
+        work_progress_draft=[
+            schemas.ProjectWorkProgressTaskDraft(
+                title="审计导入人员重点工作",
+                subtasks=[
+                    schemas.ProjectWorkProgressSubTaskDraft(
+                        title="审计导入人员关键任务",
+                        assignee="王五",
+                        helper="赵六",
+                    )
+                ],
+            )
+        ]
+    )
+
+    owner_submit_project_profile(1, payload, current_user="owner", db=db)
+
+    logs = db.query(models.OperationLog).filter_by(project_id=1, operator="owner").all()
+    created_people = [log for log in logs if log.action == "auto_create_imported_person"]
+    added_members = [log for log in logs if log.action == "auto_add_imported_project_member"]
+
+    assert {json.loads(log.after_json)["name"] for log in created_people} == {"王五", "赵六"}
+    assert {json.loads(log.after_json)["person_name_snapshot"] for log in added_members} == {"王五", "赵六"}
+    assert all(log.target_type == "person" and json.loads(log.before_json) == {} for log in created_people)
+    assert all(log.target_type == "project_member" and json.loads(log.before_json) == {} for log in added_members)
+    assert all(json.loads(log.after_json)["project_id"] == 1 for log in added_members)
+
+
+def test_owner_submit_does_not_audit_reused_project_member_as_added():
+    db = _make_session()
+    _seed_project_team(db)
+
+    owner_submit_project_profile(
+        1,
+        schemas.ProjectProfilePayload(
+            work_progress_draft=[
+                schemas.ProjectWorkProgressTaskDraft(
+                    title="复用成员重点工作",
+                    subtasks=[
+                        schemas.ProjectWorkProgressSubTaskDraft(
+                            title="复用成员关键任务",
+                            assignee_id=3,
+                        )
+                    ],
+                )
+            ]
+        ),
+        current_user="owner",
+        db=db,
+    )
+
+    actions = {
+        log.action
+        for log in db.query(models.OperationLog).filter_by(project_id=1, operator="owner").all()
+    }
+    assert "auto_create_imported_person" not in actions
+    assert "auto_add_imported_project_member" not in actions
+
+
 def test_owner_submit_binds_imported_task_owner_and_adds_project_member():
     db = _make_session()
     _seed_project_team(db)
@@ -303,6 +367,7 @@ def test_owner_submit_rolls_back_created_people_when_later_imported_assignee_is_
     assert flushed_new_person is True
     assert db.query(models.Person).filter_by(name="王五").count() == 0
     assert db.query(models.Task).filter_by(project_id=1).count() == 0
+    assert db.query(models.OperationLog).filter_by(project_id=1, operator="owner").count() == 0
     assert db.get(models.Project, 1).status == "dispatched"
 
 

@@ -729,38 +729,67 @@ def _worksheet_chunks(
         return
 
     min_row, max_row, min_column, max_column = bounds
-    header = next(
-        _worksheet_row_values(row, min_column, max_column)
-        for row_index, row in enumerate(rows())
-        if row_index == min_row
-    )
-    if not all(_is_non_empty_cell(value) for value in header):
+    header = _worksheet_table_header(rows, bounds)
+    if header is None:
         yield _render_worksheet_range(rows, sheet_name, bounds, limits)
         return
 
-    has_data_rows = False
+    header_row, header_values = header
+    data_row_count = _worksheet_data_row_count(rows, header_row, bounds)
+    if not data_row_count:
+        yield _render_worksheet_range(rows, sheet_name, bounds, limits)
+        return
+
+    remaining_chunk_capacity = MAX_CHUNKS - limits.chunk_count
+    rows_per_chunk = (
+        1
+        if data_row_count <= remaining_chunk_capacity
+        else (data_row_count + remaining_chunk_capacity - 1)
+        // remaining_chunk_capacity
+    )
+    header_text = _render_worksheet_row(header_values)
+    batch_builder = None
+    batch_start_row = batch_end_row = None
+    batch_row_count = 0
     for row_index, row in enumerate(rows()):
-        if row_index <= min_row or row_index > max_row:
+        if row_index <= header_row or row_index > max_row:
             continue
         values = _worksheet_row_values(row, min_column, max_column)
         if not any(_is_non_empty_cell(value) for value in values):
             continue
-        has_data_rows = True
-        builder = limits.builder()
-        _append_worksheet_row(builder, header)
-        builder.append("\n")
-        _append_worksheet_row(builder, values)
-        location = (
-            f"{quote_sheetname(sheet_name)}!"
-            f"{get_column_letter(min_column + 1)}{row_index + 1}:"
-            f"{get_column_letter(max_column + 1)}{row_index + 1}"
-        )
-        chunk = builder.finish(location)
-        if chunk is not None:
-            yield chunk
+        row_text = _render_worksheet_row(values)
+        if batch_builder is not None and (
+            batch_row_count >= rows_per_chunk
+            or batch_builder.length + 1 + len(row_text) > MAX_CHUNK_CHARS
+        ):
+            location = (
+                f"{quote_sheetname(sheet_name)}!"
+                f"{get_column_letter(min_column + 1)}{batch_start_row + 1}:"
+                f"{get_column_letter(max_column + 1)}{batch_end_row + 1}"
+            )
+            chunk = batch_builder.finish(location)
+            if chunk is not None:
+                yield chunk
+            batch_builder = None
 
-    if not has_data_rows:
-        yield _render_worksheet_range(rows, sheet_name, bounds, limits)
+        if batch_builder is None:
+            batch_builder = limits.builder()
+            batch_builder.append(header_text)
+            batch_start_row = row_index
+            batch_row_count = 0
+        batch_builder.append("\n")
+        batch_builder.append(row_text)
+        batch_end_row = row_index
+        batch_row_count += 1
+
+    location = (
+        f"{quote_sheetname(sheet_name)}!"
+        f"{get_column_letter(min_column + 1)}{batch_start_row + 1}:"
+        f"{get_column_letter(max_column + 1)}{batch_end_row + 1}"
+    )
+    chunk = batch_builder.finish(location)
+    if chunk is not None:
+        yield chunk
 
 
 def _worksheet_bounds(
@@ -793,6 +822,36 @@ def _worksheet_bounds(
     if min_row is None or max_row is None or min_column is None or max_column is None:
         return None
     return min_row, max_row, min_column, max_column
+
+
+def _worksheet_table_header(
+    rows: Callable[[], Iterable[Sequence[Any]]],
+    bounds: tuple[int, int, int, int],
+) -> tuple[int, list[Any]] | None:
+    min_row, max_row, min_column, max_column = bounds
+    for row_index, row in enumerate(rows()):
+        if row_index < min_row or row_index >= max_row:
+            continue
+        values = _worksheet_row_values(row, min_column, max_column)
+        if all(_is_non_empty_cell(value) for value in values):
+            return row_index, values
+    return None
+
+
+def _worksheet_data_row_count(
+    rows: Callable[[], Iterable[Sequence[Any]]],
+    header_row: int,
+    bounds: tuple[int, int, int, int],
+) -> int:
+    _, max_row, min_column, max_column = bounds
+    return sum(
+        any(
+            _is_non_empty_cell(value)
+            for value in _worksheet_row_values(row, min_column, max_column)
+        )
+        for row_index, row in enumerate(rows())
+        if header_row < row_index <= max_row
+    )
 
 
 def _render_worksheet_range(
@@ -832,6 +891,10 @@ def _worksheet_row_values(
         row[column_index] if column_index < len(row) else None
         for column_index in range(min_column, max_column + 1)
     ]
+
+
+def _render_worksheet_row(values: Sequence[Any]) -> str:
+    return "\t".join(_render_cell(value) for value in values)
 
 
 def _append_worksheet_row(

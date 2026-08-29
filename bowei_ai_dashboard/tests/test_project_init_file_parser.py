@@ -392,6 +392,42 @@ def test_xlsx_emits_header_context_for_each_populated_table_row(tmp_path):
     ]
 
 
+def test_xlsx_batches_table_evidence_before_the_chunk_limit(tmp_path, monkeypatch):
+    path = tmp_path / "large-plan.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["事项", "负责人"])
+    sheet.append(["部署", "张三"])
+    sheet.append(["验收", "李四"])
+    workbook.save(path)
+    monkeypatch.setattr(parser, "MAX_CHUNKS", 1)
+
+    assert parse_project_init_file(path, "大计划.xlsx") == [
+        SourceChunk(
+            "大计划.xlsx",
+            "'Sheet'!A2:B3",
+            "事项\t负责人\n部署\t张三\n验收\t李四",
+        )
+    ]
+
+
+def test_xlsx_uses_dense_header_after_a_title_row_for_row_evidence(tmp_path):
+    path = tmp_path / "titled-plan.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["A1"] = "项目计划"
+    sheet.append([])
+    sheet.append(["事项", "负责人"])
+    sheet.append(["部署", "张三"])
+    sheet.append(["验收", "李四"])
+    workbook.save(path)
+
+    assert parse_project_init_file(path, "标题计划.xlsx") == [
+        SourceChunk("标题计划.xlsx", "'Sheet'!A4:B4", "事项\t负责人\n部署\t张三"),
+        SourceChunk("标题计划.xlsx", "'Sheet'!A5:B5", "事项\t负责人\n验收\t李四"),
+    ]
+
+
 def test_xlsx_preserves_formula_text_when_cached_result_exists(tmp_path):
     source_path = tmp_path / "formula.xlsx"
     path = tmp_path / "formula-with-cache.xlsx"

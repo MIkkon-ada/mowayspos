@@ -206,6 +206,37 @@ def test_normalizes_redundant_evidence_label_and_null_optional_text():
     assert result.tasks[0].evidence[0].source_label == "plan.txt · lines 1-2"
 
 
+def test_reconciles_end_only_month_as_a_start_only_date():
+    payload = raw_task()
+    payload["plan_start"] = ""
+    payload["plan_end"] = "2026-06"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    assert task.plan_start == "2026-06-01"
+    assert task.plan_end == ""
+
+
+def test_reconciles_parent_description_that_repeats_its_first_subtask_title():
+    payload = raw_task()
+    payload["description"] = payload["subtasks"][0]["title"]
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].description == ""
+
+
 def test_normalizes_overlong_evidence_excerpt_without_breaking_source_validation():
     excerpt = "实施交付" * 101
     payload = raw_task(evidence=[{

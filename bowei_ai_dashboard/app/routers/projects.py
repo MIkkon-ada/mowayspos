@@ -56,7 +56,7 @@ _LIFECYCLE_STATUSES = PL.ALL_STATUSES
 _IMPORTABLE_PERSON_NAME = re.compile(r"^[\u4e00-\u9fff]{2,8}$")
 _NON_PERSON_IMPORT_VALUES = {"mowasyadmin", "moways"}
 _NON_PERSON_IMPORT_PATTERN = re.compile(
-    r"项目经理|负责人|总监|主管|全体|成员|部门|团队|项目组|项目部|[部组中心]$"
+    r"项目经理|负责人|总监|主管|总经理|总裁|总工程师|管理层|全体|成员|部门|团队|项目组|项目部|[部组中心科处]$"
 )
 
 # 旧展示常量 → 新 role key（用于 transition period 回落）
@@ -204,6 +204,12 @@ def _resolve_work_progress_people(
                     person_id for person_id in sub_draft.helper_ids
                     if person_id != sub_draft.assignee_id
                 ))
+            if sub_draft.assignee_id is not None:
+                assignee_name = people[sub_draft.assignee_id].name
+                sub_draft.helper = _join_names(
+                    name for name in _split_names(sub_draft.helper)
+                    if name != assignee_name
+                )
     return people
 
 

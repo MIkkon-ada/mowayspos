@@ -215,7 +215,10 @@ def test_owner_submit_binds_imported_task_owner_and_adds_project_member():
     assert db.query(models.ProjectMember).filter_by(project_id=1, person_id=owner.id, role="member").one()
 
 
-@pytest.mark.parametrize("invalid_name", ["项目经理", "研发部", "全体成员"])
+@pytest.mark.parametrize(
+    "invalid_name",
+    ["项目经理", "研发部", "全体成员", "总经理", "副总裁", "总工程师", "管理层", "研发科", "采购处"],
+)
 def test_owner_submit_rejects_role_department_and_group_assignees(invalid_name):
     db = _make_session()
     _seed_project_team(db)
@@ -300,6 +303,7 @@ def test_owner_submit_does_not_save_assignee_as_helper():
     subtask = db.query(models.SubTask).join(models.Task).filter(models.Task.project_id == 1).one()
     assert payload.work_progress_draft[0].subtasks[0].helper_ids == []
     assert subtask.collaborator_ids == []
+    assert subtask.notes == ""
 
 
 @pytest.mark.parametrize("invalid_name", ["各项目经理", "咨询部", "mowasyadmin"])

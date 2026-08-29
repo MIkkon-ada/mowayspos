@@ -4,12 +4,15 @@ import json
 
 import pytest
 from fastapi import HTTPException
+from openpyxl import Workbook
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app import models, schemas
 from app.database import Base
 from app.routers.projects import approve_project, owner_submit_project_profile
+from app.services.project_init_ai_agent import generate_project_init_draft
+from app.services.project_init_file_parser import parse_project_init_file
 
 
 def _make_session():
@@ -51,6 +54,141 @@ def _add_people_for_picker(db):
         ]
     )
     db.commit()
+
+
+def test_owner_submit_persists_xlsx_ai_draft_with_end_only_month_and_raw_imported_people(tmp_path):
+    workbook_path = tmp_path / "六月项目计划.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "六月计划"
+    sheet.append(["2026 年 6 月项目计划"])
+    sheet.append(["重点工作", "关键任务", "负责人", "协助人", "计划时间"])
+    sheet.append(["现场部署", "完成现场部署", "王五", "赵六", "2026-06"])
+    workbook.save(workbook_path)
+
+    parsed_chunks = parse_project_init_file(workbook_path, "六月项目计划.xlsx")
+    data_chunk = next(chunk for chunk in parsed_chunks if "现场部署" in chunk.text)
+    assert "重点工作\t关键任务\t负责人\t协助人\t计划时间" in data_chunk.text
+    assert data_chunk.location.endswith("A3:E3")
+
+    def deterministic_llm(prompt: str, provider: str) -> str:
+        assert provider == "injected"
+        assert data_chunk.location in prompt
+        return json.dumps(
+            {
+                "tasks": [
+                    {
+                        "title": "现场部署",
+                        "description": "完成现场部署",
+                        "owner_name": "王五",
+                        "priority": "high",
+                        "status": "not_started",
+                        "plan_start": "",
+                        "plan_end": "2026-06",
+                        "evidence": [
+                            {
+                                "attachment_id": 42,
+                                "file_name": data_chunk.file_name,
+                                "location": data_chunk.location,
+                                "excerpt": "现场部署\t完成现场部署\t王五\t赵六\t2026-06",
+                            }
+                        ],
+                        "subtasks": [
+                            {
+                                "title": "完成现场部署",
+                                "assignee_name": "王五",
+                                "helper_names": ["赵六"],
+                                "priority": "high",
+                                "status": "not_started",
+                                "plan_start": "",
+                                "plan_end": "2026-06",
+                                "evaluation_standard": "完成现场部署并验收",
+                                "evidence": [
+                                    {
+                                        "attachment_id": 42,
+                                        "file_name": data_chunk.file_name,
+                                        "location": data_chunk.location,
+                                        "excerpt": "现场部署\t完成现场部署\t王五\t赵六\t2026-06",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    ai_draft = generate_project_init_draft(
+        [
+            {
+                "attachment_id": 42,
+                "file_name": chunk.file_name,
+                "location": chunk.location,
+                "text": chunk.text,
+            }
+            for chunk in parsed_chunks
+        ],
+        [],
+        [],
+        llm_call=deterministic_llm,
+    )
+    ai_task = ai_draft.tasks[0]
+    ai_subtask = ai_task.subtasks[0]
+    assert (ai_task.plan_start, ai_task.plan_end) == ("2026-06-01", "")
+    assert ai_task.evidence[0].location == data_chunk.location
+    assert ai_subtask.evidence[0].location == data_chunk.location
+
+    payload = schemas.ProjectProfilePayload(
+        work_progress_draft=[
+            schemas.ProjectWorkProgressTaskDraft(
+                title=ai_task.title,
+                description=ai_task.description,
+                owner=ai_task.owner_name,
+                plan_start=ai_task.plan_start,
+                plan_end=ai_task.plan_end,
+                subtasks=[
+                    schemas.ProjectWorkProgressSubTaskDraft(
+                        title=ai_subtask.title,
+                        evaluation_standard=ai_subtask.evaluation_standard,
+                        assignee=ai_subtask.assignee_name,
+                        assignee_id=ai_subtask.assignee_id,
+                        helper="、".join(ai_subtask.helper_names),
+                        helper_ids=ai_subtask.helper_ids,
+                        plan_start=ai_subtask.plan_start,
+                        plan_end=ai_subtask.plan_end,
+                    )
+                ],
+            )
+        ]
+    )
+    db = _make_session()
+    _seed_project_team(db)
+
+    owner_submit_project_profile(1, payload, current_user="owner", db=db)
+
+    task = db.query(models.Task).filter_by(project_id=1).one()
+    subtask = db.query(models.SubTask).filter_by(task_id=task.id).one()
+    assignee = db.query(models.Person).filter_by(name="王五").one()
+    helper = db.query(models.Person).filter_by(name="赵六").one()
+    project_actions = {
+        log.action
+        for log in db.query(models.OperationLog).filter_by(project_id=1, operator="owner").all()
+    }
+    all_owner_actions = {log.action for log in db.query(models.OperationLog).filter_by(operator="owner").all()}
+
+    assert task.plan_time == "2026-06-01"
+    assert subtask.assignee_id == assignee.id
+    assert subtask.collaborator_ids == [helper.id]
+    assert {
+        (member.person_id, member.role)
+        for member in db.query(models.ProjectMember).filter_by(project_id=1, role="member")
+    } >= {(assignee.id, "member"), (helper.id, "member")}
+    assert {
+        "auto_create_imported_person",
+        "auto_add_imported_project_member",
+    } <= project_actions
+    assert "owner_submit_project" in all_owner_actions
 
 
 def test_owner_submit_adds_selected_people_to_project_and_snapshots_names():

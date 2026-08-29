@@ -72,10 +72,11 @@ def test_owner_submit_modal_builds_work_progress_draft_submit_payload():
         "currentAiDraft",
         "toCurrentDraft",
         "const result = await ownerSubmitProfile(project.id, {",
-        "...fillForm",
         "work_progress_draft: workProgressDraft",
+        "基础信息由管理层维护",
     ]:
         assert expected in source
+    assert "...fillForm" not in source
 
 
 def test_owner_submit_modal_uses_people_picker_for_key_tasks():
@@ -129,6 +130,16 @@ def test_owner_submit_modal_shows_imported_assignee_pending_server_resolution():
     assert "rawName={subtask.assignee}" in source
     assert "待自动添加：{rawName.trim()}" in source
     assert "将在提交时自动添加或匹配人员" in source
+
+
+def test_owner_submit_modal_shows_imported_helpers_pending_server_resolution():
+    source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
+    helper_picker = source.split("function HelperPicker", maxsplit=1)[1].split("export function OwnerSubmitWorkbench", maxsplit=1)[0]
+
+    assert "rawName={subtask.helper}" in source
+    assert "rawName: string" in helper_picker
+    assert "待自动添加：{rawName.trim()}" in helper_picker
+    assert "将在提交时自动添加或匹配人员" in helper_picker
 
 
 def test_project_approve_modal_contains_work_progress_draft_summary():

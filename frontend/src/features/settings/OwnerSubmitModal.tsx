@@ -302,12 +302,14 @@ function HelperPicker({
   people,
   value,
   excludedId,
+  rawName,
   disabled,
   onChange,
 }: {
   people: Person[]
   value: number[]
   excludedId: number | ''
+  rawName: string
   disabled?: boolean
   onChange: (personId: number) => void
 }) {
@@ -317,6 +319,7 @@ function HelperPicker({
   const anchorRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const selectedPeople = people.filter((person) => value.includes(person.id))
+  const hasPendingRawName = value.length === 0 && Boolean(rawName.trim())
   const filtered = people.filter((person) => {
     if (person.id === excludedId) return false
     const haystack = `${person.name} ${person.department ?? ''}`.toLowerCase()
@@ -360,7 +363,7 @@ function HelperPicker({
         className="flex min-h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 outline-none transition-colors hover:border-blue-300 hover:bg-white focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
       >
         <span className="min-w-0 truncate">
-          {selectedPeople.length > 0 ? selectedPeople.map((person) => person.name).join('、') : '请选择协助人'}
+          {selectedPeople.length > 0 ? selectedPeople.map((person) => person.name).join('、') : (hasPendingRawName ? <>待自动添加：{rawName.trim()}</> : '请选择协助人')}
         </span>
         <svg
           aria-hidden="true"
@@ -375,6 +378,7 @@ function HelperPicker({
           <path d="m4 6 4 4 4-4" />
         </svg>
       </button>
+      {hasPendingRawName && <p className="mt-1 text-[10px] leading-4 text-slate-500">将在提交时自动添加或匹配人员</p>}
       {open && menuPosition && createPortal(
         <div
           ref={menuRef}
@@ -1047,7 +1051,7 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
                                           </div>
                                         </td>
                                         <td className="px-2 py-1.5 align-top"><AssigneePicker people={people} value={subtask.assigneeId} rawName={subtask.assignee} disabled={peopleLoading || Boolean(peopleError)} onChange={(value) => updateSubTaskAssignee(taskIndex, subIndex, value)} /></td>
-                                        <td className="px-2 py-1.5 align-top"><HelperPicker people={people} value={subtask.helperIds} excludedId={subtask.assigneeId} disabled={peopleLoading || Boolean(peopleError)} onChange={(personId) => toggleSubTaskHelper(taskIndex, subIndex, personId)} /></td>
+                                        <td className="px-2 py-1.5 align-top"><HelperPicker people={people} value={subtask.helperIds} excludedId={subtask.assigneeId} rawName={subtask.helper} disabled={peopleLoading || Boolean(peopleError)} onChange={(personId) => toggleSubTaskHelper(taskIndex, subIndex, personId)} /></td>
                                         <td className="px-2 py-1.5">
                                           <div className="relative">
                                             <svg aria-hidden="true" viewBox="0 0 24 24" className="owner-submit-subtask-date-icon pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></svg>

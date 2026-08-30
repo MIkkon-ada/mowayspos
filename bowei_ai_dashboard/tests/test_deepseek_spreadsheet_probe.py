@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from openpyxl import Workbook
@@ -87,6 +88,27 @@ def test_build_text_completion_targets_in_memory_model_without_returning_secret(
     assert captured["model_id"] == 7
     assert captured["model"] == "deepseek-v4-flash"
     assert "secret" not in repr(completion)
+
+
+def test_build_text_completion_caps_probe_output_in_memory_only():
+    captured: dict[str, object] = {}
+    credential_model = models.AIModel(
+        id=7, code="configured-deepseek", display_name="Configured DeepSeek",
+        provider="deepseek", model_name="deepseek-v4-pro", model_type="chat",
+        base_url="https://api.deepseek.com", config_json="{}", enabled=True,
+    )
+    completion = build_text_completion(
+        credential_model,
+        credential_reader=lambda _model_id: "secret",
+        adapter=lambda model, _key, _prompt: captured.setdefault("config", model.config_json) or "{}",
+    )
+
+    completion("deepseek-v4-pro", "prompt")
+
+    assert json.loads(captured["config"]) == {
+        "max_output_tokens": 2048,
+        "response_format": {"type": "json_object"},
+    }
 
 
 def test_probe_b_skips_instead_of_falling_back_to_text_without_renderer(tmp_path):

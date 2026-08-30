@@ -64,6 +64,10 @@ class ProbeOutput(BaseModel):
 
 
 TEXT_MODELS = ("deepseek-v4-flash", "deepseek-v4-pro")
+_PROBE_MODEL_CONFIG = json.dumps(
+    {"max_output_tokens": 2048, "response_format": {"type": "json_object"}},
+    ensure_ascii=False,
+)
 ProbeStatus = Literal[
     "succeeded",
     "invalid_json",
@@ -187,7 +191,7 @@ def build_text_completion(
             model_name=target_model_name,
             model_type=credential_model.model_type,
             base_url=credential_model.base_url,
-            config_json=credential_model.config_json,
+            config_json=_PROBE_MODEL_CONFIG,
             enabled=credential_model.enabled,
         )
         return adapter(target_model, api_key, prompt)

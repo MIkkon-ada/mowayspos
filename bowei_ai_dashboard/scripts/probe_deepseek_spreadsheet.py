@@ -8,14 +8,15 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.settings import load_local_env
-
-load_local_env()
+# Mirror the local backend launcher so this diagnostic can decrypt the existing
+# project credential without accepting or emitting a plaintext API key.
+load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 from app import models
 from app.ai.adapters import DefaultAIAdapters
@@ -100,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
                     model,
                     credential_reader=service._credential,
                     adapter=lambda target, key, prompt: DefaultAIAdapters().complete_chat(
-                        target, key, prompt, timeout_seconds=60
+                        target, key, prompt, timeout_seconds=20
                     ),
                 )
             except Exception:

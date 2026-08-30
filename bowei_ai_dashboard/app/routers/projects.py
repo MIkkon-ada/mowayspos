@@ -169,33 +169,35 @@ def _resolve_work_progress_people(
         raise HTTPException(422, f"存在无效或已停用的人员 ID：{', '.join(map(str, invalid_ids))}")
 
     def _resolve_imported_name(name: str, *, assignee: bool = False) -> models.Person:
-        if not _is_importable_person_name(name):
-            raise HTTPException(422, "请选择关键任务负责人" if assignee else "人员姓名必须为具体个人")
         person = db.query(models.Person).filter(
             models.Person.name == name,
             models.Person.is_active.is_(True),
         ).first()
-        if person is None:
-            person = models.Person(name=name, system_role="normal_member", is_active=True)
-            db.add(person)
-            db.flush()
-            if audit_operator and audit_project_id is not None:
-                crud.log(
-                    db,
-                    audit_operator,
-                    "auto_create_imported_person",
-                    "person",
-                    person.id,
-                    {},
-                    {
-                        "id": person.id,
-                        "name": person.name,
-                        "system_role": person.system_role,
-                        "is_active": person.is_active,
-                        "source": "owner_submit_imported_work_progress",
-                    },
-                    project_id=audit_project_id,
-                )
+        if person is not None:
+            people[person.id] = person
+            return person
+        if not _is_importable_person_name(name):
+            raise HTTPException(422, "请选择关键任务负责人" if assignee else "人员姓名必须为具体个人")
+        person = models.Person(name=name, system_role="normal_member", is_active=True)
+        db.add(person)
+        db.flush()
+        if audit_operator and audit_project_id is not None:
+            crud.log(
+                db,
+                audit_operator,
+                "auto_create_imported_person",
+                "person",
+                person.id,
+                {},
+                {
+                    "id": person.id,
+                    "name": person.name,
+                    "system_role": person.system_role,
+                    "is_active": person.is_active,
+                    "source": "owner_submit_imported_work_progress",
+                },
+                project_id=audit_project_id,
+            )
         people[person.id] = person
         return person
 
@@ -224,9 +226,9 @@ def _resolve_work_progress_people(
             if not sub_draft.helper_ids:
                 helper_ids: list[int] = []
                 for name in _split_names(sub_draft.helper):
-                    if _contains_chinese(name):
+                    try:
                         person = _resolve_imported_name(name)
-                    else:
+                    except HTTPException:
                         person = None
                     if person and person.id != sub_draft.assignee_id and person.id not in helper_ids:
                         helper_ids.append(person.id)
@@ -234,8 +236,9 @@ def _resolve_work_progress_people(
             if sub_draft.assignee_id is not None:
                 assignee_name = people[sub_draft.assignee_id].name
                 sub_draft.helper = _join_names(
-                    name for name in _split_names(sub_draft.helper)
-                    if name != assignee_name
+                    people[person_id].name
+                    for person_id in sub_draft.helper_ids
+                    if person_id != sub_draft.assignee_id and person_id in people and people[person_id].name != assignee_name
                 )
     return people
 

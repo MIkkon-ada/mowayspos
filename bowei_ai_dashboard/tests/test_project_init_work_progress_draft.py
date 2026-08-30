@@ -295,6 +295,35 @@ def test_owner_submit_reuses_named_active_person_and_adds_project_member():
     } >= {(existing_assignee.id, "member"), (existing_helper.id, "member")}
 
 
+def test_owner_submit_reuses_existing_non_chinese_assignee_without_rejecting_raw_name():
+    db = _make_session()
+    _seed_project_team(db)
+    existing_assignee = models.Person(id=8, name="mowasyadmin", system_role="normal_member", is_active=True)
+    db.add(existing_assignee)
+    db.commit()
+
+    payload = schemas.ProjectProfilePayload(
+        work_progress_draft=[
+            schemas.ProjectWorkProgressTaskDraft(
+                title="Imported task",
+                subtasks=[
+                    schemas.ProjectWorkProgressSubTaskDraft(
+                        title="Imported key task",
+                        assignee="mowasyadmin",
+                    )
+                ],
+            )
+        ]
+    )
+
+    owner_submit_project_profile(1, payload, current_user="owner", db=db)
+
+    subtask = db.query(models.SubTask).join(models.Task).filter(models.Task.project_id == 1).one()
+    assert payload.work_progress_draft[0].subtasks[0].assignee_id == existing_assignee.id
+    assert subtask.assignee_id == existing_assignee.id
+    assert db.query(models.ProjectMember).filter_by(project_id=1, person_id=existing_assignee.id, role="member").one()
+
+
 def test_owner_submit_creates_named_people_as_normal_members_without_accounts():
     db = _make_session()
     _seed_project_team(db)
@@ -329,6 +358,34 @@ def test_owner_submit_creates_named_people_as_normal_members_without_accounts():
         (member.person_id, member.role)
         for member in db.query(models.ProjectMember).filter_by(project_id=1, role="member")
     } >= {(assignee.id, "member"), (helper.id, "member")}
+
+
+def test_owner_submit_skips_non_person_helper_labels_while_importing_named_people():
+    db = _make_session()
+    _seed_project_team(db)
+    payload = schemas.ProjectProfilePayload(
+        work_progress_draft=[
+            schemas.ProjectWorkProgressTaskDraft(
+                title="Mixed collaborator task",
+                subtasks=[
+                    schemas.ProjectWorkProgressSubTaskDraft(
+                        title="Mixed collaborator key task",
+                        assignee="王五",
+                        helper="赵六、市场部",
+                    )
+                ],
+            )
+        ]
+    )
+
+    owner_submit_project_profile(1, payload, current_user="owner", db=db)
+
+    helper = db.query(models.Person).filter_by(name="赵六").one()
+    subtask = db.query(models.SubTask).join(models.Task).filter(models.Task.project_id == 1).one()
+    assert payload.work_progress_draft[0].subtasks[0].helper_ids == [helper.id]
+    assert subtask.collaborator_ids == [helper.id]
+    assert "市场部" not in subtask.notes
+    assert db.query(models.Person).filter_by(name="市场部").count() == 0
 
 
 def test_owner_submit_audits_created_imported_people_and_project_members():

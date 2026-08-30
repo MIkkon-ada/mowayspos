@@ -7,6 +7,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -233,6 +234,15 @@ class AIService:
         invoke,
     ) -> tuple[str, models.AIModel, models.AIInvocationLog]:
         policy, candidates = self._candidates(capability_key, model_type)
+        return self._invoke_candidates(policy, candidates, context, invoke)
+
+    def _invoke_candidates(
+        self,
+        policy: models.AICapabilityPolicy,
+        candidates: list[models.AIModel],
+        context: AIInvocationContext | None,
+        invoke,
+    ) -> tuple[str, models.AIModel, models.AIInvocationLog]:
         invocation_context = context or AIInvocationContext()
         last_error: AIUpstreamError | None = None
         for attempt_no, model in enumerate(candidates, start=1):
@@ -268,6 +278,16 @@ class AIService:
             return result, model, log
         raise last_error or AICapabilityNotConfigured("AI capability has no usable model")
 
+    @staticmethod
+    def _vision_workbook_enabled(model: models.AIModel) -> bool:
+        if model.provider != "deepseek":
+            return False
+        try:
+            config = json.loads(model.config_json or "{}")
+        except json.JSONDecodeError:
+            return False
+        return isinstance(config, dict) and config.get("vision_workbook_analysis") is True
+
     def invoke_chat(
         self,
         capability_key: str,
@@ -280,6 +300,37 @@ class AIService:
             context,
             lambda current, api_key, timeout: self.adapters.complete_chat(
                 current, api_key, prompt, timeout_seconds=timeout
+            ),
+        )
+        return ChatResult(text=text, model_code=model.code, invocation_log_id=log.id)
+
+    def invoke_project_init_vision(
+        self,
+        images: list[Path],
+        prompt: str,
+        context: AIInvocationContext | None = None,
+    ) -> ChatResult:
+        policy, candidates = self._candidates(
+            Capability.PROJECT_INIT_ANALYSIS,
+            ModelType.CHAT,
+        )
+        vision_candidates = [
+            model for model in candidates if self._vision_workbook_enabled(model)
+        ]
+        if not vision_candidates:
+            raise AICapabilityNotConfigured(
+                "project init vision has no explicitly opted-in model"
+            )
+        text, model, log = self._invoke_candidates(
+            policy,
+            vision_candidates,
+            context,
+            lambda current, api_key, timeout: self.adapters.complete_project_init_vision(
+                current,
+                api_key,
+                images,
+                prompt,
+                timeout_seconds=timeout,
             ),
         )
         return ChatResult(text=text, model_code=model.code, invocation_log_id=log.id)

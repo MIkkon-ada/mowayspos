@@ -176,6 +176,119 @@ def test_worker_success_updates_monotonic_progress_and_keeps_snapshot(monkeypatc
     assert json.loads(stored.snapshot_json)["project"]["status"] == "dispatched"
 
 
+def test_worker_records_complex_workbook_review_requirement(monkeypatch, tmp_path):
+    from app.services import project_init_analysis as service
+
+    db = make_session()
+    project, _owner = add_project_graph(db)
+    attachment = add_attachment(db, project_id=project.id, attachment_id=1)
+    attachment.original_name = "complex.xlsx"
+    run = models.ProjectInitAnalysisRun(
+        project_id=project.id,
+        attachment_ids_json="[1]",
+        snapshot_json=json.dumps({
+            "project": {},
+            "tasks": [],
+            "people": [],
+            "attachments": [
+                {"id": 1, "storage_key": "1/1", "original_name": "complex.xlsx", "size_bytes": 10},
+            ],
+        }),
+        created_by="owner",
+    )
+    db.add(run)
+    db.commit()
+    run_id = run.id
+    source_path = tmp_path / "complex.xlsx"
+    source_path.write_bytes(b"placeholder")
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(service, "_attachment_path", lambda _key: source_path)
+    monkeypatch.setattr(service, "parse_project_init_file", lambda *_args: [{"file_name": "complex.xlsx", "location": "Sheet1!A1", "text": "task"}])
+    monkeypatch.setattr(service, "profile_project_init_workbook", lambda *_args: {
+        "risk_level": "high",
+        "signals": ["hidden_sheets", "merged_cells"],
+        "summary": {"worksheet_count": 2},
+    })
+    monkeypatch.setattr(service, "AIService", lambda _db: object())
+    monkeypatch.setattr(service, "generate_project_init_draft", lambda *_args, **_kwargs: {"tasks": [{"title": "Draft"}], "warnings": []})
+
+    service.process_analysis_run(run_id)
+
+    db.expire_all()
+    stored = db.get(models.ProjectInitAnalysisRun, run_id)
+    result = json.loads(stored.result_json)
+    file_result = json.loads(stored.file_results_json)[0]
+    assert result["analysis_route"] == {
+        "mode": "text_with_review",
+        "review_required": True,
+        "reason_codes": ["complex_workbook_layout"],
+    }
+    assert file_result["workbook_profile"] == {
+        "risk_level": "high",
+        "signals": ["hidden_sheets", "merged_cells"],
+        "summary": {"worksheet_count": 2},
+    }
+
+
+def test_worker_uses_vision_for_high_risk_non_tabular_workbook_and_cleans_images(monkeypatch, tmp_path):
+    from app.services import project_init_analysis as service
+
+    db = make_session()
+    project, _owner = add_project_graph(db)
+    attachment = add_attachment(db, project_id=project.id, attachment_id=1)
+    attachment.original_name = "复杂表.xlsx"
+    run = models.ProjectInitAnalysisRun(
+        project_id=project.id,
+        attachment_ids_json="[1]",
+        snapshot_json=json.dumps({
+            "project": {}, "tasks": [], "people": [],
+            "attachments": [{"id": 1, "storage_key": "1/1", "original_name": "复杂表.xlsx", "size_bytes": 10}],
+        }),
+        created_by="owner",
+    )
+    db.add(run)
+    db.commit()
+    run_id = run.id
+    source_path = tmp_path / "复杂表.xlsx"
+    source_path.write_bytes(b"placeholder")
+    rendered_directories = []
+
+    def render(_path, output_directory):
+        rendered_directories.append(output_directory)
+        output_directory.mkdir(parents=True, exist_ok=True)
+        image = output_directory / "sheet.png"
+        image.write_bytes(b"png")
+        return [image]
+
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(service, "_attachment_path", lambda _key: source_path)
+    monkeypatch.setattr(service, "parse_project_init_file", lambda *_args: [{"file_name": "复杂表.xlsx", "location": "'推进表'!A1:J30", "text": "复杂布局"}])
+    monkeypatch.setattr(service, "profile_project_init_workbook", lambda *_args: {"risk_level": "high", "signals": ["merged_cells"], "summary": {}})
+    monkeypatch.setattr(service, "render_workbook_images", render)
+    monkeypatch.setattr(service, "AIService", lambda _db: object())
+    monkeypatch.setattr(service, "generate_project_init_vision_draft", lambda *_args, **_kwargs: {"tasks": [{"title": "视觉任务"}], "warnings": []})
+    monkeypatch.setattr(service, "generate_project_init_draft", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("text route should not run")))
+
+    service.process_analysis_run(run_id)
+
+    db.expire_all()
+    stored = db.get(models.ProjectInitAnalysisRun, run_id)
+    assert json.loads(stored.result_json)["analysis_route"]["mode"] == "vision_with_review"
+    assert json.loads(stored.current_draft_json)["tasks"][0]["title"] == "视觉任务"
+    assert rendered_directories and not rendered_directories[0].exists()
+    decision_log = db.query(models.OperationLog).filter_by(
+        project_id=stored.project_id,
+        action="project_init_analysis_decision",
+        target_type="project_init_analysis_run",
+        target_id=run_id,
+    ).one()
+    decision = json.loads(decision_log.after_json)
+    assert decision["analysis_route"] == "vision_with_review"
+    assert decision["review_required"] is True
+    assert decision["task_count"] == 1
+    assert "复杂布局" not in decision_log.after_json
+
+
 def test_worker_all_failure_is_failed_and_does_not_leak_provider_secret(monkeypatch, tmp_path):
     from app.services import project_init_analysis as service
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,7 +35,7 @@ def governance_fixture():
         assignee="杨宇帆",
         assignee_id=1,
         collaborator_ids=[2, 3],
-        due_date=date(2026, 8, 29),
+        due_date=date.today() + timedelta(days=1),
         due_label="试点上线",
         plan_time="2026-08",
         status="进行中",
@@ -123,7 +123,7 @@ def test_governance_payload_prioritizes_actions_and_exposes_keytask_signals():
     assert initiative["accountable_owner"] == "杨宇帆"
     assert initiative["collaborators"] == [{"id": 2, "name": "刘万超"}, {"id": 3, "name": "吴肖"}]
     assert initiative["next_milestone"] == "试点上线"
-    assert initiative["next_milestone_at"] == "2026-08-29"
+    assert initiative["next_milestone_at"] == (date.today() + timedelta(days=1)).isoformat()
     assert initiative["evidence_confirmed"] == 1
     assert initiative["evidence_total"] == 2
     assert initiative["health"] == "watch"

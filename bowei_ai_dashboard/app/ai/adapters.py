@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import tempfile
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Protocol
 
 from app import models
@@ -109,6 +111,64 @@ class OpenAICompatibleChatAdapter:
             raise
         except Exception as exc:
             raise _upstream_error(exc) from exc
+
+    def complete_images(
+        self,
+        model: models.AIModel,
+        api_key: str,
+        images: list[Path],
+        prompt: str,
+        *,
+        timeout_seconds: int,
+    ) -> str:
+        try:
+            from openai import APIConnectionError, APITimeoutError, OpenAI
+
+            config = _model_config(model)
+            if model.provider != "deepseek" or config.get("vision_workbook_analysis") is not True:
+                raise AIUpstreamError("AI_UPSTREAM_BAD_REQUEST", retryable=False)
+            if not images or any(Path(image).suffix.lower() != ".png" for image in images):
+                raise AIUpstreamError("AI_UPSTREAM_BAD_REQUEST", retryable=False)
+            client = OpenAI(
+                api_key=api_key,
+                base_url=f"{model.base_url.rstrip('/')}/beta",
+                timeout=timeout_seconds,
+                max_retries=0,
+            )
+            content: list[dict[str, object]] = [{"type": "text", "text": prompt}]
+            for image in images:
+                content.append(
+                    {
+                        "type": "file",
+                        "file_data": "data:image/png;base64,"
+                        + base64.b64encode(Path(image).read_bytes()).decode("ascii"),
+                        "filename": Path(image).name,
+                    }
+                )
+            request: dict[str, object] = {
+                "model": str(config.get("vision_model") or "deepseek-v4-flash-vision-exp"),
+                "messages": [{"role": "user", "content": content}],
+            }
+            if config.get("response_format") == {"type": "json_object"}:
+                request["response_format"] = {"type": "json_object"}
+            response = client.chat.completions.create(**request)
+            return str(response.choices[0].message.content or "")
+        except APITimeoutError as exc:
+            raise AIUpstreamError("AI_UPSTREAM_TIMEOUT", retryable=True) from exc
+        except APIConnectionError as exc:
+            raise AIUpstreamError("AI_UPSTREAM_CONNECTION", retryable=True) from exc
+        except AIUpstreamError:
+            raise
+        except Exception as exc:
+            raise _upstream_error(exc) from exc
+
+
+def _model_config(model: models.AIModel) -> dict[str, Any]:
+    try:
+        config = json.loads(model.config_json or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return config if isinstance(config, dict) else {}
 
 
 class AnthropicChatAdapter:
@@ -268,6 +328,21 @@ class DefaultAIAdapters:
             raise AIUpstreamError("AI_UPSTREAM_UNKNOWN", retryable=False)
         return self._file_asr.transcribe(
             model, api_key, content, filename, timeout_seconds=timeout_seconds
+        )
+
+    def complete_project_init_vision(
+        self,
+        model: models.AIModel,
+        api_key: str,
+        images: list[Path],
+        prompt: str,
+        *,
+        timeout_seconds: int,
+    ) -> str:
+        if model.provider != "deepseek":
+            raise AIUpstreamError("AI_UPSTREAM_UNKNOWN", retryable=False)
+        return self._openai.complete_images(
+            model, api_key, images, prompt, timeout_seconds=timeout_seconds
         )
 
     def create_realtime_asr_session(

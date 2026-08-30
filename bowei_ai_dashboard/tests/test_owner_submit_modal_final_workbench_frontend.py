@@ -63,7 +63,7 @@ def test_owner_submit_modal_keeps_payload_contract_with_period_helpers():
 
     for expected in [
         "function composeProjectPeriod",
-        "function parseProjectPeriod",
+        "function parsePeriodValue",
         "function composeTaskPeriod",
         "function parseTaskPeriod",
         "function toPayloadDraft",

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import httpx
 import openai
 import pytest
+from PIL import Image
 
 from app import models
 from app.ai.contracts import AIUpstreamError
@@ -133,3 +134,40 @@ def test_openai_timeout_is_mapped_and_sdk_retries_are_disabled(monkeypatch):
     assert error.value.code == "AI_UPSTREAM_TIMEOUT"
     assert error.value.retryable is True
     assert captured["max_retries"] == 0
+
+
+def test_deepseek_vision_sends_inline_png_data_without_remote_file_id(monkeypatch, tmp_path):
+    captured: dict = {}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            captured["request"] = kwargs
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))]
+            )
+
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: captured.update(client=kwargs) or fake_client)
+    image_path = tmp_path / "sheet.png"
+    Image.new("RGB", (8, 8), "white").save(image_path)
+    model = models.AIModel(
+        code="deepseek-vision",
+        display_name="DeepSeek Vision",
+        provider="deepseek",
+        model_name="deepseek-v4-pro",
+        model_type="chat",
+        base_url="https://api.deepseek.com",
+        config_json=json.dumps({"vision_workbook_analysis": True}),
+        enabled=True,
+    )
+
+    result = OpenAICompatibleChatAdapter().complete_images(
+        model, "secret", [image_path], "extract", timeout_seconds=30
+    )
+
+    assert result == "{}"
+    assert captured["client"]["base_url"] == "https://api.deepseek.com/beta"
+    image_part = captured["request"]["messages"][0]["content"][1]
+    assert image_part["type"] == "file"
+    assert image_part["file_data"].startswith("data:image/png;base64,")
+    assert "file_id" not in image_part

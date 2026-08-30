@@ -48,6 +48,7 @@ from ..services.project_purge_storage import (
     retry_project_payload_cleanup,
     stage_project_payloads,
 )
+from ..services.project_init_attachment_storage import project_init_attachment_root
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -2335,7 +2336,7 @@ def _project_purge_storage_roots() -> list[tuple[str, Path]]:
     meeting_root = os.getenv("PROJECT_MEETING_DOCUMENT_ROOT", "").strip()
     return [
         ("achievement", Path(os.getenv("ACHIEVEMENT_ATTACHMENT_ROOT", "/app/data/achievement-attachments"))),
-        ("project_init", Path(os.getenv("PROJECT_INIT_ATTACHMENT_ROOT", "/app/data/project-init-attachments"))),
+        ("project_init", project_init_attachment_root()),
         (
             "meeting_document",
             Path(meeting_root) if meeting_root else Path(__file__).resolve().parents[2] / "data" / "meeting_documents",

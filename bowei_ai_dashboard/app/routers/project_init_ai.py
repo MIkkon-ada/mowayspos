@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import shutil
 import uuid
 import zipfile
@@ -32,13 +31,19 @@ from ..services.project_init_analysis import (
     recover_stale_runs,
     validate_analysis_attachment_selection,
 )
+from ..services.project_init_attachment_storage import (
+    project_init_attachment_path,
+    project_init_attachment_root,
+)
 
 
 router = APIRouter(prefix="/api/projects/{project_id}/init-attachments", tags=["project-init-ai"])
 analysis_router = APIRouter(prefix="/api/projects/{project_id}/init-analysis-runs", tags=["project-init-ai"])
 logger = logging.getLogger(__name__)
 
-_ROOT = Path(os.getenv("PROJECT_INIT_ATTACHMENT_ROOT", "/app/data/project-init-attachments"))
+# Tests and maintenance scripts may set this explicit override.  Normal runtime
+# always resolves the configured persistent storage root dynamically.
+_ROOT: Path | None = None
 _MAX_FILE_BYTES = 25 * 1024 * 1024
 _MAX_MULTIPART_OVERHEAD = 128 * 1024
 _EDITABLE_LIFECYCLES = {"dispatched", "returned"}
@@ -219,15 +224,14 @@ async def _parse_upload_from_request(request: Request) -> UploadFile:
 
 
 def _root_path() -> Path:
-    return _ROOT.resolve()
+    return (_ROOT or project_init_attachment_root()).resolve()
 
 
 def _attachment_path(row: models.ProjectInitAttachment) -> Path:
-    root = _root_path()
-    path = (root / row.storage_key).resolve()
-    if path == root or root not in path.parents:
+    try:
+        return project_init_attachment_path(row.storage_key, root=_root_path())
+    except ValueError:
         raise HTTPException(status_code=404, detail="attachment not found")
-    return path
 
 
 def _retry_deleted_payload_cleanup(db: Session) -> None:

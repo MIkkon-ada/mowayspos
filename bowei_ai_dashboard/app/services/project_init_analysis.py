@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Iterable
@@ -25,13 +24,18 @@ from .project_init_ai_agent import ProjectInitAiInvalidDraft, generate_project_i
 from ..ai.service import AIService
 from ..ai.contracts import AIInvocationContext
 from .project_init_file_parser import parse_project_init_file
+from .project_init_attachment_storage import (
+    project_init_attachment_path,
+    project_init_attachment_root,
+)
 
 logger = logging.getLogger(__name__)
 
 MAX_ANALYSIS_ATTACHMENTS = 10
 MAX_ANALYSIS_BYTES = 100 * 1024 * 1024
 STALE_AFTER = timedelta(minutes=30)
-_ROOT = Path(os.getenv("PROJECT_INIT_ATTACHMENT_ROOT", "/app/data/project-init-attachments"))
+# Kept as an override for existing maintenance scripts and focused tests.
+_ROOT: Path | None = None
 
 
 class RunLeaseLost(RuntimeError):
@@ -153,11 +157,13 @@ def build_project_init_snapshot(
 
 
 def _attachment_path(storage_key: str) -> Path:
-    root = _ROOT.resolve()
-    path = (root / storage_key).resolve()
-    if path == root or root not in path.parents:
+    try:
+        return project_init_attachment_path(
+            storage_key,
+            root=(_ROOT or project_init_attachment_root()),
+        )
+    except ValueError:
         raise ValueError("invalid attachment storage path")
-    return path
 
 
 def _safe_error(kind: str) -> str:

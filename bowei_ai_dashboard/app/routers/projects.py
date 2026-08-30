@@ -54,7 +54,7 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 _VALID_ROLES = {"project_ceo", "owner", "coordinator", "member"}
 _LIFECYCLE_STATUSES = PL.ALL_STATUSES
 _IMPORTABLE_PERSON_NAME = re.compile(r"^[\u4e00-\u9fff]{2,8}$")
-_NON_PERSON_IMPORT_VALUES = {"mowasyadmin", "moways"}
+_IMPORTABLE_ACCOUNT_NAME = re.compile(r"^[a-z][a-z0-9._-]{2,49}$", re.IGNORECASE)
 _NON_PERSON_IMPORT_PATTERN = re.compile(
     r"项目经理|负责人|总监|主管|总经理|总裁|总工程师|管理层|全体|成员|部门|团队|项目组|项目部|[部组中心科处]$"
 )
@@ -129,12 +129,15 @@ def _validate_work_progress_draft(payload: schemas.ProjectProfilePayload) -> Non
 
 
 def _is_importable_person_name(value: str) -> bool:
-    """Allow only short Chinese personal names from imported work-plan text."""
-    return (
-        bool(_IMPORTABLE_PERSON_NAME.fullmatch(value))
-        and value.lower() not in _NON_PERSON_IMPORT_VALUES
+    """Allow a personal Chinese name or account-style identifier, never a role/group label."""
+    return bool(
+        (_IMPORTABLE_PERSON_NAME.fullmatch(value) or _IMPORTABLE_ACCOUNT_NAME.fullmatch(value))
         and not _NON_PERSON_IMPORT_PATTERN.search(value)
     )
+
+
+def _is_non_person_label(value: str) -> bool:
+    return bool(_NON_PERSON_IMPORT_PATTERN.search(str(value or "").strip()))
 
 
 def _contains_chinese(value: str) -> bool:
@@ -226,6 +229,8 @@ def _resolve_work_progress_people(
             if not sub_draft.helper_ids:
                 helper_ids: list[int] = []
                 for name in _split_names(sub_draft.helper):
+                    if _is_non_person_label(name):
+                        continue
                     try:
                         person = _resolve_imported_name(name)
                     except HTTPException:

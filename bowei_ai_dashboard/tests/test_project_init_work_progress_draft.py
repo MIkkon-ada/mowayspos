@@ -363,6 +363,8 @@ def test_owner_submit_creates_named_people_as_normal_members_without_accounts():
 def test_owner_submit_skips_non_person_helper_labels_while_importing_named_people():
     db = _make_session()
     _seed_project_team(db)
+    db.add(models.Person(id=8, name="市场部", system_role="normal_member", is_active=True))
+    db.commit()
     payload = schemas.ProjectProfilePayload(
         work_progress_draft=[
             schemas.ProjectWorkProgressTaskDraft(
@@ -385,7 +387,32 @@ def test_owner_submit_skips_non_person_helper_labels_while_importing_named_peopl
     assert payload.work_progress_draft[0].subtasks[0].helper_ids == [helper.id]
     assert subtask.collaborator_ids == [helper.id]
     assert "市场部" not in subtask.notes
-    assert db.query(models.Person).filter_by(name="市场部").count() == 0
+    assert db.query(models.ProjectMember).filter_by(project_id=1, person_id=8, role="member").count() == 0
+
+
+def test_owner_submit_creates_unmatched_account_style_assignee_as_a_project_member():
+    db = _make_session()
+    _seed_project_team(db)
+    payload = schemas.ProjectProfilePayload(
+        work_progress_draft=[
+            schemas.ProjectWorkProgressTaskDraft(
+                title="Account-style imported task",
+                subtasks=[
+                    schemas.ProjectWorkProgressSubTaskDraft(
+                        title="Account-style imported key task",
+                        assignee="mowasyadmin",
+                    )
+                ],
+            )
+        ]
+    )
+
+    owner_submit_project_profile(1, payload, current_user="owner", db=db)
+
+    assignee = db.query(models.Person).filter_by(name="mowasyadmin").one()
+    assert (assignee.is_active, assignee.system_role) == (True, "normal_member")
+    assert payload.work_progress_draft[0].subtasks[0].assignee_id == assignee.id
+    assert db.query(models.ProjectMember).filter_by(project_id=1, person_id=assignee.id, role="member").one()
 
 
 def test_owner_submit_audits_created_imported_people_and_project_members():
@@ -623,7 +650,7 @@ def test_owner_submit_resolves_raw_helper_after_removing_assignee_helper_id():
     assert subtask.notes == "协助人：李四"
 
 
-@pytest.mark.parametrize("invalid_name", ["各项目经理", "咨询部", "mowasyadmin"])
+@pytest.mark.parametrize("invalid_name", ["各项目经理", "咨询部"])
 def test_owner_submit_rejects_non_person_imported_assignee_without_creating_person(invalid_name):
     db = _make_session()
     _seed_project_team(db)

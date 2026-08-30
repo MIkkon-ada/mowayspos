@@ -183,11 +183,13 @@ function getPickerMenuPosition(rect: DOMRect, minWidth: number): PickerMenuPosit
 function AssigneePicker({
   people,
   value,
+  rawName,
   disabled,
   onChange,
 }: {
   people: Person[]
   value: number | ''
+  rawName: string
   disabled?: boolean
   onChange: (value: string) => void
 }) {
@@ -197,6 +199,7 @@ function AssigneePicker({
   const anchorRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const selected = people.find((person) => person.id === value)
+  const hasPendingRawName = !selected && !value && Boolean(rawName.trim())
   const filtered = people.filter((person) => {
     const haystack = `${person.name} ${person.department ?? ''}`.toLowerCase()
     return haystack.includes(query.trim().toLowerCase())
@@ -238,7 +241,7 @@ function AssigneePicker({
         aria-haspopup="listbox"
         className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-left text-xs font-semibold text-slate-700 outline-none transition-colors hover:border-blue-300 hover:bg-white focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        <span className="truncate">{selected?.name ?? '请选择负责人'}</span>
+        <span className="truncate">{selected?.name ?? (hasPendingRawName ? <>待自动添加：{rawName.trim()}</> : '请选择负责人')}</span>
         <svg
           aria-hidden="true"
           viewBox="0 0 16 16"
@@ -252,6 +255,7 @@ function AssigneePicker({
           <path d="m4 6 4 4 4-4" />
         </svg>
       </button>
+      {hasPendingRawName && <p className="mt-1 text-[10px] leading-4 text-slate-500">将在提交时自动添加或匹配人员</p>}
       {open && menuPosition && createPortal(
         <div
           ref={menuRef}
@@ -298,12 +302,14 @@ function HelperPicker({
   people,
   value,
   excludedId,
+  rawName,
   disabled,
   onChange,
 }: {
   people: Person[]
   value: number[]
   excludedId: number | ''
+  rawName: string
   disabled?: boolean
   onChange: (personId: number) => void
 }) {
@@ -313,6 +319,7 @@ function HelperPicker({
   const anchorRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const selectedPeople = people.filter((person) => value.includes(person.id))
+  const hasPendingRawName = value.length === 0 && Boolean(rawName.trim())
   const filtered = people.filter((person) => {
     if (person.id === excludedId) return false
     const haystack = `${person.name} ${person.department ?? ''}`.toLowerCase()
@@ -356,7 +363,7 @@ function HelperPicker({
         className="flex min-h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left text-xs font-semibold text-slate-700 outline-none transition-colors hover:border-blue-300 hover:bg-white focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
       >
         <span className="min-w-0 truncate">
-          {selectedPeople.length > 0 ? selectedPeople.map((person) => person.name).join('、') : '请选择协助人'}
+          {selectedPeople.length > 0 ? selectedPeople.map((person) => person.name).join('、') : (hasPendingRawName ? <>待自动添加：{rawName.trim()}</> : '请选择协助人')}
         </span>
         <svg
           aria-hidden="true"
@@ -371,6 +378,7 @@ function HelperPicker({
           <path d="m4 6 4 4 4-4" />
         </svg>
       </button>
+      {hasPendingRawName && <p className="mt-1 text-[10px] leading-4 text-slate-500">将在提交时自动添加或匹配人员</p>}
       {open && menuPosition && createPortal(
         <div
           ref={menuRef}
@@ -772,8 +780,8 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
       toast.error('请至少添加一个关键任务')
       return
     }
-    if (workProgressDraft.some((task) => task.subtasks?.some((subtask) => !subtask.assignee_id))) {
-      toast.error('请选择关键任务负责人')
+    if (workProgressDraft.some((task) => task.subtasks?.some((subtask) => !subtask.assignee_id && !subtask.assignee?.trim()))) {
+      toast.error('请为每个关键任务填写负责人')
       return
     }
 
@@ -847,13 +855,13 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
               <p className="text-xs text-slate-500">基础信息由管理层维护</p>
               <div className="grid grid-cols-1 gap-3">
                 <div className="min-w-0">
-                  <span className="block text-[11px] font-semibold text-slate-500">项目名称</span>
-                  <p className="mt-2 truncate text-lg font-bold tracking-[-0.01em] text-slate-900">{project.name}</p>
+                  <span className="block text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">项目名称</span>
+                  <p className="mt-2 truncate text-xl font-bold tracking-[-0.01em] text-slate-900">{project.name}</p>
                 </div>
                 <div className="owner-submit-project-period-display min-w-0">
-                  <span className="block text-[11px] font-semibold text-slate-500">项目周期 / 时间段</span>
-                  <div className="relative mt-2 flex min-h-5 items-center pl-7 text-sm font-medium text-slate-700">
-                    <svg aria-hidden="true" viewBox="0 0 24 24" className="pointer-events-none absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <span className="block text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">项目周期 / 时间段</span>
+                  <div className="relative mt-2 flex min-h-10 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 pl-9 text-sm font-semibold text-slate-800">
+                    <svg aria-hidden="true" viewBox="0 0 24 24" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8">
                       <rect x="3" y="5" width="18" height="16" rx="2" />
                       <path d="M16 3v4M8 3v4M3 10h18" />
                     </svg>
@@ -861,8 +869,15 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
                   </div>
                 </div>
                 <div className="min-w-0">
-                  <span className="block text-[11px] font-semibold text-slate-500">项目完成准则 / 验收标准</span>
-                  <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-700">{project.objectives?.trim() || '未填写'}</p>
+                  <span className="block text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">项目完成准则 / 验收标准</span>
+                  <div className="owner-submit-objectives-content mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                    <span className="block text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">内容</span>
+                    {project.objectives?.trim() ? (
+                      <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-800">{project.objectives.trim()}</p>
+                    ) : (
+                      <span className="mt-2 inline-flex rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs font-medium text-slate-400">未填写</span>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1035,8 +1050,8 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
                                             <input value={subtask.title} onChange={(e) => updateSubTaskDraft(taskIndex, subIndex, 'title', e.target.value)} placeholder="例如：任务名称" className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100" />
                                           </div>
                                         </td>
-                                        <td className="px-2 py-1.5 align-top"><AssigneePicker people={people} value={subtask.assigneeId} disabled={peopleLoading || Boolean(peopleError)} onChange={(value) => updateSubTaskAssignee(taskIndex, subIndex, value)} /></td>
-                                        <td className="px-2 py-1.5 align-top"><HelperPicker people={people} value={subtask.helperIds} excludedId={subtask.assigneeId} disabled={peopleLoading || Boolean(peopleError)} onChange={(personId) => toggleSubTaskHelper(taskIndex, subIndex, personId)} /></td>
+                                        <td className="px-2 py-1.5 align-top"><AssigneePicker people={people} value={subtask.assigneeId} rawName={subtask.assignee} disabled={peopleLoading || Boolean(peopleError)} onChange={(value) => updateSubTaskAssignee(taskIndex, subIndex, value)} /></td>
+                                        <td className="px-2 py-1.5 align-top"><HelperPicker people={people} value={subtask.helperIds} excludedId={subtask.assigneeId} rawName={subtask.helper} disabled={peopleLoading || Boolean(peopleError)} onChange={(personId) => toggleSubTaskHelper(taskIndex, subIndex, personId)} /></td>
                                         <td className="px-2 py-1.5">
                                           <div className="relative">
                                             <svg aria-hidden="true" viewBox="0 0 24 24" className="owner-submit-subtask-date-icon pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></svg>

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
+import tempfile
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Iterable
@@ -21,16 +21,26 @@ from sqlalchemy.orm import Session, object_session
 from .. import crud, models
 from ..database import SessionLocal
 from ..time_utils import utc_now
-from .project_init_ai_agent import generate_project_init_draft
+from .project_init_ai_agent import ProjectInitAiInvalidDraft, generate_project_init_draft
 from ..ai.service import AIService
+from ..ai.contracts import AIInvocationContext
 from .project_init_file_parser import parse_project_init_file
+from .project_init_attachment_storage import (
+    project_init_attachment_path,
+    project_init_attachment_root,
+)
+from .project_init_analysis_routing import select_project_init_analysis_route
+from .project_init_workbook_profile import profile_project_init_workbook
+from .project_init_workbook_renderer import render_workbook_images
+from .project_init_vision_analysis import generate_project_init_vision_draft
 
 logger = logging.getLogger(__name__)
 
 MAX_ANALYSIS_ATTACHMENTS = 10
 MAX_ANALYSIS_BYTES = 100 * 1024 * 1024
 STALE_AFTER = timedelta(minutes=30)
-_ROOT = Path(os.getenv("PROJECT_INIT_ATTACHMENT_ROOT", "/app/data/project-init-attachments"))
+# Kept as an override for existing maintenance scripts and focused tests.
+_ROOT: Path | None = None
 
 
 class RunLeaseLost(RuntimeError):
@@ -89,6 +99,27 @@ def build_project_init_snapshot(
     attachments: Iterable[models.ProjectInitAttachment],
     current_draft: Any = None,
 ) -> dict[str, Any]:
+    policy = (
+        db.query(models.AICapabilityPolicy)
+        .filter_by(capability_key="project.init.analysis", enabled=True)
+        .one_or_none()
+    )
+    model_ids = [] if policy is None or policy.primary_model_id is None else [
+        policy.primary_model_id,
+        *(_json_load(policy.fallback_model_ids_json, [])),
+    ]
+    model_rows = {item.id: item for item in db.query(models.AIModel).filter(models.AIModel.id.in_(model_ids)).all()} if model_ids else {}
+    model_strategy = [
+        {
+            "id": model.id,
+            "code": model.code,
+            "display_name": model.display_name,
+            "provider": model.provider,
+            "model_name": model.model_name,
+        }
+        for model_id in model_ids
+        if (model := model_rows.get(model_id)) is not None
+    ]
     member_rows = (
         db.query(models.ProjectMember)
         .filter(models.ProjectMember.project_id == project.id)
@@ -126,15 +157,18 @@ def build_project_init_snapshot(
             for item in attachments
         ],
         "current_draft": current_draft if current_draft is not None else [],
+        "model_strategy": model_strategy,
     }
 
 
 def _attachment_path(storage_key: str) -> Path:
-    root = _ROOT.resolve()
-    path = (root / storage_key).resolve()
-    if path == root or root not in path.parents:
+    try:
+        return project_init_attachment_path(
+            storage_key,
+            root=(_ROOT or project_init_attachment_root()),
+        )
+    except ValueError:
         raise ValueError("invalid attachment storage path")
-    return path
 
 
 def _safe_error(kind: str) -> str:
@@ -298,7 +332,32 @@ def _draft_payload(result: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {"tasks": []}
 
 
-def _result_metadata(draft: dict[str, Any], *, provider: str = "", model_name: str = "", file_results=None) -> dict[str, Any]:
+def _attempted_models(db: Session, run_id: int) -> list[dict[str, Any]]:
+    rows = (
+        db.query(models.AIInvocationLog, models.AIModel)
+        .join(models.AIModel, models.AIInvocationLog.model_id == models.AIModel.id)
+        .filter(
+            models.AIInvocationLog.resource_type == "project_init",
+            models.AIInvocationLog.resource_id == run_id,
+        )
+        .order_by(models.AIInvocationLog.id.asc())
+        .all()
+    )
+    return [
+        {"id": model.id, "code": model.code, "display_name": model.display_name, "provider": model.provider, "model_name": model.model_name}
+        for _, model in rows
+    ]
+
+
+def _result_metadata(
+    draft: dict[str, Any],
+    *,
+    provider: str = "",
+    model_name: str = "",
+    file_results=None,
+    attempted_models=None,
+    analysis_route: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     tasks = draft.get("tasks") if isinstance(draft.get("tasks"), list) else []
     warnings = draft.get("warnings") if isinstance(draft.get("warnings"), list) else []
     return {
@@ -307,6 +366,13 @@ def _result_metadata(draft: dict[str, Any], *, provider: str = "", model_name: s
         "task_count": len(tasks),
         "warning_count": len(warnings),
         "file_count": len(file_results or []),
+        "attempted_models": attempted_models or [],
+        "final_model": attempted_models[-1] if attempted_models else {},
+        "analysis_route": analysis_route or {
+            "mode": "text_structured",
+            "review_required": False,
+            "reason_codes": [],
+        },
     }
 
 
@@ -343,12 +409,24 @@ def process_analysis_run(run_id: int) -> None:
                 attachment_snapshot.append({"id": attachment_id, "storage_key": "", "original_name": ""})
 
         file_results: list[dict[str, Any]] = []
+        workbook_profiles: list[dict[str, Any]] = []
+        vision_sources: list[Path] = []
         chunks: list[dict[str, Any]] = []
         for index, item in enumerate(attachment_snapshot):
             attachment_id = item.get("id")
             try:
                 path = _attachment_path(str(item["storage_key"]))
                 parsed = list(parse_project_init_file(path, str(item["original_name"])))
+                workbook_profile = profile_project_init_workbook(
+                    path,
+                    str(item["original_name"]),
+                )
+                workbook_profiles.append(workbook_profile)
+                if (
+                    workbook_profile.get("risk_level") == "high"
+                    and str(item["original_name"]).casefold().endswith(".xlsx")
+                ):
+                    vision_sources.append(path)
                 for chunk in parsed:
                     file_name = chunk.get("file_name", "") if isinstance(chunk, dict) else chunk.file_name
                     location = chunk.get("location", "") if isinstance(chunk, dict) else chunk.location
@@ -361,7 +439,14 @@ def process_analysis_run(run_id: int) -> None:
                             "text": text,
                         }
                     )
-                file_results.append({"attachment_id": attachment_id, "status": "completed", "chunk_count": len(parsed)})
+                file_results.append(
+                    {
+                        "attachment_id": attachment_id,
+                        "status": "completed",
+                        "chunk_count": len(parsed),
+                        "workbook_profile": workbook_profile,
+                    }
+                )
             except Exception as exc:
                 logger.warning(
                     "project_init_parse_failure run_id=%s error_type=%s code=parse_failure",
@@ -381,20 +466,64 @@ def process_analysis_run(run_id: int) -> None:
         if not chunks:
             _mark_failed(db, run_id, "parse")
             return
+        analysis_route = select_project_init_analysis_route(workbook_profiles)
         if not _update_processing(db, run_id, stage="extracting", progress=55):
             return
 
         people = snapshot.get("people", []) if isinstance(snapshot, dict) else []
         existing_tasks = snapshot.get("tasks", []) if isinstance(snapshot, dict) else []
         try:
-            result = generate_project_init_draft(
-                chunks,
-                people,
-                existing_tasks,
-                ai_service=AIService(db),
-            )
+            ai_service = AIService(db)
+            context = AIInvocationContext(resource_type="project_init", resource_id=run_id)
+            result = None
+            if vision_sources:
+                try:
+                    with tempfile.TemporaryDirectory(prefix="project-init-vision-") as raw_directory:
+                        render_directory = Path(raw_directory)
+                        images: list[Path] = []
+                        for index, source in enumerate(vision_sources, start=1):
+                            images.extend(
+                                render_workbook_images(
+                                    source,
+                                    render_directory / f"source-{index}",
+                                )
+                            )
+                        if images:
+                            result = generate_project_init_vision_draft(
+                                images,
+                                chunks,
+                                people,
+                                existing_tasks,
+                                ai_service=ai_service,
+                                invocation_context=context,
+                            )
+                            if str(getattr(result, "model_name", "")) != "structured-spreadsheet":
+                                analysis_route = {
+                                    "mode": "vision_with_review",
+                                    "review_required": True,
+                                    "reason_codes": ["complex_workbook_layout"],
+                                }
+                except Exception as exc:
+                    logger.warning(
+                        "project_init_vision_fallback run_id=%s error_type=%s code=vision_fallback",
+                        run_id,
+                        type(exc).__name__,
+                    )
+            if result is None:
+                result = generate_project_init_draft(
+                    chunks,
+                    people,
+                    existing_tasks,
+                    ai_service=ai_service,
+                    invocation_context=context,
+                )
             draft = _draft_payload(result)
         except Exception as exc:
+            failure_category = (
+                "invalid_draft_schema"
+                if isinstance(exc, ProjectInitAiInvalidDraft)
+                else "ai_processing_failed"
+            )
             logger.warning(
                 "project_init_provider_failure run_id=%s error_type=%s code=provider_failure",
                 run_id,
@@ -407,7 +536,20 @@ def process_analysis_run(run_id: int) -> None:
                 progress=100,
                 values={
                     "current_draft_json": _json_dump({"tasks": [], "warnings": []}),
-                    "result_json": _json_dump({"tasks": 0, "warnings": 0}),
+                    "result_json": _json_dump(
+                        {
+                            "tasks": 0,
+                            "warnings": 0,
+                            "attempted_models": _attempted_models(db, run_id),
+                            "analysis_route": analysis_route,
+                            "failure_category": failure_category,
+                            "validation_errors": (
+                                exc.validation_errors
+                                if isinstance(exc, ProjectInitAiInvalidDraft)
+                                else []
+                            ),
+                        }
+                    ),
                     "file_results_json": _json_dump(file_results),
                     "status": "failed",
                     "finished_at": utc_now(),
@@ -423,6 +565,34 @@ def process_analysis_run(run_id: int) -> None:
         provider = str(getattr(result, "provider", "") or "")[:30]
         model_name = str(getattr(result, "model_name", "") or "")[:100]
         failed_files = sum(1 for item in file_results if item.get("status") == "failed")
+        result_metadata = _result_metadata(
+            draft,
+            provider=provider,
+            model_name=model_name,
+            file_results=file_results,
+            attempted_models=_attempted_models(db, run_id),
+            analysis_route=analysis_route,
+        )
+        crud.log(
+            db,
+            str(run.created_by or "system")[:50],
+            "project_init_analysis_decision",
+            "project_init_analysis_run",
+            run_id,
+            {},
+            {
+                "analysis_route": result_metadata["analysis_route"]["mode"],
+                "review_required": result_metadata["analysis_route"]["review_required"],
+                "reason_codes": result_metadata["analysis_route"]["reason_codes"],
+                "provider": provider,
+                "model_name": model_name,
+                "task_count": result_metadata["task_count"],
+                "warning_count": result_metadata["warning_count"],
+                "file_count": result_metadata["file_count"],
+            },
+            project_id=run.project_id,
+            note="项目立项文档分析决策摘要",
+        )
         _update_processing(
             db,
             run_id,
@@ -432,9 +602,7 @@ def process_analysis_run(run_id: int) -> None:
                 "current_draft_json": _json_dump(draft),
                 "provider": provider,
                 "model_name": model_name,
-                "result_json": _json_dump(
-                    _result_metadata(draft, provider=provider, model_name=model_name, file_results=file_results)
-                ),
+                "result_json": _json_dump(result_metadata),
                 "file_results_json": _json_dump(file_results),
                 "status": "partial_failed" if failed_files else "completed",
                 "finished_at": utc_now(),

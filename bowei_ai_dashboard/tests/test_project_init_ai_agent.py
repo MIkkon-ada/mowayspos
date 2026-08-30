@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from openpyxl import Workbook
 from pydantic import ValidationError
 
 from app.services.project_init_ai_agent import (
@@ -8,11 +9,14 @@ from app.services.project_init_ai_agent import (
     Evidence,
     ProjectInitAiEmptyResult,
     ProjectInitAiError,
+    ProjectInitAiInvalidDraft,
     _merge_tasks,
+    _context_prompt,
+    _final_merge_prompt,
     _parse_json_response,
     generate_project_init_draft,
 )
-from app.services.project_init_file_parser import SourceChunk
+from app.services.project_init_file_parser import SourceChunk, parse_project_init_file
 
 
 def chunk(text: str, *, name: str = "plan.txt", location: str = "lines 1-2") -> dict:
@@ -81,6 +85,25 @@ def test_unique_active_person_is_bound_but_ambiguous_and_inactive_are_not():
     assert subtask.assignee_id == 1
     assert subtask.helper_ids == []
     assert {warning.code for warning in subtask.warnings} == {"ambiguous_person", "inactive_person"}
+
+
+def test_full_person_snapshot_is_reduced_to_candidate_fields():
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [{
+            "id": 1,
+            "name": "张三",
+            "is_active": True,
+            "department": "交付部",
+            "system_role": "normal_member",
+            "special_project_duty": "项目负责人",
+        }],
+        [],
+        llm_call=fake_llm({"tasks": [raw_task()]}),
+    )
+
+    assert result.tasks[0].owner_id == 1
+    assert result.tasks[0].subtasks[0].assignee_id == 1
 
 
 def test_unmatched_person_name_is_preserved_without_an_id():
@@ -165,6 +188,399 @@ def test_invalid_or_fenced_llm_json_is_rejected_as_business_error():
 
     with pytest.raises(ProjectInitAiError):
         generate_project_init_draft([chunk("x")], [], [], llm_call=bad_llm)
+
+
+def test_normalizes_redundant_evidence_label_and_null_optional_text():
+    payload = raw_task()
+    payload["plan_end"] = None
+    payload["evidence"][0]["source_label"] = "plan.txt · lines 1-2"
+    payload["subtasks"][0]["plan_end"] = None
+    payload["subtasks"][0]["evidence"][0]["source_label"] = "plan.txt · lines 1-2"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].plan_end == ""
+    assert result.tasks[0].subtasks[0].plan_end == ""
+    assert result.tasks[0].evidence[0].source_label == "plan.txt · lines 1-2"
+
+
+def test_reconciles_end_only_month_as_a_start_only_date():
+    payload = raw_task()
+    payload["plan_start"] = ""
+    payload["plan_end"] = "2026-06"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    assert task.plan_start == "2026-06-01"
+    assert task.plan_end == ""
+
+
+def test_reconciles_end_only_iso_date_as_a_start_only_date():
+    payload = raw_task()
+    payload["plan_start"] = ""
+    payload["plan_end"] = "2026-06-15"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    assert task.plan_start == "2026-06-15"
+    assert task.plan_end == ""
+
+
+def test_normalizes_month_precision_plan_start_to_a_full_date_without_changing_end():
+    payload = raw_task()
+    payload["plan_start"] = "2026-05"
+    payload["plan_end"] = "2026-06"
+    payload["subtasks"][0].update({"plan_start": "2026-07", "plan_end": "2026-08"})
+
+    result = generate_project_init_draft(
+        [chunk("计划时间 5-6月")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    subtask = task.subtasks[0]
+    assert (task.plan_start, task.plan_end) == ("2026-05-01", "2026-06")
+    assert (subtask.plan_start, subtask.plan_end) == ("2026-07-01", "2026-08")
+
+
+def test_preserves_impossible_end_only_iso_date():
+    payload = raw_task()
+    payload["plan_start"] = ""
+    payload["plan_end"] = "2026-02-31"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    assert task.plan_start == ""
+    assert task.plan_end == "2026-02-31"
+
+
+def test_preserves_plan_end_when_plan_start_is_present():
+    payload = raw_task()
+    payload["plan_start"] = "2026-06-01"
+    payload["plan_end"] = "2026-06-15"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    assert task.plan_start == "2026-06-01"
+    assert task.plan_end == "2026-06-15"
+
+
+def test_reconciles_subtask_end_only_month_as_a_start_only_date():
+    payload = raw_task()
+    payload["subtasks"][0].update({"plan_start": "", "plan_end": "2026-06"})
+
+    result = generate_project_init_draft(
+        [chunk("计划时间\n2026-06")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    subtask = result.tasks[0].subtasks[0]
+    assert (subtask.plan_start, subtask.plan_end) == ("2026-06-01", "")
+
+
+def test_reconciles_empty_parent_description_from_first_subtask_completion_standard():
+    payload = raw_task()
+    payload["description"] = ""
+    payload["subtasks"][0]["evaluation_standard"] = "  "
+    payload["subtasks"].append({
+        "title": "完成验收",
+        "evaluation_standard": "交付首版并完成验收",
+    })
+
+    result = generate_project_init_draft(
+        [chunk("关键成果\n交付首版")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].description == "交付首版并完成验收"
+
+
+def test_reconciles_parent_description_that_repeats_its_first_subtask_title():
+    payload = raw_task()
+    payload["description"] = payload["subtasks"][0]["title"]
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].description == ""
+
+
+def test_reconciles_parent_description_with_normalized_first_subtask_title():
+    payload = raw_task()
+    payload["description"] = "完成 方案，确认"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].description == ""
+
+
+def test_parent_description_matching_only_second_subtask_is_preserved():
+    payload = raw_task()
+    payload["subtasks"].append({"title": "完成上线验收"})
+    payload["description"] = "完成上线验收"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].description == "完成上线验收"
+
+
+@pytest.mark.parametrize("prompt", [_context_prompt([], [], []), _final_merge_prompt([], [])])
+def test_prompts_map_project_outline_terms_to_task_fields(prompt: str):
+    assert "专项映射到 task title" in prompt
+    assert "关键任务映射到 subtasks" in prompt
+    assert "关键成果或完成标准映射到父任务 description" in prompt
+
+
+def test_normalizes_overlong_evidence_excerpt_without_breaking_source_validation():
+    excerpt = "实施交付" * 101
+    payload = raw_task(evidence=[{
+        "attachment_id": 7,
+        "file_name": "plan.txt",
+        "location": "lines 1-2",
+        "excerpt": excerpt,
+    }])
+
+    result = generate_project_init_draft(
+        [chunk(excerpt)],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].evidence[0].excerpt == excerpt[:300]
+    assert len(result.tasks[0].evidence[0].excerpt) == 300
+
+
+def test_normalizes_string_helper_names_to_a_name_list():
+    payload = raw_task()
+    payload["subtasks"][0]["helper_names"] = "李四、王五, 赵六\n钱七"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].subtasks[0].helper_names == ["李四", "王五", "赵六", "钱七"]
+
+
+def test_normalizes_model_owned_text_fields_to_contract_limits():
+    payload = raw_task()
+    payload.update(
+        {
+            "title": "T" * 201,
+            "description": "D" * 2001,
+            "plan_end": "E" * 51,
+        }
+    )
+    payload["subtasks"][0].update(
+        {
+            "title": "S" * 201,
+            "description": "D" * 2001,
+            "plan_end": "E" * 51,
+            "evaluation_standard": "V" * 1001,
+        }
+    )
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    subtask = task.subtasks[0]
+    assert len(task.title) == 200
+    assert len(task.description) == 2000
+    assert len(task.plan_end) == 50
+    assert len(subtask.title) == 200
+    assert len(subtask.description) == 2000
+    assert len(subtask.plan_end) == 50
+    assert len(subtask.evaluation_standard) == 1000
+
+
+def test_ignores_model_supplied_server_owned_fields():
+    payload = raw_task()
+    payload.update(
+        {
+            "owner_id": "not-a-person-id",
+            "confidence": "certain",
+            "merge_status": "definite_duplicate",
+            "duplicate_of": "stale-task-id",
+            "duplicate_reason": 123,
+            "warnings": "not-a-warning-list",
+            "source": {"must": "be server generated"},
+        }
+    )
+    payload["subtasks"][0].update(
+        {
+            "assignee_id": "not-a-person-id",
+            "helper_ids": "not-an-id-list",
+            "confidence": "certain",
+            "merge_status": "definite_duplicate",
+            "duplicate_of": "stale-subtask-id",
+            "duplicate_reason": 123,
+            "warnings": "not-a-warning-list",
+            "source": {"must": "be server generated"},
+        }
+    )
+
+    result = generate_project_init_draft(
+        [chunk("实施交付")],
+        [{"id": 1, "name": "张三", "is_active": True}],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    subtask = task.subtasks[0]
+    assert task.owner_id == 1
+    assert subtask.assignee_id == 1
+    assert task.merge_status == "new"
+    assert subtask.merge_status == "new"
+    assert task.duplicate_of is None
+    assert subtask.duplicate_of is None
+    assert task.warnings == []
+    assert subtask.warnings == []
+    assert task.source == "plan.txt · lines 1-2"
+    assert subtask.source == "plan.txt · lines 1-2"
+
+
+def test_missing_subtasks_remains_rejected():
+    payload = raw_task() | {"subtasks": []}
+
+    with pytest.raises(ProjectInitAiError):
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+
+def test_unknown_business_key_remains_rejected():
+    payload = raw_task() | {"负责人": "张三"}
+
+    with pytest.raises(ProjectInitAiError):
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+
+def test_arbitrary_unknown_business_key_remains_rejected():
+    payload = raw_task() | {"not_a_contract_field": "must not be silently ignored"}
+
+    with pytest.raises(ProjectInitAiError):
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+
+def test_invalid_draft_exposes_only_safe_validation_field_metadata():
+    payload = raw_task()
+    payload["evidence"][0]["attachment_id"] = "not-an-integer"
+
+    with pytest.raises(ProjectInitAiInvalidDraft) as error:
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+    assert error.value.validation_errors == [
+        {"path": "tasks[0].evidence[0].attachment_id", "type": "int_type"}
+    ]
+
+
+def test_model_evidence_locator_is_replaced_with_a_canonical_source_excerpt():
+    payload = raw_task()
+    payload["evidence"][0]["excerpt"] = "模型杜撰的摘录"
+    payload["subtasks"][0]["evidence"][0]["excerpt"] = "模型杜撰的摘录"
+
+    result = generate_project_init_draft(
+        [chunk("实施交付来源原文")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].evidence[0].excerpt == "实施交付来源原文"
+    assert result.tasks[0].subtasks[0].evidence[0].excerpt == "实施交付来源原文"
+
+
+def test_invalid_evidence_locator_remains_rejected_with_a_safe_reason_code():
+    payload = raw_task()
+    payload["evidence"][0]["file_name"] = "not-a-source.txt"
+
+    with pytest.raises(ProjectInitAiInvalidDraft) as error:
+        generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [payload]}),
+        )
+
+    assert error.value.validation_errors == [
+        {"path": "tasks[0].evidence[0]", "type": "untraceable_file"}
+    ]
 
 
 def test_empty_llm_result_is_a_safe_business_error():
@@ -263,6 +679,305 @@ def test_long_source_evidence_uses_canonical_part_location():
         llm_call=llm,
     )
     assert result.tasks[0].evidence[0].location == "lines 1-2 part 1"
+
+
+def test_coarse_worksheet_evidence_is_repaired_to_the_matching_source_row():
+    coarse_evidence = [{
+        "attachment_id": 7,
+        "file_name": "plan.xlsx",
+        "location": "'推进表'!A1:J30",
+        "excerpt": "",
+    }]
+    result = generate_project_init_draft(
+        [
+            {
+                "attachment_id": 7,
+                "file_name": "plan.xlsx",
+                "location": "'推进表'!A2:J2",
+                "text": "专项甲 任务甲 交付甲",
+            },
+            {
+                "attachment_id": 7,
+                "file_name": "plan.xlsx",
+                "location": "'推进表'!A3:J3",
+                "text": "专项乙 任务乙 交付乙",
+            },
+        ],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [raw_task(
+            title="专项乙",
+            assignee_name="",
+            evidence=coarse_evidence,
+        ) | {"subtasks": [{
+            "title": "任务乙",
+            "evidence": coarse_evidence,
+        }]}]}),
+    )
+
+    task = result.tasks[0]
+    assert task.evidence[0].location == "'推进表'!A3:J3"
+    assert task.subtasks[0].evidence[0].location == "'推进表'!A3:J3"
+
+
+def test_coarse_worksheet_evidence_without_a_matching_source_title_is_rejected():
+    with pytest.raises(ProjectInitAiInvalidDraft):
+        generate_project_init_draft(
+            [{
+                "attachment_id": 7,
+                "file_name": "plan.xlsx",
+                "location": "'推进表'!A2:J2",
+                "text": "专项甲 任务甲 交付甲",
+            }],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [raw_task(
+                title="专项乙",
+                assignee_name="",
+                evidence=[{
+                    "attachment_id": 7,
+                    "file_name": "plan.xlsx",
+                    "location": "'推进表'!A1:J30",
+                    "excerpt": "",
+                }],
+            )]}),
+        )
+
+
+@pytest.mark.parametrize("location", [
+    "'推进表'!A0:J30",
+    "'推进表'!A1:J1048577",
+    "'推进表'!A1:XFE30",
+])
+def test_out_of_bounds_coarse_worksheet_evidence_is_not_repaired(location):
+    with pytest.raises(ProjectInitAiInvalidDraft):
+        generate_project_init_draft(
+            [{
+                "attachment_id": 7,
+                "file_name": "plan.xlsx",
+                "location": "'推进表'!A2:J2",
+                "text": "专项甲 任务甲 交付甲",
+            }],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [raw_task(
+                title="专项甲",
+                assignee_name="",
+                evidence=[{
+                    "attachment_id": 7,
+                    "file_name": "plan.xlsx",
+                    "location": location,
+                    "excerpt": "",
+                }],
+            )]}),
+        )
+
+
+def test_structured_spreadsheet_fallback_uses_traceable_row_data_after_invalid_ai_evidence():
+    spreadsheet_row = {
+        "attachment_id": 7,
+        "file_name": "工作推进表_2026-06-04.xlsx",
+        "location": "'工作推进表'!A2:J2",
+        "text": (
+            "专项\t关键任务\t关键成果\t完成标准\t统筹人\t负责人\t协同成员\t计划时间\t当前状态\t问题与协调\n"
+            "知识资产AI化\t完成标签体系修订\t知识资产标签框架\t负责人确认可复用\t张三\t李四\t王五、赵六\t2026-06\t进行中\t需协调"
+        ),
+    }
+    result = generate_project_init_draft(
+        [spreadsheet_row],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [raw_task(
+            title="无来源任务",
+            assignee_name="",
+            evidence=[{
+                "attachment_id": 7,
+                "file_name": "工作推进表_2026-06-04.xlsx",
+                "location": "'工作推进表'!A1:J30",
+                "excerpt": "",
+            }],
+        )]}),
+    )
+
+    task = result.tasks[0]
+    subtask = task.subtasks[0]
+    assert (task.title, task.description, task.owner_name) == ("知识资产AI化", "知识资产标签框架", "张三")
+    assert (subtask.title, subtask.assignee_name, subtask.helper_names) == ("完成标签体系修订", "李四", ["王五", "赵六"])
+    assert (task.plan_start, task.plan_end) == ("2026-06-01", "")
+    assert (subtask.plan_start, subtask.plan_end) == ("2026-06-01", "")
+    assert task.evidence[0].location == "'工作推进表'!A2:J2"
+    assert subtask.evidence[0].location == "'工作推进表'!A2:J2"
+
+
+def test_structured_spreadsheet_fallback_accepts_alias_headers_and_merged_workstream_values():
+    spreadsheet_rows = [
+        {
+            "attachment_id": 7,
+            "file_name": "非规范推进表.xlsx",
+            "location": "'推进表'!A2:J2",
+            "text": (
+                "重点工作\t任务名称\t目标成果\t验收标准\t统筹负责人\t执行人\t协助人\t开始时间\t状态\t备注\n"
+                "知识资产AI化\t制定知识获取计划\t专家清单\t完成访谈计划\t张三\t李四\t王五、赵六\t2026-06-01\t进行中\t先访谈"
+            ),
+        },
+        {
+            "attachment_id": 7,
+            "file_name": "非规范推进表.xlsx",
+            "location": "'推进表'!A3:J3",
+            "text": (
+                "重点工作\t任务名称\t目标成果\t验收标准\t统筹负责人\t执行人\t协助人\t开始时间\t状态\t备注\n"
+                "\t建立知识目录\t目录初稿\t完成目录评审\t\t李四\t吴肖\t2026-06-01\t进行中\t按模板整理"
+            ),
+        },
+    ]
+    result = generate_project_init_draft(
+        spreadsheet_rows,
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [raw_task(
+            title="无来源任务",
+            assignee_name="",
+            evidence=[{
+                "attachment_id": 7,
+                "file_name": "非规范推进表.xlsx",
+                "location": "'推进表'!A1:J30",
+                "excerpt": "",
+            }],
+        )]}),
+    )
+
+    task = result.tasks[0]
+    first, second = task.subtasks
+    assert (task.title, task.owner_name, task.plan_start, task.plan_end) == (
+        "知识资产AI化", "张三", "2026-06-01", "",
+    )
+    assert (first.title, first.assignee_name, first.helper_names) == (
+        "制定知识获取计划", "李四", ["王五", "赵六"],
+    )
+    assert (second.title, second.assignee_name, second.helper_names) == (
+        "建立知识目录", "李四", ["吴肖"],
+    )
+    assert second.evaluation_standard == "完成目录评审"
+    assert second.description == "按模板整理"
+
+
+def test_recognized_work_plan_rows_do_not_depend_on_ai_field_interpretation():
+    spreadsheet_row = {
+        "attachment_id": 7,
+        "file_name": "推进表.xlsx",
+        "location": "'推进表'!A2:J2",
+        "text": (
+            "专项\t关键任务\t关键成果\t完成标准\t统筹人\t负责人\t协同成员\t计划时间\t当前状态\t问题与协调\n"
+            "专项甲\t任务甲\t成果甲\t标准甲\t张三\t李四\t王五\t2026-06-01\t进行中\t备注甲"
+        ),
+    }
+    calls: list[str] = []
+
+    result = generate_project_init_draft(
+        [spreadsheet_row],
+        [],
+        [],
+        llm_call=lambda prompt: calls.append(prompt) or '{"tasks":[]}',
+    )
+
+    assert calls == []
+    assert result.model_name == "structured-spreadsheet"
+    assert result.tasks[0].subtasks[0].helper_names == ["王五"]
+
+
+def test_merged_alias_header_workbook_is_extracted_end_to_end_without_ai(tmp_path):
+    path = tmp_path / "推进表.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "推进表"
+    sheet.append(["重点工作", "任务名称", "目标成果", "验收标准", "统筹负责人", "执行人", "协助人", "开始时间", "状态", "备注"])
+    sheet.append(["知识资产AI化", "制定计划", "专家清单", "完成计划", "张三", "李四", "王五", "2026-06-01", "进行中", "先访谈"])
+    sheet.append(["", "建立目录", "目录初稿", "完成评审", "", "李四", "赵六", "2026-06-01", "进行中", "按模板整理"])
+    sheet.merge_cells("A2:A3")
+    sheet.merge_cells("E2:E3")
+    workbook.save(path)
+
+    result = generate_project_init_draft(
+        parse_project_init_file(path, path.name),
+        [],
+        [],
+        llm_call=lambda _prompt: (_ for _ in ()).throw(AssertionError("AI should not be called")),
+    )
+
+    assert result.model_name == "structured-spreadsheet"
+    assert result.tasks[0].title == "知识资产AI化"
+    assert [item.title for item in result.tasks[0].subtasks] == ["制定计划", "建立目录"]
+    assert result.tasks[0].subtasks[1].helper_names == ["赵六"]
+
+
+def test_structured_spreadsheet_fallback_rejects_non_excel_tabular_text():
+    source = {
+        "attachment_id": 7,
+        "file_name": "meeting-notes.txt",
+        "location": "lines 1-2",
+        "text": (
+            "专项\t关键任务\t关键成果\t完成标准\t统筹人\t负责人\t协同成员\t计划时间\t当前状态\t问题与协调\n"
+            "知识资产AI化\t完成标签体系修订\t知识资产标签框架\t负责人确认可复用\t张三\t李四\t王五\t2026-06\t进行中\t需协调"
+        ),
+    }
+    with pytest.raises(ProjectInitAiInvalidDraft):
+        generate_project_init_draft(
+            [source],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [raw_task(
+                title="无来源任务",
+                assignee_name="",
+                evidence=[{
+                    "attachment_id": 7,
+                    "file_name": "meeting-notes.txt",
+                    "location": "lines 1-99",
+                    "excerpt": "",
+                }],
+            )]}),
+        )
+
+
+def test_structured_spreadsheet_fallback_does_not_infer_year_or_make_backwards_ranges():
+    spreadsheet_rows = [
+        {
+            "attachment_id": 7,
+            "file_name": "工作推进表_2026-06-04.xlsx",
+            "location": "'工作推进表'!A2:J2",
+            "text": (
+                "专项\t关键任务\t关键成果\t完成标准\t统筹人\t负责人\t协同成员\t计划时间\t当前状态\t问题与协调\n"
+                "专项甲\t任务甲\t成果甲\t标准甲\t张三\t李四\t\t4-5月\t进行中\t"
+            ),
+        },
+        {
+            "attachment_id": 7,
+            "file_name": "工作推进表_2026-06-04.xlsx",
+            "location": "'工作推进表'!A3:J3",
+            "text": (
+                "专项\t关键任务\t关键成果\t完成标准\t统筹人\t负责人\t协同成员\t计划时间\t当前状态\t问题与协调\n"
+                "专项乙\t任务乙\t成果乙\t标准乙\t张三\t李四\t\t2026-12-1月\t进行中\t"
+            ),
+        },
+    ]
+    result = generate_project_init_draft(
+        spreadsheet_rows,
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [raw_task(
+            title="无来源任务",
+            assignee_name="",
+            evidence=[{
+                "attachment_id": 7,
+                "file_name": "工作推进表_2026-06-04.xlsx",
+                "location": "'工作推进表'!A1:J30",
+                "excerpt": "",
+            }],
+        )]}),
+    )
+
+    first, second = result.tasks
+    assert (first.plan_start, first.plan_end) == ("", "")
+    assert (second.plan_start, second.plan_end) == ("2026-12-01", "")
 
 
 def test_source_without_attachment_id_accepts_only_none_evidence_id():

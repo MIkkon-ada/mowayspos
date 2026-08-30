@@ -271,7 +271,10 @@ def _auth_me_projects(account: models.Account, context: dict, db) -> list[dict]:
         rows = (
             db.query(models.Project)
             .join(models.ProjectMember, models.ProjectMember.project_id == models.Project.id)
-            .filter(models.ProjectMember.person_id == person_id, models.Project.status != "archived")
+            .filter(
+                models.ProjectMember.person_id == person_id,
+                models.Project.status.notin_(["archived", "draft"]),
+            )
             .distinct()
             .order_by(models.Project.sort_order, models.Project.id)
             .all()

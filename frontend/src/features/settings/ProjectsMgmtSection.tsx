@@ -13,6 +13,7 @@ import {
   addProjectMember,
   removeProjectMember,
   batchImportProjects,
+  deleteProject,
 } from '../../api/projects'
 import type { BatchImportRow, ProjectProfilePayload } from '../../api/projects'
 import type { CurrentUser, Person, Project, ProjectMember, TaskItem } from '../../types'
@@ -29,6 +30,7 @@ import {
   getProjectStatusBadge,
 } from '../../domain/projectLifecycleStatus'
 import { getProjectRoleLabel } from '../../domain/roleLabels'
+import { canPermanentlyDeleteProject, isProjectDeletionConfirmed } from '../../domain/projectDeletionPolicy'
 import { NewProjectForm, ProjectInitModal, type TeamMap } from './ProjectInitModal'
 import { getPickerPosition } from './projectPickerPosition.js'
 import { ProjectCloseFlowDrawer } from './ProjectCloseFlowDrawer'
@@ -41,6 +43,7 @@ import {
 } from './projectsWorkbench'
 import { ProjectOverviewStats } from './ProjectOverviewStats'
 import { ProjectTodoSection, type ProjectTodoViewModel } from './ProjectTodoSection'
+import { buildDraftRows, type ProjectReviewDraftRow } from './projectReviewDraftRows'
 
 // ── 常量 ──────────────────────────────────────────────────────
 
@@ -225,48 +228,6 @@ function getDraftSummary(tasks: TaskItem[], subtasks: SubTaskWithParent[], proje
   }
 }
 
-type DraftRow = {
-  objective: string
-  keyTask: string
-  standard: string
-  seq: string
-  subTask: string
-  assignee: string
-  planRange: string
-  collaborator: string
-  note: string
-  isTaskOnly: boolean
-}
-
-function buildDraftRows(tasks: TaskItem[], subtasks: SubTaskWithParent[], project: Project): DraftRow[] {
-  const objText = project.objectives?.trim()
-  const objective = objText ? (objText.length > 10 ? objText.slice(0, 10) + '…' : objText) : '—'
-  const rows: DraftRow[] = []
-  for (const task of tasks) {
-    const taskSubs = subtasks.filter((s) => s.parent_task_id === task.id || s.task_id === task.id)
-    const standard = task.completion_standard?.trim() || '—'
-    const collaborator = task.collaborators?.trim() || '—'
-    if (taskSubs.length === 0) {
-      const planRange = task.plan_time?.trim() || '—'
-      rows.push({
-        objective, keyTask: task.key_task || '—', standard, seq: '—',
-        subTask: '关键任务待补充', assignee: task.owner?.trim() || '—',
-        planRange, collaborator, note: '—', isTaskOnly: true,
-      })
-    } else {
-      taskSubs.forEach((sub, idx) => {
-        const planRange = sub.plan_time?.trim() || task.plan_time?.trim() || '—'
-        rows.push({
-          objective, keyTask: task.key_task || '—', standard, seq: String(idx + 1),
-          subTask: sub.title || '—', assignee: sub.assignee?.trim() || '—',
-          planRange, collaborator, note: sub.notes?.trim() || '—', isTaskOnly: false,
-        })
-      })
-    }
-  }
-  return rows
-}
-
 type MainAction = { label: string; type: 'edit' | 'dispatch' | 'ownerSubmit' | 'approvalMaterials' | 'workProgress' | 'viewDetail' | 'closeRequest' | 'closeReview' | 'closeArchiveView' | 'projectArchive' }
 
 function getMainAction(
@@ -370,6 +331,10 @@ export function ProjectsMgmtSection() {
 
   // 更多菜单
   const [menuState, setMenuState] = useState<{ pid: number; anchorEl: HTMLButtonElement } | null>(null)
+  const [deleteCandidate, setDeleteCandidate] = useState<Project | null>(null)
+  const [deleteConfirmation, setDeleteConfirmation] = useState('')
+  const [deletePhrase, setDeletePhrase] = useState('')
+  const [deletingProject, setDeletingProject] = useState(false)
 
   // ── 初始加载 ──
   useEffect(() => {
@@ -720,6 +685,45 @@ export function ProjectsMgmtSection() {
     return { isSuperAdmin, isCompanyCeo, isRealProjectCeo, isRealOwner }
   }
 
+  function closeDeleteDialog() {
+    if (deletingProject) return
+    setDeleteCandidate(null)
+    setDeleteConfirmation('')
+    setDeletePhrase('')
+  }
+
+  async function handleDeleteProject() {
+    if (!deleteCandidate || !isProjectDeletionConfirmed(deleteCandidate.name, deleteConfirmation, deletePhrase)) return
+    const projectId = deleteCandidate.id
+    setDeletingProject(true)
+    try {
+      const result = await deleteProject(projectId, deleteConfirmation, deletePhrase)
+      setProjects((prev) => prev.filter((project) => project.id !== projectId))
+      setMembers((prev) => {
+        const { [projectId]: _removed, ...rest } = prev
+        return rest
+      })
+      setProjectTasksMap((prev) => {
+        const { [projectId]: _removed, ...rest } = prev
+        return rest
+      })
+      setProjectSubtasksMap((prev) => {
+        const { [projectId]: _removed, ...rest } = prev
+        return rest
+      })
+      reloadProjects()
+      setDeleteCandidate(null)
+      setDeleteConfirmation('')
+      setDeletePhrase('')
+      if (result.cleanup_pending) toast.warning('项目数据已删除，附件文件正在等待清理')
+      else toast.success('项目已永久删除')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '删除项目失败')
+    } finally {
+      setDeletingProject(false)
+    }
+  }
+
   async function handleDispatch(project: Project) {
     if (!isProjectDispatchReady(project)) {
       toast.warning('请先完善项目目标、开始日期和结束日期，再下发给负责人')
@@ -1058,9 +1062,34 @@ export function ProjectsMgmtSection() {
               if (roles.isSuperAdmin || (roles.isCompanyCeo && status === 'draft')) {
                 items.push({ label: '编辑项目', onClick: () => { setMenuState(null); void openProjectEditor(menuProject) } })
               }
+              if (canPermanentlyDeleteProject(status, roles.isSuperAdmin)) {
+                items.push({
+                  label: '永久删除项目',
+                  tone: 'danger',
+                  onClick: () => {
+                    setMenuState(null)
+                    setDeleteConfirmation('')
+                    setDeletePhrase('')
+                    setDeleteCandidate(menuProject)
+                  },
+                })
+              }
               return items
             })()
           }
+        />
+      )}
+
+      {deleteCandidate && (
+        <DeleteDraftProjectDialog
+          project={deleteCandidate}
+          confirmation={deleteConfirmation}
+          phrase={deletePhrase}
+          deleting={deletingProject}
+          onConfirmationChange={setDeleteConfirmation}
+          onPhraseChange={setDeletePhrase}
+          onClose={closeDeleteDialog}
+          onConfirm={() => void handleDeleteProject()}
         />
       )}
     </div>
@@ -1172,6 +1201,92 @@ function LifecycleCard({
 }
 
 // ── 更多菜单 ──────────────────────────────────────────────────
+
+function DeleteDraftProjectDialog({
+  project,
+  confirmation,
+  phrase,
+  deleting,
+  onConfirmationChange,
+  onPhraseChange,
+  onClose,
+  onConfirm,
+}: {
+  project: Project
+  confirmation: string
+  phrase: string
+  deleting: boolean
+  onConfirmationChange: (value: string) => void
+  onPhraseChange: (value: string) => void
+  onClose: () => void
+  onConfirm: () => void
+}) {
+  const confirmed = isProjectDeletionConfirmed(project.name, confirmation, phrase)
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 px-4"
+      role="presentation"
+      onMouseDown={() => { if (!deleting) onClose() }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-draft-project-title"
+        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <h2 id="delete-draft-project-title" className="text-lg font-bold text-slate-900">永久删除项目</h2>
+        <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-800">
+          将永久删除“{project.name}”及其成员、重点工作、关键任务、附件、AI 分析和其他关联数据。此操作不可恢复。
+        </p>
+        <label className="mt-5 block text-sm font-semibold text-slate-700" htmlFor="delete-project-confirmation">
+          请输入项目名称以确认
+        </label>
+        <input
+          id="delete-project-confirmation"
+          value={confirmation}
+          onChange={(event) => onConfirmationChange(event.target.value)}
+          placeholder={project.name}
+          autoComplete="off"
+          disabled={deleting}
+          className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100 disabled:bg-slate-100"
+        />
+        <p className="mt-2 text-xs text-slate-500">必须与项目名称完全一致，不能有多余空格。</p>
+        <label className="mt-4 block text-sm font-semibold text-slate-700" htmlFor="delete-project-phrase">
+          请输入“永久删除”以确认
+        </label>
+        <input
+          id="delete-project-phrase"
+          value={phrase}
+          onChange={(event) => onPhraseChange(event.target.value)}
+          placeholder="永久删除"
+          autoComplete="off"
+          disabled={deleting}
+          className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100 disabled:bg-slate-100"
+        />
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={deleting}
+            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={!confirmed || deleting}
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {deleting ? '删除中…' : '永久删除'}
+          </button>
+        </div>
+      </section>
+    </div>
+  )
+}
 
 function LifecycleMoreMenu({
   anchorEl, onClose, items,
@@ -1494,8 +1609,8 @@ export function DetailPanel({
 
 // ── 类 Excel 草案明细表 ──────────────────────────────────────
 
-function DraftProgressTable({ rows }: { rows: DraftRow[] }) {
-  const cols = ['重点工作', '目标成果 / 验收标准', '关键任务', '责任人', '协助人', '时间段', '备注 / 标准']
+function DraftProgressTable({ rows }: { rows: ProjectReviewDraftRow[] }) {
+  const cols = ['重点工作', '目标成果', '关键任务', '责任人', '协助人', '时间段', '备注 / 标准']
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-200">
       <table className="w-full text-[11px]" style={{ borderCollapse: 'collapse' }}>
@@ -1536,7 +1651,7 @@ function ProjectApproveModal({
   name: string
   form: ProjectProfilePayload
   draftSummary: DraftSummary
-  draftRows: DraftRow[]
+  draftRows: ProjectReviewDraftRow[]
   onChangeForm: (next: ProjectProfilePayload) => void
   onClose: () => void
   onConfirm: () => void
@@ -1725,7 +1840,7 @@ export function ApprovalMaterialsWorkbenchModal({
 }) {
   const teamLine = summarizeProjectRoleLine(projectMembers, project)
   const draftSummary = getDraftSummary(tasks, subtasks, project)
-  const draftRows = buildDraftRows(tasks, subtasks, project)
+  const draftRows = buildDraftRows(tasks, subtasks, project, projectMembers)
   const projectType = project.project_type?.trim() || '未填写'
   const clientName = project.client_name?.trim() || '内部项目 / 未填写'
   const background = project.background?.trim() || '未填写'
@@ -1871,8 +1986,8 @@ export function ApprovalMaterialsWorkbenchModal({
                               <div className="mt-1 text-lg font-semibold text-slate-900">{task.key_task || '未填写'}</div>
                             </div>
                             <div>
-                              <div className="block text-[10px] font-semibold uppercase text-slate-500/80">目标成果 / 验收标准</div>
-                              <div className="mt-1 text-sm leading-relaxed text-slate-600">{task.completion_standard?.trim() || '未填写'}</div>
+                              <div className="block text-[10px] font-semibold uppercase text-slate-500/80">重点工作目标</div>
+                              <div className="mt-1 text-sm leading-relaxed text-slate-600">{task.key_achievement?.trim() || '未填写'}</div>
                             </div>
                           </div>
                         </div>

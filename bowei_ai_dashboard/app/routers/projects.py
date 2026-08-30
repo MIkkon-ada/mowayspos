@@ -1,6 +1,9 @@
 import json
+import os
 import re
 from datetime import date
+from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
@@ -38,11 +41,24 @@ from ..services.project_close import (
     material_values,
     serialize_residual_items,
 )
+from ..services.project_purge_storage import (
+    ProjectPurgeStorageError,
+    destroy_staged_project_payloads,
+    restore_staged_project_payloads,
+    retry_project_payload_cleanup,
+    stage_project_payloads,
+)
+from ..services.project_init_attachment_storage import project_init_attachment_root
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 _VALID_ROLES = {"project_ceo", "owner", "coordinator", "member"}
 _LIFECYCLE_STATUSES = PL.ALL_STATUSES
+_IMPORTABLE_PERSON_NAME = re.compile(r"^[\u4e00-\u9fff]{2,8}$")
+_IMPORTABLE_ACCOUNT_NAME = re.compile(r"^[a-z][a-z0-9._-]{2,49}$", re.IGNORECASE)
+_NON_PERSON_IMPORT_PATTERN = re.compile(
+    r"项目经理|负责人|总监|主管|总经理|总裁|总工程师|管理层|全体|成员|部门|团队|项目组|项目部|[部组中心科处]$"
+)
 
 # 旧展示常量 → 新 role key（用于 transition period 回落）
 _OLD_ROLE_TO_KEY = {
@@ -113,11 +129,30 @@ def _validate_work_progress_draft(payload: schemas.ProjectProfilePayload) -> Non
             raise HTTPException(422, "请选择关键任务负责人")
 
 
+def _is_importable_person_name(value: str) -> bool:
+    """Allow a personal Chinese name or account-style identifier, never a role/group label."""
+    return bool(
+        (_IMPORTABLE_PERSON_NAME.fullmatch(value) or _IMPORTABLE_ACCOUNT_NAME.fullmatch(value))
+        and not _NON_PERSON_IMPORT_PATTERN.search(value)
+    )
+
+
+def _is_non_person_label(value: str) -> bool:
+    return bool(_NON_PERSON_IMPORT_PATTERN.search(str(value or "").strip()))
+
+
+def _contains_chinese(value: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", value))
+
+
 def _resolve_work_progress_people(
     payload: schemas.ProjectProfilePayload,
     db: Session,
+    *,
+    audit_operator: str | None = None,
+    audit_project_id: int | None = None,
 ) -> dict[int, models.Person]:
-    """Validate picker IDs before owner-submit mutates any project data."""
+    """Resolve safe imported names and validate picker IDs before project mutations."""
     person_ids: set[int] = set()
     for task_draft in payload.work_progress_draft or []:
         for sub_draft in task_draft.subtasks or []:
@@ -136,6 +171,81 @@ def _resolve_work_progress_people(
     invalid_ids = sorted(person_ids - people.keys())
     if invalid_ids:
         raise HTTPException(422, f"存在无效或已停用的人员 ID：{', '.join(map(str, invalid_ids))}")
+
+    def _resolve_imported_name(name: str, *, assignee: bool = False) -> models.Person:
+        person = db.query(models.Person).filter(
+            models.Person.name == name,
+            models.Person.is_active.is_(True),
+        ).first()
+        if person is not None:
+            people[person.id] = person
+            return person
+        if not _is_importable_person_name(name):
+            raise HTTPException(422, "请选择关键任务负责人" if assignee else "人员姓名必须为具体个人")
+        person = models.Person(name=name, system_role="normal_member", is_active=True)
+        db.add(person)
+        db.flush()
+        if audit_operator and audit_project_id is not None:
+            crud.log(
+                db,
+                audit_operator,
+                "auto_create_imported_person",
+                "person",
+                person.id,
+                {},
+                {
+                    "id": person.id,
+                    "name": person.name,
+                    "system_role": person.system_role,
+                    "is_active": person.is_active,
+                    "source": "owner_submit_imported_work_progress",
+                },
+                project_id=audit_project_id,
+            )
+        people[person.id] = person
+        return person
+
+    for task_draft in payload.work_progress_draft or []:
+        task_owner_name = (task_draft.owner or "").strip()
+        if task_owner_name:
+            if _contains_chinese(task_owner_name):
+                _resolve_imported_name(task_owner_name)
+            else:
+                existing_owner = db.query(models.Person).filter(
+                    models.Person.name == task_owner_name,
+                    models.Person.is_active.is_(True),
+                ).first()
+                if existing_owner is not None:
+                    people[existing_owner.id] = existing_owner
+        for sub_draft in task_draft.subtasks or []:
+            if not (sub_draft.title or "").strip():
+                continue
+            if sub_draft.assignee_id is None:
+                assignee = _resolve_imported_name((sub_draft.assignee or "").strip(), assignee=True)
+                sub_draft.assignee_id = assignee.id
+            sub_draft.helper_ids = list(dict.fromkeys(
+                person_id for person_id in sub_draft.helper_ids
+                if person_id != sub_draft.assignee_id
+            ))
+            if not sub_draft.helper_ids:
+                helper_ids: list[int] = []
+                for name in _split_names(sub_draft.helper):
+                    if _is_non_person_label(name):
+                        continue
+                    try:
+                        person = _resolve_imported_name(name)
+                    except HTTPException:
+                        person = None
+                    if person and person.id != sub_draft.assignee_id and person.id not in helper_ids:
+                        helper_ids.append(person.id)
+                sub_draft.helper_ids = helper_ids
+            if sub_draft.assignee_id is not None:
+                assignee_name = people[sub_draft.assignee_id].name
+                sub_draft.helper = _join_names(
+                    people[person_id].name
+                    for person_id in sub_draft.helper_ids
+                    if person_id != sub_draft.assignee_id and person_id in people and people[person_id].name != assignee_name
+                )
     return people
 
 
@@ -637,7 +747,12 @@ def _save_work_progress_draft(
     if not drafts:
         return
 
-    resolved_people = resolved_people if resolved_people is not None else _resolve_work_progress_people(payload, db)
+    resolved_people = resolved_people if resolved_people is not None else _resolve_work_progress_people(
+        payload,
+        db,
+        audit_operator=current_user,
+        audit_project_id=project.id,
+    )
     selected_ids = {
         person_id
         for task_draft in drafts
@@ -645,20 +760,39 @@ def _save_work_progress_draft(
         if (sub_draft.title or "").strip()
         for person_id in ([sub_draft.assignee_id] if sub_draft.assignee_id is not None else []) + (sub_draft.helper_ids or [])
     }
+    selected_ids.update(
+        owner_id
+        for task_draft in drafts
+        if (owner_id := _person_id_for_name(task_draft.owner, db)) is not None
+    )
+    added_members: list[models.ProjectMember] = []
     for person_id in selected_ids:
         person = resolved_people[person_id]
         existing = db.query(models.ProjectMember).filter_by(
             project_id=project.id, person_id=person.id, role="member"
         ).first()
         if not existing:
-            db.add(models.ProjectMember(
+            member = models.ProjectMember(
                 project_id=project.id,
                 person_id=person.id,
                 person_name_snapshot=person.name,
                 role="member",
                 joined_at=utc_now(),
-            ))
+            )
+            db.add(member)
+            added_members.append(member)
     db.flush()
+    for member in added_members:
+        crud.log(
+            db,
+            current_user,
+            "auto_add_imported_project_member",
+            "project_member",
+            member.id,
+            {},
+            _member_to_dict(member),
+            project_id=project.id,
+        )
     _sync_project_old_fields(project.id, db)
 
     project_name = project.name or ""
@@ -721,9 +855,16 @@ def _save_work_progress_draft(
             subtask.status = subtask.status or TS.S_NOT_STARTED
             subtask.completion_criteria = (sub_draft.evaluation_standard or "").strip()
             if sub_draft.helper_ids:
-                helper_names = _join_names(resolved_people[person_id].name for person_id in sub_draft.helper_ids)
+                helper_ids = [
+                    person_id
+                    for person_id in dict.fromkeys(sub_draft.helper_ids)
+                    if person_id != subtask.assignee_id
+                ]
+                subtask.collaborator_ids = helper_ids
+                helper_names = _join_names(resolved_people[person_id].name for person_id in helper_ids)
                 subtask.notes = _helper_note(helper_names)
             else:
+                subtask.collaborator_ids = []
                 subtask.notes = _helper_note(sub_draft.helper)
 
 
@@ -855,6 +996,7 @@ def list_projects(
     q = q.order_by(models.Project.sort_order, models.Project.id)
 
     if not context["can_view_all"]:
+        q = q.filter(models.Project.status.notin_(["archived", PL.S_DRAFT]))
         person_id = context.get("person_id")
 
         # 从 project_members 取可见 project_id
@@ -2061,6 +2203,254 @@ def reject_project_close_request(
     return _close_request_response(request, project, db)
 
 
+def _delete_project_data(project: models.Project, db: Session) -> None:
+    """Delete project rows required by the permanent project purge endpoint.
+
+    The caller owns the transaction and must finish by deleting the project.
+    """
+    project_id = project.id
+    task_ids = [row[0] for row in db.query(models.Task.id).filter(models.Task.project_id == project_id).all()]
+    subtask_ids = [
+        row[0]
+        for row in db.query(models.SubTask.id).filter(models.SubTask.task_id.in_(task_ids)).all()
+    ]
+    schedule_ids = [
+        row[0]
+        for row in db.query(models.ExecutionSchedule.id).filter(models.ExecutionSchedule.subtask_id.in_(subtask_ids)).all()
+    ]
+    meeting_ids = [row[0] for row in db.query(models.Meeting.id).filter(models.Meeting.project_id == project_id).all()]
+    transcript_source_ids = [
+        row[0]
+        for row in db.query(models.MeetingTranscriptSource.id)
+        .filter(models.MeetingTranscriptSource.meeting_id.in_(meeting_ids))
+        .all()
+    ]
+    analysis_run_ids = [
+        row[0]
+        for row in db.query(models.MeetingAnalysisRun.id).filter(models.MeetingAnalysisRun.project_id == project_id).all()
+    ]
+    skill_run_ids = [
+        row[0]
+        for row in db.query(models.MeetingSkillRun.id).filter(models.MeetingSkillRun.project_id == project_id).all()
+    ]
+    clarification_ids = [
+        row[0]
+        for row in db.query(models.MeetingSkillClarification.id)
+        .filter(models.MeetingSkillClarification.run_id.in_(skill_run_ids))
+        .all()
+    ]
+    change_set_ids = [
+        row[0]
+        for row in db.query(models.MeetingChangeSet.id).filter(models.MeetingChangeSet.project_id == project_id).all()
+    ]
+
+    db.query(models.ExecutionScheduleReminder).filter(
+        models.ExecutionScheduleReminder.schedule_id.in_(schedule_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.KeyTaskExecutionEvent).filter(models.KeyTaskExecutionEvent.project_id == project_id).delete(
+        synchronize_session=False
+    )
+
+    db.query(models.MeetingSkillClarificationAnswerRevision).filter(
+        models.MeetingSkillClarificationAnswerRevision.question_id.in_(clarification_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.MeetingSkillResolvedFact).filter(
+        models.MeetingSkillResolvedFact.run_id.in_(skill_run_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.MeetingSkillClarification).filter(
+        models.MeetingSkillClarification.run_id.in_(skill_run_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.MeetingSkillInputSnapshot).filter(
+        models.MeetingSkillInputSnapshot.run_id.in_(skill_run_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.MeetingSkillRun).filter(models.MeetingSkillRun.id.in_(skill_run_ids)).delete(synchronize_session=False)
+    db.query(models.MeetingAnalysisCandidate).filter(
+        models.MeetingAnalysisCandidate.run_id.in_(analysis_run_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.MeetingRevision).filter(models.MeetingRevision.meeting_id.in_(meeting_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(models.MeetingReviewEvent).filter(models.MeetingReviewEvent.meeting_id.in_(meeting_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(models.MeetingTranscriptRevision).filter(
+        models.MeetingTranscriptRevision.source_id.in_(transcript_source_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.MeetingTranscriptSource).filter(models.MeetingTranscriptSource.meeting_id.in_(meeting_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(models.MeetingChangeProposal).filter(models.MeetingChangeProposal.change_set_id.in_(change_set_ids)).delete(
+        synchronize_session=False
+    )
+
+    db.query(models.AchievementAttachment).filter(models.AchievementAttachment.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.AchievementSubmission).filter(models.AchievementSubmission.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.Achievement).filter(models.Achievement.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.ProjectMeetingRun).filter(models.ProjectMeetingRun.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.MeetingAnalysisRun).filter(models.MeetingAnalysisRun.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.MeetingProgressReview).filter(models.MeetingProgressReview.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.MeetingChangeSet).filter(models.MeetingChangeSet.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.KickoffAgentRun).filter(models.KickoffAgentRun.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.Meeting).filter(models.Meeting.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.MeetingDocumentSource).filter(models.MeetingDocumentSource.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.ProjectInitAnalysisRun).filter(models.ProjectInitAnalysisRun.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.ProjectInitAttachment).filter(models.ProjectInitAttachment.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.Issue).filter(models.Issue.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.ProjectCloseRequest).filter(models.ProjectCloseRequest.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.Notification).filter(models.Notification.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.SubTaskDraft).filter(models.SubTaskDraft.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.UpdateSubmission).filter(models.UpdateSubmission.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.MemberChangeRequest).filter(models.MemberChangeRequest.project_id == project_id).delete(
+        synchronize_session=False
+    )
+    db.query(models.ProjectMember).filter(models.ProjectMember.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.ExecutionSchedule).filter(models.ExecutionSchedule.id.in_(schedule_ids)).delete(synchronize_session=False)
+    db.query(models.SubTask).filter(models.SubTask.id.in_(subtask_ids)).delete(synchronize_session=False)
+    db.query(models.Task).filter(models.Task.project_id == project_id).delete(synchronize_session=False)
+    db.delete(project)
+
+
+def _project_purge_storage_roots() -> list[tuple[str, Path]]:
+    meeting_root = os.getenv("PROJECT_MEETING_DOCUMENT_ROOT", "").strip()
+    return [
+        ("achievement", Path(os.getenv("ACHIEVEMENT_ATTACHMENT_ROOT", "/app/data/achievement-attachments"))),
+        ("project_init", project_init_attachment_root()),
+        (
+            "meeting_document",
+            Path(meeting_root) if meeting_root else Path(__file__).resolve().parents[2] / "data" / "meeting_documents",
+        ),
+    ]
+
+
+def _project_purge_payload_entries(project_id: int, db: Session) -> list[tuple[str, Path, str]]:
+    roots = dict(_project_purge_storage_roots())
+    entries: list[tuple[str, Path, str]] = []
+    for row in db.query(models.AchievementAttachment).filter(models.AchievementAttachment.project_id == project_id).all():
+        entries.append(("achievement", roots["achievement"], row.storage_key))
+    for row in db.query(models.ProjectInitAttachment).filter(models.ProjectInitAttachment.project_id == project_id).all():
+        entries.append(("project_init", roots["project_init"], row.storage_key))
+    for row in db.query(models.MeetingDocumentSource).filter(models.MeetingDocumentSource.project_id == project_id).all():
+        entries.append(("meeting_document", roots["meeting_document"], row.storage_key))
+    return entries
+
+
+def _lock_project_for_delete(project_id: int, db: Session) -> models.Project | None:
+    statement = (
+        select(models.Project)
+        .where(models.Project.id == project_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return db.execute(statement).scalar_one_or_none()
+
+
+@router.delete("/{project_id}")
+def delete_project(
+    project_id: int,
+    payload: schemas.ProjectDeletePayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """Permanently remove a project of any lifecycle after double confirmation."""
+    _require_super_admin(current_user, db)
+    project = _lock_project_for_delete(project_id, db)
+    if not project:
+        raise HTTPException(404, "项目不存在")
+    if payload.confirm_name != project.name:
+        raise HTTPException(422, "确认名称与项目名称不一致")
+    if payload.confirm_phrase != "永久删除":
+        raise HTTPException(422, "请准确输入“永久删除”")
+
+    project_name = project.name
+    status_before = PL.normalize(project.status)
+    cleanup_key = str(uuid4())
+    staged = []
+    try:
+        staged = stage_project_payloads(cleanup_key, _project_purge_payload_entries(project_id, db))
+        _delete_project_data(project, db)
+        crud.log(
+            db,
+            current_user,
+            "delete_project",
+            "project",
+            project_id,
+            {"name": project_name, "status": status_before, "cleanup_key": cleanup_key},
+            {},
+            project_id=project_id,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        restore_staged_project_payloads(staged)
+        raise
+    try:
+        destroy_staged_project_payloads(staged)
+    except ProjectPurgeStorageError:
+        crud.log(
+            db,
+            current_user,
+            "delete_project_cleanup_pending",
+            "project_purge_cleanup",
+            None,
+            {"cleanup_key": cleanup_key},
+            {},
+        )
+        db.commit()
+        return {"ok": True, "project_id": project_id, "cleanup_pending": True, "cleanup_key": cleanup_key}
+    return {"ok": True, "project_id": project_id, "cleanup_pending": False, "cleanup_key": None}
+
+
+@router.post("/purge-cleanups/{cleanup_key}/retry")
+def retry_project_purge_cleanup(
+    cleanup_key: str,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    _require_super_admin(current_user, db)
+    try:
+        cleaned = retry_project_payload_cleanup(
+            cleanup_key,
+            [root for _, root in _project_purge_storage_roots()],
+        )
+    except ProjectPurgeStorageError as exc:
+        if str(exc).startswith("invalid"):
+            raise HTTPException(422, "清理标识无效") from exc
+        return {"ok": True, "cleanup_key": cleanup_key, "cleanup_pending": True}
+    crud.log(
+        db,
+        current_user,
+        "retry_project_cleanup",
+        "project_purge_cleanup",
+        None,
+        {"cleanup_key": cleanup_key},
+        {"cleaned": cleaned},
+    )
+    db.commit()
+    return {"ok": True, "cleanup_key": cleanup_key, "cleanup_pending": not cleaned}
+
+
 @router.post("/{project_id}/archive")
 def archive_project(
     project_id: int,
@@ -2132,17 +2522,23 @@ def dispatch_project(
     objectives = (project.objectives or "").strip()
     start_date = (project.start_date or "").strip()
     end_date = (project.end_date or "").strip()
-    if not objectives or not start_date or not end_date:
-        raise HTTPException(409, "请先填写项目目标和项目周期后再下发项目。")
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start_date) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", end_date):
-        raise HTTPException(409, "项目周期必须使用 YYYY-MM-DD 格式。")
+    if not objectives or not start_date:
+        raise HTTPException(409, "\u8bf7\u5148\u586b\u5199\u9879\u76ee\u76ee\u6807\u548c\u5f00\u59cb\u65e5\u671f\u540e\u518d\u4e0b\u53d1\u9879\u76ee\u3002")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start_date):
+        raise HTTPException(409, "\u9879\u76ee\u5f00\u59cb\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
     try:
         parsed_start_date = date.fromisoformat(start_date)
-        parsed_end_date = date.fromisoformat(end_date)
     except ValueError:
-        raise HTTPException(409, "项目周期必须使用 YYYY-MM-DD 格式。")
-    if parsed_end_date < parsed_start_date:
-        raise HTTPException(409, "项目结束日期不得早于开始日期。")
+        raise HTTPException(409, "\u9879\u76ee\u5f00\u59cb\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
+    if end_date:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", end_date):
+            raise HTTPException(409, "\u9879\u76ee\u7ed3\u675f\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
+        try:
+            parsed_end_date = date.fromisoformat(end_date)
+        except ValueError:
+            raise HTTPException(409, "\u9879\u76ee\u7ed3\u675f\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
+        if parsed_end_date < parsed_start_date:
+            raise HTTPException(409, "\u9879\u76ee\u7ed3\u675f\u65e5\u671f\u4e0d\u5f97\u65e9\u4e8e\u5f00\u59cb\u65e5\u671f\u3002")
 
     _set_project_lifecycle(project, PL.S_DISPATCHED, db=db, project_id=project_id)
     recipient_ids = project_strict_owner_ids(project_id, db)
@@ -2182,19 +2578,28 @@ def owner_submit_project_profile(
             raise HTTPException(409, "项目已在审核中")
         raise HTTPException(409, "当前项目阶段不可提交立项信息")
 
-    _validate_work_progress_draft(payload)
-    resolved_people = _resolve_work_progress_people(payload, db)
+    try:
+        resolved_people = _resolve_work_progress_people(
+            payload,
+            db,
+            audit_operator=current_user,
+            audit_project_id=project_id,
+        )
+        _validate_work_progress_draft(payload)
 
-    _set_project_lifecycle(project, "pending_review", db=db, project_id=project_id)
-    _save_work_progress_draft(
-        project,
-        payload,
-        current_user=current_user,
-        db=db,
-        resolved_people=resolved_people,
-    )
-    crud.log(db, current_user, "owner_submit_project", "project", project_id, {"status": lifecycle}, {"status": "pending_review"})
-    db.commit()
+        _set_project_lifecycle(project, "pending_review", db=db, project_id=project_id)
+        _save_work_progress_draft(
+            project,
+            payload,
+            current_user=current_user,
+            db=db,
+            resolved_people=resolved_people,
+        )
+        crud.log(db, current_user, "owner_submit_project", "project", project_id, {"status": lifecycle}, {"status": "pending_review"})
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     raw = _read_project_raw(project_id, db)
     result = _project_response(raw, _get_user_roles(project_id, project.name, get_user_context_from_db(current_user, db), db), db)

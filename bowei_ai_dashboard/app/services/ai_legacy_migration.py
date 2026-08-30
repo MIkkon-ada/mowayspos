@@ -199,12 +199,22 @@ def import_legacy_llm_config(
     if primary_chat is None and chat_models:
         primary_chat = next(iter(chat_models.values()))
 
-    for capability_key in (
-        Capability.MEETING_ANALYSIS,
-        Capability.TASK_EXTRACTION,
-        Capability.PROJECT_INIT_ANALYSIS,
-    ):
+    for capability_key in (Capability.MEETING_ANALYSIS, Capability.TASK_EXTRACTION):
         _save_missing_migration_policy(repo, db, report, capability_key, primary_chat)
+    project_init_primary = chat_models.get("deepseek") or primary_chat
+    project_init_fallback = (
+        chat_models.get("dashscope")
+        if project_init_primary is not None and project_init_primary.provider == "deepseek"
+        else None
+    )
+    _save_missing_migration_policy(
+        repo,
+        db,
+        report,
+        Capability.PROJECT_INIT_ANALYSIS,
+        project_init_primary,
+        fallback_models=[project_init_fallback] if project_init_fallback is not None else [],
+    )
     _save_missing_migration_policy(repo, db, report, Capability.SPEECH_REALTIME, asr_model)
     db.flush()
     return report
@@ -216,6 +226,7 @@ def _save_missing_migration_policy(
     report: LegacyMigrationReport,
     capability_key: str,
     primary_model: models.AIModel | None,
+    fallback_models: list[models.AIModel] | None = None,
 ) -> None:
     existing = (
         db.query(models.AICapabilityPolicy).filter_by(capability_key=capability_key).one_or_none()
@@ -225,13 +236,14 @@ def _save_missing_migration_policy(
         report.reasons[capability_key] = "existing capability policy was preserved"
         return
     enabled = primary_model is not None
+    fallback_ids = [model.id for model in (fallback_models or [])]
     try:
         policy = repo.save_policy(
             capability_key,
             primary_model_id=primary_model.id if primary_model is not None else None,
-            fallback_model_ids=[],
+            fallback_model_ids=fallback_ids,
             timeout_seconds=60,
-            max_attempts=1,
+            max_attempts=1 + len(fallback_ids),
             enabled=enabled,
         )
     except (InvalidAIModel, InvalidAIPolicy):

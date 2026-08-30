@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app import models
-from app.ai.contracts import AIInvocationContext, AIUpstreamError, Capability
+from app.ai.contracts import AICapabilityNotConfigured, AIInvocationContext, AIUpstreamError, Capability
 from app.ai.repository import AIConfigurationRepository
 from app.ai.service import AIService
 from app.database import Base
@@ -19,12 +19,18 @@ class FakeAdapters:
         self.chat_errors = {}
         self.chat_results = {}
         self.chat_calls = []
+        self.vision_results = {}
+        self.vision_calls = []
 
     def complete_chat(self, model, api_key, prompt, *, timeout_seconds):
         self.chat_calls.append(model.id)
         if model.id in self.chat_errors:
             raise self.chat_errors[model.id]
         return self.chat_results[model.id]
+
+    def complete_project_init_vision(self, model, api_key, images, prompt, *, timeout_seconds):
+        self.vision_calls.append((model.id, list(images)))
+        return self.vision_results[model.id]
 
 
 @pytest.fixture()
@@ -82,12 +88,21 @@ def fake_adapters():
     return FakeAdapters()
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        "AI_UPSTREAM_TIMEOUT",
+        "AI_UPSTREAM_CONNECTION",
+        "AI_UPSTREAM_RATE_LIMIT",
+        "AI_UPSTREAM_5XX",
+    ],
+)
 def test_chat_uses_primary_then_retryable_fallback_and_logs_each_attempt(
-    db, configured_chat_policy, fake_adapters
+    db, configured_chat_policy, fake_adapters, code
 ):
     primary, fallback = configured_chat_policy
     fake_adapters.chat_errors[primary.id] = AIUpstreamError(
-        "AI_UPSTREAM_TIMEOUT", retryable=True
+        code, retryable=True
     )
     fake_adapters.chat_results[fallback.id] = '{"title":"ok"}'
 
@@ -103,7 +118,7 @@ def test_chat_uses_primary_then_retryable_fallback_and_logs_each_attempt(
     assert result.model_code == "fallback"
     logs = db.query(models.AIInvocationLog).order_by(models.AIInvocationLog.attempt_no).all()
     assert [(row.status, row.error_code, row.fallback_used) for row in logs] == [
-        ("failed", "AI_UPSTREAM_TIMEOUT", False),
+        ("failed", code, False),
         ("succeeded", "", True),
     ]
     assert [(row.actor, row.resource_type, row.resource_id) for row in logs] == [
@@ -112,10 +127,11 @@ def test_chat_uses_primary_then_retryable_fallback_and_logs_each_attempt(
     ]
 
 
-def test_non_retryable_error_does_not_try_fallback(db, configured_chat_policy, fake_adapters):
+@pytest.mark.parametrize("code", ["AI_UPSTREAM_AUTH", "AI_UPSTREAM_BAD_REQUEST"])
+def test_non_retryable_error_does_not_try_fallback(db, configured_chat_policy, fake_adapters, code):
     primary, _fallback = configured_chat_policy
     fake_adapters.chat_errors[primary.id] = AIUpstreamError(
-        "AI_UPSTREAM_BAD_REQUEST", retryable=False
+        code, retryable=False
     )
 
     with pytest.raises(AIUpstreamError, match="AI upstream request failed"):
@@ -124,3 +140,56 @@ def test_non_retryable_error_does_not_try_fallback(db, configured_chat_policy, f
         )
 
     assert fake_adapters.chat_calls == [primary.id]
+
+
+def test_project_init_vision_uses_only_explicitly_opted_in_model(
+    db, configured_chat_policy, fake_adapters, tmp_path
+):
+    primary, fallback = configured_chat_policy
+    primary.config_json = '{"vision_workbook_analysis":true}'
+    AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY).save_policy(
+        Capability.PROJECT_INIT_ANALYSIS,
+        primary_model_id=primary.id,
+        fallback_model_ids=[fallback.id],
+        timeout_seconds=30,
+        max_attempts=2,
+        enabled=True,
+    )
+    db.commit()
+    image_path = tmp_path / "sheet.png"
+    image_path.write_bytes(b"png")
+    fake_adapters.vision_results[primary.id] = '{"tasks":[]}'
+
+    result = AIService(
+        db, adapters=fake_adapters, cipher_key=TEST_FERNET_KEY
+    ).invoke_project_init_vision(
+        [image_path], "extract", AIInvocationContext(resource_type="project_init", resource_id=8)
+    )
+
+    assert result.text == '{"tasks":[]}'
+    assert result.model_code == "primary"
+    assert fake_adapters.vision_calls == [(primary.id, [image_path])]
+    assert fallback.id not in [model_id for model_id, _ in fake_adapters.vision_calls]
+
+
+def test_project_init_vision_rejects_models_without_explicit_opt_in(
+    db, configured_chat_policy, fake_adapters, tmp_path
+):
+    primary, fallback = configured_chat_policy
+    AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY).save_policy(
+        Capability.PROJECT_INIT_ANALYSIS,
+        primary_model_id=primary.id,
+        fallback_model_ids=[fallback.id],
+        timeout_seconds=30,
+        max_attempts=2,
+        enabled=True,
+    )
+    image_path = tmp_path / "sheet.png"
+    image_path.write_bytes(b"png")
+
+    with pytest.raises(AICapabilityNotConfigured, match="vision"):
+        AIService(
+            db, adapters=fake_adapters, cipher_key=TEST_FERNET_KEY
+        ).invoke_project_init_vision([image_path], "extract")
+
+    assert fake_adapters.vision_calls == []

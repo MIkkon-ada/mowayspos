@@ -808,6 +808,76 @@ def test_structured_spreadsheet_fallback_uses_traceable_row_data_after_invalid_a
     assert subtask.evidence[0].location == "'工作推进表'!A2:J2"
 
 
+def test_structured_spreadsheet_fallback_rejects_non_excel_tabular_text():
+    source = {
+        "attachment_id": 7,
+        "file_name": "meeting-notes.txt",
+        "location": "lines 1-2",
+        "text": (
+            "专项\t关键任务\t关键成果\t完成标准\t统筹人\t负责人\t协同成员\t计划时间\t当前状态\t问题与协调\n"
+            "知识资产AI化\t完成标签体系修订\t知识资产标签框架\t负责人确认可复用\t张三\t李四\t王五\t2026-06\t进行中\t需协调"
+        ),
+    }
+    with pytest.raises(ProjectInitAiInvalidDraft):
+        generate_project_init_draft(
+            [source],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [raw_task(
+                title="无来源任务",
+                assignee_name="",
+                evidence=[{
+                    "attachment_id": 7,
+                    "file_name": "meeting-notes.txt",
+                    "location": "lines 1-99",
+                    "excerpt": "",
+                }],
+            )]}),
+        )
+
+
+def test_structured_spreadsheet_fallback_does_not_infer_year_or_make_backwards_ranges():
+    spreadsheet_rows = [
+        {
+            "attachment_id": 7,
+            "file_name": "工作推进表_2026-06-04.xlsx",
+            "location": "'工作推进表'!A2:J2",
+            "text": (
+                "专项\t关键任务\t关键成果\t完成标准\t统筹人\t负责人\t协同成员\t计划时间\t当前状态\t问题与协调\n"
+                "专项甲\t任务甲\t成果甲\t标准甲\t张三\t李四\t\t4-5月\t进行中\t"
+            ),
+        },
+        {
+            "attachment_id": 7,
+            "file_name": "工作推进表_2026-06-04.xlsx",
+            "location": "'工作推进表'!A3:J3",
+            "text": (
+                "专项\t关键任务\t关键成果\t完成标准\t统筹人\t负责人\t协同成员\t计划时间\t当前状态\t问题与协调\n"
+                "专项乙\t任务乙\t成果乙\t标准乙\t张三\t李四\t\t2026-12-1月\t进行中\t"
+            ),
+        },
+    ]
+    result = generate_project_init_draft(
+        spreadsheet_rows,
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [raw_task(
+            title="无来源任务",
+            assignee_name="",
+            evidence=[{
+                "attachment_id": 7,
+                "file_name": "工作推进表_2026-06-04.xlsx",
+                "location": "'工作推进表'!A1:J30",
+                "excerpt": "",
+            }],
+        )]}),
+    )
+
+    first, second = result.tasks
+    assert (first.plan_start, first.plan_end) == ("", "")
+    assert (second.plan_start, second.plan_end) == ("2026-12-01", "")
+
+
 def test_source_without_attachment_id_accepts_only_none_evidence_id():
     result = generate_project_init_draft(
         [source_chunk("原文片段", name="plan.txt", location="lines 1")],

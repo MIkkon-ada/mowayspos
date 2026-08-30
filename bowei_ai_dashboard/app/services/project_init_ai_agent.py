@@ -45,6 +45,7 @@ _WORK_PLAN_HEADERS = {
     "协同成员",
     "计划时间",
     "当前状态",
+    "问题与协调",
 }
 _CHINESE_MONTH_RANGE = re.compile(
     r"(?:(?P<start_year>20\d{2})[-年])?(?P<start_month>\d{1,2})"
@@ -1035,7 +1036,7 @@ def _repair_batch_evidence(task: AgentTask, batch: list[tuple[str, str, str, int
     return repaired_task
 
 
-def _spreadsheet_plan_dates(value: str, file_name: str) -> tuple[str, str]:
+def _spreadsheet_plan_dates(value: str) -> tuple[str, str]:
     """Derive only explicitly supported spreadsheet month values into plan dates."""
     clean_value = re.sub(r"\s+", "", str(value or ""))
     if _ISO_DATE.fullmatch(clean_value) and _is_calendar_date(clean_value):
@@ -1045,8 +1046,7 @@ def _spreadsheet_plan_dates(value: str, file_name: str) -> tuple[str, str]:
     match = _CHINESE_MONTH_RANGE.fullmatch(clean_value)
     if match is None:
         return "", ""
-    year_match = re.search(r"(?<!\d)(20\d{2})(?!\d)", file_name)
-    start_year = match.group("start_year") or (year_match.group(1) if year_match else "")
+    start_year = match.group("start_year")
     end_year = match.group("end_year") or start_year
     start_month = int(match.group("start_month"))
     end_month_text = match.group("end_month")
@@ -1057,6 +1057,8 @@ def _spreadsheet_plan_dates(value: str, file_name: str) -> tuple[str, str]:
         return plan_start, ""
     end_month = int(end_month_text)
     if not end_year or not 1 <= end_month <= 12:
+        return plan_start, ""
+    if (int(end_year), end_month) < (int(start_year), start_month):
         return plan_start, ""
     return plan_start, f"{end_year}-{end_month:02d}"
 
@@ -1071,6 +1073,8 @@ def _structured_spreadsheet_rows(
     """Build a traceable review draft when a work-progress spreadsheet is explicit."""
     task_index: dict[str, dict[str, Any]] = {}
     for file_name, location, text, attachment_id in sources:
+        if not file_name.casefold().endswith((".xlsx", ".xls")) or _worksheet_range(location) is None:
+            continue
         lines = str(text or "").splitlines()
         if len(lines) < 2 or "\t" not in lines[0] or "\t" not in lines[1]:
             continue
@@ -1083,7 +1087,7 @@ def _structured_spreadsheet_rows(
         subtask_title = row.get("关键任务", "").strip()
         if not task_title or not subtask_title:
             continue
-        plan_start, plan_end = _spreadsheet_plan_dates(row.get("计划时间", ""), file_name)
+        plan_start, plan_end = _spreadsheet_plan_dates(row.get("计划时间", ""))
         evidence = [{
             "attachment_id": attachment_id,
             "file_name": file_name,

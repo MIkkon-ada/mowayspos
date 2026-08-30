@@ -508,6 +508,7 @@ export function OwnerSubmitAiPanel({
     }
     analysisStartInFlightRef.current = true
     resetAnalysisPreview()
+    setRun(undefined)
     setError('')
     setPanelState('uploading')
     const controller = new AbortController()

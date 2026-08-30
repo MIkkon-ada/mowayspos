@@ -37,4 +37,13 @@ describe('project-init analysis retry state', () => {
     renderPanel(); const rerun = await screen.findByRole('button', { name: '重新分析' }); expect(screen.getByText('旧预览任务')).toBeTruthy(); fireEvent.click(rerun); fireEvent.click(rerun)
     await waitFor(() => expect(api.createInitAnalysisRun).toHaveBeenCalledTimes(1)); expect(screen.queryByText('旧预览任务')).toBeNull()
   })
+
+  it('clears a completed preview summary when creating its rerun fails and keeps recovery usable', async () => {
+    const previewRun = { ...retryingRun, status: 'completed', stage: 'completed', progress: 100, result_metadata: { model_strategy: [{ display_name: '旧模型' }] }, draft: { tasks: [{ title: '旧预览任务', description: '', subtasks: [], warnings: [], evidence: [], merge_status: 'new' }] } }
+    api.getLatestInitAnalysisRun.mockResolvedValue(previewRun); api.createInitAnalysisRun.mockRejectedValueOnce(new Error('新建分析失败')).mockResolvedValueOnce({ ...retryingRun, status: 'completed', stage: 'completed', progress: 100 })
+
+    renderPanel(); fireEvent.click(await screen.findByRole('button', { name: '重新分析' })); expect(await screen.findAllByText('新建分析失败')).toHaveLength(2)
+    expect(screen.queryByText(/旧模型/)).toBeNull(); expect(screen.queryByText('旧预览任务')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '重新分析' })); await waitFor(() => expect(api.createInitAnalysisRun).toHaveBeenCalledTimes(2))
+  })
 })

@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from openpyxl import Workbook
 from pydantic import ValidationError
 
 from app.services.project_init_ai_agent import (
@@ -15,7 +16,7 @@ from app.services.project_init_ai_agent import (
     _parse_json_response,
     generate_project_init_draft,
 )
-from app.services.project_init_file_parser import SourceChunk
+from app.services.project_init_file_parser import SourceChunk, parse_project_init_file
 
 
 def chunk(text: str, *, name: str = "plan.txt", location: str = "lines 1-2") -> dict:
@@ -882,6 +883,31 @@ def test_recognized_work_plan_rows_do_not_depend_on_ai_field_interpretation():
     assert calls == []
     assert result.model_name == "structured-spreadsheet"
     assert result.tasks[0].subtasks[0].helper_names == ["王五"]
+
+
+def test_merged_alias_header_workbook_is_extracted_end_to_end_without_ai(tmp_path):
+    path = tmp_path / "推进表.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "推进表"
+    sheet.append(["重点工作", "任务名称", "目标成果", "验收标准", "统筹负责人", "执行人", "协助人", "开始时间", "状态", "备注"])
+    sheet.append(["知识资产AI化", "制定计划", "专家清单", "完成计划", "张三", "李四", "王五", "2026-06-01", "进行中", "先访谈"])
+    sheet.append(["", "建立目录", "目录初稿", "完成评审", "", "李四", "赵六", "2026-06-01", "进行中", "按模板整理"])
+    sheet.merge_cells("A2:A3")
+    sheet.merge_cells("E2:E3")
+    workbook.save(path)
+
+    result = generate_project_init_draft(
+        parse_project_init_file(path, path.name),
+        [],
+        [],
+        llm_call=lambda _prompt: (_ for _ in ()).throw(AssertionError("AI should not be called")),
+    )
+
+    assert result.model_name == "structured-spreadsheet"
+    assert result.tasks[0].title == "知识资产AI化"
+    assert [item.title for item in result.tasks[0].subtasks] == ["制定计划", "建立目录"]
+    assert result.tasks[0].subtasks[1].helper_names == ["赵六"]
 
 
 def test_structured_spreadsheet_fallback_rejects_non_excel_tabular_text():

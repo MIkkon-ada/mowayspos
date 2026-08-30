@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
+import time
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
+from typing import Callable, Literal
 
 from openpyxl import load_workbook
 from openpyxl.utils import quote_sheetname
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .project_init_file_parser import parse_project_init_file
 
@@ -53,6 +56,112 @@ class ProbeOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     workstreams: list[ProbeWorkstream] = Field(min_length=1)
+
+
+TEXT_MODELS = ("deepseek-v4-flash", "deepseek-v4-pro")
+ProbeStatus = Literal[
+    "succeeded",
+    "invalid_json",
+    "invalid_schema",
+    "uncited_output",
+    "upstream_error",
+    "skipped",
+]
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    """A sanitized outcome for one probe model invocation."""
+
+    mode: Literal["a", "b"]
+    model_name: str
+    status: ProbeStatus
+    duration_ms: int
+    output: ProbeOutput | None = None
+    reason: str = ""
+
+
+class ProbeRunner:
+    """Compare text models against the same workbook evidence."""
+
+    def __init__(self, *, complete_text: Callable[[str, str], str]) -> None:
+        self._complete_text = complete_text
+
+    def run_text(self, evidence: WorkbookEvidence) -> list[ProbeResult]:
+        return [self._run_text_model(model_name, evidence) for model_name in TEXT_MODELS]
+
+    def _run_text_model(self, model_name: str, evidence: WorkbookEvidence) -> ProbeResult:
+        started = time.monotonic()
+        try:
+            response = self._complete_text(model_name, _text_prompt(evidence))
+        except Exception:
+            return ProbeResult(
+                mode="a",
+                model_name=model_name,
+                status="upstream_error",
+                duration_ms=_elapsed_ms(started),
+            )
+        try:
+            payload = json.loads(response)
+        except (TypeError, json.JSONDecodeError):
+            return ProbeResult(
+                mode="a",
+                model_name=model_name,
+                status="invalid_json",
+                duration_ms=_elapsed_ms(started),
+            )
+        try:
+            output = ProbeOutput.model_validate(payload)
+        except ValidationError:
+            return ProbeResult(
+                mode="a",
+                model_name=model_name,
+                status="invalid_schema",
+                duration_ms=_elapsed_ms(started),
+            )
+        if not _has_only_known_evidence(output, evidence.locations):
+            return ProbeResult(
+                mode="a",
+                model_name=model_name,
+                status="uncited_output",
+                duration_ms=_elapsed_ms(started),
+            )
+        return ProbeResult(
+            mode="a",
+            model_name=model_name,
+            status="succeeded",
+            duration_ms=_elapsed_ms(started),
+            output=output,
+        )
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((time.monotonic() - started) * 1000))
+
+
+def _has_only_known_evidence(output: ProbeOutput, locations: set[str]) -> bool:
+    return all(
+        location in locations
+        for workstream in output.workstreams
+        for key_task in workstream.key_tasks
+        for location in key_task.evidence
+    )
+
+
+def _text_prompt(evidence: WorkbookEvidence) -> str:
+    return """你正在测试对 Excel 工作推进表的结构理解。只返回一个 JSON 对象，不能使用 Markdown。
+
+请提取：专项/重点工作 -> workstreams；关键任务 -> key_tasks。每个关键任务必须包含
+title、owner、collaborators、plan_start、plan_end、completion_standard、note、evidence。
+“协同成员”“协助人”“参与人”以及类似“协助人：张三、李四”的备注都属于 collaborators；
+不要在 note 中重复协助人名单。信息不确定时留空或在 note 说明，不能编造。
+每个 key_task 必须用 evidence 引用下面证据中完全一致的单元格位置。
+
+JSON 结构：
+{"workstreams":[{"title":"","key_tasks":[{"title":"","owner":"","collaborators":[],"plan_start":"","plan_end":"","completion_standard":"","note":"","evidence":["'工作表'!A1"]}]}]}
+
+证据：
+""" + evidence.text
 
 
 def build_workbook_evidence(

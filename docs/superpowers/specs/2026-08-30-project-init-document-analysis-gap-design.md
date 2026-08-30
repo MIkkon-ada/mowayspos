@@ -77,20 +77,29 @@ text_with_review
 route. They are never selected for `file_understanding` because their official
 API contract does not accept raw Excel files.
 
-### 4. File-understanding capability boundary
+### 4. Complex-workbook visual capability boundary
 
-Add a document model capability separate from chat and ASR. Its adapter
-receives `Path`, original filename, MIME type, and a structured extraction
-instruction; it returns only a text JSON envelope. The model configuration
-must explicitly include `supported_input_extensions`, and the router only
-chooses it for an extension it declares. Configuration without a provider or
-credential leaves the capability unavailable, not silently routed to chat.
+DeepSeek's official Files API accepts images only, not raw `.xlsx` files.
+For high-risk `.xlsx` sources, use the already verified
+`deepseek-v4-flash-vision-exp` route instead of pretending that the text model
+received a workbook. The application renders bounded workbook sheet views to
+PNG in a temporary directory and submits these images with an extraction
+instruction. The original workbook never leaves the local attachment store as
+an opaque provider file object.
 
-The first supported provider integration will be selected from a model/API
-that documents raw `.xlsx` file input. It must upload only the retained
-attachment, enforce the existing 25 MiB limit, omit raw prompts/responses and
-file IDs from database logs, and clean temporary provider references when the
-provider supports deletion.
+The visual route is eligible only for a configured, enabled DeepSeek model
+whose config opts in with `vision_workbook_analysis: true`. It applies only to
+`.xlsx`, enforces the existing upload limit plus caps on sheets, rendered
+pixels, and image count, and records no image bytes, raw prompt, API key, or
+remote file ID in database logs. All temporary rendered images are removed
+after the request.
+
+Visual output is a review signal, not an untrusted replacement for a
+recognised table: deterministic row extraction remains authoritative whenever
+the headers are known or can be normalised. For non-tabular complex layouts,
+the visual model returns the existing evidence-bound draft envelope. If vision
+is unavailable or fails, the route stays `text_with_review` and displays a
+safe reason; it never silently claims visual understanding.
 
 ### 5. Snapshot and review visibility
 
@@ -109,9 +118,9 @@ Validate type/archive and profile workbook complexity
         ↓
 Create immutable run snapshot with route decision
         ↓
-low risk → existing parser + text AI
-high risk + document capability → original file model
-high risk + no document capability → parser + visible review requirement
+low risk / recognised table → deterministic rows, then text AI only where needed
+high risk + opted-in vision capability → render bounded sheet images + visual model
+high risk + no usable vision capability → parser + visible review requirement
         ↓
 Evidence validation, person reconciliation, reviewer confirmation
 ```
@@ -121,11 +130,9 @@ Evidence validation, person reconciliation, reviewer confirmation
 - No existing attachment is deleted or migrated automatically.
 - No API key is added to source code, output, or logs.
 - No complex workbook is silently downgraded while being labeled as
-  file-understood.
-- The first increment supplies durable storage, profiling, route decision,
-  snapshot metadata, and review signals. A live raw-file provider requires a
-  separately configured provider credential and is only enabled after its
-  adapter contract and integration tests are in place.
+  visually understood.
+- Visual model output never mutates a project directly and continues through
+  the existing evidence, person-resolution, and reviewer-confirmation gates.
 
 ## Verification
 
@@ -135,8 +142,9 @@ Tests will prove that:
 2. upload, download, cleanup, and worker resolve the same root;
 3. low- and high-risk workbooks produce deterministic profiles without
    recording source values;
-4. high-risk workbooks cannot choose a text-only model as a file route;
-5. a missing document capability produces `text_with_review` plus a review
-   signal; and
-6. snapshots preserve route/profile metadata while retaining existing draft
+4. high-risk workbooks choose vision only when the model explicitly opts in;
+5. rendered images respect sheet, pixel, and count limits and are removed;
+6. a missing or failed vision capability produces `text_with_review` plus a
+   review signal; and
+7. snapshots preserve route/profile metadata while retaining existing draft
    generation behavior for normal workbooks.

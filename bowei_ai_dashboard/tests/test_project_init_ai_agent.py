@@ -743,6 +743,35 @@ def test_coarse_worksheet_evidence_without_a_matching_source_title_is_rejected()
         )
 
 
+@pytest.mark.parametrize("location", [
+    "'推进表'!A0:J30",
+    "'推进表'!A1:J1048577",
+    "'推进表'!A1:XFE30",
+])
+def test_out_of_bounds_coarse_worksheet_evidence_is_not_repaired(location):
+    with pytest.raises(ProjectInitAiInvalidDraft):
+        generate_project_init_draft(
+            [{
+                "attachment_id": 7,
+                "file_name": "plan.xlsx",
+                "location": "'推进表'!A2:J2",
+                "text": "专项甲 任务甲 交付甲",
+            }],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [raw_task(
+                title="专项甲",
+                assignee_name="",
+                evidence=[{
+                    "attachment_id": 7,
+                    "file_name": "plan.xlsx",
+                    "location": location,
+                    "excerpt": "",
+                }],
+            )]}),
+        )
+
+
 def test_source_without_attachment_id_accepts_only_none_evidence_id():
     result = generate_project_init_draft(
         [source_chunk("原文片段", name="plan.txt", location="lines 1")],

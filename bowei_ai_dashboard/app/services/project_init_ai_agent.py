@@ -23,6 +23,8 @@ from .project_init_file_parser import SourceChunk
 
 MAX_BATCH_CHARS = 40_000
 LLM_TIMEOUT_SECONDS = 90
+_MAX_EXCEL_COLUMN = 16_384  # XFD
+_MAX_EXCEL_ROW = 1_048_576
 _POSITIVE_ID = Annotated[int, Field(strict=True, gt=0)]
 _POSITIVE_ID_ADAPTER = TypeAdapter(_POSITIVE_ID)
 _MERGE_STATUSES = Literal["new", "definite_duplicate", "possible_duplicate"]
@@ -920,7 +922,14 @@ def _worksheet_range(value: str) -> tuple[str, int, int, int, int] | None:
     end_column = _column_number(match.group("end_column"))
     start_row = int(match.group("start_row"))
     end_row = int(match.group("end_row"))
-    if start_column > end_column or start_row > end_row:
+    if (
+        not 1 <= start_column <= _MAX_EXCEL_COLUMN
+        or not 1 <= end_column <= _MAX_EXCEL_COLUMN
+        or not 1 <= start_row <= _MAX_EXCEL_ROW
+        or not 1 <= end_row <= _MAX_EXCEL_ROW
+        or start_column > end_column
+        or start_row > end_row
+    ):
         return None
     return match.group("sheet").casefold(), start_column, start_row, end_column, end_row
 

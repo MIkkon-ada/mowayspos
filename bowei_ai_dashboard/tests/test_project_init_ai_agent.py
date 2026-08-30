@@ -242,6 +242,25 @@ def test_reconciles_end_only_iso_date_as_a_start_only_date():
     assert task.plan_end == ""
 
 
+def test_normalizes_month_precision_plan_start_to_a_full_date_without_changing_end():
+    payload = raw_task()
+    payload["plan_start"] = "2026-05"
+    payload["plan_end"] = "2026-06"
+    payload["subtasks"][0].update({"plan_start": "2026-07", "plan_end": "2026-08"})
+
+    result = generate_project_init_draft(
+        [chunk("计划时间 5-6月")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    task = result.tasks[0]
+    subtask = task.subtasks[0]
+    assert (task.plan_start, task.plan_end) == ("2026-05-01", "2026-06")
+    assert (subtask.plan_start, subtask.plan_end) == ("2026-07-01", "2026-08")
+
+
 def test_preserves_impossible_end_only_iso_date():
     payload = raw_task()
     payload["plan_start"] = ""
@@ -659,6 +678,69 @@ def test_long_source_evidence_uses_canonical_part_location():
         llm_call=llm,
     )
     assert result.tasks[0].evidence[0].location == "lines 1-2 part 1"
+
+
+def test_coarse_worksheet_evidence_is_repaired_to_the_matching_source_row():
+    coarse_evidence = [{
+        "attachment_id": 7,
+        "file_name": "plan.xlsx",
+        "location": "'推进表'!A1:J30",
+        "excerpt": "",
+    }]
+    result = generate_project_init_draft(
+        [
+            {
+                "attachment_id": 7,
+                "file_name": "plan.xlsx",
+                "location": "'推进表'!A2:J2",
+                "text": "专项甲 任务甲 交付甲",
+            },
+            {
+                "attachment_id": 7,
+                "file_name": "plan.xlsx",
+                "location": "'推进表'!A3:J3",
+                "text": "专项乙 任务乙 交付乙",
+            },
+        ],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [raw_task(
+            title="专项乙",
+            assignee_name="",
+            evidence=coarse_evidence,
+        ) | {"subtasks": [{
+            "title": "任务乙",
+            "evidence": coarse_evidence,
+        }]}]}),
+    )
+
+    task = result.tasks[0]
+    assert task.evidence[0].location == "'推进表'!A3:J3"
+    assert task.subtasks[0].evidence[0].location == "'推进表'!A3:J3"
+
+
+def test_coarse_worksheet_evidence_without_a_matching_source_title_is_rejected():
+    with pytest.raises(ProjectInitAiInvalidDraft):
+        generate_project_init_draft(
+            [{
+                "attachment_id": 7,
+                "file_name": "plan.xlsx",
+                "location": "'推进表'!A2:J2",
+                "text": "专项甲 任务甲 交付甲",
+            }],
+            [],
+            [],
+            llm_call=fake_llm({"tasks": [raw_task(
+                title="专项乙",
+                assignee_name="",
+                evidence=[{
+                    "attachment_id": 7,
+                    "file_name": "plan.xlsx",
+                    "location": "'推进表'!A1:J30",
+                    "excerpt": "",
+                }],
+            )]}),
+        )
 
 
 def test_source_without_attachment_id_accepts_only_none_evidence_id():

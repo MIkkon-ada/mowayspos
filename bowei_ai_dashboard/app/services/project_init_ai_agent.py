@@ -28,6 +28,11 @@ _POSITIVE_ID_ADAPTER = TypeAdapter(_POSITIVE_ID)
 _MERGE_STATUSES = Literal["new", "definite_duplicate", "possible_duplicate"]
 _YEAR_MONTH = re.compile(r"\d{4}-(?:0[1-9]|1[0-2])")
 _ISO_DATE = re.compile(r"\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])")
+_WORKSHEET_RANGE = re.compile(
+    r"^(?P<sheet>'(?:[^']|'')+'|[^!]+)!(?P<start_column>[A-Z]+)(?P<start_row>\d+):"
+    r"(?P<end_column>[A-Z]+)(?P<end_row>\d+)$",
+    re.IGNORECASE,
+)
 
 
 class ProjectInitAiError(RuntimeError):
@@ -213,9 +218,12 @@ def _is_calendar_date(value: str) -> bool:
 
 
 def _normalise_start_only_dates(payload: dict[str, Any]) -> None:
-    """Move a valid end-only date into the start field for imported work plans."""
+    """Normalize imported plan starts and move a valid end-only date into start."""
     plan_start = str(payload.get("plan_start") or "")
     plan_end = str(payload.get("plan_end") or "")
+    if _YEAR_MONTH.fullmatch(plan_start):
+        payload["plan_start"] = f"{plan_start}-01"
+        return
     if plan_start:
         return
     if _YEAR_MONTH.fullmatch(plan_end):
@@ -897,6 +905,112 @@ def _evidence_traceability_error(raw: Evidence, sources: list[tuple[str, str, st
     return None
 
 
+def _column_number(value: str) -> int:
+    result = 0
+    for character in value.upper():
+        result = result * 26 + ord(character) - ord("A") + 1
+    return result
+
+
+def _worksheet_range(value: str) -> tuple[str, int, int, int, int] | None:
+    match = _WORKSHEET_RANGE.fullmatch(value.strip())
+    if not match:
+        return None
+    start_column = _column_number(match.group("start_column"))
+    end_column = _column_number(match.group("end_column"))
+    start_row = int(match.group("start_row"))
+    end_row = int(match.group("end_row"))
+    if start_column > end_column or start_row > end_row:
+        return None
+    return match.group("sheet").casefold(), start_column, start_row, end_column, end_row
+
+
+def _enclosed_worksheet_sources(
+    raw: Evidence,
+    sources: list[tuple[str, str, str, int | None]],
+) -> list[tuple[str, str, str, int | None]]:
+    raw_range = _worksheet_range(raw.location)
+    if raw_range is None:
+        return []
+    sheet, start_column, start_row, end_column, end_row = raw_range
+    matches: list[tuple[str, str, str, int | None]] = []
+    for source in sources:
+        file_name, location, _text, attachment_id = source
+        if file_name != raw.file_name or attachment_id != raw.attachment_id:
+            continue
+        source_range = _worksheet_range(location)
+        if source_range is None:
+            continue
+        source_sheet, source_start_column, source_start_row, source_end_column, source_end_row = source_range
+        if (
+            source_sheet == sheet
+            and start_column <= source_start_column <= source_end_column <= end_column
+            and start_row <= source_start_row <= source_end_row <= end_row
+        ):
+            matches.append(source)
+    return matches
+
+
+def _repair_coarse_worksheet_evidence(
+    evidence: list[Evidence],
+    sources: list[tuple[str, str, str, int | None]],
+    titles: Iterable[str],
+) -> list[Evidence]:
+    """Replace a model's broad worksheet range with a title-matched source row.
+
+    This recovery is deliberately narrow: it never accepts a different file or
+    attachment, and it requires the declared range to enclose a real source row
+    containing the task title. All other untraceable citations still fail closed.
+    """
+    title_values = [
+        _normalise_title(title)
+        for title in titles
+        if _normalise_title(title)
+    ]
+    repaired: list[Evidence] = []
+    for item in evidence:
+        if _evidence_traceability_error(item, sources) != "untraceable_location":
+            repaired.append(item)
+            continue
+        candidates = _enclosed_worksheet_sources(item, sources)
+        source = next(
+            (
+                candidate
+                for candidate in candidates
+                if any(title in _normalise_title(candidate[2]) for title in title_values)
+            ),
+            None,
+        )
+        if source is None:
+            repaired.append(item)
+            continue
+        repaired.append(
+            Evidence(
+                attachment_id=source[3],
+                file_name=source[0],
+                location=source[1],
+                excerpt=item.excerpt,
+            )
+        )
+    return repaired
+
+
+def _repair_batch_evidence(task: AgentTask, batch: list[tuple[str, str, str, int | None]]) -> AgentTask:
+    repaired_task = task.model_copy(deep=True)
+    repaired_task.evidence = _repair_coarse_worksheet_evidence(
+        repaired_task.evidence,
+        batch,
+        [repaired_task.title],
+    )
+    for subtask in repaired_task.subtasks:
+        subtask.evidence = _repair_coarse_worksheet_evidence(
+            subtask.evidence,
+            batch,
+            [subtask.title, repaired_task.title],
+        )
+    return repaired_task
+
+
 def _validate_evidence_group(
     evidence: list[Evidence],
     *,
@@ -990,6 +1104,7 @@ def generate_project_init_draft(
             ) from exc
         except Exception as exc:
             raise ProjectInitAiError("AI 草稿处理失败") from exc
+        envelope.tasks = [_repair_batch_evidence(task, batch) for task in envelope.tasks]
         _validate_batch_sources(envelope.tasks, batch)
         all_tasks = _merge_tasks([*all_tasks, *_merge_tasks(envelope.tasks)])
     if not all_tasks:
@@ -999,6 +1114,10 @@ def generate_project_init_draft(
             merge_raw = _invoke_llm(caller, _final_merge_prompt(all_tasks, canonical_sources), provider)
             merge_payload = _parse_json_response(merge_raw)
             merge_envelope = _RawEnvelope.model_validate(_normalise_llm_payload(merge_payload))
+            merge_envelope.tasks = [
+                _repair_batch_evidence(task, canonical_sources)
+                for task in merge_envelope.tasks
+            ]
             _validate_batch_sources(merge_envelope.tasks, canonical_sources)
         except ProjectInitAiError:
             raise

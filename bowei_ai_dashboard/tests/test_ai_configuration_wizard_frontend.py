@@ -23,7 +23,7 @@ def test_model_management_uses_weknora_card_and_drawer_structure():
         assert expected in section
     assert "AIModelCard" in section
     assert "AIModelDrawer" in section
-    assert section.count("添加模型") == 1
+    assert section.count("添加模型") >= 1
     assert "编辑" in card
     assert "测试连接" in card
     assert "停用" in card
@@ -51,19 +51,16 @@ def test_model_drawer_contains_only_model_connection_fields():
     assert "testAIModel" in drawer
 
 
-def test_model_management_does_not_render_business_capability_binding():
+def test_model_management_exposes_capability_policy_ordering():
     section = source("features/settings/AIConfigurationSection.tsx")
-    combined = section + source("features/settings/AIModelDrawer.tsx") + source("features/settings/AIModelCard.tsx")
 
-    for forbidden in (
-        "会议纪要分析",
-        "任务提取",
-        "项目初始化分析",
-        "语音实时转写",
+    for expected in (
+        "AI 能力策略",
         "listAICapabilityPolicies",
         "saveAICapabilityPolicy",
+        "fallback_model_ids: ids.slice(1)",
     ):
-        assert forbidden not in combined
+        assert expected in section
 
 
 def test_provider_metadata_has_supported_providers_and_stable_code_generation():

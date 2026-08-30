@@ -177,7 +177,9 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
                 background: isActive ? 'rgba(14,165,233,0.15)' : 'transparent',
                 width: '100%',
                 textAlign: 'left',
-                border: 'none',
+                borderTop: 'none',
+                borderRight: 'none',
+                borderBottom: 'none',
                 outline: 'none',
               }}
               onMouseEnter={(e) => {

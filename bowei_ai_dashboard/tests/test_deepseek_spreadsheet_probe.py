@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from openpyxl import Workbook
 
+from app import models
 from app.services.deepseek_spreadsheet_probe import (
     ProbeRunner,
     WorkbookEvidence,
+    build_text_completion,
     build_workbook_evidence,
 )
 
@@ -55,3 +57,28 @@ def test_probe_a_rejects_unknown_evidence_location():
 
     assert result.status == "uncited_output"
     assert result.output is None
+
+
+def test_build_text_completion_targets_in_memory_model_without_returning_secret():
+    captured: dict[str, object] = {}
+    credential_model = models.AIModel(
+        id=7,
+        code="configured-deepseek",
+        display_name="Configured DeepSeek",
+        provider="deepseek",
+        model_name="deepseek-v4-pro",
+        model_type="chat",
+        base_url="https://api.deepseek.com",
+        config_json="{}",
+        enabled=True,
+    )
+    completion = build_text_completion(
+        credential_model,
+        credential_reader=lambda model_id: captured.setdefault("model_id", model_id) or "secret",
+        adapter=lambda model, key, _prompt: captured.update(model=model.model_name, key=key) or "{}",
+    )
+
+    assert completion("deepseek-v4-flash", "prompt") == "{}"
+    assert captured["model_id"] == 7
+    assert captured["model"] == "deepseek-v4-flash"
+    assert "secret" not in repr(completion)

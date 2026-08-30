@@ -13,6 +13,8 @@ from openpyxl import load_workbook
 from openpyxl.utils import quote_sheetname
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app import models
+
 from .project_init_file_parser import parse_project_init_file
 
 
@@ -162,6 +164,32 @@ JSON 结构：
 
 证据：
 """ + evidence.text
+
+
+def build_text_completion(
+    credential_model: models.AIModel,
+    *,
+    credential_reader: Callable[[int], str],
+    adapter: Callable[[models.AIModel, str, str], str],
+) -> Callable[[str, str], str]:
+    """Build an in-memory target-model caller without storing credentials."""
+    api_key = credential_reader(credential_model.id)
+
+    def complete(target_model_name: str, prompt: str) -> str:
+        target_model = models.AIModel(
+            id=credential_model.id,
+            code=f"{credential_model.code}-spreadsheet-probe",
+            display_name=credential_model.display_name,
+            provider=credential_model.provider,
+            model_name=target_model_name,
+            model_type=credential_model.model_type,
+            base_url=credential_model.base_url,
+            config_json=credential_model.config_json,
+            enabled=credential_model.enabled,
+        )
+        return adapter(target_model, api_key, prompt)
+
+    return complete
 
 
 def build_workbook_evidence(

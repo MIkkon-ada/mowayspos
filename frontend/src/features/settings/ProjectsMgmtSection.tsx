@@ -43,6 +43,7 @@ import {
 } from './projectsWorkbench'
 import { ProjectOverviewStats } from './ProjectOverviewStats'
 import { ProjectTodoSection, type ProjectTodoViewModel } from './ProjectTodoSection'
+import { buildDraftRows, type ProjectReviewDraftRow } from './projectReviewDraftRows'
 
 // ── 常量 ──────────────────────────────────────────────────────
 
@@ -225,48 +226,6 @@ function getDraftSummary(tasks: TaskItem[], subtasks: SubTaskWithParent[], proje
     planConfigured: subtasks.filter((s) => (s.plan_time ?? '').trim()).length,
     taskTotal: subtasks.length,
   }
-}
-
-type DraftRow = {
-  objective: string
-  keyTask: string
-  standard: string
-  seq: string
-  subTask: string
-  assignee: string
-  planRange: string
-  collaborator: string
-  note: string
-  isTaskOnly: boolean
-}
-
-function buildDraftRows(tasks: TaskItem[], subtasks: SubTaskWithParent[], project: Project): DraftRow[] {
-  const objText = project.objectives?.trim()
-  const objective = objText ? (objText.length > 10 ? objText.slice(0, 10) + '…' : objText) : '—'
-  const rows: DraftRow[] = []
-  for (const task of tasks) {
-    const taskSubs = subtasks.filter((s) => s.parent_task_id === task.id || s.task_id === task.id)
-    const standard = task.completion_standard?.trim() || '—'
-    const collaborator = task.collaborators?.trim() || '—'
-    if (taskSubs.length === 0) {
-      const planRange = task.plan_time?.trim() || '—'
-      rows.push({
-        objective, keyTask: task.key_task || '—', standard, seq: '—',
-        subTask: '关键任务待补充', assignee: task.owner?.trim() || '—',
-        planRange, collaborator, note: '—', isTaskOnly: true,
-      })
-    } else {
-      taskSubs.forEach((sub, idx) => {
-        const planRange = sub.plan_time?.trim() || task.plan_time?.trim() || '—'
-        rows.push({
-          objective, keyTask: task.key_task || '—', standard, seq: String(idx + 1),
-          subTask: sub.title || '—', assignee: sub.assignee?.trim() || '—',
-          planRange, collaborator, note: sub.notes?.trim() || '—', isTaskOnly: false,
-        })
-      })
-    }
-  }
-  return rows
 }
 
 type MainAction = { label: string; type: 'edit' | 'dispatch' | 'ownerSubmit' | 'approvalMaterials' | 'workProgress' | 'viewDetail' | 'closeRequest' | 'closeReview' | 'closeArchiveView' | 'projectArchive' }
@@ -1650,8 +1609,8 @@ export function DetailPanel({
 
 // ── 类 Excel 草案明细表 ──────────────────────────────────────
 
-function DraftProgressTable({ rows }: { rows: DraftRow[] }) {
-  const cols = ['重点工作', '目标成果 / 验收标准', '关键任务', '责任人', '协助人', '时间段', '备注 / 标准']
+function DraftProgressTable({ rows }: { rows: ProjectReviewDraftRow[] }) {
+  const cols = ['重点工作', '目标成果', '关键任务', '责任人', '协助人', '时间段', '备注 / 标准']
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-200">
       <table className="w-full text-[11px]" style={{ borderCollapse: 'collapse' }}>
@@ -1692,7 +1651,7 @@ function ProjectApproveModal({
   name: string
   form: ProjectProfilePayload
   draftSummary: DraftSummary
-  draftRows: DraftRow[]
+  draftRows: ProjectReviewDraftRow[]
   onChangeForm: (next: ProjectProfilePayload) => void
   onClose: () => void
   onConfirm: () => void
@@ -1881,7 +1840,7 @@ export function ApprovalMaterialsWorkbenchModal({
 }) {
   const teamLine = summarizeProjectRoleLine(projectMembers, project)
   const draftSummary = getDraftSummary(tasks, subtasks, project)
-  const draftRows = buildDraftRows(tasks, subtasks, project)
+  const draftRows = buildDraftRows(tasks, subtasks, project, projectMembers)
   const projectType = project.project_type?.trim() || '未填写'
   const clientName = project.client_name?.trim() || '内部项目 / 未填写'
   const background = project.background?.trim() || '未填写'
@@ -2027,8 +1986,8 @@ export function ApprovalMaterialsWorkbenchModal({
                               <div className="mt-1 text-lg font-semibold text-slate-900">{task.key_task || '未填写'}</div>
                             </div>
                             <div>
-                              <div className="block text-[10px] font-semibold uppercase text-slate-500/80">目标成果 / 验收标准</div>
-                              <div className="mt-1 text-sm leading-relaxed text-slate-600">{task.completion_standard?.trim() || '未填写'}</div>
+                              <div className="block text-[10px] font-semibold uppercase text-slate-500/80">重点工作目标</div>
+                              <div className="mt-1 text-sm leading-relaxed text-slate-600">{task.key_achievement?.trim() || '未填写'}</div>
                             </div>
                           </div>
                         </div>

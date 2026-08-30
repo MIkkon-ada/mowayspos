@@ -276,6 +276,17 @@ def test_worker_uses_vision_for_high_risk_non_tabular_workbook_and_cleans_images
     assert json.loads(stored.result_json)["analysis_route"]["mode"] == "vision_with_review"
     assert json.loads(stored.current_draft_json)["tasks"][0]["title"] == "视觉任务"
     assert rendered_directories and not rendered_directories[0].exists()
+    decision_log = db.query(models.OperationLog).filter_by(
+        project_id=stored.project_id,
+        action="project_init_analysis_decision",
+        target_type="project_init_analysis_run",
+        target_id=run_id,
+    ).one()
+    decision = json.loads(decision_log.after_json)
+    assert decision["analysis_route"] == "vision_with_review"
+    assert decision["review_required"] is True
+    assert decision["task_count"] == 1
+    assert "复杂布局" not in decision_log.after_json
 
 
 def test_worker_all_failure_is_failed_and_does_not_leak_provider_secret(monkeypatch, tmp_path):

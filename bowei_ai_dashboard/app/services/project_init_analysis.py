@@ -565,6 +565,34 @@ def process_analysis_run(run_id: int) -> None:
         provider = str(getattr(result, "provider", "") or "")[:30]
         model_name = str(getattr(result, "model_name", "") or "")[:100]
         failed_files = sum(1 for item in file_results if item.get("status") == "failed")
+        result_metadata = _result_metadata(
+            draft,
+            provider=provider,
+            model_name=model_name,
+            file_results=file_results,
+            attempted_models=_attempted_models(db, run_id),
+            analysis_route=analysis_route,
+        )
+        crud.log(
+            db,
+            str(run.created_by or "system")[:50],
+            "project_init_analysis_decision",
+            "project_init_analysis_run",
+            run_id,
+            {},
+            {
+                "analysis_route": result_metadata["analysis_route"]["mode"],
+                "review_required": result_metadata["analysis_route"]["review_required"],
+                "reason_codes": result_metadata["analysis_route"]["reason_codes"],
+                "provider": provider,
+                "model_name": model_name,
+                "task_count": result_metadata["task_count"],
+                "warning_count": result_metadata["warning_count"],
+                "file_count": result_metadata["file_count"],
+            },
+            project_id=run.project_id,
+            note="项目立项文档分析决策摘要",
+        )
         _update_processing(
             db,
             run_id,
@@ -574,16 +602,7 @@ def process_analysis_run(run_id: int) -> None:
                 "current_draft_json": _json_dump(draft),
                 "provider": provider,
                 "model_name": model_name,
-                "result_json": _json_dump(
-                    _result_metadata(
-                        draft,
-                        provider=provider,
-                        model_name=model_name,
-                        file_results=file_results,
-                        attempted_models=_attempted_models(db, run_id),
-                        analysis_route=analysis_route,
-                    )
-                ),
+                "result_json": _json_dump(result_metadata),
                 "file_results_json": _json_dump(file_results),
                 "status": "partial_failed" if failed_files else "completed",
                 "finished_at": utc_now(),

@@ -176,6 +176,60 @@ def test_worker_success_updates_monotonic_progress_and_keeps_snapshot(monkeypatc
     assert json.loads(stored.snapshot_json)["project"]["status"] == "dispatched"
 
 
+def test_worker_records_complex_workbook_review_requirement(monkeypatch, tmp_path):
+    from app.services import project_init_analysis as service
+
+    db = make_session()
+    project, _owner = add_project_graph(db)
+    attachment = add_attachment(db, project_id=project.id, attachment_id=1)
+    attachment.original_name = "complex.xlsx"
+    run = models.ProjectInitAnalysisRun(
+        project_id=project.id,
+        attachment_ids_json="[1]",
+        snapshot_json=json.dumps({
+            "project": {},
+            "tasks": [],
+            "people": [],
+            "attachments": [
+                {"id": 1, "storage_key": "1/1", "original_name": "complex.xlsx", "size_bytes": 10},
+            ],
+        }),
+        created_by="owner",
+    )
+    db.add(run)
+    db.commit()
+    run_id = run.id
+    source_path = tmp_path / "complex.xlsx"
+    source_path.write_bytes(b"placeholder")
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(service, "_attachment_path", lambda _key: source_path)
+    monkeypatch.setattr(service, "parse_project_init_file", lambda *_args: [{"file_name": "complex.xlsx", "location": "Sheet1!A1", "text": "task"}])
+    monkeypatch.setattr(service, "profile_project_init_workbook", lambda *_args: {
+        "risk_level": "high",
+        "signals": ["hidden_sheets", "merged_cells"],
+        "summary": {"worksheet_count": 2},
+    })
+    monkeypatch.setattr(service, "AIService", lambda _db: object())
+    monkeypatch.setattr(service, "generate_project_init_draft", lambda *_args, **_kwargs: {"tasks": [{"title": "Draft"}], "warnings": []})
+
+    service.process_analysis_run(run_id)
+
+    db.expire_all()
+    stored = db.get(models.ProjectInitAnalysisRun, run_id)
+    result = json.loads(stored.result_json)
+    file_result = json.loads(stored.file_results_json)[0]
+    assert result["analysis_route"] == {
+        "mode": "text_with_review",
+        "review_required": True,
+        "reason_codes": ["complex_workbook_layout"],
+    }
+    assert file_result["workbook_profile"] == {
+        "risk_level": "high",
+        "signals": ["hidden_sheets", "merged_cells"],
+        "summary": {"worksheet_count": 2},
+    }
+
+
 def test_worker_all_failure_is_failed_and_does_not_leak_provider_secret(monkeypatch, tmp_path):
     from app.services import project_init_analysis as service
 

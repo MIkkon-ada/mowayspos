@@ -28,6 +28,8 @@ from .project_init_attachment_storage import (
     project_init_attachment_path,
     project_init_attachment_root,
 )
+from .project_init_analysis_routing import select_project_init_analysis_route
+from .project_init_workbook_profile import profile_project_init_workbook
 
 logger = logging.getLogger(__name__)
 
@@ -344,7 +346,15 @@ def _attempted_models(db: Session, run_id: int) -> list[dict[str, Any]]:
     ]
 
 
-def _result_metadata(draft: dict[str, Any], *, provider: str = "", model_name: str = "", file_results=None, attempted_models=None) -> dict[str, Any]:
+def _result_metadata(
+    draft: dict[str, Any],
+    *,
+    provider: str = "",
+    model_name: str = "",
+    file_results=None,
+    attempted_models=None,
+    analysis_route: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     tasks = draft.get("tasks") if isinstance(draft.get("tasks"), list) else []
     warnings = draft.get("warnings") if isinstance(draft.get("warnings"), list) else []
     return {
@@ -355,6 +365,11 @@ def _result_metadata(draft: dict[str, Any], *, provider: str = "", model_name: s
         "file_count": len(file_results or []),
         "attempted_models": attempted_models or [],
         "final_model": attempted_models[-1] if attempted_models else {},
+        "analysis_route": analysis_route or {
+            "mode": "text_structured",
+            "review_required": False,
+            "reason_codes": [],
+        },
     }
 
 
@@ -391,12 +406,18 @@ def process_analysis_run(run_id: int) -> None:
                 attachment_snapshot.append({"id": attachment_id, "storage_key": "", "original_name": ""})
 
         file_results: list[dict[str, Any]] = []
+        workbook_profiles: list[dict[str, Any]] = []
         chunks: list[dict[str, Any]] = []
         for index, item in enumerate(attachment_snapshot):
             attachment_id = item.get("id")
             try:
                 path = _attachment_path(str(item["storage_key"]))
                 parsed = list(parse_project_init_file(path, str(item["original_name"])))
+                workbook_profile = profile_project_init_workbook(
+                    path,
+                    str(item["original_name"]),
+                )
+                workbook_profiles.append(workbook_profile)
                 for chunk in parsed:
                     file_name = chunk.get("file_name", "") if isinstance(chunk, dict) else chunk.file_name
                     location = chunk.get("location", "") if isinstance(chunk, dict) else chunk.location
@@ -409,7 +430,14 @@ def process_analysis_run(run_id: int) -> None:
                             "text": text,
                         }
                     )
-                file_results.append({"attachment_id": attachment_id, "status": "completed", "chunk_count": len(parsed)})
+                file_results.append(
+                    {
+                        "attachment_id": attachment_id,
+                        "status": "completed",
+                        "chunk_count": len(parsed),
+                        "workbook_profile": workbook_profile,
+                    }
+                )
             except Exception as exc:
                 logger.warning(
                     "project_init_parse_failure run_id=%s error_type=%s code=parse_failure",
@@ -429,6 +457,7 @@ def process_analysis_run(run_id: int) -> None:
         if not chunks:
             _mark_failed(db, run_id, "parse")
             return
+        analysis_route = select_project_init_analysis_route(workbook_profiles)
         if not _update_processing(db, run_id, stage="extracting", progress=55):
             return
 
@@ -466,6 +495,7 @@ def process_analysis_run(run_id: int) -> None:
                             "tasks": 0,
                             "warnings": 0,
                             "attempted_models": _attempted_models(db, run_id),
+                            "analysis_route": analysis_route,
                             "failure_category": failure_category,
                             "validation_errors": (
                                 exc.validation_errors
@@ -499,7 +529,14 @@ def process_analysis_run(run_id: int) -> None:
                 "provider": provider,
                 "model_name": model_name,
                 "result_json": _json_dump(
-                    _result_metadata(draft, provider=provider, model_name=model_name, file_results=file_results, attempted_models=_attempted_models(db, run_id))
+                    _result_metadata(
+                        draft,
+                        provider=provider,
+                        model_name=model_name,
+                        file_results=file_results,
+                        attempted_models=_attempted_models(db, run_id),
+                        analysis_route=analysis_route,
+                    )
                 ),
                 "file_results_json": _json_dump(file_results),
                 "status": "partial_failed" if failed_files else "completed",

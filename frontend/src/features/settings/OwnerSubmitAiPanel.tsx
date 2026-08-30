@@ -206,6 +206,21 @@ function ModelUsageSummary({ run }: { run: ProjectInitAnalysisRun }) {
   </div>
 }
 
+function analysisReviewNotice(run: ProjectInitAnalysisRun): string {
+  const route = run.result_metadata.analysis_route
+  if (!route || typeof route !== 'object') return ''
+  const value = route as Record<string, unknown>
+  if (value.review_required !== true) return ''
+  const reasons = Array.isArray(value.reason_codes) ? value.reason_codes : []
+  if (reasons.includes('workbook_structure_unavailable')) {
+    return '该 Excel 的结构无法完整检查，当前结果来自文本提取，请重点核对人员、时间和层级关系。'
+  }
+  if (reasons.includes('complex_workbook_layout')) {
+    return '该 Excel 包含复杂版式，当前结果来自文本提取，请重点核对人员、时间和层级关系。'
+  }
+  return '当前文件需要人工复核，请重点核对人员、时间和层级关系。'
+}
+
 function requiredDecisionKeys(draft: ProjectInitAiDraft): string[] {
   const keys: string[] = []
   draft.tasks.forEach((task, taskIndex) => {
@@ -727,6 +742,7 @@ export function OwnerSubmitAiPanel({
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 p-3"><div><span className="text-sm font-semibold text-slate-800">{stageLabel(run.stage)}</span><span className="ml-2 text-xs text-slate-500">{statusLabel(run.status)} · {run.progress}%</span></div><div className="flex items-center gap-2"><span className="text-xs text-slate-500">{draft.tasks.length} 项重点工作待确认</span><button type="button" onClick={() => void startAnalysis()} disabled={disabled || applying || applySuccess} className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-50">重新分析</button></div></div>
           <ModelUsageSummary run={run} />
+          {analysisReviewNotice(run) && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{analysisReviewNotice(run)}</div>}
           {draft.warnings && renderWarningMessages(draft.warnings.map((warning) => `${warning.code}: ${warning.message}`))}
           {run.status === 'partial_failed' && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">部分文件分析失败，下面仅展示已成功生成的结果。</div>}
           {renderFileResults(run)}

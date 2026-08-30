@@ -46,4 +46,26 @@ describe('project-init analysis retry state', () => {
     expect(screen.queryByText(/旧模型/)).toBeNull(); expect(screen.queryByText('旧预览任务')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '重新分析' })); await waitFor(() => expect(api.createInitAnalysisRun).toHaveBeenCalledTimes(2))
   })
+
+  it('shows a review notice for a complex workbook parsed through the text route', async () => {
+    const previewRun = {
+      ...retryingRun,
+      status: 'completed',
+      stage: 'completed',
+      progress: 100,
+      result_metadata: {
+        analysis_route: {
+          mode: 'text_with_review',
+          review_required: true,
+          reason_codes: ['complex_workbook_layout'],
+        },
+      },
+      draft: { tasks: [{ title: '复杂表格草稿', description: '', subtasks: [], warnings: [], evidence: [], merge_status: 'new' }] },
+    }
+    api.getLatestInitAnalysisRun.mockResolvedValue(previewRun)
+
+    renderPanel()
+
+    expect(await screen.findByText('该 Excel 包含复杂版式，当前结果来自文本提取，请重点核对人员、时间和层级关系。')).toBeTruthy()
+  })
 })

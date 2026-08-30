@@ -772,6 +772,42 @@ def test_out_of_bounds_coarse_worksheet_evidence_is_not_repaired(location):
         )
 
 
+def test_structured_spreadsheet_fallback_uses_traceable_row_data_after_invalid_ai_evidence():
+    spreadsheet_row = {
+        "attachment_id": 7,
+        "file_name": "工作推进表_2026-06-04.xlsx",
+        "location": "'工作推进表'!A2:J2",
+        "text": (
+            "专项\t关键任务\t关键成果\t完成标准\t统筹人\t负责人\t协同成员\t计划时间\t当前状态\t问题与协调\n"
+            "知识资产AI化\t完成标签体系修订\t知识资产标签框架\t负责人确认可复用\t张三\t李四\t王五、赵六\t2026-06\t进行中\t需协调"
+        ),
+    }
+    result = generate_project_init_draft(
+        [spreadsheet_row],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [raw_task(
+            title="无来源任务",
+            assignee_name="",
+            evidence=[{
+                "attachment_id": 7,
+                "file_name": "工作推进表_2026-06-04.xlsx",
+                "location": "'工作推进表'!A1:J30",
+                "excerpt": "",
+            }],
+        )]}),
+    )
+
+    task = result.tasks[0]
+    subtask = task.subtasks[0]
+    assert (task.title, task.description, task.owner_name) == ("知识资产AI化", "知识资产标签框架", "张三")
+    assert (subtask.title, subtask.assignee_name, subtask.helper_names) == ("完成标签体系修订", "李四", ["王五", "赵六"])
+    assert (task.plan_start, task.plan_end) == ("2026-06-01", "")
+    assert (subtask.plan_start, subtask.plan_end) == ("2026-06-01", "")
+    assert task.evidence[0].location == "'工作推进表'!A2:J2"
+    assert subtask.evidence[0].location == "'工作推进表'!A2:J2"
+
+
 def test_source_without_attachment_id_accepts_only_none_evidence_id():
     result = generate_project_init_draft(
         [source_chunk("原文片段", name="plan.txt", location="lines 1")],

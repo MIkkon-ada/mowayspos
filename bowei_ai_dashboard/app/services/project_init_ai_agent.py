@@ -35,6 +35,21 @@ _WORKSHEET_RANGE = re.compile(
     r"(?P<end_column>[A-Z]+)(?P<end_row>\d+)$",
     re.IGNORECASE,
 )
+_WORK_PLAN_HEADERS = {
+    "专项",
+    "关键任务",
+    "关键成果",
+    "完成标准",
+    "统筹人",
+    "负责人",
+    "协同成员",
+    "计划时间",
+    "当前状态",
+}
+_CHINESE_MONTH_RANGE = re.compile(
+    r"(?:(?P<start_year>20\d{2})[-年])?(?P<start_month>\d{1,2})"
+    r"(?:\s*(?:-|~|至)\s*(?:(?P<end_year>20\d{2})[-年])?(?P<end_month>\d{1,2}))?月?"
+)
 
 
 class ProjectInitAiError(RuntimeError):
@@ -1020,6 +1035,108 @@ def _repair_batch_evidence(task: AgentTask, batch: list[tuple[str, str, str, int
     return repaired_task
 
 
+def _spreadsheet_plan_dates(value: str, file_name: str) -> tuple[str, str]:
+    """Derive only explicitly supported spreadsheet month values into plan dates."""
+    clean_value = re.sub(r"\s+", "", str(value or ""))
+    if _ISO_DATE.fullmatch(clean_value) and _is_calendar_date(clean_value):
+        return clean_value, ""
+    if _YEAR_MONTH.fullmatch(clean_value):
+        return f"{clean_value}-01", ""
+    match = _CHINESE_MONTH_RANGE.fullmatch(clean_value)
+    if match is None:
+        return "", ""
+    year_match = re.search(r"(?<!\d)(20\d{2})(?!\d)", file_name)
+    start_year = match.group("start_year") or (year_match.group(1) if year_match else "")
+    end_year = match.group("end_year") or start_year
+    start_month = int(match.group("start_month"))
+    end_month_text = match.group("end_month")
+    if not start_year or not 1 <= start_month <= 12:
+        return "", ""
+    plan_start = f"{start_year}-{start_month:02d}-01"
+    if end_month_text is None:
+        return plan_start, ""
+    end_month = int(end_month_text)
+    if not end_year or not 1 <= end_month <= 12:
+        return plan_start, ""
+    return plan_start, f"{end_year}-{end_month:02d}"
+
+
+def _split_helper_names(value: str) -> list[str]:
+    return [item.strip() for item in re.split(r"[、，,；;/]+", str(value or "")) if item.strip()]
+
+
+def _structured_spreadsheet_rows(
+    sources: list[tuple[str, str, str, int | None]],
+) -> list[dict[str, Any]]:
+    """Build a traceable review draft when a work-progress spreadsheet is explicit."""
+    task_index: dict[str, dict[str, Any]] = {}
+    for file_name, location, text, attachment_id in sources:
+        lines = str(text or "").splitlines()
+        if len(lines) < 2 or "\t" not in lines[0] or "\t" not in lines[1]:
+            continue
+        headers = [item.strip() for item in lines[0].split("\t")]
+        values = [item.strip() for item in lines[1].split("\t")]
+        if not _WORK_PLAN_HEADERS.issubset(headers) or len(values) < len(headers):
+            continue
+        row = dict(zip(headers, values))
+        task_title = row.get("专项", "").strip()
+        subtask_title = row.get("关键任务", "").strip()
+        if not task_title or not subtask_title:
+            continue
+        plan_start, plan_end = _spreadsheet_plan_dates(row.get("计划时间", ""), file_name)
+        evidence = [{
+            "attachment_id": attachment_id,
+            "file_name": file_name,
+            "location": location,
+        }]
+        task = task_index.get(task_title)
+        if task is None:
+            task = {
+                "title": task_title,
+                "description": row.get("关键成果", "").strip() or row.get("完成标准", "").strip(),
+                "owner_name": row.get("统筹人", "").strip(),
+                "status": row.get("当前状态", "").strip(),
+                "plan_start": plan_start,
+                "plan_end": plan_end,
+                "evidence": evidence,
+                "subtasks": [],
+            }
+            task_index[task_title] = task
+        elif len(task["evidence"]) < 10:
+            task["evidence"].append(evidence[0])
+        task["subtasks"].append({
+            "title": subtask_title,
+            "description": row.get("问题与协调", "").strip(),
+            "assignee_name": row.get("负责人", "").strip() or row.get("统筹人", "").strip(),
+            "helper_names": _split_helper_names(row.get("协同成员", "")),
+            "status": row.get("当前状态", "").strip(),
+            "plan_start": plan_start,
+            "plan_end": plan_end,
+            "evaluation_standard": row.get("完成标准", "").strip(),
+            "evidence": evidence,
+        })
+    return list(task_index.values())
+
+
+def _structured_spreadsheet_fallback(
+    sources: list[tuple[str, str, str, int | None]],
+    people: list[PersonCandidate],
+    existing_tasks: list[dict[str, Any]],
+    provider: str,
+) -> ProjectInitAiResult | None:
+    tasks = _structured_spreadsheet_rows(sources)
+    if not tasks:
+        return None
+    return normalize_agent_result(
+        {"tasks": tasks},
+        people,
+        existing_tasks=existing_tasks,
+        chunks=sources,
+        provider=provider,
+        model_name="structured-spreadsheet-fallback",
+    )
+
+
 def _validate_evidence_group(
     evidence: list[Evidence],
     *,
@@ -1114,7 +1231,18 @@ def generate_project_init_draft(
         except Exception as exc:
             raise ProjectInitAiError("AI 草稿处理失败") from exc
         envelope.tasks = [_repair_batch_evidence(task, batch) for task in envelope.tasks]
-        _validate_batch_sources(envelope.tasks, batch)
+        try:
+            _validate_batch_sources(envelope.tasks, batch)
+        except ProjectInitAiInvalidDraft:
+            fallback = _structured_spreadsheet_fallback(
+                canonical_sources,
+                people,
+                indexed_tasks,
+                provider,
+            )
+            if fallback is not None:
+                return fallback
+            raise
         all_tasks = _merge_tasks([*all_tasks, *_merge_tasks(envelope.tasks)])
     if not all_tasks:
         raise ProjectInitAiEmptyResult("AI 未提取到可用任务")
@@ -1127,7 +1255,18 @@ def generate_project_init_draft(
                 _repair_batch_evidence(task, canonical_sources)
                 for task in merge_envelope.tasks
             ]
-            _validate_batch_sources(merge_envelope.tasks, canonical_sources)
+            try:
+                _validate_batch_sources(merge_envelope.tasks, canonical_sources)
+            except ProjectInitAiInvalidDraft:
+                fallback = _structured_spreadsheet_fallback(
+                    canonical_sources,
+                    people,
+                    indexed_tasks,
+                    provider,
+                )
+                if fallback is not None:
+                    return fallback
+                raise
         except ProjectInitAiError:
             raise
         except ValidationError as exc:
@@ -1138,12 +1277,22 @@ def generate_project_init_draft(
         except Exception as exc:
             raise ProjectInitAiError("AI 最终合并处理失败") from exc
         all_tasks = _merge_tasks([*all_tasks, *_merge_tasks(merge_envelope.tasks)])
-    result = normalize_agent_result(
-        {"tasks": [task.model_dump() for task in all_tasks]},
-        people,
-        existing_tasks=indexed_tasks,
-        chunks=canonical_sources,
-        provider=provider,
-        model_name="",
-    )
-    return result
+    try:
+        return normalize_agent_result(
+            {"tasks": [task.model_dump() for task in all_tasks]},
+            people,
+            existing_tasks=indexed_tasks,
+            chunks=canonical_sources,
+            provider=provider,
+            model_name="",
+        )
+    except ProjectInitAiError:
+        fallback = _structured_spreadsheet_fallback(
+            canonical_sources,
+            people,
+            indexed_tasks,
+            provider,
+        )
+        if fallback is not None:
+            return fallback
+        raise

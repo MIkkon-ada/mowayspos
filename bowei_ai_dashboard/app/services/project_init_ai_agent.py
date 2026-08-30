@@ -47,6 +47,22 @@ _WORK_PLAN_HEADERS = {
     "当前状态",
     "问题与协调",
 }
+_WORK_PLAN_HEADER_ALIASES = {
+    "专项": {"专项", "重点工作", "重点工作名称", "工作模块", "一级任务"},
+    "关键任务": {"关键任务", "任务名称", "任务", "子任务", "工作事项", "二级任务"},
+    "关键成果": {"关键成果", "目标成果", "成果", "交付物", "预期成果"},
+    "完成标准": {"完成标准", "验收标准", "验证标准", "交付标准"},
+    "统筹人": {"统筹人", "统筹负责人", "项目统筹", "项目负责人"},
+    "负责人": {"负责人", "执行人", "执行负责人", "任务负责人"},
+    "协同成员": {"协同成员", "协助人", "协同人", "协作者", "协作人"},
+    "计划时间": {"计划时间", "开始时间", "开始日期", "计划开始时间", "计划日期"},
+    "当前状态": {"当前状态", "状态", "进度", "任务状态"},
+    "问题与协调": {"问题与协调", "备注", "说明", "问题", "协调事项"},
+}
+_WORK_PLAN_HEADER_KEYS = {
+    canonical: {_normalised for alias in aliases for _normalised in [re.sub(r"[\s：:（）()\[\]【】_-]+", "", alias).casefold()]}
+    for canonical, aliases in _WORK_PLAN_HEADER_ALIASES.items()
+}
 _CHINESE_MONTH_RANGE = re.compile(
     r"(?:(?P<start_year>20\d{2})[-年])?(?P<start_month>\d{1,2})"
     r"(?:\s*(?:-|~|至)\s*(?:(?P<end_year>20\d{2})[-年])?(?P<end_month>\d{1,2}))?月?"
@@ -1067,26 +1083,56 @@ def _split_helper_names(value: str) -> list[str]:
     return [item.strip() for item in re.split(r"[、，,；;/]+", str(value or "")) if item.strip()]
 
 
+def _normalise_spreadsheet_header(value: str) -> str:
+    return re.sub(r"[\s：:（）()\[\]【】_-]+", "", str(value or "")).casefold()
+
+
+def _normalise_work_plan_row(headers: list[str], values: list[str]) -> dict[str, str] | None:
+    """Map common, non-standard spreadsheet headers to the review draft fields."""
+
+    columns: dict[str, int] = {}
+    for index, header in enumerate(headers):
+        normalised_header = _normalise_spreadsheet_header(header)
+        for canonical, alias_keys in _WORK_PLAN_HEADER_KEYS.items():
+            if normalised_header in alias_keys:
+                columns.setdefault(canonical, index)
+                break
+    if not {"专项", "关键任务"}.issubset(columns):
+        return None
+    return {
+        canonical: values[index].strip() if index < len(values) else ""
+        for canonical, index in columns.items()
+    }
+
+
 def _structured_spreadsheet_rows(
     sources: list[tuple[str, str, str, int | None]],
 ) -> list[dict[str, Any]]:
     """Build a traceable review draft when a work-progress spreadsheet is explicit."""
     task_index: dict[str, dict[str, Any]] = {}
+    worksheet_contexts: dict[tuple[str, str], dict[str, str]] = {}
     for file_name, location, text, attachment_id in sources:
-        if not file_name.casefold().endswith((".xlsx", ".xls")) or _worksheet_range(location) is None:
+        worksheet_range = _worksheet_range(location)
+        if not file_name.casefold().endswith((".xlsx", ".xls")) or worksheet_range is None:
             continue
         lines = str(text or "").splitlines()
         if len(lines) < 2 or "\t" not in lines[0] or "\t" not in lines[1]:
             continue
         headers = [item.strip() for item in lines[0].split("\t")]
         values = [item.strip() for item in lines[1].split("\t")]
-        if not _WORK_PLAN_HEADERS.issubset(headers) or len(values) < len(headers):
+        row = _normalise_work_plan_row(headers, values)
+        if row is None:
             continue
-        row = dict(zip(headers, values))
-        task_title = row.get("专项", "").strip()
+        worksheet_key = (file_name, worksheet_range[0])
+        context = worksheet_contexts.setdefault(worksheet_key, {})
+        task_title = row.get("专项", "").strip() or context.get("专项", "")
         subtask_title = row.get("关键任务", "").strip()
         if not task_title or not subtask_title:
             continue
+        context["专项"] = task_title
+        coordinator = row.get("统筹人", "").strip() or context.get("统筹人", "")
+        if coordinator:
+            context["统筹人"] = coordinator
         plan_start, plan_end = _spreadsheet_plan_dates(row.get("计划时间", ""))
         evidence = [{
             "attachment_id": attachment_id,
@@ -1098,7 +1144,7 @@ def _structured_spreadsheet_rows(
             task = {
                 "title": task_title,
                 "description": row.get("关键成果", "").strip() or row.get("完成标准", "").strip(),
-                "owner_name": row.get("统筹人", "").strip(),
+                "owner_name": coordinator,
                 "status": row.get("当前状态", "").strip(),
                 "plan_start": plan_start,
                 "plan_end": plan_end,
@@ -1111,7 +1157,7 @@ def _structured_spreadsheet_rows(
         task["subtasks"].append({
             "title": subtask_title,
             "description": row.get("问题与协调", "").strip(),
-            "assignee_name": row.get("负责人", "").strip() or row.get("统筹人", "").strip(),
+            "assignee_name": row.get("负责人", "").strip() or coordinator,
             "helper_names": _split_helper_names(row.get("协同成员", "")),
             "status": row.get("当前状态", "").strip(),
             "plan_start": plan_start,
@@ -1127,6 +1173,8 @@ def _structured_spreadsheet_fallback(
     people: list[PersonCandidate],
     existing_tasks: list[dict[str, Any]],
     provider: str,
+    *,
+    model_name: str = "structured-spreadsheet-fallback",
 ) -> ProjectInitAiResult | None:
     tasks = _structured_spreadsheet_rows(sources)
     if not tasks:
@@ -1137,7 +1185,7 @@ def _structured_spreadsheet_fallback(
         existing_tasks=existing_tasks,
         chunks=sources,
         provider=provider,
-        model_name="structured-spreadsheet-fallback",
+        model_name=model_name,
     )
 
 
@@ -1204,6 +1252,15 @@ def generate_project_init_draft(
         raise ProjectInitAiEmptyResult("没有可分析的来源片段")
     people = _person_candidates(existing_people)
     indexed_tasks, _ = _existing_task_index(existing_tasks)
+    structured_draft = _structured_spreadsheet_fallback(
+        source_values,
+        people,
+        indexed_tasks,
+        "local-rule",
+        model_name="structured-spreadsheet",
+    )
+    if structured_draft is not None:
+        return structured_draft
     if llm_call is not None:
         provider = "injected"
         caller = llm_call

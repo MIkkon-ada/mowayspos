@@ -808,6 +808,82 @@ def test_structured_spreadsheet_fallback_uses_traceable_row_data_after_invalid_a
     assert subtask.evidence[0].location == "'工作推进表'!A2:J2"
 
 
+def test_structured_spreadsheet_fallback_accepts_alias_headers_and_merged_workstream_values():
+    spreadsheet_rows = [
+        {
+            "attachment_id": 7,
+            "file_name": "非规范推进表.xlsx",
+            "location": "'推进表'!A2:J2",
+            "text": (
+                "重点工作\t任务名称\t目标成果\t验收标准\t统筹负责人\t执行人\t协助人\t开始时间\t状态\t备注\n"
+                "知识资产AI化\t制定知识获取计划\t专家清单\t完成访谈计划\t张三\t李四\t王五、赵六\t2026-06-01\t进行中\t先访谈"
+            ),
+        },
+        {
+            "attachment_id": 7,
+            "file_name": "非规范推进表.xlsx",
+            "location": "'推进表'!A3:J3",
+            "text": (
+                "重点工作\t任务名称\t目标成果\t验收标准\t统筹负责人\t执行人\t协助人\t开始时间\t状态\t备注\n"
+                "\t建立知识目录\t目录初稿\t完成目录评审\t\t李四\t吴肖\t2026-06-01\t进行中\t按模板整理"
+            ),
+        },
+    ]
+    result = generate_project_init_draft(
+        spreadsheet_rows,
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [raw_task(
+            title="无来源任务",
+            assignee_name="",
+            evidence=[{
+                "attachment_id": 7,
+                "file_name": "非规范推进表.xlsx",
+                "location": "'推进表'!A1:J30",
+                "excerpt": "",
+            }],
+        )]}),
+    )
+
+    task = result.tasks[0]
+    first, second = task.subtasks
+    assert (task.title, task.owner_name, task.plan_start, task.plan_end) == (
+        "知识资产AI化", "张三", "2026-06-01", "",
+    )
+    assert (first.title, first.assignee_name, first.helper_names) == (
+        "制定知识获取计划", "李四", ["王五", "赵六"],
+    )
+    assert (second.title, second.assignee_name, second.helper_names) == (
+        "建立知识目录", "李四", ["吴肖"],
+    )
+    assert second.evaluation_standard == "完成目录评审"
+    assert second.description == "按模板整理"
+
+
+def test_recognized_work_plan_rows_do_not_depend_on_ai_field_interpretation():
+    spreadsheet_row = {
+        "attachment_id": 7,
+        "file_name": "推进表.xlsx",
+        "location": "'推进表'!A2:J2",
+        "text": (
+            "专项\t关键任务\t关键成果\t完成标准\t统筹人\t负责人\t协同成员\t计划时间\t当前状态\t问题与协调\n"
+            "专项甲\t任务甲\t成果甲\t标准甲\t张三\t李四\t王五\t2026-06-01\t进行中\t备注甲"
+        ),
+    }
+    calls: list[str] = []
+
+    result = generate_project_init_draft(
+        [spreadsheet_row],
+        [],
+        [],
+        llm_call=lambda prompt: calls.append(prompt) or '{"tasks":[]}',
+    )
+
+    assert calls == []
+    assert result.model_name == "structured-spreadsheet"
+    assert result.tasks[0].subtasks[0].helper_names == ["王五"]
+
+
 def test_structured_spreadsheet_fallback_rejects_non_excel_tabular_text():
     source = {
         "attachment_id": 7,

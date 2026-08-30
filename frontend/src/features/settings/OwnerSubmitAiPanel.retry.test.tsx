@@ -68,4 +68,26 @@ describe('project-init analysis retry state', () => {
 
     expect(await screen.findByText('该 Excel 包含复杂版式，当前结果来自文本提取，请重点核对人员、时间和层级关系。')).toBeTruthy()
   })
+
+  it('shows a review notice for a complex workbook analyzed through vision', async () => {
+    const previewRun = {
+      ...retryingRun,
+      status: 'completed',
+      stage: 'completed',
+      progress: 100,
+      result_metadata: {
+        analysis_route: {
+          mode: 'vision_with_review',
+          review_required: true,
+          reason_codes: ['complex_workbook_layout'],
+        },
+      },
+      draft: { tasks: [{ title: '视觉分析草稿', description: '', subtasks: [], warnings: [], evidence: [], merge_status: 'new' }] },
+    }
+    api.getLatestInitAnalysisRun.mockResolvedValue(previewRun)
+
+    renderPanel()
+
+    expect(await screen.findByText('复杂 Excel 已通过视觉分析生成候选，请复核后应用。')).toBeTruthy()
+  })
 })

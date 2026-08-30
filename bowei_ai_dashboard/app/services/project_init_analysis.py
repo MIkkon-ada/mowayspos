@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import tempfile
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Iterable
@@ -30,6 +31,8 @@ from .project_init_attachment_storage import (
 )
 from .project_init_analysis_routing import select_project_init_analysis_route
 from .project_init_workbook_profile import profile_project_init_workbook
+from .project_init_workbook_renderer import render_workbook_images
+from .project_init_vision_analysis import generate_project_init_vision_draft
 
 logger = logging.getLogger(__name__)
 
@@ -407,6 +410,7 @@ def process_analysis_run(run_id: int) -> None:
 
         file_results: list[dict[str, Any]] = []
         workbook_profiles: list[dict[str, Any]] = []
+        vision_sources: list[Path] = []
         chunks: list[dict[str, Any]] = []
         for index, item in enumerate(attachment_snapshot):
             attachment_id = item.get("id")
@@ -418,6 +422,11 @@ def process_analysis_run(run_id: int) -> None:
                     str(item["original_name"]),
                 )
                 workbook_profiles.append(workbook_profile)
+                if (
+                    workbook_profile.get("risk_level") == "high"
+                    and str(item["original_name"]).casefold().endswith(".xlsx")
+                ):
+                    vision_sources.append(path)
                 for chunk in parsed:
                     file_name = chunk.get("file_name", "") if isinstance(chunk, dict) else chunk.file_name
                     location = chunk.get("location", "") if isinstance(chunk, dict) else chunk.location
@@ -464,13 +473,50 @@ def process_analysis_run(run_id: int) -> None:
         people = snapshot.get("people", []) if isinstance(snapshot, dict) else []
         existing_tasks = snapshot.get("tasks", []) if isinstance(snapshot, dict) else []
         try:
-            result = generate_project_init_draft(
-                chunks,
-                people,
-                existing_tasks,
-                ai_service=AIService(db),
-                invocation_context=AIInvocationContext(resource_type="project_init", resource_id=run_id),
-            )
+            ai_service = AIService(db)
+            context = AIInvocationContext(resource_type="project_init", resource_id=run_id)
+            result = None
+            if vision_sources:
+                try:
+                    with tempfile.TemporaryDirectory(prefix="project-init-vision-") as raw_directory:
+                        render_directory = Path(raw_directory)
+                        images: list[Path] = []
+                        for index, source in enumerate(vision_sources, start=1):
+                            images.extend(
+                                render_workbook_images(
+                                    source,
+                                    render_directory / f"source-{index}",
+                                )
+                            )
+                        if images:
+                            result = generate_project_init_vision_draft(
+                                images,
+                                chunks,
+                                people,
+                                existing_tasks,
+                                ai_service=ai_service,
+                                invocation_context=context,
+                            )
+                            if str(getattr(result, "model_name", "")) != "structured-spreadsheet":
+                                analysis_route = {
+                                    "mode": "vision_with_review",
+                                    "review_required": True,
+                                    "reason_codes": ["complex_workbook_layout"],
+                                }
+                except Exception as exc:
+                    logger.warning(
+                        "project_init_vision_fallback run_id=%s error_type=%s code=vision_fallback",
+                        run_id,
+                        type(exc).__name__,
+                    )
+            if result is None:
+                result = generate_project_init_draft(
+                    chunks,
+                    people,
+                    existing_tasks,
+                    ai_service=ai_service,
+                    invocation_context=context,
+                )
             draft = _draft_payload(result)
         except Exception as exc:
             failure_category = (

@@ -211,6 +211,9 @@ function analysisReviewNotice(run: ProjectInitAnalysisRun): string {
   if (!route || typeof route !== 'object') return ''
   const value = route as Record<string, unknown>
   if (value.review_required !== true) return ''
+  if (value.mode === 'vision_with_review') {
+    return '复杂 Excel 已通过视觉分析生成候选，请复核后应用。'
+  }
   const reasons = Array.isArray(value.reason_codes) ? value.reason_codes : []
   if (reasons.includes('workbook_structure_unavailable')) {
     return '该 Excel 的结构无法完整检查，当前结果来自文本提取，请重点核对人员、时间和层级关系。'

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from hashlib import sha256
@@ -190,6 +193,122 @@ def build_text_completion(
         return adapter(target_model, api_key, prompt)
 
     return complete
+
+
+def run_visual_probe(
+    input_path: Path,
+    *,
+    evidence: WorkbookEvidence,
+    build_images: Callable[[Path, Path], list[Path] | None],
+    complete_vision: Callable[[list[Path], str], str],
+) -> ProbeResult:
+    """Run only a real visual route; never fall back to text evidence alone."""
+    with tempfile.TemporaryDirectory(prefix="deepseek-spreadsheet-probe-") as raw_directory:
+        images = build_images(Path(input_path), Path(raw_directory))
+        if not images:
+            return ProbeResult(
+                mode="b",
+                model_name="deepseek-v4-flash-vision-exp",
+                status="skipped",
+                duration_ms=0,
+                reason="renderer_unavailable",
+            )
+        started = time.monotonic()
+        try:
+            response = complete_vision(images, _text_prompt(evidence))
+        except Exception:
+            return ProbeResult(
+                mode="b",
+                model_name="deepseek-v4-flash-vision-exp",
+                status="upstream_error",
+                duration_ms=_elapsed_ms(started),
+            )
+        return _validated_response("b", "deepseek-v4-flash-vision-exp", response, evidence, started)
+
+
+def render_workbook_images(input_path: Path, output_directory: Path) -> list[Path] | None:
+    """Render an Excel workbook through local office software, or return None."""
+    office = shutil.which("soffice") or shutil.which("libreoffice")
+    pdftoppm = shutil.which("pdftoppm")
+    if not office or not pdftoppm:
+        return None
+    try:
+        conversion = subprocess.run(
+            [office, "--headless", "--convert-to", "pdf", "--outdir", str(output_directory), str(input_path)],
+            check=False,
+            capture_output=True,
+            timeout=60,
+        )
+        if conversion.returncode != 0:
+            return None
+        pdf_paths = list(output_directory.glob("*.pdf"))
+        if len(pdf_paths) != 1:
+            return None
+        prefix = output_directory / "sheet"
+        raster = subprocess.run(
+            [pdftoppm, "-png", str(pdf_paths[0]), str(prefix)],
+            check=False,
+            capture_output=True,
+            timeout=60,
+        )
+        images = sorted(output_directory.glob("sheet-*.png"))
+        return images if raster.returncode == 0 and images else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def build_vision_completion(
+    credential_model: models.AIModel,
+    *,
+    credential_reader: Callable[[int], str],
+    client_factory: Callable[..., object] | None = None,
+) -> Callable[[list[Path], str], str]:
+    """Create a DeepSeek image-file caller without returning credentials or IDs."""
+    api_key = credential_reader(credential_model.id)
+    if client_factory is None:
+        from openai import OpenAI
+
+        client_factory = OpenAI
+
+    def complete(images: list[Path], prompt: str) -> str:
+        client = client_factory(
+            api_key=api_key,
+            base_url=credential_model.base_url,
+            timeout=60,
+            max_retries=0,
+        )
+        content: list[dict] = [{"type": "text", "text": prompt}]
+        for image_path in images:
+            with Path(image_path).open("rb") as image:
+                uploaded = client.files.create(file=image, purpose="user_data")
+            content.append({"type": "image_file", "image_file": {"file_id": uploaded.id}})
+        response = client.chat.completions.create(
+            model="deepseek-v4-flash-vision-exp",
+            messages=[{"role": "user", "content": content}],
+        )
+        return str(response.choices[0].message.content or "")
+
+    return complete
+
+
+def _validated_response(
+    mode: Literal["a", "b"],
+    model_name: str,
+    response: object,
+    evidence: WorkbookEvidence,
+    started: float,
+) -> ProbeResult:
+    try:
+        payload = json.loads(response)
+    except (TypeError, json.JSONDecodeError):
+        return ProbeResult(mode=mode, model_name=model_name, status="invalid_json", duration_ms=_elapsed_ms(started))
+    try:
+        output = ProbeOutput.model_validate(payload)
+    except ValidationError:
+        return ProbeResult(mode=mode, model_name=model_name, status="invalid_schema", duration_ms=_elapsed_ms(started))
+    if not _has_only_known_evidence(output, evidence.locations):
+        return ProbeResult(mode=mode, model_name=model_name, status="uncited_output", duration_ms=_elapsed_ms(started))
+    return ProbeResult(mode=mode, model_name=model_name, status="succeeded", duration_ms=_elapsed_ms(started), output=output)
 
 
 def build_workbook_evidence(

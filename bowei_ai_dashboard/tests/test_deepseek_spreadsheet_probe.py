@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from openpyxl import Workbook
+import pytest
 
 from app import models
 from app.services.deepseek_spreadsheet_probe import (
     ProbeRunner,
     WorkbookEvidence,
     build_text_completion,
+    build_vision_completion,
     build_workbook_evidence,
+    run_visual_probe,
 )
 
 
@@ -82,3 +87,67 @@ def test_build_text_completion_targets_in_memory_model_without_returning_secret(
     assert captured["model_id"] == 7
     assert captured["model"] == "deepseek-v4-flash"
     assert "secret" not in repr(completion)
+
+
+def test_probe_b_skips_instead_of_falling_back_to_text_without_renderer(tmp_path):
+    result = run_visual_probe(
+        tmp_path / "plan.xlsx",
+        evidence=WorkbookEvidence("x", {"'表'!A1"}, {}, "hash"),
+        build_images=lambda _path, _directory: None,
+        complete_vision=lambda _images, _prompt: pytest.fail("vision must not run"),
+    )
+
+    assert (result.status, result.reason) == ("skipped", "renderer_unavailable")
+
+
+def test_probe_b_passes_rendered_images_to_vision_and_validates_citations(tmp_path):
+    captured: dict[str, object] = {}
+    response = (
+        '{"workstreams":[{"title":"专项","key_tasks":[{"title":"任务",'
+        '"evidence":["\'表\'!A1"]}]}]}'
+    )
+    result = run_visual_probe(
+        tmp_path / "plan.xlsx",
+        evidence=WorkbookEvidence("'表'!A1=专项", {"'表'!A1"}, {}, "hash"),
+        build_images=lambda _path, directory: [directory / "sheet-1.png"],
+        complete_vision=lambda images, prompt: captured.update(images=images, prompt=prompt) or response,
+    )
+
+    assert result.status == "succeeded"
+    assert result.model_name == "deepseek-v4-flash-vision-exp"
+    assert len(captured["images"]) == 1
+
+
+def test_build_vision_completion_uploads_png_as_user_data(tmp_path):
+    captured: dict[str, object] = {}
+    image = tmp_path / "sheet.png"
+    image.write_bytes(b"png")
+
+    class FakeFiles:
+        def create(self, **kwargs):
+            captured["upload"] = kwargs
+            return SimpleNamespace(id="file-1")
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            captured["request"] = kwargs
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))])
+
+    client = SimpleNamespace(
+        files=FakeFiles(),
+        chat=SimpleNamespace(completions=FakeCompletions()),
+    )
+    model = models.AIModel(
+        id=7, code="deepseek", display_name="DeepSeek", provider="deepseek",
+        model_name="deepseek-v4-pro", model_type="chat", base_url="https://api.deepseek.com",
+        config_json="{}", enabled=True,
+    )
+    completion = build_vision_completion(
+        model,
+        credential_reader=lambda _model_id: "secret",
+        client_factory=lambda **kwargs: captured.update(client=kwargs) or client,
+    )
+
+    assert completion([image], "prompt") == "{}"
+    assert captured["upload"]["purpose"] == "user_data"
+    assert captured["request"]["model"] == "deepseek-v4-flash-vision-exp"

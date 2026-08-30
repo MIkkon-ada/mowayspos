@@ -23,8 +23,11 @@ from app.ai.service import AIService
 from app.database import SessionLocal
 from app.services.deepseek_spreadsheet_probe import (
     ProbeRunner,
+    build_vision_completion,
     build_text_completion,
     build_workbook_evidence,
+    render_workbook_images,
+    run_visual_probe,
 )
 
 
@@ -84,28 +87,38 @@ def main(argv: list[str] | None = None) -> int:
         print("计划模型：" + " -> ".join(planned))
         print("干跑完成；未发送外部请求。")
         return 0
-    if args.mode not in {"a", "all"}:
-        print("视觉探针尚未启用；未发送外部请求。")
-        return 0
-
     with SessionLocal() as db:
         model = _configured_deepseek_model(db)
         if model is None:
             print("未找到可用的 DeepSeek 聊天模型凭据。")
             return 3
-        try:
-            service = AIService(db)
-            completion = build_text_completion(
-                model,
-                credential_reader=service._credential,
-                adapter=lambda target, key, prompt: DefaultAIAdapters().complete_chat(
-                    target, key, prompt, timeout_seconds=60
-                ),
+        service = AIService(db)
+        results = []
+        if args.mode in {"a", "all"}:
+            try:
+                completion = build_text_completion(
+                    model,
+                    credential_reader=service._credential,
+                    adapter=lambda target, key, prompt: DefaultAIAdapters().complete_chat(
+                        target, key, prompt, timeout_seconds=60
+                    ),
+                )
+            except Exception:
+                print("无法读取受控 DeepSeek 凭据。")
+                return 3
+            results.extend(ProbeRunner(complete_text=completion).run_text(evidence))
+        if args.mode in {"b", "all"}:
+            results.append(
+                run_visual_probe(
+                    args.input,
+                    evidence=evidence,
+                    build_images=render_workbook_images,
+                    complete_vision=lambda images, prompt: build_vision_completion(
+                        model,
+                        credential_reader=service._credential,
+                    )(images, prompt),
+                )
             )
-        except Exception:
-            print("无法读取受控 DeepSeek 凭据。")
-            return 3
-        results = ProbeRunner(complete_text=completion).run_text(evidence)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = args.output_dir / "summary.json"

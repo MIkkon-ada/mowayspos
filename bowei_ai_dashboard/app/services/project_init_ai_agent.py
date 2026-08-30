@@ -212,6 +212,20 @@ def _is_calendar_date(value: str) -> bool:
     return True
 
 
+def _normalise_start_only_dates(payload: dict[str, Any]) -> None:
+    """Move a valid end-only date into the start field for imported work plans."""
+    plan_start = str(payload.get("plan_start") or "")
+    plan_end = str(payload.get("plan_end") or "")
+    if plan_start:
+        return
+    if _YEAR_MONTH.fullmatch(plan_end):
+        payload["plan_start"] = f"{plan_end}-01"
+        payload["plan_end"] = ""
+    elif _ISO_DATE.fullmatch(plan_end) and _is_calendar_date(plan_end):
+        payload["plan_start"] = plan_end
+        payload["plan_end"] = ""
+
+
 def _source_label(file_name: str, location: str) -> str:
     return Evidence(file_name=file_name, location=location, excerpt="source").source_label
 
@@ -541,6 +555,7 @@ def _reconcile_task(
         subtask_source = subtask_evidence[0].source_label if subtask_evidence else subtask.source
         sub_merge, sub_duplicate_of, sub_duplicate_reason = _classify_duplicate(subtask.title, existing_subtasks)
         subtask_data = subtask.model_dump(mode="python")
+        _normalise_start_only_dates(subtask_data)
         subtask_data.update(
             {
                 "assignee_id": assignee_id,
@@ -558,15 +573,15 @@ def _reconcile_task(
         )
         reconciled_subtasks.append(AgentSubTask.model_validate(subtask_data))
     task_data = task.model_dump(mode="python")
-    is_end_only_month = _YEAR_MONTH.fullmatch(task.plan_end)
-    is_end_only_date = _ISO_DATE.fullmatch(task.plan_end) and _is_calendar_date(task.plan_end)
-    if not task.plan_start and (is_end_only_month or is_end_only_date):
-        task_data["plan_start"] = (
-            f"{task.plan_end}-01" if _YEAR_MONTH.fullmatch(task.plan_end) else task.plan_end
-        )
-        task_data["plan_end"] = ""
+    _normalise_start_only_dates(task_data)
     if reconciled_subtasks and _normalise_title(task.description) == _normalise_title(reconciled_subtasks[0].title):
         task_data["description"] = ""
+    if not task.description.strip():
+        for subtask in reconciled_subtasks:
+            evaluation_standard = subtask.evaluation_standard.strip()
+            if evaluation_standard:
+                task_data["description"] = evaluation_standard
+                break
     task_data.update(
         {
             "owner_id": owner_id,

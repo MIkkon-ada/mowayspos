@@ -276,6 +276,40 @@ def test_preserves_plan_end_when_plan_start_is_present():
     assert task.plan_end == "2026-06-15"
 
 
+def test_reconciles_subtask_end_only_month_as_a_start_only_date():
+    payload = raw_task()
+    payload["subtasks"][0].update({"plan_start": "", "plan_end": "2026-06"})
+
+    result = generate_project_init_draft(
+        [chunk("计划时间\n2026-06")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    subtask = result.tasks[0].subtasks[0]
+    assert (subtask.plan_start, subtask.plan_end) == ("2026-06-01", "")
+
+
+def test_reconciles_empty_parent_description_from_first_subtask_completion_standard():
+    payload = raw_task()
+    payload["description"] = ""
+    payload["subtasks"][0]["evaluation_standard"] = "  "
+    payload["subtasks"].append({
+        "title": "完成验收",
+        "evaluation_standard": "交付首版并完成验收",
+    })
+
+    result = generate_project_init_draft(
+        [chunk("关键成果\n交付首版")],
+        [],
+        [],
+        llm_call=fake_llm({"tasks": [payload]}),
+    )
+
+    assert result.tasks[0].description == "交付首版并完成验收"
+
+
 def test_reconciles_parent_description_that_repeats_its_first_subtask_title():
     payload = raw_task()
     payload["description"] = payload["subtasks"][0]["title"]

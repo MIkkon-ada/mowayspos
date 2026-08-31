@@ -236,4 +236,3 @@ Expected: project tests and the focused/new frontend tests PASS; any unrelated p
 git add frontend/src/components/key-task-workspace/ExecutionPlanCreateDrawer.tsx frontend/src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx frontend/tests/keyTaskExecutionWorkspace.test.mjs frontend/src/components/key-task-workspace/ExecutionPlanCreateDrawer.test.tsx
 git commit -m "feat: add AI text planning to key task workspace"
 ```
-

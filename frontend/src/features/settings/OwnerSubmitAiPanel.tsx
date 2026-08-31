@@ -5,10 +5,7 @@ import {
   deleteInitAttachment,
   downloadInitAttachmentUrl,
   getInitAnalysisRun,
-  getLatestInitAnalysisRun,
-  listInitAttachments,
   ProjectInitApiError,
-  retryInitAnalysisRun,
   type AgentSubTask,
   type AgentTask,
   type ProjectInitAiDraft,
@@ -92,7 +89,6 @@ function formatBytes(bytes: number): string {
 }
 
 const AI_SERVICE_UNAVAILABLE_MESSAGE = 'AI 分析服务暂时不可用，请稍后重试。'
-const AI_INITIALIZATION_UNAVAILABLE_MESSAGE = '暂时无法获取 AI 分析状态，请先选择资料文件，上传后再重试。'
 
 function errorMessage(error: unknown): string {
   if (error instanceof ProjectInitApiError) {
@@ -104,11 +100,6 @@ function errorMessage(error: unknown): string {
     return error.message
   }
   return '操作失败，请稍后重试'
-}
-
-function initializationErrorMessage(error: unknown): string {
-  const message = errorMessage(error)
-  return message === AI_SERVICE_UNAVAILABLE_MESSAGE ? AI_INITIALIZATION_UNAVAILABLE_MESSAGE : message
 }
 
 function statusLabel(status: ProjectInitAnalysisRun['status']): string {
@@ -304,14 +295,13 @@ function DecisionButtons({
 export function OwnerSubmitAiPanel({
   projectId,
   currentDraft,
-  existingAttachments,
   onApplyDraft,
   onClose,
   disabled = false,
 }: OwnerSubmitAiPanelProps) {
   const [panelState, setPanelState] = useState<PanelState>('idle')
   const [queue, setQueue] = useState<UploadItem[]>([])
-  const [attachments, setAttachments] = useState<ProjectInitAttachment[]>(() => existingAttachments ?? [])
+  const [attachments, setAttachments] = useState<ProjectInitAttachment[]>([])
   const [run, setRun] = useState<ProjectInitAnalysisRun>()
   const [draft, setDraft] = useState<ProjectInitAiDraft>()
   const [error, setError] = useState('')
@@ -320,7 +310,6 @@ export function OwnerSubmitAiPanel({
   const [applying, setApplying] = useState(false)
   const [applySuccess, setApplySuccess] = useState(false)
   const mountedRef = useRef(true)
-  const initializationControllerRef = useRef<AbortController | undefined>(undefined)
   const pollInFlightTokenRef = useRef<number | undefined>(undefined)
   const activeRunIdRef = useRef<number | undefined>(undefined)
   const pollTimerRef = useRef<number | undefined>(undefined)
@@ -380,43 +369,21 @@ export function OwnerSubmitAiPanel({
 
   useEffect(() => {
     mountedRef.current = true
-    let cancelled = false
-    const controller = new AbortController()
-    initializationControllerRef.current = controller
-    setLoading(true)
-    Promise.all([
-      listAttachmentsSafely(projectId, existingAttachments ?? [], controller.signal),
-      getLatestInitAnalysisRun(projectId, controller.signal).catch((nextError) => {
-        if (nextError instanceof ProjectInitApiError && nextError.status === 404) return undefined
-        throw nextError
-      }),
-    ])
-      .then(([nextAttachments, latestRun]) => {
-        if (cancelled || !mountedRef.current) return
-        setAttachments(nextAttachments)
-        if (latestRun) updateRun(latestRun)
-        else setPanelState('idle')
-      })
-      .catch((nextError) => {
-        if (!cancelled && mountedRef.current && !controller.signal.aborted) {
-          setError(initializationErrorMessage(nextError))
-          setPanelState('idle')
-        }
-      })
-      .finally(() => {
-        if (!cancelled && mountedRef.current) setLoading(false)
-      })
+    setAttachments([])
+    setQueue([])
+    setRun(undefined)
+    setDraft(undefined)
+    setError('')
+    setPanelState('idle')
+    setLoading(false)
     return () => {
-      cancelled = true
-      controller.abort()
-      if (initializationControllerRef.current === controller) initializationControllerRef.current = undefined
       mountedRef.current = false
       analysisRequestIdRef.current += 1
       uploadControllerRef.current?.abort()
       analysisControllerRef.current?.abort()
       clearPolling()
     }
-  }, [clearPolling, existingAttachments, projectId, updateRun])
+  }, [clearPolling, projectId])
 
   useEffect(() => {
     clearPolling()
@@ -517,6 +484,20 @@ export function OwnerSubmitAiPanel({
     setDraft(nextPreview.draft)
   }
 
+  function resetToFreshUpload() {
+    analysisRequestIdRef.current += 1
+    uploadControllerRef.current?.abort()
+    analysisControllerRef.current?.abort()
+    clearPolling()
+    activeRunIdRef.current = undefined
+    setQueue([])
+    setAttachments([])
+    setRun(undefined)
+    resetAnalysisPreview()
+    setError('')
+    setPanelState('idle')
+  }
+
   async function startAnalysis() {
     if (!canBeginAnalysisRequest(analysisStartInFlightRef.current)) return
     const pending = queue.filter((item) => item.status === 'queued' || ((item.status === 'failed' || item.status === 'cancelled') && item.retryable === true))
@@ -569,34 +550,6 @@ export function OwnerSubmitAiPanel({
     } finally {
       if (uploadControllerRef.current === controller) uploadControllerRef.current = undefined
       if (analysisControllerRef.current === analysisController) analysisControllerRef.current = undefined
-      analysisStartInFlightRef.current = false
-    }
-  }
-
-  async function retryAnalysis() {
-    if (!run || run.status !== 'failed') {
-      await startAnalysis()
-      return
-    }
-    if (!canBeginAnalysisRequest(analysisStartInFlightRef.current)) return
-    analysisStartInFlightRef.current = true
-    resetAnalysisPreview()
-    setRun(undefined)
-    setError('')
-    setPanelState('analyzing')
-    const controller = new AbortController()
-    const requestId = ++analysisRequestIdRef.current
-    analysisControllerRef.current = controller
-    try {
-      const nextRun = await retryInitAnalysisRun(projectId, run.id, controller.signal)
-      if (isCurrentAnalysisRequest(requestId, controller)) updateRun(nextRun)
-    } catch (nextError) {
-      if (isCurrentAnalysisRequest(requestId, controller) && !isAbortError(nextError)) {
-        setError(errorMessage(nextError))
-        setPanelState('failed')
-      }
-    } finally {
-      if (analysisControllerRef.current === controller) analysisControllerRef.current = undefined
       analysisStartInFlightRef.current = false
     }
   }
@@ -664,7 +617,6 @@ export function OwnerSubmitAiPanel({
 
   function handleClose() {
     analysisRequestIdRef.current += 1
-    initializationControllerRef.current?.abort()
     uploadControllerRef.current?.abort()
     analysisControllerRef.current?.abort()
     clearPolling()
@@ -687,7 +639,7 @@ export function OwnerSubmitAiPanel({
         {onClose && <button type="button" onClick={handleClose} disabled={disabled} className="rounded-lg px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 disabled:opacity-50" aria-label="关闭 AI 文件面板">关闭</button>}
       </header>
 
-      {error && <div role={error === AI_INITIALIZATION_UNAVAILABLE_MESSAGE ? 'status' : 'alert'} className={error === AI_INITIALIZATION_UNAVAILABLE_MESSAGE ? 'rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800' : 'rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700'}>{error}</div>}
+      {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
       {showUploadStage && (
         <div className="space-y-3">
@@ -738,12 +690,12 @@ export function OwnerSubmitAiPanel({
       )}
 
       {panelState === 'failed' && (
-        <div className="space-y-3 rounded-xl border border-red-100 bg-red-50 p-4"><p className="text-sm font-semibold text-red-800">分析失败</p>{run && <ModelUsageSummary run={run} />}<p className="text-xs text-red-700">{run?.error_message || error || '未能生成草稿'}</p><button type="button" onClick={() => void retryAnalysis()} disabled={disabled} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-50">重新分析</button></div>
+        <div className="space-y-3 rounded-xl border border-red-100 bg-red-50 p-4"><p className="text-sm font-semibold text-red-800">分析失败</p>{run && <ModelUsageSummary run={run} />}<p className="text-xs text-red-700">{run?.error_message || error || '未能生成草稿'}</p><button type="button" onClick={resetToFreshUpload} disabled={disabled} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-50">重新上传资料</button></div>
       )}
 
       {panelState === 'preview' && run && draft && (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 p-3"><div><span className="text-sm font-semibold text-slate-800">{stageLabel(run.stage)}</span><span className="ml-2 text-xs text-slate-500">{statusLabel(run.status)} · {run.progress}%</span></div><div className="flex items-center gap-2"><span className="text-xs text-slate-500">{draft.tasks.length} 项重点工作待确认</span><button type="button" onClick={() => void startAnalysis()} disabled={disabled || applying || applySuccess} className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-50">重新分析</button></div></div>
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 p-3"><div><span className="text-sm font-semibold text-slate-800">{stageLabel(run.stage)}</span><span className="ml-2 text-xs text-slate-500">{statusLabel(run.status)} · {run.progress}%</span></div><div className="flex items-center gap-2"><span className="text-xs text-slate-500">{draft.tasks.length} 项重点工作待确认</span><button type="button" onClick={resetToFreshUpload} disabled={disabled || applying || applySuccess} className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-50">重新上传资料</button></div></div>
           <ModelUsageSummary run={run} />
           {analysisReviewNotice(run) && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{analysisReviewNotice(run)}</div>}
           {draft.warnings && renderWarningMessages(draft.warnings.map((warning) => `${warning.code}: ${warning.message}`))}
@@ -765,13 +717,4 @@ export function OwnerSubmitAiPanel({
       )}
     </section>
   )
-}
-
-async function listAttachmentsSafely(projectId: number, fallback: ProjectInitAttachment[], signal?: AbortSignal): Promise<ProjectInitAttachment[]> {
-  try {
-    return await listInitAttachments(projectId, signal)
-  } catch (nextError) {
-    if (nextError instanceof ProjectInitApiError && nextError.status === 404) return fallback
-    throw nextError
-  }
 }

@@ -107,7 +107,7 @@ const members = [
 describe('ExecutionPlanCreateDrawer', () => {
   it('defaults the assignee to the key task owner', () => {
     render(<ExecutionPlanCreateDrawer keyTaskId={42} defaultAssigneeId={11} members={members} onClose={vi.fn()} onCreated={vi.fn()} />)
-    expect(screen.getByLabelText('负责人')).toHaveValue('11')
+    expect((screen.getByLabelText('负责人') as HTMLSelectElement).value).toBe('11')
   })
 
   it('creates a plan for the current key task and closes on success', async () => {

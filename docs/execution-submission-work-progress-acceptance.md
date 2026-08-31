@@ -54,7 +54,7 @@ Owner/PM 确认 ────────► POST /api/confirmations/{id}/confirm
 - **项目负责人（owner / PM）**
 - 超级管理员（tech_admin）
 - 企业教练（project_ceo）不可确认
-- 纯公司 CEO（company_ceo，无项目角色）不可确认
+- 纯公司管理（company_ceo，无项目角色）不可确认
 
 权限校验链：
 1. `_require_confirmation_center` — 需有确认中心访问权

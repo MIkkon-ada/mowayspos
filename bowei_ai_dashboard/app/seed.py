@@ -19,7 +19,7 @@ def seed(db):
     db.add(
         models.Person(
             name="冯海林",
-            role="组长 / CEO",
+            role="公司管理",
             department="管理层",
             special_project_duty="方向判断、项目统筹、重大决策、阶段验收",
             permission="确认",

@@ -100,7 +100,7 @@ const LOG_ACTION_MAP: Record<string, string> = {
   issue_owner_accept_opinion: '负责人确认意见',
   issue_owner_reject_opinion: '负责人退回',
   issue_assign_helper: '指定协助人',
-  issue_request_ceo: '请求CEO决策',
+  issue_request_ceo: '请求公司管理决策',
   issue_resolve: '标记已解决',
   issue_close: '关闭问题',
   issue_update: '更新问题信息',

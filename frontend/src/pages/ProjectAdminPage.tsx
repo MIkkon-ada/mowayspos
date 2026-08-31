@@ -113,7 +113,7 @@ export function ProjectAdminPage() {
   }, [isSuperAdmin])
 
   if (!isSuperAdmin) {
-    return <Hint title="无权限访问" subtitle="项目管理对公司 CEO / 超级管理员开放。" />
+    return <Hint title="无权限访问" subtitle="项目管理对公司管理 / 超级管理员开放。" />
   }
 
   const resetForm = () => {

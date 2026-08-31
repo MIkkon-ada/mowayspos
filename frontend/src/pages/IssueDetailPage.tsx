@@ -53,7 +53,7 @@ const LOG_ACTION_MAP: Record<string, string> = {
   issue_owner_accept_opinion: '负责人确认意见',
   issue_owner_reject_opinion: '负责人退回',
   issue_assign_helper: '指定协助人',
-  issue_request_ceo: '请求CEO决策',
+  issue_request_ceo: '请求公司管理决策',
   issue_resolve: '标记已解决',
   issue_close: '关闭问题',
   issue_update: '更新问题信息',
@@ -512,7 +512,7 @@ export function IssueDetailPage() {
                       disabled={!!actionLoading}
                       className="w-full text-left px-3 py-2.5 rounded-lg border border-slate-200 text-sm font-semibold text-pink-600 hover:bg-pink-50 transition-colors disabled:opacity-50"
                     >
-                      ⚡ 请求CEO决策
+                      ⚡ 请求公司管理决策
                     </button>
 
                     {/* Owner confirm */}

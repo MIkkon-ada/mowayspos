@@ -19,7 +19,7 @@ ROLE_NORMAL        = "normal_member"   # 默认，项目内角色由 project_mem
 
 # 英文键 → 中文展示名
 SYSTEM_ROLE_LABELS: dict[str, str] = {
-    ROLE_CEO:         "公司CEO",
+    ROLE_CEO:         "公司管理",
     ROLE_SUPER_ADMIN: "超级管理员",
     ROLE_NORMAL:      "普通成员",
 }
@@ -28,6 +28,8 @@ SYSTEM_ROLE_LABELS: dict[str, str] = {
 _LEGACY_SYSTEM_ROLE_VALUES: dict[str, str] = {
     "组长CEO":     ROLE_CEO,
     "公司CEO":     ROLE_CEO,
+    "公司 CEO":    ROLE_CEO,
+    "公司管理":    ROLE_CEO,
     "超级管理员":   ROLE_SUPER_ADMIN,
     "普通成员":     ROLE_NORMAL,
 }
@@ -611,7 +613,7 @@ def require_project_manager(current_user, project_id: int, db):
     identity = _load_account_identity(current_user, db)
     if _can_manage_project_by_identity(identity, project_id, db):
         return identity["username"]
-    raise HTTPException(status_code=403, detail="仅超级管理员、公司 CEO、企业教练、负责人或创建人可执行此操作")
+    raise HTTPException(status_code=403, detail="仅超级管理员、公司管理、企业教练、负责人或创建人可执行此操作")
 
 
 def _normalize_current_user(current_user):

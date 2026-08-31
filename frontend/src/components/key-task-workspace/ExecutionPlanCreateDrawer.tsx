@@ -19,7 +19,7 @@ function blankPlan(assigneeId: number | null): MonthlyPlanPayload {
     collaborator_ids: [],
     status: '未开始',
     start_date: null,
-    due_kind: null,
+    due_kind: undefined,
     due_date: null,
     due_label: null,
     due_reference_date: null,
@@ -117,4 +117,3 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const inputClass = 'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-50'
-

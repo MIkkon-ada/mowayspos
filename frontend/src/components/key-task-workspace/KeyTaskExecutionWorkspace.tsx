@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { confirmKeyTaskCompletion, fetchKeyTaskExecutionWorkspace, reopenKeyTask, setKeyTaskRisk, type ExecutionPlan, type KeyTaskWorkspace } from '../../api/keyTaskWorkspace'
 import { updateMonthlyPlan } from '../../api/monthlyPlans'
+import { getProjectMembers } from '../../api/projects'
 import { buildWorkReportEntryUrl } from '../../domain/workReportEntry'
+import type { ProjectMember } from '../../types'
 import { AchievementList } from './AchievementList'
 import { CurrentProgressCard } from './CurrentProgressCard'
+import { ExecutionPlanCreateDrawer } from './ExecutionPlanCreateDrawer'
 import { ExecutionPlanDetailDrawer } from './ExecutionPlanDetailDrawer'
 import { ExecutionPlanTable } from './ExecutionPlanTable'
 import { ExecutionTimeline } from './ExecutionTimeline'
@@ -16,6 +19,8 @@ export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId }: { ke
   const navigate = useNavigate()
   const [workspace, setWorkspace] = useState<KeyTaskWorkspace | null>(null)
   const [selectedPlan, setSelectedPlan] = useState<ExecutionPlan | null>(null)
+  const [creatingPlan, setCreatingPlan] = useState(false)
+  const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -30,6 +35,15 @@ export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId }: { ke
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [keyTaskId, refreshKey])
+
+  useEffect(() => {
+    if (!creatingPlan || !workspace?.project?.id) return
+    let cancelled = false
+    getProjectMembers(workspace.project.id)
+      .then((members) => { if (!cancelled) setProjectMembers(members) })
+      .catch(() => { if (!cancelled) setProjectMembers([]) })
+    return () => { cancelled = true }
+  }, [creatingPlan, workspace?.project?.id])
 
   const refresh = () => setRefreshKey((value) => value + 1)
   const submitUpdate = () => {
@@ -79,7 +93,7 @@ export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId }: { ke
         <div className="grid gap-4 px-4 min-[800px]:px-6 xl:grid-cols-[minmax(0,1fr)_330px]">
           <div className="space-y-4">
             <CurrentProgressCard progress={workspace.current_progress} />
-            <ExecutionPlanTable plans={workspace.execution_plans} summary={workspace.plan_summary} onOpen={setSelectedPlan} />
+            <ExecutionPlanTable plans={workspace.execution_plans} summary={workspace.plan_summary} canManage={workspace.permissions.can_manage_execution_plans && workspace.key_task.status !== '已完成'} onAdd={() => setCreatingPlan(true)} onOpen={setSelectedPlan} />
             <div className="grid gap-4 md:grid-cols-2">
               <AchievementList items={workspace.achievements} />
               <IssueList items={workspace.issues} />
@@ -89,6 +103,7 @@ export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId }: { ke
           <div className="xl:sticky xl:top-4 xl:self-start"><KeyTaskContextCard workspace={workspace} /></div>
         </div>
       </div>
+      {creatingPlan && <ExecutionPlanCreateDrawer keyTaskId={keyTaskId} defaultAssigneeId={workspace.key_task.owner.id ?? null} members={projectMembers} onClose={() => setCreatingPlan(false)} onCreated={refresh} />}
       <ExecutionPlanDetailDrawer open={Boolean(selectedPlan)} plan={selectedPlan} workspace={workspace} onClose={() => setSelectedPlan(null)} onSubmitUpdate={submitUpdate} onEdit={() => { setSelectedPlan(null); submitUpdate() }} onMarkCompleted={(plan) => void markPlanCompleted(plan)} />
     </main>
   )

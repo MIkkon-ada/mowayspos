@@ -283,6 +283,7 @@ export function MeetingPage() {
               const parentSubtaskId = change.parent_subtask_id ?? change.target?.key_task_id ?? agentChange?.parent_subtask_id ?? agentChange?.target?.key_task_id ?? null
               return {
                 id: change.id,
+                action: change.action,
                 scheduleId: change.target_id,
                 workstreamId,
                 parentSubtaskId,

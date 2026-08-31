@@ -172,3 +172,13 @@ test('empty execution plan state exposes an add-plan button only to plan manager
   assert.match(plan, /canManage/)
   assert.match(plan, /<button[^>]*onClick=\{onAdd\}[^>]*>添加计划<\/button>/)
 })
+
+test('workspace wires task-plan creation to the current key task permissions and refresh', () => {
+  const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
+
+  assert.match(workspace, /ExecutionPlanCreateDrawer/)
+  assert.match(workspace, /getProjectMembers/)
+  assert.match(workspace, /can_manage_execution_plans/)
+  assert.match(workspace, /onAdd=\{\(\) => setCreatingPlan\(true\)\}/)
+  assert.match(workspace, /onCreated=\{refresh\}/)
+})

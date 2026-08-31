@@ -24,6 +24,17 @@ describe('ExecutionPlanCreateDrawer', () => {
     expect((screen.getByLabelText('负责人') as HTMLSelectElement).value).toBe('11')
   })
 
+  it('uses a compact, de-duplicated collaborator selector', () => {
+    render(<ExecutionPlanCreateDrawer keyTaskId={42} defaultAssigneeId={11} members={[...members, { ...members[1], id: 3 }]} onClose={vi.fn()} onCreated={vi.fn()} />)
+
+    const trigger = screen.getByRole('button', { name: '协助人' })
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(document.querySelector('select[multiple]')).toBeNull()
+    fireEvent.click(trigger)
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getAllByRole('checkbox', { name: '郭曙彬' })).toHaveLength(1)
+  })
+
   it('creates a plan for the current key task and closes on success', async () => {
     api.createMonthlyPlan.mockResolvedValue({ id: 99 })
     const onClose = vi.fn()

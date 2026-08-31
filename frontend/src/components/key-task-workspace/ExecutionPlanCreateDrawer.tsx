@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { createMonthlyPlan, type MonthlyPlanPayload } from '../../api/monthlyPlans'
 import type { ProjectMember } from '../../types'
+import { CollaboratorMultiSelect } from './CollaboratorMultiSelect'
 
 type Props = {
   keyTaskId: number
@@ -50,10 +51,6 @@ export function ExecutionPlanCreateDrawer({ keyTaskId, defaultAssigneeId, member
     }))
   }
 
-  function changeCollaborators(event: React.ChangeEvent<HTMLSelectElement>) {
-    patch('collaborator_ids', Array.from(event.target.selectedOptions, (option) => Number(option.value)))
-  }
-
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (!form.title.trim() || !form.expected_output.trim() || !form.assignee_id) {
@@ -82,7 +79,9 @@ export function ExecutionPlanCreateDrawer({ keyTaskId, defaultAssigneeId, member
     }
   }
 
-  const collaboratorCandidates = members.filter((member) => member.person_id !== form.assignee_id)
+  const selectableMembers = members.filter((member, index, all) =>
+    all.findIndex((candidate) => candidate.person_id === member.person_id) === index,
+  )
 
   return <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/25" role="dialog" aria-modal="true" aria-label="新增任务计划" onClick={onClose}>
     <form onSubmit={(event) => void submit(event)} className="flex h-full w-full max-w-[500px] flex-col bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
@@ -93,8 +92,8 @@ export function ExecutionPlanCreateDrawer({ keyTaskId, defaultAssigneeId, member
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
         <Field label="计划事项 *"><input aria-label="计划事项" value={form.title} disabled={saving} onChange={(event) => patch('title', event.target.value)} placeholder="需要推进的具体事项" className={inputClass} /></Field>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="负责人 *"><select aria-label="负责人" value={form.assignee_id || ''} disabled={saving} onChange={(event) => changeAssignee(Number(event.target.value))} className={inputClass}><option value="">请选择负责人</option>{members.map((member) => <option key={member.person_id} value={member.person_id}>{member.person_name_snapshot}</option>)}</select></Field>
-          <Field label="协助人"><select aria-label="协助人" multiple value={form.collaborator_ids.map(String)} disabled={saving} onChange={changeCollaborators} className={inputClass + ' min-h-24'}>{collaboratorCandidates.map((member) => <option key={member.person_id} value={member.person_id}>{member.person_name_snapshot}</option>)}</select></Field>
+          <Field label="负责人 *"><select aria-label="负责人" value={form.assignee_id || ''} disabled={saving} onChange={(event) => changeAssignee(Number(event.target.value))} className={inputClass}><option value="">请选择负责人</option>{selectableMembers.map((member) => <option key={member.person_id} value={member.person_id}>{member.person_name_snapshot}</option>)}</select></Field>
+          <CollaboratorMultiSelect members={selectableMembers} excludedPersonId={form.assignee_id || null} selectedIds={form.collaborator_ids} disabled={saving} onChange={(collaboratorIds) => patch('collaborator_ids', collaboratorIds)} />
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="开始日期"><input aria-label="开始日期" type="date" value={form.start_date ?? ''} disabled={saving} onChange={(event) => patch('start_date', event.target.value || null)} className={inputClass} /></Field>

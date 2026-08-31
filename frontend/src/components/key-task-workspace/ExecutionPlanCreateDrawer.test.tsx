@@ -44,4 +44,3 @@ describe('ExecutionPlanCreateDrawer', () => {
     expect(onClose).toHaveBeenCalledOnce()
   })
 })
-

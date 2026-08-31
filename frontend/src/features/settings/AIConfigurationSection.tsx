@@ -12,6 +12,17 @@ import { AIModelCard } from './AIModelCard'
 import { AIModelDrawer } from './AIModelDrawer'
 
 type ModelFilter = 'all' | AIModel['model_type']
+type CapabilityPolicyView = AICapabilityPolicy & {
+  configured: boolean
+  requiredModelType: AIModel['model_type']
+}
+
+const CAPABILITY_DEFAULTS: Array<Pick<CapabilityPolicyView, 'capability_key' | 'requiredModelType'>> = [
+  { capability_key: 'meeting.analysis', requiredModelType: 'chat' },
+  { capability_key: 'task.extraction', requiredModelType: 'chat' },
+  { capability_key: 'project.init.analysis', requiredModelType: 'chat' },
+  { capability_key: 'speech.realtime', requiredModelType: 'asr' },
+]
 
 function friendlyLoadError(error: unknown): string {
   const text = error instanceof Error ? error.message : ''
@@ -63,6 +74,27 @@ export function AIConfigurationSection() {
     asr: models.filter((model) => model.model_type === 'asr').length,
   }), [models])
 
+  const displayPolicies = useMemo<CapabilityPolicyView[]>(() => {
+    const savedByKey = new Map(policies.map((policy) => [policy.capability_key, policy]))
+    return CAPABILITY_DEFAULTS.map((definition) => {
+      const saved = savedByKey.get(definition.capability_key)
+      return saved
+        ? { ...saved, configured: true, requiredModelType: definition.requiredModelType }
+        : {
+            id: 0,
+            capability_key: definition.capability_key,
+            primary_model_id: null,
+            fallback_model_ids: [],
+            timeout_seconds: 30,
+            max_attempts: 1,
+            policy_version: 0,
+            enabled: true,
+            configured: false,
+            requiredModelType: definition.requiredModelType,
+          }
+    })
+  }, [policies])
+
   function openAddDrawer() {
     setEditingModel(null)
     setDrawerOpen(true)
@@ -101,9 +133,8 @@ export function AIConfigurationSection() {
     }
   }
 
-  function eligibleModels(policy: AICapabilityPolicy) {
-    const requiredType = policy.capability_key === 'speech.realtime' ? 'asr' : 'chat'
-    return models.filter((model) => model.enabled && model.model_type === requiredType)
+  function eligibleModels(policy: CapabilityPolicyView) {
+    return models.filter((model) => model.enabled && model.model_type === policy.requiredModelType)
   }
 
   function moveModel(key: string, index: number, direction: -1 | 1) {
@@ -124,7 +155,7 @@ export function AIConfigurationSection() {
     setPolicyOrders((current) => ({ ...current, [key]: (current[key] ?? []).filter((item) => item !== id) }))
   }
 
-  async function savePolicy(policy: AICapabilityPolicy) {
+  async function savePolicy(policy: CapabilityPolicyView) {
     const ids = policyOrders[policy.capability_key] ?? []
     if (ids.length === 0) {
       setMessage('每个启用的 AI 能力至少需要一个模型。')
@@ -170,13 +201,16 @@ export function AIConfigurationSection() {
         <h3 className="font-semibold text-slate-800">AI 能力策略</h3>
         <p className="mt-1 text-xs text-slate-500">技术管理员设置主模型和备用模型的调用顺序。</p>
         <div className="mt-4 space-y-4">
-          {policies.map((policy) => {
+          {displayPolicies.map((policy) => {
             const order = policyOrders[policy.capability_key] ?? []
             const available = eligibleModels(policy)
             return <div key={policy.capability_key} className="rounded-lg bg-slate-50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <strong className="text-sm text-slate-700">{policy.capability_key}</strong>
-                <button type="button" onClick={() => void savePolicy(policy)} className="rounded-md bg-sky-700 px-3 py-1.5 text-xs font-semibold text-white">保存顺序</button>
+                <div className="flex items-center gap-2">
+                  {!policy.configured && <span data-policy-status className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">未配置</span>}
+                  <button type="button" onClick={() => void savePolicy(policy)} className="rounded-md bg-sky-700 px-3 py-1.5 text-xs font-semibold text-white">保存顺序</button>
+                </div>
               </div>
               <ol className="mt-2 space-y-1">
                 {order.map((id, index) => {

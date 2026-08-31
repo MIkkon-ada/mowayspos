@@ -33,6 +33,15 @@ test('key task header keeps owner, collaborators, and plan time on one aligned m
   }
 })
 
+test('key task header uses a white rounded reference card without changing its content rail', () => {
+  const header = read('src/components/key-task-workspace/KeyTaskHeader.tsx')
+
+  assert.match(header, /rounded-xl/)
+  assert.match(header, /border-slate-200/)
+  assert.match(header, /bg-white/)
+  assert.doesNotMatch(header, /border-blue-200 bg-blue-50/)
+})
+
 test('key task header does not present a placeholder more-actions menu', () => {
   const header = read('src/components/key-task-workspace/KeyTaskHeader.tsx')
 
@@ -155,7 +164,7 @@ test('workspace uses the approved reference card hierarchy and empty states', ()
   const context = read('src/components/key-task-workspace/KeyTaskContextCard.tsx')
 
   assert.match(workspace, /md:grid-cols-2/)
-  assert.match(header, /bg-blue-50/)
+  assert.match(header, /bg-white/)
   assert.match(plan, /添加计划/)
   assert.match(current, /暂无已确认的有效推进事实/)
   assert.match(achievements, /暂无关联成果/)

@@ -164,9 +164,11 @@ test('workspace uses the approved reference card hierarchy and empty states', ()
   assert.match(context, /所属关系/)
 })
 
-test('empty execution plan state does not expose an inert add-plan button', () => {
+test('empty execution plan state exposes an add-plan button only to plan managers', () => {
   const plan = read('src/components/key-task-workspace/ExecutionPlanTable.tsx')
 
   assert.match(plan, /添加计划/)
-  assert.doesNotMatch(plan, /<button[^>]*>添加计划<\/button>/)
+  assert.match(plan, /onAdd/)
+  assert.match(plan, /canManage/)
+  assert.match(plan, /<button[^>]*onClick=\{onAdd\}[^>]*>添加计划<\/button>/)
 })

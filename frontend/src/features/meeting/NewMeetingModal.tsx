@@ -479,6 +479,13 @@ export function NewMeetingModal({
                 <div className="mt-5 grid gap-x-5 gap-y-4 lg:grid-cols-3">
                   <Field label="会议主题" value={form.title} onChange={(value) => setField('title', value)} placeholder="例如：项目推进周例会" />
                   <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-700">会议类型</label>
+                    <select aria-label="会议类型" value={form.meeting_type} onChange={(event) => setField('meeting_type', event.target.value)} className="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-sky-500">
+                      <option value="">请选择会议类型</option>
+                      {['项目例会', '专题会议', '启动会', '沟通会', '评审会', '复盘会'].map((type) => <option key={type} value={type}>{type}</option>)}
+                    </select>
+                  </div>
+                  <div>
                     <label className="mb-1 block text-xs font-semibold text-slate-700">会议日期</label>
                     <input type="date" value={form.meeting_date} onChange={(event) => setField('meeting_date', event.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-sky-500" />
                   </div>

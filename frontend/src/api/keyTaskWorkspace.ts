@@ -94,7 +94,7 @@ export type KeyTaskWorkspace = {
   achievements: Array<{ id: number; name: string; achievement_type: string; status: string; owner: string; version: string; created_at: string | null }>
   issues: Array<{ id: number; description: string; issue_type: string; status: string; priority: string; owner: string; updated_at: string | null }>
   timeline: ExecutionEvent[]
-  permissions: { can_view: boolean; can_operate: boolean; can_submit_update: boolean; can_confirm_completion: boolean; can_manage_risk: boolean }
+  permissions: { can_view: boolean; can_operate: boolean; can_manage_execution_plans: boolean; can_submit_update: boolean; can_confirm_completion: boolean; can_manage_risk: boolean }
 }
 
 export const fetchKeyTaskExecutionWorkspace = (keyTaskId: number) =>

@@ -10,7 +10,7 @@ const drawerPath = path.join(root, 'src/features/settings/AIModelDrawer.tsx')
 const apiPath = path.join(root, 'src/api/aiConfig.ts')
 const providersPath = path.join(root, 'src/features/settings/aiModelProviders.ts')
 
-test('AI model settings manages the model registry without business bindings or secrets', () => {
+test('AI model settings manages model registry, capability priority, and secrets safely', () => {
   const source = fs.readFileSync(sectionPath, 'utf8')
   const drawer = fs.readFileSync(drawerPath, 'utf8')
   const api = fs.readFileSync(apiPath, 'utf8')
@@ -20,7 +20,10 @@ test('AI model settings manages the model registry without business bindings or 
   assert.match(source, /添加模型/)
   assert.match(drawer, /credential_configured/)
   assert.match(api, /\/api\/ai-config\/models/)
-  assert.doesNotMatch(source, /能力策略|listAICapabilityPolicies|saveAICapabilityPolicy|defaultPolicy/)
+  assert.match(source, /AI 能力策略/)
+  assert.match(source, /listAICapabilityPolicies/)
+  assert.match(source, /saveAICapabilityPolicy/)
+  assert.match(source, /模型优先级已保存/)
   assert.doesNotMatch(source + drawer, /value=\{[^}]*api_key|credential\.api_key/)
   assert.match(providers, /deepseek-v4-flash、deepseek-v4-pro/)
   assert.match(drawer, /setMessage\(result\.message\)/)

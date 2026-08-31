@@ -97,6 +97,35 @@ export type KeyTaskWorkspace = {
   permissions: { can_view: boolean; can_operate: boolean; can_manage_execution_plans: boolean; can_submit_update: boolean; can_confirm_completion: boolean; can_manage_risk: boolean }
 }
 
+export type TaskPlanProposal = {
+  id: number
+  plan: {
+    title: string
+    expected_output: string
+    assignee_id: number | null
+    collaborator_ids: number[]
+    status: '未开始' | '进行中' | '暂缓' | '已完成' | '已取消'
+    start_date: string | null
+    due_date: string | null
+    completion_criteria: string
+  }
+  evidence: Record<string, string>
+  validation: { state: 'ready' | 'needs_confirmation'; errors: string[]; reviewed?: boolean }
+  status: 'ready' | 'needs_confirmation' | 'executed'
+  reviewer_edit: Record<string, unknown>
+  created_plan_id: number | null
+}
+
+export type TaskPlanProposalRun = {
+  id: number
+  project_id: number
+  key_task_id: number
+  status: 'ready_for_review' | 'completed'
+  source_text: string
+  model_code: string
+  proposals: TaskPlanProposal[]
+}
+
 export const fetchKeyTaskExecutionWorkspace = (keyTaskId: number) =>
   apiGet<KeyTaskWorkspace>(`/api/key-tasks/${keyTaskId}/execution-workspace`)
 
@@ -108,3 +137,12 @@ export const reopenKeyTask = (keyTaskId: number, reason: string) =>
 
 export const setKeyTaskRisk = (keyTaskId: number, riskNote: string) =>
   apiPatch<{ ok: boolean }>(`/api/key-tasks/${keyTaskId}/risk`, { risk_note: riskNote })
+
+export const createTaskPlanProposalRun = (keyTaskId: number, sourceText: string) =>
+  apiPost<TaskPlanProposalRun>(`/api/key-tasks/${keyTaskId}/task-plan-proposal-runs`, { source_text: sourceText })
+
+export const updateTaskPlanProposal = (proposalId: number, plan: TaskPlanProposal['plan']) =>
+  apiPatch<TaskPlanProposal>(`/api/task-plan-proposals/${proposalId}`, { plan })
+
+export const applyTaskPlanProposalRun = (keyTaskId: number, runId: number, proposalIds: number[]) =>
+  apiPost<TaskPlanProposalRun>(`/api/key-tasks/${keyTaskId}/task-plan-proposal-runs/${runId}/apply`, { proposal_ids: proposalIds })

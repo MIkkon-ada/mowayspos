@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app import models
 from app.database import Base
 from app import schemas
-from app.routers.meetings import patch_meeting_change_proposal, review_project_meeting
+from app.routers.meetings import _project_meeting_change_set, patch_meeting_change_proposal, review_project_meeting
 from app.services import meeting_change_set
 
 
@@ -224,6 +224,31 @@ def test_apply_changes_requires_published_meeting_then_writes_selected_change(db
 def test_apply_changes_payload_requires_selected_proposals():
     with pytest.raises(ValueError, match="proposal_ids"):
         schemas.ProjectMeetingReviewPayload(action="apply_changes")
+
+
+def test_meeting_create_plan_proposal_keeps_workstream_and_key_task_parents(db):
+    change_set = _project_meeting_change_set(
+        project_id=1,
+        meeting_id=1,
+        created_by_person_id=1,
+        document_text="为客户清单补充一项计划",
+        snapshot={},
+        result={
+            "execution_schedule_changes": [{
+                "action": "create_execution_schedule",
+                "target": {"workstream_id": 10, "key_task_id": 20},
+                "proposed": {"title": "补充客户清单", "plan_type": "week"},
+                "evidence": ["为客户清单补充一项计划"],
+                "validation": {"state": "ready", "errors": []},
+            }],
+        },
+        db=db,
+    )
+
+    proposal = db.query(models.MeetingChangeProposal).filter_by(change_set_id=change_set.id).one()
+    assert proposal.action == "create_execution_schedule"
+    assert proposal.parent_workstream_id == 10
+    assert proposal.parent_subtask_id == 20
 
 
 def test_owner_edit_preserves_immutable_result_and_allows_lineage_writeback(db):

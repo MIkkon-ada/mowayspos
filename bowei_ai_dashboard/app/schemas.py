@@ -889,6 +889,33 @@ class MonthPlanUpdatePayload(BaseModel):
     is_archived: bool | None = None
 
 
+class TaskPlanProposalTextCreatePayload(BaseModel):
+    source_text: str = Field(min_length=1, max_length=40_000)
+
+    @field_validator("source_text")
+    @classmethod
+    def text_cannot_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("source_text cannot be blank")
+        return value
+
+
+class TaskPlanProposalPatchPayload(BaseModel):
+    plan: dict[str, Any]
+
+
+class TaskPlanProposalApplyPayload(BaseModel):
+    proposal_ids: list[int] = Field(min_length=1, max_length=20)
+
+    @field_validator("proposal_ids")
+    @classmethod
+    def unique_proposal_ids(cls, value: list[int]) -> list[int]:
+        if any(isinstance(item, bool) or item <= 0 for item in value) or len(value) != len(set(value)):
+            raise ValueError("proposal_ids must be unique positive integers")
+        return value
+
+
 class SubTaskPayload(BaseModel):
     """关键任务(KeyTask)创建/更新参数 — 对应物理表 subtasks"""
     title: str = Field(..., max_length=200)

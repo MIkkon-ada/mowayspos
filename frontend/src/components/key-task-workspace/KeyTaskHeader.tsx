@@ -26,7 +26,7 @@ export function KeyTaskHeader({ workspace, onSubmitUpdate, onConfirmCompletion, 
   const isCompleted = task.status === '已完成'
   const collaborators = task.collaborators.length ? task.collaborators.map((person) => person.name).join('、') : '—'
 
-  return <header className="border-y border-blue-200 bg-blue-50 px-5 py-6 shadow-sm sm:px-7">
+  return <header className="rounded-xl border border-slate-200 bg-white px-5 py-6 shadow-sm sm:px-7">
     <nav className="truncate text-sm text-slate-500" aria-label="关键任务路径">
       <span>{project?.name || '项目'}</span><span className="mx-2">/</span><span>{workstream?.name || '重点工作'}</span><span className="mx-2">/</span><span className="text-slate-700">关键任务</span>
     </nav>

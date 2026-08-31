@@ -23,7 +23,7 @@ export type SystemRole = (typeof SYSTEM_ROLES)[number]
 // 英文键 → 中文展示名
 export const SYSTEM_ROLE_LABELS: Record<string, string> = {
   [SYSTEM_ROLE_NORMAL]: '普通成员',
-  [SYSTEM_ROLE_CEO]: '公司CEO',
+  [SYSTEM_ROLE_CEO]: '公司管理',
   [SYSTEM_ROLE_SUPER_ADMIN]: '超级管理员',
 }
 
@@ -36,6 +36,8 @@ const LEGACY_ROLE_MAP: Record<string, string> = {
   '普通成员': SYSTEM_ROLE_NORMAL,
   '组长CEO': SYSTEM_ROLE_CEO,
   '公司CEO': SYSTEM_ROLE_CEO,
+  '公司 CEO': SYSTEM_ROLE_CEO,
+  '公司管理': SYSTEM_ROLE_CEO,
   '超级管理员': SYSTEM_ROLE_SUPER_ADMIN,
 }
 

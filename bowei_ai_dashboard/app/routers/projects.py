@@ -352,13 +352,13 @@ def _require_project_manager(current_user: str, db: Session):
 def _require_ceo_or_tech_admin(current_user: str, db: Session):
     ctx = get_user_context_from_db(current_user, db)
     if not (ctx.get("is_tech_admin") or ctx.get("is_ceo")):
-        raise HTTPException(403, "仅 CEO 或超级管理员可执行此操作")
+        raise HTTPException(403, "仅公司管理或超级管理员可执行此操作")
 
 
 def _require_project_coach_or_tech_admin(current_user: str, project_id: int, db: Session):
     """审核立项权限：仅企业教练（project_ceo）或超级管理员可执行。
 
-    公司CEO（system_role=company_ceo）不能仅凭系统角色审核立项。
+    公司管理（system_role=company_ceo）不能仅凭系统角色审核立项。
     企业教练必须在该项目的 project_members 中有 project_ceo 角色。
     """
     ctx = get_user_context_from_db(current_user, db)
@@ -391,12 +391,12 @@ def _require_project_source_manager(current_user: str, project_id: int, db: Sess
 def _require_archive_via_approval(current_user: str, db: Session):
     """归档需审核流（本轮未实现），仅 super_admin 可技术兜底直接归档。
 
-    company_ceo / project_ceo / owner 均不可直接归档，需提交归档申请由公司CEO审核。
+    company_ceo / project_ceo / owner 均不可直接归档，需提交归档申请由公司管理审核。
     """
     ctx = get_user_context_from_db(current_user, db)
     if ctx.get("is_tech_admin"):
         return
-    raise HTTPException(403, "项目归档需提交公司CEO审核。")
+    raise HTTPException(403, "项目归档需提交公司管理审核。")
 
 
 def _person_name(member: models.ProjectMember, db: Session) -> str:
@@ -1041,7 +1041,7 @@ def create_project(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """仅 CEO / 技术管理员可新建项目。"""
+    """仅公司管理 / 技术管理员可新建项目。"""
     _require_ceo_or_tech_admin(current_user, db)
     context = get_user_context_from_db(current_user, db)
 
@@ -2495,7 +2495,7 @@ def dispatch_project(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """CEO 下发项目给负责人。"""
+    """公司管理下发项目给负责人。"""
     _require_ceo_or_tech_admin(current_user, db)
 
     project = db.execute(

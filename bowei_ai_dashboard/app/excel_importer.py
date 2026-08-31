@@ -248,7 +248,7 @@ def read_project_assignments(excel_path: Path) -> list[dict[str, str]]:
 
 
 def permission_from_role(role: str) -> str:
-    if "CEO" in role or "组长" in role:
+    if "CEO" in role or "组长" in role or "公司管理" in role:
         return "确认"
     if "负责人" in role or "统筹" in role:
         return "维护"

@@ -76,7 +76,7 @@ export function ProjectMembersPage() {
   const takenForRole = new Set(members.filter((member) => member.role === role).map((member) => member.person_id))
 
   if (!isSuperAdmin) {
-    return <Hint title="无权限访问" subtitle="成员管理仅对超级管理员或公司 CEO 开放。" />
+    return <Hint title="无权限访问" subtitle="成员管理仅对超级管理员或公司管理开放。" />
   }
 
   const handleAdd = async (e: React.FormEvent) => {

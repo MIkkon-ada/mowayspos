@@ -81,7 +81,7 @@ npm run dev
 | 序号 | 角色 | 系统中对应 | 验收用途 |
 |------|------|-----------|---------|
 | R1 | super_admin / tech_admin | `is_tech_admin = true` | 创建项目、配置人员、技术兜底启动 |
-| R2 | company_ceo（纯公司 CEO） | `is_ceo = true`，不在 `project_members` | 验证**不能**越权当 project_ceo/owner |
+| R2 | company_ceo（纯公司管理） | `is_ceo = true`，不在 `project_members` | 验证**不能**越权当 project_ceo/owner |
 | R3 | project_ceo（企业教练） | `project_members.role = "project_ceo"` | 审核立项（通过/退回） |
 | R4 | owner（负责人/PM） | `project_members.role = "owner"` | 补立项、确认入库、查看工作推进表 |
 | R5 | coordinator（统筹人） | `project_members.role = "coordinator"` | 验证**不能**替代 owner 做最终确认 |

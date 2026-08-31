@@ -36,7 +36,7 @@ Task(Workstream) / SubTask(KeyTask) / Achievement / Issue / Schedule 回写
 已实现或接近可用的 Wave-like 能力包括：
 
 - 项目生命周期治理：`draft → dispatched → pending_review → pending_kickoff → active → pending_close → ended → archived`。
-- 项目角色与权限：公司 CEO、超级管理员、项目 CEO、负责人、统筹人、成员，并由后端做最终校验。
+- 项目角色与权限：公司管理、超级管理员、企业教练、负责人、统筹人、成员，并由后端做最终校验。
 - 项目执行结构：Project → Workstream → KeyTask，并有周/月执行计划。
 - AI 辅助事实提取：工作汇报、项目初始化材料、会议文本/文档均可形成草稿或分析结果。
 - 人工确认和正式回写：AI 不直接写入核心业务表，确认中心负责审核、退回、转交、CEO 决策和写回。

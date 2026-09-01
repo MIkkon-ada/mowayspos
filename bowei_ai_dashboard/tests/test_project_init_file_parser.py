@@ -364,6 +364,19 @@ def test_xlsx_uses_actual_non_empty_range_and_skips_empty_worksheets(tmp_path):
     ]
 
 
+def test_xlsx_parses_when_storage_path_has_no_extension(tmp_path):
+    source_path = tmp_path / "plan.xlsx"
+    storage_path = tmp_path / "attachment-storage-key"
+    workbook = Workbook()
+    workbook.active["A1"] = "项目计划"
+    workbook.save(source_path)
+    source_path.rename(storage_path)
+
+    assert parse_project_init_file(storage_path, "项目计划.xlsx") == [
+        SourceChunk("项目计划.xlsx", "'Sheet'!A1:A1", "项目计划")
+    ]
+
+
 def test_xlsx_falls_back_to_formula_when_cached_value_is_absent(tmp_path):
     path = tmp_path / "formula.xlsx"
     workbook = Workbook()

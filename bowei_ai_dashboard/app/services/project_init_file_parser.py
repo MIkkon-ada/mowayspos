@@ -520,9 +520,12 @@ def _parse_xls(path: Path, original_name: str) -> Iterable[SourceChunk]:
 
 
 def _parse_xlsx(path: Path, original_name: str) -> Iterable[SourceChunk]:
-    cached_workbook = load_workbook(path, read_only=True, data_only=True)
+    # Uploaded attachments are stored under opaque keys without a filename
+    # extension. Pass file-like data so openpyxl validates the OOXML payload
+    # instead of rejecting the extensionless storage path.
+    cached_workbook = load_workbook(io.BytesIO(path.read_bytes()), read_only=True, data_only=True)
     try:
-        formula_workbook = load_workbook(path, read_only=True, data_only=False)
+        formula_workbook = load_workbook(io.BytesIO(path.read_bytes()), read_only=True, data_only=False)
     except BaseException:
         try:
             cached_workbook.close()

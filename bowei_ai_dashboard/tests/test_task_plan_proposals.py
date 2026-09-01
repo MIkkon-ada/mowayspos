@@ -305,3 +305,12 @@ def test_apply_revalidates_selected_drafts_atomically(db):
     assert len(created) == 2
     assert db.query(models.ExecutionSchedule).filter_by(subtask_id=30, plan_type="month").count() == 2
     assert all(proposal.status == "executed" and proposal.created_plan_id for proposal in proposals)
+    events = (
+        db.query(models.KeyTaskExecutionEvent)
+        .filter_by(key_task_id=30, source_type="task_plan_proposal")
+        .all()
+    )
+    assert len(events) == 1
+    assert events[0].source_id == run.id
+    assert events[0].execution_plan_id is None
+    assert events[0].progress_summary == "AI 拆解已确认，新增 2 项任务计划"

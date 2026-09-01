@@ -8,6 +8,7 @@ const plan: ExecutionPlan = {
   id: 1,
   title: '完成关键任务 AI 拆解入口资料上传与分析能力',
   status: '未开始',
+  display_status: '已延期',
   assignee: '吴肖',
   assignee_id: 5,
   collaborator_ids: [6],
@@ -29,8 +30,10 @@ const plan: ExecutionPlan = {
 describe('ExecutionPlanTable', () => {
   it('uses a compact list and opens details only from the row action', () => {
     const onOpen = vi.fn()
-    render(<ExecutionPlanTable plans={[plan]} summary={{ total: 1, completed: 0, in_progress: 0, not_started: 1 }} canManage={false} onAdd={vi.fn()} onOpen={onOpen} />)
+    render(<ExecutionPlanTable plans={[plan]} summary={{ total: 1, completed: 0, in_progress: 0, not_started: 0, delayed: 1 }} canManage={false} onAdd={vi.fn()} onOpen={onOpen} />)
 
+    expect(screen.getByText('已延期')).toBeTruthy()
+    expect(screen.getByText(/延期 1/)).toBeTruthy()
     expect(screen.getByRole('columnheader', { name: '负责人' })).toBeTruthy()
     expect(screen.getByRole('columnheader', { name: '协助人' })).toBeTruthy()
     expect(screen.queryByRole('columnheader', { name: /最新进展/ })).toBeNull()

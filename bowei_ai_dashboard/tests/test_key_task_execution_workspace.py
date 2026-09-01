@@ -431,8 +431,92 @@ def test_workspace_api_returns_one_contract_without_percentages():
         "completed": 0,
         "in_progress": 0,
         "not_started": 0,
+        "delayed": 0,
     }
     assert "percent" not in str(result).lower()
+
+
+def test_workspace_displays_task_plan_status_from_dates(monkeypatch):
+    from app.routers import key_tasks, monthly_plans
+    from app.services import key_task_execution
+
+    db = _db()
+    _project, _workstream, key_task = _seed_workspace(db)
+    monkeypatch.setattr(monthly_plans, "utc_now", lambda: datetime(2026, 7, 10, 9, 0))
+    monkeypatch.setattr(key_task_execution, "utc_now", lambda: datetime(2026, 7, 10, 9, 0))
+    db.add_all([
+        models.ExecutionSchedule(
+            subtask_id=key_task.id, plan_type="month", title="尚未开始", assignee="负责人",
+            assignee_id=1, status="未开始", start_date=date(2026, 7, 11),
+            due_kind="exact", due_date=date(2026, 7, 14),
+        ),
+        models.ExecutionSchedule(
+            subtask_id=key_task.id, plan_type="month", title="计划进行中", assignee="负责人",
+            assignee_id=1, status="未开始", start_date=date(2026, 7, 9),
+            due_kind="exact", due_date=date(2026, 7, 11),
+        ),
+        models.ExecutionSchedule(
+            subtask_id=key_task.id, plan_type="month", title="已超过截止日", assignee="负责人",
+            assignee_id=1, status="未开始", start_date=date(2026, 7, 1),
+            due_kind="exact", due_date=date(2026, 7, 9),
+        ),
+        models.ExecutionSchedule(
+            subtask_id=key_task.id, plan_type="month", title="人工暂缓", assignee="负责人",
+            assignee_id=1, status="暂缓", start_date=date(2026, 7, 1),
+            due_kind="exact", due_date=date(2026, 7, 9),
+        ),
+    ])
+    db.commit()
+
+    result = key_tasks.get_execution_workspace(key_task.id, current_user="owner", db=db)
+
+    status_by_title = {item["title"]: item["display_status"] for item in result["execution_plans"]}
+    assert status_by_title == {
+        "尚未开始": "未开始",
+        "计划进行中": "进行中",
+        "已超过截止日": "已延期",
+        "人工暂缓": "暂缓",
+    }
+    assert result["plan_summary"] == {
+        "total": 4,
+        "completed": 0,
+        "in_progress": 1,
+        "not_started": 1,
+        "delayed": 1,
+    }
+
+
+def test_timeline_aggregates_legacy_ai_plan_events_created_together():
+    from app.services.key_task_execution import record_execution_event, timeline_dicts
+
+    db = _db()
+    _project, _workstream, key_task = _seed_workspace(db)
+    now = datetime(2026, 7, 10, 9, 12, 30)
+    for source_id, title in [(101, "整理资料"), (102, "核验结果")]:
+        record_execution_event(
+            db,
+            project_id=1,
+            key_task_id=key_task.id,
+            execution_plan_id=source_id,
+            event_type="execution_plan_created",
+            source_type="task_plan_proposal",
+            source_id=source_id,
+            dedupe_key=f"legacy-ai-plan:{source_id}",
+            actor_person_id=1,
+            actor_name="负责人",
+            occurred_at=now,
+            confirmed_at=now,
+            effective_at=now,
+            affects_current_progress=False,
+            progress_summary=f"AI 建议确认后新增任务计划：{title}",
+        )
+    db.commit()
+
+    timeline = timeline_dicts(db, key_task.id)
+
+    assert len(timeline) == 1
+    assert timeline[0]["source_label"] == "AI 计划拆解"
+    assert timeline[0]["progress_summary"] == "AI 拆解已确认，新增 2 项任务计划"
 
 
 def test_workspace_uses_workstream_plan_time_when_key_task_time_is_blank():

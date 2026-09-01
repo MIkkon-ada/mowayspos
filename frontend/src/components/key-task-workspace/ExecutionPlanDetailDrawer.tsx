@@ -8,11 +8,12 @@ type Props = { plan: ExecutionPlan | null; open: boolean; onClose: () => void; w
 export function ExecutionPlanDetailDrawer({ plan, open, onClose, workspace, onSubmitUpdate, onEdit, onMarkCompleted }: Props) {
   const events = useMemo<ExecutionEvent[]>(() => plan ? workspace.timeline.filter((event) => event.execution_plan_id === plan.id) : [], [plan, workspace.timeline])
   if (!plan) return null
+  const displayStatus = plan.display_status || plan.status || '未开始'
 
   return <DetailDrawer open={open} onClose={onClose} title="任务计划详情">
     <div className="space-y-4 text-sm text-slate-700">
       <section>
-        <div className="flex flex-wrap items-start gap-2"><h3 className="min-w-0 flex-1 text-lg font-semibold leading-7 text-slate-900">{plan.title}</h3><span className={`shrink-0 rounded-md px-2 py-1 text-xs font-medium ${statusTone(plan.status)}`}>{plan.status || '未开始'}</span></div>
+        <div className="flex flex-wrap items-start gap-2"><h3 className="min-w-0 flex-1 text-lg font-semibold leading-7 text-slate-900">{plan.title}</h3><span className={`shrink-0 rounded-md px-2 py-1 text-xs font-medium ${statusTone(displayStatus)}`}>{displayStatus}</span></div>
         <dl className="mt-4 grid overflow-hidden rounded-xl border border-slate-200 bg-white sm:grid-cols-3 sm:divide-x sm:divide-slate-200"><Field label="负责人" value={plan.assignee || '未指定'} compact /><Field label="协助人" value={plan.collaborators.length ? plan.collaborators.join('、') : '—'} compact /><Field label="计划时间" value={formatPlanTime(plan)} compact /></dl>
       </section>
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white"><Field label="预期成果" value={plan.expected_output || '—'} multiline card /><div className="border-t border-slate-100" /><Field label="完成定义" value={plan.completion_criteria || '—'} multiline card /></section>

@@ -314,28 +314,30 @@ def apply_text_plan_proposals(
                 {}, crud.to_dict(row), project_id=run.project_id,
             )
             db.flush()
-            now = utc_now()
-            record_execution_event(
-                db,
-                project_id=run.project_id,
-                key_task_id=key_task.id,
-                execution_plan_id=row.id,
-                event_type="execution_plan_created",
-                source_type="task_plan_proposal",
-                source_id=proposal.id,
-                dedupe_key=f"operation_log:{log.id}:ai-task-plan-proposal-apply",
-                actor_person_id=actor_person_id,
-                actor_name=actor,
-                occurred_at=now,
-                confirmed_at=now,
-                effective_at=now,
-                affects_current_progress=False,
-                status_after=row.status,
-                progress_summary=f"AI 建议确认后新增任务计划：{row.title}",
-            )
             proposal.created_plan_id = row.id
             proposal.status = "executed"
             created.append(row)
+        now = utc_now()
+        record_execution_event(
+            db,
+            project_id=run.project_id,
+            key_task_id=key_task.id,
+            event_type="execution_plans_created",
+            source_type="task_plan_proposal",
+            source_id=run.id,
+            dedupe_key=f"task-plan-proposal-run:{run.id}:apply",
+            actor_person_id=actor_person_id,
+            actor_name=actor,
+            occurred_at=now,
+            confirmed_at=now,
+            effective_at=now,
+            affects_current_progress=False,
+            progress_summary=f"AI 拆解已确认，新增 {len(created)} 项任务计划",
+            display_payload={
+                "execution_plan_ids": [row.id for row in created],
+                "plan_count": len(created),
+            },
+        )
         run.status = "completed"
         db.commit()
     except Exception:

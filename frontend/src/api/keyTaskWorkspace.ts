@@ -11,6 +11,7 @@ export type ExecutionPlan = {
   id: number
   title: string
   status: string
+  display_status: string
   assignee: string
   assignee_id?: number | null
   collaborator_ids: number[]
@@ -89,7 +90,7 @@ export type KeyTaskWorkspace = {
     completed_plan_count: number
     requires_owner_confirmation: boolean
   }
-  plan_summary: { total: number; completed: number; in_progress: number; not_started: number }
+  plan_summary: { total: number; completed: number; in_progress: number; not_started: number; delayed: number }
   execution_plans: ExecutionPlan[]
   achievements: Array<{ id: number; name: string; achievement_type: string; status: string; owner: string; version: string; created_at: string | null }>
   issues: Array<{ id: number; description: string; issue_type: string; status: string; priority: string; owner: string; updated_at: string | null }>

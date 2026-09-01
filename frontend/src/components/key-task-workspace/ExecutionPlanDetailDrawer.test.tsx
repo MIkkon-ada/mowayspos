@@ -8,6 +8,7 @@ const plan: ExecutionPlan = {
   id: 1,
   title: '完成关键任务 AI 拆解入口资料上传与分析能力',
   status: '未开始',
+  display_status: '未开始',
   assignee: '吴肖',
   assignee_id: 5,
   collaborator_ids: [],

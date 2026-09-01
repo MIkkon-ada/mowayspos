@@ -27,18 +27,19 @@ describe('AI capability policy configuration', () => {
   it('shows every supported capability when no policy has been saved', async () => {
     render(<AIConfigurationSection />)
 
-    expect(await screen.findByText('meeting.analysis')).toBeTruthy()
-    expect(screen.getByText('task.extraction')).toBeTruthy()
-    expect(screen.getByText('project.init.analysis')).toBeTruthy()
-    expect(screen.getByText('speech.realtime')).toBeTruthy()
-    expect(screen.getAllByText('未配置', { selector: '[data-policy-status]' })).toHaveLength(4)
+    expect(await screen.findByText('会议纪要 AI 分析')).toBeTruthy()
+    expect(screen.getByText('工作汇报 / 文本任务提取')).toBeTruthy()
+    expect(screen.getByText('项目立项方案 AI 分析')).toBeTruthy()
+    expect(screen.getByText('关键任务计划 AI 拆解（文字 / 附件）')).toBeTruthy()
+    expect(screen.getByText('实时语音转写')).toBeTruthy()
+    expect(screen.getAllByText('未配置', { selector: '[data-policy-status]' })).toHaveLength(5)
   })
 
   it('creates a meeting policy from the selected enabled chat model', async () => {
     api.saveAICapabilityPolicy.mockResolvedValue({})
     render(<AIConfigurationSection />)
 
-    const row = (await screen.findByText('meeting.analysis')).closest('.rounded-lg')
+    const row = (await screen.findByText('会议纪要 AI 分析')).closest('.rounded-lg')
     expect(row).not.toBeNull()
     fireEvent.change(within(row as HTMLElement).getByRole('combobox'), { target: { value: '7' } })
     fireEvent.click(within(row as HTMLElement).getByRole('button', { name: '保存顺序' }))

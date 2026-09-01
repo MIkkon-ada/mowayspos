@@ -583,6 +583,41 @@ class MeetingChangeProposal(Base, TimestampMixin):
     result_target_id = Column(Integer, nullable=True)
 
 
+class TaskPlanProposalRun(Base, TimestampMixin):
+    """Persisted, review-only AI decomposition for one selected key task."""
+
+    __tablename__ = "task_plan_proposal_runs"
+    __table_args__ = (
+        Index("ix_task_plan_proposal_runs_project_key_task_status", "project_id", "key_task_id", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    key_task_id = Column(Integer, ForeignKey("subtasks.id"), nullable=False, index=True)
+    source_text = Column(Text, nullable=False, default="")
+    source_hash = Column(String(64), nullable=False, default="", index=True)
+    status = Column(String(32), nullable=False, default="ready_for_review", index=True)
+    model_code = Column(String(96), nullable=False, default="")
+    invocation_log_id = Column(Integer, ForeignKey("ai_invocation_logs.id"), nullable=True, index=True)
+    created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+
+
+class TaskPlanProposal(Base, TimestampMixin):
+    __tablename__ = "task_plan_proposals"
+    __table_args__ = (
+        Index("ix_task_plan_proposals_run_status", "run_id", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("task_plan_proposal_runs.id"), nullable=False, index=True)
+    plan_json = Column(Text, nullable=False, default="{}")
+    evidence_json = Column(Text, nullable=False, default="{}")
+    validation_json = Column(Text, nullable=False, default="{}")
+    status = Column(String(32), nullable=False, default="needs_confirmation", index=True)
+    reviewer_edit_json = Column(Text, nullable=False, default="{}")
+    created_plan_id = Column(Integer, ForeignKey("execution_schedules.id"), nullable=True, index=True)
+
+
 class Achievement(Base, TimestampMixin):
     __tablename__ = "achievements"
 

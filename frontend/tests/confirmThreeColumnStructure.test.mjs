@@ -42,13 +42,25 @@ describe('ConfirmPage three-column structure', () => {
 });
 
 describe('ConfirmPage filter placement', () => {
-  it('keeps the single functional filter set in the page header', () => {
+  it('keeps one desktop filter set in the page header', () => {
     const queueStart = source.indexOf('data-confirm-panel="queue"');
-    const header = source.slice(0, queueStart);
+    const desktopStart = source.indexOf('data-confirm-header="compact"');
+    assert.ok(desktopStart !== -1 && desktopStart < queueStart, 'Expected a desktop confirmation header before the queue');
+    const header = source.slice(desktopStart, queueStart);
     for (const binding of ['filterProject', 'filterSubmitter', 'filterStatus', 'search']) {
       assert.ok(header.includes(`value={${binding}}`), `Expected ${binding} control in the page header`);
-      assert.equal((source.match(new RegExp(`value=\\{${binding}\\}`, 'g')) || []).length, 1,
-        `Expected exactly one ${binding} control`);
+      assert.equal((header.match(new RegExp(`value=\\{${binding}\\}`, 'g')) || []).length, 1,
+        `Expected exactly one desktop ${binding} control`);
+    }
+  });
+
+  it('keeps the responsive mobile filters separate from the desktop header', () => {
+    const mobileStart = source.indexOf('data-mobile-confirm-header');
+    const desktopStart = source.indexOf('data-confirm-header="compact"');
+    assert.ok(mobileStart !== -1 && mobileStart < desktopStart, 'Expected a mobile header before the desktop header');
+    const mobileHeader = source.slice(mobileStart, desktopStart);
+    for (const binding of ['filterProject', 'filterSubmitter', 'filterStatus', 'search']) {
+      assert.ok(mobileHeader.includes(`value={${binding}}`), `Expected ${binding} control in mobile filters`);
     }
   });
 

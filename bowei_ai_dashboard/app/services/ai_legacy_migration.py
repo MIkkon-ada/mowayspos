@@ -199,7 +199,11 @@ def import_legacy_llm_config(
     if primary_chat is None and chat_models:
         primary_chat = next(iter(chat_models.values()))
 
-    for capability_key in (Capability.MEETING_ANALYSIS, Capability.TASK_EXTRACTION):
+    for capability_key in (
+        Capability.MEETING_ANALYSIS,
+        Capability.TASK_EXTRACTION,
+        Capability.TASK_PLAN_PROPOSAL,
+    ):
         _save_missing_migration_policy(repo, db, report, capability_key, primary_chat)
     project_init_primary = chat_models.get("deepseek") or primary_chat
     project_init_fallback = (

@@ -16,12 +16,14 @@ class Capability:
     MEETING_ANALYSIS = "meeting.analysis"
     TASK_EXTRACTION = "task.extraction"
     PROJECT_INIT_ANALYSIS = "project.init.analysis"
+    TASK_PLAN_PROPOSAL = "task.plan.proposal"
     SPEECH_REALTIME = "speech.realtime"
 
     _TYPES = {
         MEETING_ANALYSIS: ModelType.CHAT,
         TASK_EXTRACTION: ModelType.CHAT,
         PROJECT_INIT_ANALYSIS: ModelType.CHAT,
+        TASK_PLAN_PROPOSAL: ModelType.CHAT,
         SPEECH_REALTIME: ModelType.ASR,
     }
 

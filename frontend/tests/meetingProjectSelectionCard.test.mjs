@@ -13,9 +13,9 @@ test('meeting project selector loads real project meetings for each project', ()
   assert.match(source, /prev\.set\('projectId', String\(p\.id\)\)/)
 })
 
-test('meeting project selector is a concise equal-weight project directory', () => {
+test('meeting project selector is a reference-aligned project directory', () => {
   assert.match(source, /project-selector-table/)
-  assert.match(source, /grid-cols-\[minmax\(280px,2fr\)_120px_150px_minmax\(220px,1\.4fr\)_150px\]/)
+  assert.match(source, /grid-cols-\[minmax\(300px,2\.1fr\)_150px_190px_minmax\(220px,1\.4fr\)_150px\]/)
   assert.match(source, /项目名称/)
   assert.match(source, /项目经理/)
   assert.match(source, /最近会议/)

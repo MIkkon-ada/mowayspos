@@ -1,6 +1,9 @@
 import { useState, type FormEvent } from 'react'
+import { applyTaskPlanProposalRun, createTaskPlanProposalRun, updateTaskPlanProposal, type TaskPlanProposalRun } from '../../api/keyTaskWorkspace'
 import { createMonthlyPlan, type MonthlyPlanPayload } from '../../api/monthlyPlans'
 import type { ProjectMember } from '../../types'
+import { CollaboratorMultiSelect } from './CollaboratorMultiSelect'
+import { TaskPlanProposalReview } from './TaskPlanProposalReview'
 
 type Props = {
   keyTaskId: number
@@ -37,6 +40,9 @@ export function ExecutionPlanCreateDrawer({ keyTaskId, defaultAssigneeId, member
   const [form, setForm] = useState<MonthlyPlanPayload>(() => blankPlan(defaultAssigneeId))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [mode, setMode] = useState<'manual' | 'ai'>('manual')
+  const [sourceText, setSourceText] = useState('')
+  const [proposalRun, setProposalRun] = useState<TaskPlanProposalRun | null>(null)
 
   function patch<K extends keyof MonthlyPlanPayload>(key: K, value: MonthlyPlanPayload[K]) {
     setForm((current) => ({ ...current, [key]: value }))
@@ -48,10 +54,6 @@ export function ExecutionPlanCreateDrawer({ keyTaskId, defaultAssigneeId, member
       assignee_id: assigneeId,
       collaborator_ids: current.collaborator_ids.filter((personId) => personId !== assigneeId),
     }))
-  }
-
-  function changeCollaborators(event: React.ChangeEvent<HTMLSelectElement>) {
-    patch('collaborator_ids', Array.from(event.target.selectedOptions, (option) => Number(option.value)))
   }
 
   async function submit(event: FormEvent) {
@@ -82,7 +84,40 @@ export function ExecutionPlanCreateDrawer({ keyTaskId, defaultAssigneeId, member
     }
   }
 
-  const collaboratorCandidates = members.filter((member) => member.person_id !== form.assignee_id)
+  async function generateDrafts() {
+    if (!sourceText.trim()) {
+      setError('请输入需要拆解的文本')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      setProposalRun(await createTaskPlanProposalRun(keyTaskId, sourceText.trim()))
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '生成计划草稿失败，请重试')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function updateDraft(proposalId: number, plan: TaskPlanProposalRun['proposals'][number]['plan']) {
+    const updated = await updateTaskPlanProposal(proposalId, plan)
+    setProposalRun((current) => current ? {
+      ...current,
+      proposals: current.proposals.map((proposal) => proposal.id === proposalId ? { ...proposal, ...updated } : proposal),
+    } : current)
+  }
+
+  async function applyDrafts(proposalIds: number[]) {
+    const updated = await applyTaskPlanProposalRun(keyTaskId, proposalRun!.id, proposalIds)
+    setProposalRun(updated)
+    onCreated()
+    onClose()
+  }
+
+  const selectableMembers = members.filter((member, index, all) =>
+    all.findIndex((candidate) => candidate.person_id === member.person_id) === index,
+  )
 
   return <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/25" role="dialog" aria-modal="true" aria-label="新增任务计划" onClick={onClose}>
     <form onSubmit={(event) => void submit(event)} className="flex h-full w-full max-w-[500px] flex-col bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
@@ -91,10 +126,19 @@ export function ExecutionPlanCreateDrawer({ keyTaskId, defaultAssigneeId, member
         <button type="button" onClick={onClose} className="rounded p-1 text-xl text-slate-400 hover:bg-slate-100" aria-label="关闭">×</button>
       </header>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+        <div className="flex gap-2 rounded-lg bg-slate-100 p-1">
+          <button type="button" onClick={() => { setMode('manual'); setError('') }} disabled={saving} className={`flex-1 rounded-md px-3 py-2 text-sm font-medium ${mode === 'manual' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}>手工新增</button>
+          <button type="button" onClick={() => { setMode('ai'); setError('') }} disabled={saving} className={`flex-1 rounded-md px-3 py-2 text-sm font-medium ${mode === 'ai' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}>AI 拆解</button>
+        </div>
+        {mode === 'ai' ? proposalRun ? <TaskPlanProposalReview run={proposalRun} members={selectableMembers} busy={saving} onUpdate={updateDraft} onApply={applyDrafts} /> : <div className="space-y-4">
+          <p className="rounded-lg bg-sky-50 p-3 text-xs leading-5 text-sky-800">AI 只会根据您输入的文本生成多条草稿和原文依据，不会自动创建计划。涉及客户、人员或敏感内容时，请仅输入业务必需信息。</p>
+          <Field label="待拆解文本"><textarea aria-label="待拆解文本" rows={9} value={sourceText} disabled={saving} onChange={(event) => setSourceText(event.target.value)} placeholder="粘贴会议纪要、工作安排或需求说明。AI 将生成多条可编辑的计划草稿。" className={inputClass} /></Field>
+          <button type="button" onClick={() => void generateDrafts()} className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50" disabled={saving}>{saving ? '生成中…' : '生成计划草稿'}</button>
+        </div> : <>
         <Field label="计划事项 *"><input aria-label="计划事项" value={form.title} disabled={saving} onChange={(event) => patch('title', event.target.value)} placeholder="需要推进的具体事项" className={inputClass} /></Field>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="负责人 *"><select aria-label="负责人" value={form.assignee_id || ''} disabled={saving} onChange={(event) => changeAssignee(Number(event.target.value))} className={inputClass}><option value="">请选择负责人</option>{members.map((member) => <option key={member.person_id} value={member.person_id}>{member.person_name_snapshot}</option>)}</select></Field>
-          <Field label="协助人"><select aria-label="协助人" multiple value={form.collaborator_ids.map(String)} disabled={saving} onChange={changeCollaborators} className={inputClass + ' min-h-24'}>{collaboratorCandidates.map((member) => <option key={member.person_id} value={member.person_id}>{member.person_name_snapshot}</option>)}</select></Field>
+          <Field label="负责人 *"><select aria-label="负责人" value={form.assignee_id || ''} disabled={saving} onChange={(event) => changeAssignee(Number(event.target.value))} className={inputClass}><option value="">请选择负责人</option>{selectableMembers.map((member) => <option key={member.person_id} value={member.person_id}>{member.person_name_snapshot}</option>)}</select></Field>
+          <CollaboratorMultiSelect members={selectableMembers} excludedPersonId={form.assignee_id || null} selectedIds={form.collaborator_ids} disabled={saving} onChange={(collaboratorIds) => patch('collaborator_ids', collaboratorIds)} />
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="开始日期"><input aria-label="开始日期" type="date" value={form.start_date ?? ''} disabled={saving} onChange={(event) => patch('start_date', event.target.value || null)} className={inputClass} /></Field>
@@ -102,11 +146,12 @@ export function ExecutionPlanCreateDrawer({ keyTaskId, defaultAssigneeId, member
         </div>
         <Field label="预期成果 *"><textarea aria-label="预期成果" rows={3} value={form.expected_output} disabled={saving} onChange={(event) => patch('expected_output', event.target.value)} className={inputClass} /></Field>
         <Field label="完成定义"><textarea aria-label="完成定义" rows={2} value={form.completion_criteria} disabled={saving} onChange={(event) => patch('completion_criteria', event.target.value)} className={inputClass} /></Field>
+        </>}
         {error && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
       </div>
       <footer className="flex justify-end gap-2 border-t border-slate-200 px-6 py-4">
         <button type="button" onClick={onClose} disabled={saving} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 disabled:opacity-50">取消</button>
-        <button disabled={saving} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? '创建中…' : '创建计划'}</button>
+        {mode === 'manual' && <button disabled={saving} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? '创建中…' : '创建计划'}</button>}
       </footer>
     </form>
   </div>

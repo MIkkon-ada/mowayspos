@@ -24,7 +24,7 @@ from .task_plan_proposal_attachments import (
 )
 from ..routers.monthly_plans import _validate_people
 
-MAX_PROPOSALS = 20
+MAX_PROPOSALS = 8
 MAX_SOURCE_TEXT_LENGTH = 40_000
 
 
@@ -89,6 +89,11 @@ def _normalise_plan(raw: dict[str, Any], source: str, member_ids: set[int]) -> t
 
 def _prompt(source_text: str, members: list[dict[str, Any]]) -> str:
     return f"""你是项目任务拆解助手。只基于给定原文，为一个已选定的关键任务生成最多 {MAX_PROPOSALS} 条可执行任务计划草稿；不要写入系统。
+
+优先生成 3 至 6 条完整工作包；每条计划应有独立、可交付的工作结果，并覆盖一个可执行阶段。
+不要把同一句中的验收字段或名词拆成多条计划。例如“检查任务名称、负责人、协同人、计划时间、交付物和验收标准”应生成一条“核验 AI 拆解结果”的计划，不要拆成六条。
+若原文包含“关键任务上下文”，其中的默认负责人、默认协同人和计划区间可以直接作为计划默认值；使用人员时必须使用该人员在成员表中的 id，并在 evidence 中逐字引用对应上下文。
+
 原文：\n{source_text}\n
 项目成员（只能使用其中的 id）：{json.dumps(members, ensure_ascii=False)}
 只输出 JSON：{{\"plans\":[{{\"title\":\"\",\"expected_output\":\"\",\"assignee_id\":null,\"collaborator_ids\":[],\"status\":\"未开始\",\"start_date\":null,\"due_date\":null,\"completion_criteria\":\"\",\"evidence\":{{\"title\":\"原文精确片段\",\"expected_output\":\"原文精确片段\",\"assignee_id\":\"原文精确片段\",\"start_date\":\"原文精确片段\",\"due_date\":\"原文精确片段\",\"completion_criteria\":\"原文精确片段\"}}}}]}}。没有明确依据的字段留空。"""
@@ -166,9 +171,34 @@ def create_attachment_plan_proposal_run(
         )
         member_rows = db.query(models.ProjectMember).filter_by(project_id=project_id).all()
         members = [{"id": row.person_id, "name": row.person_name_snapshot} for row in member_rows]
+        key_task = db.get(models.SubTask, key_task_id)
+        member_names = {member["id"]: member["name"] for member in members}
+        context_lines: list[str] = []
+        if key_task:
+            context_lines.append("关键任务上下文（可作为计划默认值和原文依据）：")
+            if key_task.title:
+                context_lines.append(f"关键任务名称：{key_task.title}")
+            if key_task.assignee:
+                assignee_detail = key_task.assignee
+                if key_task.assignee_id:
+                    assignee_detail += f"（人员 id：{key_task.assignee_id}）"
+                context_lines.append(f"关键任务默认负责人：{assignee_detail}")
+            collaborator_ids = key_task.collaborator_ids if isinstance(key_task.collaborator_ids, list) else []
+            collaborators = [
+                f"{member_names[person_id]}（人员 id：{person_id}）"
+                for person_id in collaborator_ids
+                if person_id in member_names
+            ]
+            if collaborators:
+                context_lines.append(f"关键任务默认协同人：{'、'.join(collaborators)}")
+            if key_task.plan_time:
+                context_lines.append(f"关键任务计划区间：{key_task.plan_time}")
+        source_with_context = text
+        if len(context_lines) > 1:
+            source_with_context = f"{text}\n\n{'\n'.join(context_lines)}"
         result = (ai_service or AIService(db)).invoke_chat(
             Capability.TASK_PLAN_PROPOSAL,
-            _prompt(text, members),
+            _prompt(source_with_context, members),
             AIInvocationContext(actor=actor, resource_type="key_task", resource_id=key_task_id),
         )
         raw_plans = _parse_response(result.text)
@@ -197,7 +227,7 @@ def create_attachment_plan_proposal_run(
             ))
         member_ids = {item["id"] for item in members}
         for raw in raw_plans:
-            plan, validation, status = _normalise_plan(raw, text, member_ids)
+            plan, validation, status = _normalise_plan(raw, source_with_context, member_ids)
             db.add(models.TaskPlanProposal(
                 run_id=run.id,
                 plan_json=_json_dump(plan),

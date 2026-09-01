@@ -28,7 +28,11 @@ def db() -> Session:
 
 
 class FakeAI:
+    def __init__(self):
+        self.prompts = []
+
     def invoke_chat(self, *_args, **_kwargs):
+        self.prompts.append(_args[1])
         return type("Result", (), {
             "text": json.dumps({"plans": [
                 {
@@ -68,7 +72,7 @@ def _seed(db: Session):
         models.ProjectMember(project_id=10, person_id=1, person_name_snapshot="王五", role="owner"),
         models.ProjectMember(project_id=10, person_id=2, person_name_snapshot="李四", role="member"),
         models.Task(id=20, project_id=10, key_task="客户交付", owner="王五", status="进行中"),
-        models.SubTask(id=30, task_id=20, title="客户交付", assignee="王五", status="进行中"),
+        models.SubTask(id=30, task_id=20, title="客户交付", assignee="王五", assignee_id=1, collaborator_ids=[2], plan_time="7.3-7.10", status="进行中"),
     ])
     db.commit()
 
@@ -95,6 +99,28 @@ def test_text_analysis_persists_multiple_auditable_drafts_for_selected_key_task(
     assert proposals[1].status == "needs_confirmation"
     assert json.loads(proposals[0].plan_json)["assignee_id"] == 2
     assert json.loads(proposals[1].validation_json)["state"] == "needs_confirmation"
+
+
+def test_task_plan_prompt_supplies_key_task_defaults_and_requires_work_package_granularity(db):
+    _seed(db)
+    ai = FakeAI()
+
+    create_text_plan_proposal_run(
+        project_id=10,
+        key_task_id=30,
+        source_text="整理客户清单并安排客户访谈。",
+        created_by_person_id=1,
+        actor="owner",
+        db=db,
+        ai_service=ai,
+    )
+
+    prompt = ai.prompts[0]
+    assert "关键任务默认负责人：王五" in prompt
+    assert "关键任务默认协同人：李四" in prompt
+    assert "关键任务计划区间：7.3-7.10" in prompt
+    assert "优先生成 3 至 6 条完整工作包" in prompt
+    assert "不要把同一句中的验收字段或名词拆成多条计划" in prompt
 
 
 def test_attachment_analysis_combines_manual_text_and_persists_attachment_metadata(db, tmp_path):

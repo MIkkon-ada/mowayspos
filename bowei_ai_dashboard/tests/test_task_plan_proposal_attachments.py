@@ -1,4 +1,5 @@
 import hashlib
+from pathlib import Path
 
 import pytest
 
@@ -114,6 +115,59 @@ def test_save_task_plan_attachments_rejects_eleventh_file_before_writing(tmp_pat
         )
 
     assert not list(tmp_path.rglob("*"))
+
+
+def test_save_task_plan_attachments_prevalidates_all_files_before_writing(tmp_path):
+    root = tmp_path / "attachments"
+
+    with pytest.raises(TaskPlanProposalAttachmentError, match="not supported"):
+        save_task_plan_attachments(
+            root,
+            project_id=1,
+            attachments=[("valid.txt", b"valid"), ("invalid.pdf", b"pdf")],
+        )
+
+    assert not [path for path in root.rglob("*") if path.is_file()]
+
+
+def test_save_task_plan_attachments_removes_files_when_second_write_fails(monkeypatch, tmp_path):
+    root = tmp_path / "attachments"
+    original_write_bytes = Path.write_bytes
+    write_attempts = 0
+
+    def fail_second_write(path, content):
+        nonlocal write_attempts
+        write_attempts += 1
+        if write_attempts == 2:
+            raise OSError("disk unavailable")
+        return original_write_bytes(path, content)
+
+    monkeypatch.setattr(Path, "write_bytes", fail_second_write)
+
+    with pytest.raises(OSError, match="disk unavailable"):
+        save_task_plan_attachments(
+            root,
+            project_id=1,
+            attachments=[("first.txt", b"first"), ("second.txt", b"second")],
+        )
+
+    assert not [path for path in root.rglob("*") if path.is_file()]
+
+
+def test_save_task_plan_attachment_rejects_filename_over_model_limit(tmp_path):
+    filename = f"{'a' * 252}.txt"
+
+    with pytest.raises(TaskPlanProposalAttachmentError, match="too long"):
+        save_task_plan_attachment(
+            tmp_path, project_id=1, filename=filename, content=b"text"
+        )
+
+
+def test_save_task_plan_attachment_rejects_control_character_in_filename(tmp_path):
+    with pytest.raises(TaskPlanProposalAttachmentError, match="control character"):
+        save_task_plan_attachment(
+            tmp_path, project_id=1, filename="bad\nname.txt", content=b"text"
+        )
 
 
 def test_remove_task_plan_attachment_removes_only_safe_stored_file(tmp_path):

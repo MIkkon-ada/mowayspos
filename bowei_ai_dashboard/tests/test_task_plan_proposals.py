@@ -296,6 +296,8 @@ def test_apply_revalidates_selected_drafts_atomically(db):
     assert db.query(models.ExecutionSchedule).count() == 0
 
     first["collaborator_ids"] = []
+    first["start_date"] = "2026-07-08"
+    first["due_date"] = "2026-07-09"
     proposals[0].plan_json = json.dumps(first, ensure_ascii=False)
     db.commit()
     created = apply_text_plan_proposals(run=run, proposal_ids=[proposal.id for proposal in proposals], actor="owner", actor_person_id=1, db=db)

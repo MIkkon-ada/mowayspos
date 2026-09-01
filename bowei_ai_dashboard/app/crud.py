@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import HTTPException
@@ -52,6 +52,8 @@ def to_dict(obj):
         value = getattr(obj, col.name)
         if isinstance(value, datetime):
             value = value.isoformat(timespec="seconds") + "Z"
+        elif isinstance(value, date):
+            value = value.isoformat()
         data[col.name] = value
     return data
 

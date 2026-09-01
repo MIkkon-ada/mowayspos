@@ -20,6 +20,7 @@ export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId }: { ke
   const [workspace, setWorkspace] = useState<KeyTaskWorkspace | null>(null)
   const [selectedPlan, setSelectedPlan] = useState<ExecutionPlan | null>(null)
   const [creatingPlan, setCreatingPlan] = useState(false)
+  const [editingPlan, setEditingPlan] = useState<ExecutionPlan | null>(null)
   const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -37,13 +38,13 @@ export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId }: { ke
   }, [keyTaskId, refreshKey])
 
   useEffect(() => {
-    if (!creatingPlan || !workspace?.project?.id) return
+    if ((!creatingPlan && !editingPlan) || !workspace?.project?.id) return
     let cancelled = false
     getProjectMembers(workspace.project.id)
       .then((members) => { if (!cancelled) setProjectMembers(members) })
       .catch(() => { if (!cancelled) setProjectMembers([]) })
     return () => { cancelled = true }
-  }, [creatingPlan, workspace?.project?.id])
+  }, [creatingPlan, editingPlan, workspace?.project?.id])
 
   const refresh = () => setRefreshKey((value) => value + 1)
   const submitUpdate = () => {
@@ -103,8 +104,8 @@ export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId }: { ke
           <div className="xl:sticky xl:top-4 xl:self-start"><KeyTaskContextCard workspace={workspace} /></div>
         </div>
       </div>
-      {creatingPlan && <ExecutionPlanCreateDrawer keyTaskId={keyTaskId} defaultAssigneeId={workspace.key_task.owner.id ?? null} members={projectMembers} onClose={() => setCreatingPlan(false)} onCreated={refresh} />}
-      <ExecutionPlanDetailDrawer open={Boolean(selectedPlan)} plan={selectedPlan} workspace={workspace} onClose={() => setSelectedPlan(null)} onSubmitUpdate={submitUpdate} onEdit={() => { setSelectedPlan(null); submitUpdate() }} onMarkCompleted={(plan) => void markPlanCompleted(plan)} />
+      {(creatingPlan || editingPlan) && <ExecutionPlanCreateDrawer keyTaskId={keyTaskId} defaultAssigneeId={workspace.key_task.owner.id ?? null} members={projectMembers} plan={editingPlan} onClose={() => { setCreatingPlan(false); setEditingPlan(null) }} onCreated={refresh} />}
+      <ExecutionPlanDetailDrawer open={Boolean(selectedPlan)} plan={selectedPlan} workspace={workspace} onClose={() => setSelectedPlan(null)} onSubmitUpdate={submitUpdate} onEdit={(plan) => { setSelectedPlan(null); setEditingPlan(plan) }} onMarkCompleted={(plan) => void markPlanCompleted(plan)} />
     </main>
   )
 }

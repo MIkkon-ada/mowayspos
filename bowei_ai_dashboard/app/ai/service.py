@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ from .crypto import AICredentialCipher, AIConfigurationKeyError
 
 
 _SAFE_ERROR_CODES = {
+    "AI_RESPONSE_INVALID",
     "AI_UPSTREAM_TIMEOUT",
     "AI_UPSTREAM_RATE_LIMIT",
     "AI_UPSTREAM_5XX",
@@ -293,13 +295,67 @@ class AIService:
         capability_key: str,
         prompt: str,
         context: AIInvocationContext | None = None,
+        response_validator: Callable[[str], bool] | None = None,
     ) -> ChatResult:
         text, model, log = self._invoke(
             capability_key,
             ModelType.CHAT,
             context,
-            lambda current, api_key, timeout: self.adapters.complete_chat(
-                current, api_key, prompt, timeout_seconds=timeout
+            lambda current, api_key, timeout: self._complete_validated_chat(
+                current,
+                api_key,
+                prompt,
+                None if capability_key == Capability.TASK_PLAN_PROPOSAL else timeout,
+                response_validator,
+            ),
+        )
+        return ChatResult(text=text, model_code=model.code, invocation_log_id=log.id)
+
+    def _complete_validated_chat(
+        self,
+        model: models.AIModel,
+        api_key: str,
+        prompt: str,
+        timeout_seconds: int,
+        response_validator: Callable[[str], bool] | None,
+    ) -> str:
+        text = self.adapters.complete_chat(
+            model,
+            api_key,
+            prompt,
+            timeout_seconds=timeout_seconds,
+        )
+        if response_validator is not None and not response_validator(text):
+            raise AIUpstreamError("AI_RESPONSE_INVALID", retryable=True)
+        return text
+
+    def invoke_project_init_vision(
+        self,
+        images: list[Path],
+        prompt: str,
+        context: AIInvocationContext | None = None,
+    ) -> ChatResult:
+        policy, candidates = self._candidates(
+            Capability.PROJECT_INIT_ANALYSIS,
+            ModelType.CHAT,
+        )
+        vision_candidates = [
+            model for model in candidates if self._vision_workbook_enabled(model)
+        ]
+        if not vision_candidates:
+            raise AICapabilityNotConfigured(
+                "project init vision has no explicitly opted-in model"
+            )
+        text, model, log = self._invoke_candidates(
+            policy,
+            vision_candidates,
+            context,
+            lambda current, api_key, timeout: self.adapters.complete_project_init_vision(
+                current,
+                api_key,
+                images,
+                prompt,
+                timeout_seconds=timeout,
             ),
         )
         return ChatResult(text=text, model_code=model.code, invocation_log_id=log.id)

@@ -53,6 +53,7 @@ export function TaskPlanProposalReview({ run, members, busy, onUpdate, onApply }
 
   return <section className="space-y-4" aria-label="AI 计划草稿审核">
     <div className="rounded-lg bg-sky-50 p-3 text-xs leading-5 text-sky-800">AI 仅根据输入文本生成草稿，不会自动创建。请核对每条计划及其原文依据；补全后先保存该条草稿，再勾选确认创建。</div>
+    {run.attachments?.length ? <section className="rounded-lg border border-slate-200 p-3 text-xs text-slate-600"><h3 className="font-semibold text-slate-700">本次分析附件</h3><ul className="mt-2 space-y-1">{run.attachments.map((item) => <li key={item.id}>{item.original_name} · {Math.ceil(item.size_bytes / 1024)} KB</li>)}</ul></section> : null}
     {run.proposals.map((proposal) => {
       const plan = drafts[proposal.id]
       const ready = proposal.status === 'ready'

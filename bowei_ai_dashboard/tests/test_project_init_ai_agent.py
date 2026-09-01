@@ -3,7 +3,14 @@ import json
 import pytest
 from openpyxl import Workbook
 from pydantic import ValidationError
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+from app import models
+from app.ai.contracts import AIInvocationContext, Capability
+from app.ai.repository import AIConfigurationRepository
+from app.ai.service import AIService
+from app.database import Base
 from app.services.project_init_ai_agent import (
     AgentTask,
     Evidence,
@@ -17,6 +24,18 @@ from app.services.project_init_ai_agent import (
     generate_project_init_draft,
 )
 from app.services.project_init_file_parser import SourceChunk, parse_project_init_file
+
+
+TEST_FERNET_KEY = "m6F5dBXMRy1ZOQ4Dv_rwuPhtchxZzTCBuRUg-hxeF6U="
+
+
+class SequencedChatAdapters:
+    def __init__(self, responses: dict[str, str]) -> None:
+        self.responses = responses
+
+    def complete_chat(self, model, _api_key, _prompt, *, timeout_seconds):
+        assert timeout_seconds == 30
+        return self.responses[model.code]
 
 
 def chunk(text: str, *, name: str = "plan.txt", location: str = "lines 1-2") -> dict:
@@ -63,6 +82,73 @@ def fake_llm(result: dict):
         return json.dumps(result, ensure_ascii=False)
 
     return call
+
+
+def test_schema_invalid_primary_response_uses_project_init_fallback_model():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        repo = AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY)
+        primary = repo.create_model(
+            code="primary",
+            display_name="Primary",
+            provider="deepseek",
+            model_name="deepseek-chat",
+            model_type="chat",
+            base_url="https://api.example.test",
+            config={},
+            enabled=True,
+            source="custom",
+        )
+        fallback = repo.create_model(
+            code="fallback",
+            display_name="Fallback",
+            provider="dashscope",
+            model_name="qwen-plus",
+            model_type="chat",
+            base_url="https://api.example.test",
+            config={},
+            enabled=True,
+            source="custom",
+        )
+        for model in (primary, fallback):
+            repo.replace_credential(model.id, api_key="test-key", app_secret=None)
+        repo.save_policy(
+            Capability.PROJECT_INIT_ANALYSIS,
+            primary_model_id=primary.id,
+            fallback_model_ids=[fallback.id],
+            timeout_seconds=30,
+            max_attempts=2,
+            enabled=True,
+        )
+        invalid = raw_task()
+        invalid["evidence"] = invalid["evidence"][0]
+        invalid["subtasks"][0]["evidence"] = invalid["subtasks"][0]["evidence"][0]
+        adapters = SequencedChatAdapters(
+            {
+                "primary": json.dumps({"tasks": [invalid]}, ensure_ascii=False),
+                "fallback": json.dumps({"tasks": [raw_task()]}, ensure_ascii=False),
+            }
+        )
+
+        result = generate_project_init_draft(
+            [chunk("实施交付")],
+            [],
+            [],
+            ai_service=AIService(db, adapters=adapters, cipher_key=TEST_FERNET_KEY),
+            invocation_context=AIInvocationContext(resource_type="project_init", resource_id=99),
+        )
+
+        assert result.tasks[0].title == "实施交付"
+        logs = db.query(models.AIInvocationLog).order_by(models.AIInvocationLog.id).all()
+        assert [(log.status, log.fallback_used, log.error_code) for log in logs] == [
+            ("failed", False, "AI_RESPONSE_INVALID"),
+            ("succeeded", True, ""),
+        ]
+    finally:
+        db.close()
+        Base.metadata.drop_all(engine)
 
 
 def test_unique_active_person_is_bound_but_ambiguous_and_inactive_are_not():

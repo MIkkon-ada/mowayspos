@@ -1,17 +1,30 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
 from ..permissions import get_all_project_roles, get_current_user_name, get_user_context_from_db, require_login
-from ..services.task_plan_proposals import apply_text_plan_proposals, create_text_plan_proposal_run
+from ..services.task_plan_proposals import (
+    UploadedAttachment,
+    apply_text_plan_proposals,
+    create_attachment_plan_proposal_run,
+)
 
 
 router = APIRouter(tags=["task-plan-proposals"])
+
+
+def _task_plan_attachment_root() -> Path:
+    configured = os.getenv("TASK_PLAN_PROPOSAL_ATTACHMENT_ROOT", "").strip()
+    if configured:
+        return Path(configured)
+    return Path(__file__).resolve().parents[2] / "data" / "task_plan_proposal_attachments"
 
 
 def _json(value: str, fallback):
@@ -58,6 +71,12 @@ def _run_payload(run: models.TaskPlanProposalRun, db: Session) -> dict:
         .order_by(models.TaskPlanProposal.id.asc())
         .all()
     )
+    attachments = (
+        db.query(models.TaskPlanProposalAttachment)
+        .filter_by(run_id=run.id)
+        .order_by(models.TaskPlanProposalAttachment.id.asc())
+        .all()
+    )
     return {
         "id": run.id,
         "project_id": run.project_id,
@@ -65,27 +84,47 @@ def _run_payload(run: models.TaskPlanProposalRun, db: Session) -> dict:
         "status": run.status,
         "source_text": run.source_text,
         "model_code": run.model_code,
+        "attachments": [
+            {
+                "id": row.id,
+                "original_name": row.original_name,
+                "mime_type": row.mime_type,
+                "size_bytes": row.size_bytes,
+            }
+            for row in attachments
+        ],
         "proposals": [_proposal_payload(row) for row in proposals],
     }
 
 
 @router.post("/api/key-tasks/{key_task_id}/task-plan-proposal-runs", status_code=201)
-def create_task_plan_proposal_run(
+async def create_task_plan_proposal_run(
     key_task_id: int,
-    payload: schemas.TaskPlanProposalTextCreatePayload,
+    source_text: str = Form(""),
+    files: list[UploadFile] = File(default=[]),
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
     current_user = require_login(current_user, db)
     _, task, context = _key_task_for_write(key_task_id, current_user, db)
-    run = create_text_plan_proposal_run(
-        project_id=task.project_id,
-        key_task_id=key_task_id,
-        source_text=payload.source_text,
-        created_by_person_id=context.get("person_id"),
-        actor=current_user,
-        db=db,
-    )
+    try:
+        attachments = [
+            UploadedAttachment(filename=file.filename or "", content=await file.read())
+            for file in files
+        ]
+        run = create_attachment_plan_proposal_run(
+            project_id=task.project_id,
+            key_task_id=key_task_id,
+            source_text=source_text,
+            attachments=attachments,
+            storage_root=_task_plan_attachment_root(),
+            created_by_person_id=context.get("person_id"),
+            actor=current_user,
+            db=db,
+        )
+    finally:
+        for file in files:
+            await file.close()
     return _run_payload(run, db)
 
 

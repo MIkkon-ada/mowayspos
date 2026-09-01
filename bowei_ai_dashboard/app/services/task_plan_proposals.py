@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
+from os import PathLike
 from typing import Any
 
 from fastapi import HTTPException
@@ -14,9 +16,22 @@ from ..ai.contracts import AIInvocationContext, Capability
 from ..ai.service import AIService
 from ..time_utils import utc_now
 from .key_task_execution import record_execution_event
+from .meeting_document_text import MeetingDocumentTextError, extract_meeting_document_text
+from .task_plan_proposal_attachments import (
+    TaskPlanProposalAttachmentError,
+    remove_task_plan_attachment,
+    save_task_plan_attachments,
+)
 from ..routers.monthly_plans import _validate_people
 
-MAX_PROPOSALS = 20
+MAX_PROPOSALS = 8
+MAX_SOURCE_TEXT_LENGTH = 40_000
+
+
+@dataclass(frozen=True)
+class UploadedAttachment:
+    filename: str
+    content: bytes
 
 
 def _json_dump(value: Any) -> str:
@@ -74,6 +89,11 @@ def _normalise_plan(raw: dict[str, Any], source: str, member_ids: set[int]) -> t
 
 def _prompt(source_text: str, members: list[dict[str, Any]]) -> str:
     return f"""你是项目任务拆解助手。只基于给定原文，为一个已选定的关键任务生成最多 {MAX_PROPOSALS} 条可执行任务计划草稿；不要写入系统。
+
+优先生成 3 至 6 条完整工作包；每条计划应有独立、可交付的工作结果，并覆盖一个可执行阶段。
+不要把同一句中的验收字段或名词拆成多条计划。例如“检查任务名称、负责人、协同人、计划时间、交付物和验收标准”应生成一条“核验 AI 拆解结果”的计划，不要拆成六条。
+若原文包含“关键任务上下文”，其中的默认负责人、默认协同人和计划区间可以直接作为计划默认值；使用人员时必须使用该人员在成员表中的 id，并在 evidence 中逐字引用对应上下文。
+
 原文：\n{source_text}\n
 项目成员（只能使用其中的 id）：{json.dumps(members, ensure_ascii=False)}
 只输出 JSON：{{\"plans\":[{{\"title\":\"\",\"expected_output\":\"\",\"assignee_id\":null,\"collaborator_ids\":[],\"status\":\"未开始\",\"start_date\":null,\"due_date\":null,\"completion_criteria\":\"\",\"evidence\":{{\"title\":\"原文精确片段\",\"expected_output\":\"原文精确片段\",\"assignee_id\":\"原文精确片段\",\"start_date\":\"原文精确片段\",\"due_date\":\"原文精确片段\",\"completion_criteria\":\"原文精确片段\"}}}}]}}。没有明确依据的字段留空。"""
@@ -89,41 +109,145 @@ def create_text_plan_proposal_run(
     db: Session,
     ai_service: AIService | Any | None = None,
 ) -> models.TaskPlanProposalRun:
-    text = source_text.strip()
-    if not text:
-        raise HTTPException(422, "请输入需要拆解的文本")
-    member_rows = db.query(models.ProjectMember).filter_by(project_id=project_id).all()
-    members = [{"id": row.person_id, "name": row.person_name_snapshot} for row in member_rows]
-    result = (ai_service or AIService(db)).invoke_chat(
-        Capability.TASK_PLAN_PROPOSAL,
-        _prompt(text, members),
-        AIInvocationContext(actor=actor, resource_type="key_task", resource_id=key_task_id),
-    )
-    run = models.TaskPlanProposalRun(
+    return create_attachment_plan_proposal_run(
         project_id=project_id,
         key_task_id=key_task_id,
-        source_text=text,
-        source_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
-        status="ready_for_review",
-        model_code=result.model_code,
-        invocation_log_id=result.invocation_log_id,
+        source_text=source_text,
+        attachments=[],
+        storage_root="data/task_plan_proposal_attachments",
         created_by_person_id=created_by_person_id,
+        actor=actor,
+        db=db,
+        ai_service=ai_service,
     )
-    db.add(run)
-    db.flush()
-    member_ids = {item["id"] for item in members}
-    for raw in _parse_response(result.text):
-        plan, validation, status = _normalise_plan(raw, text, member_ids)
-        db.add(models.TaskPlanProposal(
-            run_id=run.id,
-            plan_json=_json_dump(plan),
-            evidence_json=_json_dump(raw.get("evidence") if isinstance(raw.get("evidence"), dict) else {}),
-            validation_json=_json_dump(validation),
-            status=status,
-        ))
-    db.commit()
-    db.refresh(run)
-    return run
+
+
+def create_attachment_plan_proposal_run(
+    *,
+    project_id: int,
+    key_task_id: int,
+    source_text: str,
+    attachments: list[UploadedAttachment],
+    storage_root: str | PathLike[str],
+    created_by_person_id: int | None,
+    actor: str,
+    db: Session,
+    ai_service: AIService | Any | None = None,
+) -> models.TaskPlanProposalRun:
+    manual_text = (source_text or "").strip()
+    extracted_attachments: list[tuple[UploadedAttachment, str]] = []
+    try:
+        for attachment in attachments:
+            extracted_attachments.append((
+                attachment,
+                extract_meeting_document_text(attachment.filename, attachment.content),
+            ))
+    except (AttributeError, MeetingDocumentTextError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    sections: list[str] = []
+    if manual_text:
+        sections.append(f"手工补充文字：\n{manual_text}")
+    sections.extend(
+        f"附件：{attachment.filename}\n{extracted_text}"
+        for attachment, extracted_text in extracted_attachments
+    )
+    text = "\n\n".join(sections)
+    if not text:
+        raise HTTPException(422, "请输入需要拆解的文本或上传附件")
+    source_content_length = len(manual_text) + sum(
+        len(extracted_text) for _, extracted_text in extracted_attachments
+    )
+    if source_content_length > MAX_SOURCE_TEXT_LENGTH:
+        raise HTTPException(422, "文本和附件提取内容不能超过 40000 字符")
+
+    saved_attachments: list[dict[str, Any]] = []
+    completed = False
+    try:
+        saved_attachments = save_task_plan_attachments(
+            storage_root,
+            project_id=project_id,
+            attachments=[(attachment.filename, attachment.content) for attachment, _ in extracted_attachments],
+        )
+        member_rows = db.query(models.ProjectMember).filter_by(project_id=project_id).all()
+        members = [{"id": row.person_id, "name": row.person_name_snapshot} for row in member_rows]
+        key_task = db.get(models.SubTask, key_task_id)
+        member_names = {member["id"]: member["name"] for member in members}
+        context_lines: list[str] = []
+        if key_task:
+            context_lines.append("关键任务上下文（可作为计划默认值和原文依据）：")
+            if key_task.title:
+                context_lines.append(f"关键任务名称：{key_task.title}")
+            if key_task.assignee:
+                assignee_detail = key_task.assignee
+                if key_task.assignee_id:
+                    assignee_detail += f"（人员 id：{key_task.assignee_id}）"
+                context_lines.append(f"关键任务默认负责人：{assignee_detail}")
+            collaborator_ids = key_task.collaborator_ids if isinstance(key_task.collaborator_ids, list) else []
+            collaborators = [
+                f"{member_names[person_id]}（人员 id：{person_id}）"
+                for person_id in collaborator_ids
+                if person_id in member_names
+            ]
+            if collaborators:
+                context_lines.append(f"关键任务默认协同人：{'、'.join(collaborators)}")
+            if key_task.plan_time:
+                context_lines.append(f"关键任务计划区间：{key_task.plan_time}")
+        source_with_context = text
+        if len(context_lines) > 1:
+            source_with_context = f"{text}\n\n{'\n'.join(context_lines)}"
+        result = (ai_service or AIService(db)).invoke_chat(
+            Capability.TASK_PLAN_PROPOSAL,
+            _prompt(source_with_context, members),
+            AIInvocationContext(actor=actor, resource_type="key_task", resource_id=key_task_id),
+        )
+        raw_plans = _parse_response(result.text)
+        run = models.TaskPlanProposalRun(
+            project_id=project_id,
+            key_task_id=key_task_id,
+            source_text=text,
+            source_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            status="ready_for_review",
+            model_code=result.model_code,
+            invocation_log_id=result.invocation_log_id,
+            created_by_person_id=created_by_person_id,
+        )
+        db.add(run)
+        db.flush()
+        for saved, (_, extracted_text) in zip(saved_attachments, extracted_attachments):
+            db.add(models.TaskPlanProposalAttachment(
+                run_id=run.id,
+                original_name=saved["original_name"],
+                storage_key=saved["storage_key"],
+                mime_type=saved["mime_type"],
+                size_bytes=saved["size_bytes"],
+                content_hash=saved["content_hash"],
+                extracted_text=extracted_text,
+                uploaded_by_person_id=created_by_person_id,
+            ))
+        member_ids = {item["id"] for item in members}
+        for raw in raw_plans:
+            plan, validation, status = _normalise_plan(raw, source_with_context, member_ids)
+            db.add(models.TaskPlanProposal(
+                run_id=run.id,
+                plan_json=_json_dump(plan),
+                evidence_json=_json_dump(raw.get("evidence") if isinstance(raw.get("evidence"), dict) else {}),
+                validation_json=_json_dump(validation),
+                status=status,
+            ))
+        db.commit()
+        completed = True
+        return run
+    except TaskPlanProposalAttachmentError as exc:
+        db.rollback()
+        raise HTTPException(422, str(exc)) from exc
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        if saved_attachments and not completed:
+            for saved in reversed(saved_attachments):
+                remove_task_plan_attachment(storage_root, saved["storage_key"])
 
 
 def _json_load(value: str, fallback: Any) -> Any:
@@ -190,28 +314,30 @@ def apply_text_plan_proposals(
                 {}, crud.to_dict(row), project_id=run.project_id,
             )
             db.flush()
-            now = utc_now()
-            record_execution_event(
-                db,
-                project_id=run.project_id,
-                key_task_id=key_task.id,
-                execution_plan_id=row.id,
-                event_type="execution_plan_created",
-                source_type="task_plan_proposal",
-                source_id=proposal.id,
-                dedupe_key=f"operation_log:{log.id}:ai-task-plan-proposal-apply",
-                actor_person_id=actor_person_id,
-                actor_name=actor,
-                occurred_at=now,
-                confirmed_at=now,
-                effective_at=now,
-                affects_current_progress=False,
-                status_after=row.status,
-                progress_summary=f"AI 建议确认后新增任务计划：{row.title}",
-            )
             proposal.created_plan_id = row.id
             proposal.status = "executed"
             created.append(row)
+        now = utc_now()
+        record_execution_event(
+            db,
+            project_id=run.project_id,
+            key_task_id=key_task.id,
+            event_type="execution_plans_created",
+            source_type="task_plan_proposal",
+            source_id=run.id,
+            dedupe_key=f"task-plan-proposal-run:{run.id}:apply",
+            actor_person_id=actor_person_id,
+            actor_name=actor,
+            occurred_at=now,
+            confirmed_at=now,
+            effective_at=now,
+            affects_current_progress=False,
+            progress_summary=f"AI 拆解已确认，新增 {len(created)} 项任务计划",
+            display_payload={
+                "execution_plan_ids": [row.id for row in created],
+                "plan_count": len(created),
+            },
+        )
         run.status = "completed"
         db.commit()
     except Exception:

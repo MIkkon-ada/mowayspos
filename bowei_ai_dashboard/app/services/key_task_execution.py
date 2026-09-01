@@ -19,7 +19,31 @@ SOURCE_LABELS = {
     "execution_schedule": "计划变更",
     "achievement": "成果",
     "issue": "问题",
+    "task_plan_proposal": "AI 计划拆解",
 }
+
+PRESERVED_PLAN_STATUSES = {"已完成", "已取消", "暂缓", "延期", "已延期"}
+
+
+def is_execution_plan_overdue(row: models.ExecutionSchedule, *, today: date | None = None) -> bool:
+    today = today or utc_now().date()
+    return bool(
+        row.status not in PRESERVED_PLAN_STATUSES
+        and (row.due_kind == "exact" or (not row.due_kind and row.due_date is not None))
+        and row.due_date
+        and row.due_date < today
+    )
+
+
+def execution_plan_display_status(row: models.ExecutionSchedule, *, today: date | None = None) -> str:
+    today = today or utc_now().date()
+    if row.status in PRESERVED_PLAN_STATUSES:
+        return row.status
+    if is_execution_plan_overdue(row, today=today):
+        return "已延期"
+    if row.start_date:
+        return "未开始" if row.start_date > today else "进行中"
+    return row.status
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -158,7 +182,46 @@ def timeline_dicts(db: Session, key_task_id: int, *, limit: int = 200) -> list[d
         .limit(limit)
         .all()
     )
-    return [event_dict(row) for row in rows]
+    legacy_batches: dict[tuple[Any, ...], list[models.KeyTaskExecutionEvent]] = {}
+    for row in rows:
+        if row.source_type != "task_plan_proposal" or row.event_type != "execution_plan_created":
+            continue
+        occurred_at = row.occurred_at
+        if not occurred_at:
+            continue
+        batch_key = (
+            row.actor_person_id,
+            row.actor_name_snapshot,
+            occurred_at.replace(second=0, microsecond=0),
+        )
+        legacy_batches.setdefault(batch_key, []).append(row)
+
+    aggregated_ids: set[int] = set()
+    timeline: list[dict[str, Any]] = []
+    for row in rows:
+        if row.source_type == "task_plan_proposal" and row.event_type == "execution_plan_created" and row.occurred_at:
+            batch_key = (
+                row.actor_person_id,
+                row.actor_name_snapshot,
+                row.occurred_at.replace(second=0, microsecond=0),
+            )
+            batch = legacy_batches[batch_key]
+            if len(batch) > 1:
+                if row.id in aggregated_ids:
+                    continue
+                aggregated_ids.update(item.id for item in batch)
+                event = event_dict(row)
+                event["event_type"] = "execution_plans_created"
+                event["execution_plan_id"] = None
+                event["progress_summary"] = f"AI 拆解已确认，新增 {len(batch)} 项任务计划"
+                event["display_payload"] = {
+                    "execution_plan_ids": [item.execution_plan_id for item in batch],
+                    "plan_count": len(batch),
+                }
+                timeline.append(event)
+                continue
+        timeline.append(event_dict(row))
+    return timeline
 
 
 def effective_execution_plans(db: Session, key_task_id: int) -> list[models.ExecutionSchedule]:
@@ -176,13 +239,16 @@ def effective_execution_plans(db: Session, key_task_id: int) -> list[models.Exec
 
 def plan_summary_dict(db: Session, key_task_id: int) -> dict[str, int]:
     rows = effective_execution_plans(db, key_task_id)
-    completed = sum(row.status == "已完成" for row in rows)
-    not_started = sum(row.status in {"待开始", "未开始"} for row in rows)
+    statuses = [execution_plan_display_status(row) for row in rows]
+    completed = sum(status == "已完成" for status in statuses)
+    not_started = sum(status in {"待开始", "未开始"} for status in statuses)
+    delayed = sum(status in {"延期", "已延期"} for status in statuses)
     return {
         "total": len(rows),
         "completed": completed,
-        "in_progress": len(rows) - completed - not_started,
+        "in_progress": sum(status == "进行中" for status in statuses),
         "not_started": not_started,
+        "delayed": delayed,
     }
 
 

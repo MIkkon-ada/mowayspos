@@ -602,6 +602,25 @@ class TaskPlanProposalRun(Base, TimestampMixin):
     created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
 
 
+class TaskPlanProposalAttachment(Base, TimestampMixin):
+    __tablename__ = "task_plan_proposal_attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(
+        Integer,
+        ForeignKey("task_plan_proposal_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    original_name = Column(String(255), nullable=False)
+    storage_key = Column(String(255), nullable=False, unique=True)
+    mime_type = Column(String(120), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    content_hash = Column(String(64), nullable=False, index=True)
+    extracted_text = Column(Text, nullable=False, default="")
+    uploaded_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
+
+
 class TaskPlanProposal(Base, TimestampMixin):
     __tablename__ = "task_plan_proposals"
     __table_args__ = (

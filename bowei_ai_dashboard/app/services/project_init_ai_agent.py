@@ -926,6 +926,15 @@ def _parse_json_response(raw: str | dict[str, Any]) -> Any:
     return values[0]
 
 
+def _is_valid_raw_draft_envelope(raw: str) -> bool:
+    try:
+        payload = _parse_json_response(raw)
+        _RawEnvelope.model_validate(_normalise_llm_payload(payload))
+    except (ProjectInitAiError, ValidationError):
+        return False
+    return True
+
+
 def _evidence_traceability_error(raw: Evidence, sources: list[tuple[str, str, str, int | None]]) -> str | None:
     file_matches = [source for source in sources if source[0] == raw.file_name]
     if not file_matches:
@@ -1270,6 +1279,7 @@ def generate_project_init_draft(
             Capability.PROJECT_INIT_ANALYSIS,
             prompt,
             invocation_context or AIInvocationContext(resource_type="project_init"),
+            response_validator=_is_valid_raw_draft_envelope,
         ).text
     else:
         raise ProjectInitAiError("AI capability service is required")

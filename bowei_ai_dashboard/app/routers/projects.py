@@ -2243,9 +2243,24 @@ def _delete_project_data(project: models.Project, db: Session) -> None:
         row[0]
         for row in db.query(models.MeetingChangeSet.id).filter(models.MeetingChangeSet.project_id == project_id).all()
     ]
+    task_plan_run_ids = [
+        row[0]
+        for row in db.query(models.TaskPlanProposalRun.id)
+        .filter(models.TaskPlanProposalRun.project_id == project_id)
+        .all()
+    ]
 
     db.query(models.ExecutionScheduleReminder).filter(
         models.ExecutionScheduleReminder.schedule_id.in_(schedule_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.TaskPlanProposal).filter(
+        models.TaskPlanProposal.run_id.in_(task_plan_run_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.TaskPlanProposalAttachment).filter(
+        models.TaskPlanProposalAttachment.run_id.in_(task_plan_run_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.TaskPlanProposalRun).filter(
+        models.TaskPlanProposalRun.id.in_(task_plan_run_ids)
     ).delete(synchronize_session=False)
     db.query(models.KeyTaskExecutionEvent).filter(models.KeyTaskExecutionEvent.project_id == project_id).delete(
         synchronize_session=False
@@ -2341,7 +2356,15 @@ def _project_purge_storage_roots() -> list[tuple[str, Path]]:
             "meeting_document",
             Path(meeting_root) if meeting_root else Path(__file__).resolve().parents[2] / "data" / "meeting_documents",
         ),
+        ("task_plan", _task_plan_attachment_root()),
     ]
+
+
+def _task_plan_attachment_root() -> Path:
+    configured = os.getenv("TASK_PLAN_PROPOSAL_ATTACHMENT_ROOT", "").strip()
+    if configured:
+        return Path(configured)
+    return Path(__file__).resolve().parents[2] / "data" / "task_plan_proposal_attachments"
 
 
 def _project_purge_payload_entries(project_id: int, db: Session) -> list[tuple[str, Path, str]]:
@@ -2353,6 +2376,13 @@ def _project_purge_payload_entries(project_id: int, db: Session) -> list[tuple[s
         entries.append(("project_init", roots["project_init"], row.storage_key))
     for row in db.query(models.MeetingDocumentSource).filter(models.MeetingDocumentSource.project_id == project_id).all():
         entries.append(("meeting_document", roots["meeting_document"], row.storage_key))
+    for row in (
+        db.query(models.TaskPlanProposalAttachment)
+        .join(models.TaskPlanProposalRun, models.TaskPlanProposalAttachment.run_id == models.TaskPlanProposalRun.id)
+        .filter(models.TaskPlanProposalRun.project_id == project_id)
+        .all()
+    ):
+        entries.append(("task_plan", roots["task_plan"], row.storage_key))
     return entries
 
 

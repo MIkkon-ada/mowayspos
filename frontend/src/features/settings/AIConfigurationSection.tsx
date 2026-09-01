@@ -17,11 +17,17 @@ type CapabilityPolicyView = AICapabilityPolicy & {
   requiredModelType: AIModel['model_type']
 }
 
-const CAPABILITY_DEFAULTS: Array<Pick<CapabilityPolicyView, 'capability_key' | 'requiredModelType'>> = [
-  { capability_key: 'meeting.analysis', requiredModelType: 'chat' },
-  { capability_key: 'task.extraction', requiredModelType: 'chat' },
-  { capability_key: 'project.init.analysis', requiredModelType: 'chat' },
-  { capability_key: 'speech.realtime', requiredModelType: 'asr' },
+type CapabilityDefinition = Pick<CapabilityPolicyView, 'capability_key' | 'requiredModelType'> & {
+  title: string
+  description: string
+}
+
+const CAPABILITY_DEFAULTS: CapabilityDefinition[] = [
+  { capability_key: 'meeting.analysis', requiredModelType: 'chat', title: '会议纪要 AI 分析', description: '用于会议资料分析、会议纪要和行动项生成。' },
+  { capability_key: 'task.extraction', requiredModelType: 'chat', title: '工作汇报 / 文本任务提取', description: '用于从工作汇报或输入文本中提取任务。' },
+  { capability_key: 'project.init.analysis', requiredModelType: 'chat', title: '项目立项方案 AI 分析', description: '用于项目立项页面上传资料后的方案分析。' },
+  { capability_key: 'task.plan.proposal', requiredModelType: 'chat', title: '关键任务计划 AI 拆解（文字 / 附件）', description: '用于工作推进表中，根据文字和附件生成任务计划草稿。' },
+  { capability_key: 'speech.realtime', requiredModelType: 'asr', title: '实时语音转写', description: '用于实时语音识别并转换为文字。' },
 ]
 
 function friendlyLoadError(error: unknown): string {
@@ -199,24 +205,33 @@ export function AIConfigurationSection() {
 
       <section className="mt-6 rounded-xl border border-slate-200 p-4">
         <h3 className="font-semibold text-slate-800">AI 能力策略</h3>
-        <p className="mt-1 text-xs text-slate-500">技术管理员设置主模型和备用模型的调用顺序。</p>
+        <p className="mt-1 text-xs text-slate-500">每个模块会先调用“优先模型”；失败后，才按备用模型顺序重试。</p>
         <div className="mt-4 space-y-4">
           {displayPolicies.map((policy) => {
             const order = policyOrders[policy.capability_key] ?? []
             const available = eligibleModels(policy)
+            const definition = CAPABILITY_DEFAULTS.find((item) => item.capability_key === policy.capability_key)
+            const primaryModel = models.find((item) => item.id === order[0])
             return <div key={policy.capability_key} className="rounded-lg bg-slate-50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <strong className="text-sm text-slate-700">{policy.capability_key}</strong>
+                <div>
+                  <strong className="text-sm text-slate-700">{definition?.title || policy.capability_key}</strong>
+                  {definition && <p className="mt-0.5 text-xs text-slate-500">{definition.description}</p>}
+                  <p className="mt-0.5 text-xs text-slate-400">系统标识：{policy.capability_key}</p>
+                </div>
                 <div className="flex items-center gap-2">
                   {!policy.configured && <span data-policy-status className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">未配置</span>}
                   <button type="button" onClick={() => void savePolicy(policy)} className="rounded-md bg-sky-700 px-3 py-1.5 text-xs font-semibold text-white">保存顺序</button>
                 </div>
               </div>
+              {primaryModel
+                ? <p className="mt-2 rounded bg-sky-50 px-2 py-1 text-xs text-sky-800">当前优先调用（下一次请求会先使用）：{primaryModel.display_name || primaryModel.model_name}</p>
+                : <p className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">当前未配置模型：此模块暂不能进行 AI 调用。</p>}
               <ol className="mt-2 space-y-1">
                 {order.map((id, index) => {
                   const model = models.find((item) => item.id === id)
                   return <li key={id} className="flex items-center gap-2 text-xs">
-                    <span className="w-4 font-semibold text-slate-400">{index + 1}</span>
+                    <span className="w-20 font-semibold text-slate-500">{index === 0 ? '优先模型' : `备用模型 ${index}`}</span>
                     <span className="flex-1">{model?.display_name || model?.model_name || `模型 ${id}`}</span>
                     <button type="button" disabled={index === 0} onClick={() => moveModel(policy.capability_key, index, -1)}>↑</button>
                     <button type="button" disabled={index === order.length - 1} onClick={() => moveModel(policy.capability_key, index, 1)}>↓</button>

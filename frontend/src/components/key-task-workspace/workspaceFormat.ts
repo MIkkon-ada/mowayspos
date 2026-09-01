@@ -32,6 +32,6 @@ export function statusTone(status?: string) {
   if (status === '已完成') return 'bg-emerald-50 text-emerald-700'
   if (status === '进行中') return 'bg-blue-50 text-blue-700'
   if (status === '已取消' || status === '暂缓') return 'bg-slate-100 text-slate-600'
-  if (status === '延期') return 'bg-amber-50 text-amber-700'
+  if (status === '延期' || status === '已延期') return 'bg-amber-50 text-amber-700'
   return 'bg-slate-100 text-slate-600'
 }

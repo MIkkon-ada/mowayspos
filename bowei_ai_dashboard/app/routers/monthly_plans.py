@@ -8,28 +8,25 @@ from sqlalchemy.orm import Session
 from .. import crud, models, schemas
 from ..database import get_db
 from ..permissions import get_current_user_name, get_user_context_from_db, require_login, require_project_access
-from ..services.key_task_execution import record_execution_event
+from ..services.key_task_execution import (
+    execution_plan_display_status,
+    is_execution_plan_overdue,
+    record_execution_event,
+)
 from ..time_utils import utc_now
 from .execution_schedules import _parent, _require_write
 
 
 router = APIRouter(tags=["monthly-plans"])
-FINAL_STATUSES = {"已完成", "已取消"}
 DISPLAY_STATUS_RANK = {"已延期": 0, "进行中": 1, "暂缓": 2, "未开始": 3, "已完成": 4, "已取消": 5}
 
 
 def is_overdue(row: models.ExecutionSchedule, *, today: date | None = None) -> bool:
-    today = today or utc_now().date()
-    return bool(
-        row.status not in FINAL_STATUSES
-        and (row.due_kind == "exact" or (not row.due_kind and row.due_date is not None))
-        and row.due_date
-        and row.due_date < today
-    )
+    return is_execution_plan_overdue(row, today=today)
 
 
 def display_status(row: models.ExecutionSchedule, *, today: date | None = None) -> str:
-    return "已延期" if is_overdue(row, today=today) else row.status
+    return execution_plan_display_status(row, today=today)
 
 
 def month_plan_sort_key(row: models.ExecutionSchedule, *, today: date | None = None) -> tuple:

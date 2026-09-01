@@ -889,18 +889,6 @@ class MonthPlanUpdatePayload(BaseModel):
     is_archived: bool | None = None
 
 
-class TaskPlanProposalTextCreatePayload(BaseModel):
-    source_text: str = Field(min_length=1, max_length=40_000)
-
-    @field_validator("source_text")
-    @classmethod
-    def text_cannot_be_blank(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("source_text cannot be blank")
-        return value
-
-
 class TaskPlanProposalPatchPayload(BaseModel):
     plan: dict[str, Any]
 

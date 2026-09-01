@@ -19,11 +19,13 @@ class FakeAdapters:
         self.chat_errors = {}
         self.chat_results = {}
         self.chat_calls = []
+        self.chat_timeouts = []
         self.vision_results = {}
         self.vision_calls = []
 
     def complete_chat(self, model, api_key, prompt, *, timeout_seconds):
         self.chat_calls.append(model.id)
+        self.chat_timeouts.append(timeout_seconds)
         if model.id in self.chat_errors:
             raise self.chat_errors[model.id]
         return self.chat_results[model.id]
@@ -140,6 +142,25 @@ def test_non_retryable_error_does_not_try_fallback(db, configured_chat_policy, f
         )
 
     assert fake_adapters.chat_calls == [primary.id]
+
+
+def test_task_plan_drafting_has_no_client_request_timeout(db, configured_chat_policy, fake_adapters):
+    primary, _fallback = configured_chat_policy
+    AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY).save_policy(
+        Capability.TASK_PLAN_PROPOSAL,
+        primary_model_id=primary.id,
+        fallback_model_ids=[],
+        timeout_seconds=30,
+        max_attempts=1,
+        enabled=True,
+    )
+    fake_adapters.chat_results[primary.id] = '{"plans":[]}'
+
+    AIService(db, adapters=fake_adapters, cipher_key=TEST_FERNET_KEY).invoke_chat(
+        Capability.TASK_PLAN_PROPOSAL, "draft plans"
+    )
+
+    assert fake_adapters.chat_timeouts == [None]
 
 
 def test_project_init_vision_uses_only_explicitly_opted_in_model(

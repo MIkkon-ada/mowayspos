@@ -1,12 +1,14 @@
 import hashlib
-from pathlib import Path
 
 import pytest
 
 from app.services.task_plan_proposal_attachments import (
+    MAX_TASK_PLAN_ATTACHMENT_BYTES,
+    MAX_TASK_PLAN_ATTACHMENT_COUNT,
     TaskPlanProposalAttachmentError,
     remove_task_plan_attachment,
     save_task_plan_attachment,
+    save_task_plan_attachments,
 )
 
 
@@ -40,6 +42,30 @@ def test_save_task_plan_attachment_rejects_pdf(tmp_path):
         )
 
 
+@pytest.mark.parametrize("project_id", [0, -1, True])
+def test_save_task_plan_attachment_rejects_non_positive_project_id(tmp_path, project_id):
+    with pytest.raises(TaskPlanProposalAttachmentError, match="positive integer"):
+        save_task_plan_attachment(
+            tmp_path, project_id=project_id, filename="proposal.txt", content=b"text"
+        )
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected_mime"),
+    [
+        ("proposal.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        ("proposal.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    ],
+)
+def test_save_task_plan_attachment_allows_office_file_types(tmp_path, filename, expected_mime):
+    saved = save_task_plan_attachment(
+        tmp_path, project_id=1, filename=filename, content=b"office document"
+    )
+
+    assert saved["mime_type"] == expected_mime
+    assert saved["path"].read_bytes() == b"office document"
+
+
 def test_save_task_plan_attachment_rejects_path_traversal_filename(tmp_path):
     with pytest.raises(TaskPlanProposalAttachmentError, match="basename"):
         save_task_plan_attachment(
@@ -63,6 +89,31 @@ def test_save_task_plan_attachment_rejects_content_over_limit(monkeypatch, tmp_p
         save_task_plan_attachment(
             tmp_path, project_id=1, filename="proposal.txt", content=b"four"
         )
+
+
+def test_save_task_plan_attachment_accepts_exact_10_mib_limit(tmp_path):
+    content = b"x" * MAX_TASK_PLAN_ATTACHMENT_BYTES
+
+    saved = save_task_plan_attachment(
+        tmp_path, project_id=1, filename="proposal.txt", content=content
+    )
+
+    assert saved["size_bytes"] == MAX_TASK_PLAN_ATTACHMENT_BYTES
+    assert saved["path"].stat().st_size == MAX_TASK_PLAN_ATTACHMENT_BYTES
+
+
+def test_save_task_plan_attachments_rejects_eleventh_file_before_writing(tmp_path):
+    attachments = [("proposal-11.txt", b"text")]
+
+    with pytest.raises(TaskPlanProposalAttachmentError, match="maximum count"):
+        save_task_plan_attachments(
+            tmp_path,
+            project_id=1,
+            attachments=attachments,
+            existing_attachment_count=MAX_TASK_PLAN_ATTACHMENT_COUNT,
+        )
+
+    assert not list(tmp_path.rglob("*"))
 
 
 def test_remove_task_plan_attachment_removes_only_safe_stored_file(tmp_path):

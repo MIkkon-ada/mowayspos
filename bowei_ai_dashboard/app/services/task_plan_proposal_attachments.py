@@ -75,6 +75,33 @@ def save_task_plan_attachment(
     }
 
 
+def save_task_plan_attachments(
+    root: str | os.PathLike[str],
+    *,
+    project_id: int,
+    attachments: list[tuple[str, bytes]],
+    existing_attachment_count: int = 0,
+) -> list[dict]:
+    """Save one request batch after the router has counted its persisted run attachments."""
+    if (
+        isinstance(existing_attachment_count, bool)
+        or not isinstance(existing_attachment_count, int)
+        or existing_attachment_count < 0
+    ):
+        raise TaskPlanProposalAttachmentError("Existing attachment count must be a non-negative integer")
+
+    attachment_batch = list(attachments)
+    if existing_attachment_count + len(attachment_batch) > MAX_TASK_PLAN_ATTACHMENT_COUNT:
+        raise TaskPlanProposalAttachmentError("Attachment maximum count exceeded")
+
+    return [
+        save_task_plan_attachment(
+            root, project_id=project_id, filename=filename, content=content
+        )
+        for filename, content in attachment_batch
+    ]
+
+
 def remove_task_plan_attachment(root: str | os.PathLike[str], storage_key: str) -> None:
     path = _safe_path(_root_path(root), storage_key)
     if path.is_file():

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
+from os import PathLike
 from typing import Any
 
 from fastapi import HTTPException
@@ -14,9 +16,26 @@ from ..ai.contracts import AIInvocationContext, Capability
 from ..ai.service import AIService
 from ..time_utils import utc_now
 from .key_task_execution import record_execution_event
+from .meeting_document_text import MeetingDocumentTextError, extract_meeting_document_text
+from .task_plan_proposal_attachments import (
+    TaskPlanProposalAttachmentError,
+    remove_task_plan_attachment,
+    save_task_plan_attachments,
+)
 from ..routers.monthly_plans import _validate_people
 
 MAX_PROPOSALS = 20
+MAX_SOURCE_TEXT_LENGTH = 40_000
+
+
+@dataclass(frozen=True)
+class UploadedAttachment:
+    filename: str
+    content: bytes
+
+
+class TaskPlanProposalAttachmentCleanupError(RuntimeError):
+    """Raised when project purge cannot safely remove task-plan attachment blobs."""
 
 
 def _json_dump(value: Any) -> str:
@@ -89,41 +108,135 @@ def create_text_plan_proposal_run(
     db: Session,
     ai_service: AIService | Any | None = None,
 ) -> models.TaskPlanProposalRun:
-    text = source_text.strip()
-    if not text:
-        raise HTTPException(422, "请输入需要拆解的文本")
-    member_rows = db.query(models.ProjectMember).filter_by(project_id=project_id).all()
-    members = [{"id": row.person_id, "name": row.person_name_snapshot} for row in member_rows]
-    result = (ai_service or AIService(db)).invoke_chat(
-        Capability.TASK_PLAN_PROPOSAL,
-        _prompt(text, members),
-        AIInvocationContext(actor=actor, resource_type="key_task", resource_id=key_task_id),
-    )
-    run = models.TaskPlanProposalRun(
+    return create_attachment_plan_proposal_run(
         project_id=project_id,
         key_task_id=key_task_id,
-        source_text=text,
-        source_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
-        status="ready_for_review",
-        model_code=result.model_code,
-        invocation_log_id=result.invocation_log_id,
+        source_text=source_text,
+        attachments=[],
+        storage_root="data/task_plan_proposal_attachments",
         created_by_person_id=created_by_person_id,
+        actor=actor,
+        db=db,
+        ai_service=ai_service,
     )
-    db.add(run)
-    db.flush()
-    member_ids = {item["id"] for item in members}
-    for raw in _parse_response(result.text):
-        plan, validation, status = _normalise_plan(raw, text, member_ids)
-        db.add(models.TaskPlanProposal(
-            run_id=run.id,
-            plan_json=_json_dump(plan),
-            evidence_json=_json_dump(raw.get("evidence") if isinstance(raw.get("evidence"), dict) else {}),
-            validation_json=_json_dump(validation),
-            status=status,
-        ))
-    db.commit()
-    db.refresh(run)
-    return run
+
+
+def create_attachment_plan_proposal_run(
+    *,
+    project_id: int,
+    key_task_id: int,
+    source_text: str,
+    attachments: list[UploadedAttachment],
+    storage_root: str | PathLike[str],
+    created_by_person_id: int | None,
+    actor: str,
+    db: Session,
+    ai_service: AIService | Any | None = None,
+) -> models.TaskPlanProposalRun:
+    manual_text = (source_text or "").strip()
+    extracted_attachments: list[tuple[UploadedAttachment, str]] = []
+    try:
+        for attachment in attachments:
+            extracted_attachments.append((
+                attachment,
+                extract_meeting_document_text(attachment.filename, attachment.content),
+            ))
+    except (AttributeError, MeetingDocumentTextError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    sections: list[str] = []
+    if manual_text:
+        sections.append(f"手工补充文字：\n{manual_text}")
+    sections.extend(
+        f"附件：{attachment.filename}\n{extracted_text}"
+        for attachment, extracted_text in extracted_attachments
+    )
+    text = "\n\n".join(sections)
+    if not text:
+        raise HTTPException(422, "请输入需要拆解的文本或上传附件")
+    if len(text) > MAX_SOURCE_TEXT_LENGTH:
+        raise HTTPException(422, "文本和附件提取内容不能超过 40000 字符")
+
+    saved_attachments: list[dict[str, Any]] = []
+    completed = False
+    try:
+        saved_attachments = save_task_plan_attachments(
+            storage_root,
+            project_id=project_id,
+            attachments=[(attachment.filename, attachment.content) for attachment, _ in extracted_attachments],
+        )
+        member_rows = db.query(models.ProjectMember).filter_by(project_id=project_id).all()
+        members = [{"id": row.person_id, "name": row.person_name_snapshot} for row in member_rows]
+        result = (ai_service or AIService(db)).invoke_chat(
+            Capability.TASK_PLAN_PROPOSAL,
+            _prompt(text, members),
+            AIInvocationContext(actor=actor, resource_type="key_task", resource_id=key_task_id),
+        )
+        raw_plans = _parse_response(result.text)
+        run = models.TaskPlanProposalRun(
+            project_id=project_id,
+            key_task_id=key_task_id,
+            source_text=text,
+            source_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            status="ready_for_review",
+            model_code=result.model_code,
+            invocation_log_id=result.invocation_log_id,
+            created_by_person_id=created_by_person_id,
+        )
+        db.add(run)
+        db.flush()
+        for saved, (_, extracted_text) in zip(saved_attachments, extracted_attachments):
+            db.add(models.TaskPlanProposalAttachment(
+                run_id=run.id,
+                original_name=saved["original_name"],
+                storage_key=saved["storage_key"],
+                mime_type=saved["mime_type"],
+                size_bytes=saved["size_bytes"],
+                content_hash=saved["content_hash"],
+                extracted_text=extracted_text,
+                uploaded_by_person_id=created_by_person_id,
+            ))
+        member_ids = {item["id"] for item in members}
+        for raw in raw_plans:
+            plan, validation, status = _normalise_plan(raw, text, member_ids)
+            db.add(models.TaskPlanProposal(
+                run_id=run.id,
+                plan_json=_json_dump(plan),
+                evidence_json=_json_dump(raw.get("evidence") if isinstance(raw.get("evidence"), dict) else {}),
+                validation_json=_json_dump(validation),
+                status=status,
+            ))
+        db.commit()
+        completed = True
+        return run
+    except TaskPlanProposalAttachmentError as exc:
+        db.rollback()
+        raise HTTPException(422, str(exc)) from exc
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        if saved_attachments and not completed:
+            for saved in reversed(saved_attachments):
+                remove_task_plan_attachment(storage_root, saved["storage_key"])
+
+
+def cleanup_project_task_plan_attachments(
+    *, project_id: int, storage_root: str | PathLike[str], db: Session
+) -> None:
+    """Remove persisted blobs for a project before its attachment rows are deleted."""
+    rows = (
+        db.query(models.TaskPlanProposalAttachment)
+        .join(models.TaskPlanProposalRun, models.TaskPlanProposalAttachment.run_id == models.TaskPlanProposalRun.id)
+        .filter(models.TaskPlanProposalRun.project_id == project_id)
+        .order_by(models.TaskPlanProposalAttachment.id.asc())
+        .all()
+    )
+    try:
+        for row in rows:
+            remove_task_plan_attachment(storage_root, row.storage_key)
+    except Exception as exc:
+        raise TaskPlanProposalAttachmentCleanupError("无法清理任务计划附件") from exc
 
 
 def _json_load(value: str, fallback: Any) -> Any:

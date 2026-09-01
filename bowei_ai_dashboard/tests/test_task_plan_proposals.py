@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import models
+from app.routers.task_plan_proposals import _run_payload
 from app.database import Base
+from app.services import task_plan_proposals
 from app.services.task_plan_proposals import apply_text_plan_proposals, create_text_plan_proposal_run
 
 
@@ -93,6 +95,165 @@ def test_text_analysis_persists_multiple_auditable_drafts_for_selected_key_task(
     assert proposals[1].status == "needs_confirmation"
     assert json.loads(proposals[0].plan_json)["assignee_id"] == 2
     assert json.loads(proposals[1].validation_json)["state"] == "needs_confirmation"
+
+
+def test_attachment_analysis_combines_manual_text_and_persists_attachment_metadata(db, tmp_path):
+    _seed(db)
+    source = "由李四负责整理客户清单并形成可核对的客户清单，随后安排客户访谈并输出访谈纪要。"
+
+    run = task_plan_proposals.create_attachment_plan_proposal_run(
+        project_id=10,
+        key_task_id=30,
+        source_text="补充说明",
+        attachments=[task_plan_proposals.UploadedAttachment(filename="source.txt", content=source.encode())],
+        storage_root=tmp_path / "attachments",
+        created_by_person_id=1,
+        actor="owner",
+        db=db,
+        ai_service=FakeAI(),
+    )
+
+    attachment = db.query(models.TaskPlanProposalAttachment).one()
+    assert run.source_text == f"手工补充文字：\n补充说明\n\n附件：source.txt\n{source}"
+    assert attachment.run_id == run.id
+    assert attachment.original_name == "source.txt"
+    assert attachment.extracted_text == source
+    assert attachment.uploaded_by_person_id == 1
+    assert (tmp_path / "attachments" / attachment.storage_key).read_bytes() == source.encode()
+
+
+def test_attachment_analysis_removes_saved_blobs_and_rows_when_ai_fails(db, tmp_path):
+    _seed(db)
+
+    class FailingAI:
+        def invoke_chat(self, *_args, **_kwargs):
+            raise RuntimeError("AI unavailable")
+
+    with pytest.raises(RuntimeError, match="AI unavailable"):
+        task_plan_proposals.create_attachment_plan_proposal_run(
+            project_id=10,
+            key_task_id=30,
+            source_text="",
+            attachments=[task_plan_proposals.UploadedAttachment(filename="source.txt", content="附件内容".encode())],
+            storage_root=tmp_path / "attachments",
+            created_by_person_id=1,
+            actor="owner",
+            db=db,
+            ai_service=FailingAI(),
+        )
+
+    assert db.query(models.TaskPlanProposalRun).count() == 0
+    assert db.query(models.TaskPlanProposalAttachment).count() == 0
+    assert not [path for path in (tmp_path / "attachments").rglob("*") if path.is_file()]
+
+
+def test_run_payload_includes_attachment_metadata(db, tmp_path):
+    _seed(db)
+    run = task_plan_proposals.create_attachment_plan_proposal_run(
+        project_id=10,
+        key_task_id=30,
+        source_text="",
+        attachments=[task_plan_proposals.UploadedAttachment(filename="source.txt", content="附件内容".encode())],
+        storage_root=tmp_path / "attachments",
+        created_by_person_id=1,
+        actor="owner",
+        db=db,
+        ai_service=FakeAI(),
+    )
+
+    payload = _run_payload(run, db)
+
+    assert payload["attachments"] == [{
+        "id": db.query(models.TaskPlanProposalAttachment).one().id,
+        "original_name": "source.txt",
+        "mime_type": "text/plain",
+        "size_bytes": len("附件内容".encode()),
+    }]
+
+
+@pytest.mark.parametrize("filename,content", [("source.pdf", b"%PDF"), ("source.docx", b"not-a-zip")])
+def test_invalid_attachment_leaves_no_task_plan_rows_or_blobs(db, tmp_path, filename, content):
+    _seed(db)
+
+    with pytest.raises(HTTPException, match="支持|有效"):
+        task_plan_proposals.create_attachment_plan_proposal_run(
+            project_id=10,
+            key_task_id=30,
+            source_text="",
+            attachments=[task_plan_proposals.UploadedAttachment(filename=filename, content=content)],
+            storage_root=tmp_path / "attachments",
+            created_by_person_id=1,
+            actor="owner",
+            db=db,
+            ai_service=FakeAI(),
+        )
+
+    assert db.query(models.TaskPlanProposalRun).count() == 0
+    assert db.query(models.TaskPlanProposalAttachment).count() == 0
+    assert not (tmp_path / "attachments").exists()
+
+
+def test_attachment_analysis_requires_manual_text_or_attachment(db, tmp_path):
+    _seed(db)
+
+    with pytest.raises(HTTPException, match="文本或上传附件"):
+        task_plan_proposals.create_attachment_plan_proposal_run(
+            project_id=10,
+            key_task_id=30,
+            source_text="  ",
+            attachments=[],
+            storage_root=tmp_path / "attachments",
+            created_by_person_id=1,
+            actor="owner",
+            db=db,
+            ai_service=FakeAI(),
+        )
+
+    assert db.query(models.TaskPlanProposalRun).count() == 0
+    assert db.query(models.TaskPlanProposalAttachment).count() == 0
+    assert not (tmp_path / "attachments").exists()
+
+
+def test_attachment_analysis_rejects_source_over_40000_characters(db, tmp_path):
+    _seed(db)
+
+    with pytest.raises(HTTPException, match="40000"):
+        task_plan_proposals.create_attachment_plan_proposal_run(
+            project_id=10,
+            key_task_id=30,
+            source_text="x" * 40_000,
+            attachments=[],
+            storage_root=tmp_path / "attachments",
+            created_by_person_id=1,
+            actor="owner",
+            db=db,
+            ai_service=FakeAI(),
+        )
+
+
+def test_project_attachment_cleanup_removes_only_the_project_blobs(db, tmp_path):
+    _seed(db)
+    run = task_plan_proposals.create_attachment_plan_proposal_run(
+        project_id=10,
+        key_task_id=30,
+        source_text="",
+        attachments=[task_plan_proposals.UploadedAttachment(filename="source.txt", content=b"project 10")],
+        storage_root=tmp_path / "attachments",
+        created_by_person_id=1,
+        actor="owner",
+        db=db,
+        ai_service=FakeAI(),
+    )
+    attachment = db.query(models.TaskPlanProposalAttachment).filter_by(run_id=run.id).one()
+
+    task_plan_proposals.cleanup_project_task_plan_attachments(
+        project_id=10,
+        storage_root=tmp_path / "attachments",
+        db=db,
+    )
+
+    assert not (tmp_path / "attachments" / attachment.storage_key).exists()
+    assert db.get(models.TaskPlanProposalAttachment, attachment.id) is not None
 
 
 def test_apply_revalidates_selected_drafts_atomically(db):

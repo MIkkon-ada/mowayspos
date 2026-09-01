@@ -49,6 +49,10 @@ from ..services.project_purge_storage import (
     stage_project_payloads,
 )
 from ..services.project_init_attachment_storage import project_init_attachment_root
+from ..services.task_plan_proposals import (
+    TaskPlanProposalAttachmentCleanupError,
+    cleanup_project_task_plan_attachments,
+)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -2243,9 +2247,24 @@ def _delete_project_data(project: models.Project, db: Session) -> None:
         row[0]
         for row in db.query(models.MeetingChangeSet.id).filter(models.MeetingChangeSet.project_id == project_id).all()
     ]
+    task_plan_run_ids = [
+        row[0]
+        for row in db.query(models.TaskPlanProposalRun.id)
+        .filter(models.TaskPlanProposalRun.project_id == project_id)
+        .all()
+    ]
 
     db.query(models.ExecutionScheduleReminder).filter(
         models.ExecutionScheduleReminder.schedule_id.in_(schedule_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.TaskPlanProposal).filter(
+        models.TaskPlanProposal.run_id.in_(task_plan_run_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.TaskPlanProposalAttachment).filter(
+        models.TaskPlanProposalAttachment.run_id.in_(task_plan_run_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.TaskPlanProposalRun).filter(
+        models.TaskPlanProposalRun.id.in_(task_plan_run_ids)
     ).delete(synchronize_session=False)
     db.query(models.KeyTaskExecutionEvent).filter(models.KeyTaskExecutionEvent.project_id == project_id).delete(
         synchronize_session=False
@@ -2344,6 +2363,13 @@ def _project_purge_storage_roots() -> list[tuple[str, Path]]:
     ]
 
 
+def _task_plan_attachment_root() -> Path:
+    configured = os.getenv("TASK_PLAN_PROPOSAL_ATTACHMENT_ROOT", "").strip()
+    if configured:
+        return Path(configured)
+    return Path(__file__).resolve().parents[2] / "data" / "task_plan_proposal_attachments"
+
+
 def _project_purge_payload_entries(project_id: int, db: Session) -> list[tuple[str, Path, str]]:
     roots = dict(_project_purge_storage_roots())
     entries: list[tuple[str, Path, str]] = []
@@ -2389,6 +2415,11 @@ def delete_project(
     staged = []
     try:
         staged = stage_project_payloads(cleanup_key, _project_purge_payload_entries(project_id, db))
+        cleanup_project_task_plan_attachments(
+            project_id=project_id,
+            storage_root=_task_plan_attachment_root(),
+            db=db,
+        )
         _delete_project_data(project, db)
         crud.log(
             db,
@@ -2401,6 +2432,10 @@ def delete_project(
             project_id=project_id,
         )
         db.commit()
+    except TaskPlanProposalAttachmentCleanupError as exc:
+        db.rollback()
+        restore_staged_project_payloads(staged)
+        raise HTTPException(500, "任务计划附件清理失败，项目未删除") from exc
     except Exception:
         db.rollback()
         restore_staged_project_payloads(staged)

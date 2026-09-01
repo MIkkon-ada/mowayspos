@@ -49,10 +49,6 @@ from ..services.project_purge_storage import (
     stage_project_payloads,
 )
 from ..services.project_init_attachment_storage import project_init_attachment_root
-from ..services.task_plan_proposals import (
-    TaskPlanProposalAttachmentCleanupError,
-    cleanup_project_task_plan_attachments,
-)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -2360,6 +2356,7 @@ def _project_purge_storage_roots() -> list[tuple[str, Path]]:
             "meeting_document",
             Path(meeting_root) if meeting_root else Path(__file__).resolve().parents[2] / "data" / "meeting_documents",
         ),
+        ("task_plan", _task_plan_attachment_root()),
     ]
 
 
@@ -2379,6 +2376,13 @@ def _project_purge_payload_entries(project_id: int, db: Session) -> list[tuple[s
         entries.append(("project_init", roots["project_init"], row.storage_key))
     for row in db.query(models.MeetingDocumentSource).filter(models.MeetingDocumentSource.project_id == project_id).all():
         entries.append(("meeting_document", roots["meeting_document"], row.storage_key))
+    for row in (
+        db.query(models.TaskPlanProposalAttachment)
+        .join(models.TaskPlanProposalRun, models.TaskPlanProposalAttachment.run_id == models.TaskPlanProposalRun.id)
+        .filter(models.TaskPlanProposalRun.project_id == project_id)
+        .all()
+    ):
+        entries.append(("task_plan", roots["task_plan"], row.storage_key))
     return entries
 
 
@@ -2415,11 +2419,6 @@ def delete_project(
     staged = []
     try:
         staged = stage_project_payloads(cleanup_key, _project_purge_payload_entries(project_id, db))
-        cleanup_project_task_plan_attachments(
-            project_id=project_id,
-            storage_root=_task_plan_attachment_root(),
-            db=db,
-        )
         _delete_project_data(project, db)
         crud.log(
             db,
@@ -2432,10 +2431,6 @@ def delete_project(
             project_id=project_id,
         )
         db.commit()
-    except TaskPlanProposalAttachmentCleanupError as exc:
-        db.rollback()
-        restore_staged_project_payloads(staged)
-        raise HTTPException(500, "任务计划附件清理失败，项目未删除") from exc
     except Exception:
         db.rollback()
         restore_staged_project_payloads(staged)

@@ -214,14 +214,27 @@ def test_attachment_analysis_requires_manual_text_or_attachment(db, tmp_path):
     assert not (tmp_path / "attachments").exists()
 
 
-def test_attachment_analysis_rejects_source_over_40000_characters(db, tmp_path):
+def test_attachment_analysis_accepts_exactly_40000_user_characters_but_rejects_40001(db, tmp_path):
     _seed(db)
+
+    exact = task_plan_proposals.create_attachment_plan_proposal_run(
+        project_id=10,
+        key_task_id=30,
+        source_text="x" * 40_000,
+        attachments=[],
+        storage_root=tmp_path / "attachments",
+        created_by_person_id=1,
+        actor="owner",
+        db=db,
+        ai_service=FakeAI(),
+    )
+    assert exact.source_text.endswith("x" * 40_000)
 
     with pytest.raises(HTTPException, match="40000"):
         task_plan_proposals.create_attachment_plan_proposal_run(
             project_id=10,
             key_task_id=30,
-            source_text="x" * 40_000,
+            source_text="x" * 40_001,
             attachments=[],
             storage_root=tmp_path / "attachments",
             created_by_person_id=1,
@@ -229,31 +242,6 @@ def test_attachment_analysis_rejects_source_over_40000_characters(db, tmp_path):
             db=db,
             ai_service=FakeAI(),
         )
-
-
-def test_project_attachment_cleanup_removes_only_the_project_blobs(db, tmp_path):
-    _seed(db)
-    run = task_plan_proposals.create_attachment_plan_proposal_run(
-        project_id=10,
-        key_task_id=30,
-        source_text="",
-        attachments=[task_plan_proposals.UploadedAttachment(filename="source.txt", content=b"project 10")],
-        storage_root=tmp_path / "attachments",
-        created_by_person_id=1,
-        actor="owner",
-        db=db,
-        ai_service=FakeAI(),
-    )
-    attachment = db.query(models.TaskPlanProposalAttachment).filter_by(run_id=run.id).one()
-
-    task_plan_proposals.cleanup_project_task_plan_attachments(
-        project_id=10,
-        storage_root=tmp_path / "attachments",
-        db=db,
-    )
-
-    assert not (tmp_path / "attachments" / attachment.storage_key).exists()
-    assert db.get(models.TaskPlanProposalAttachment, attachment.id) is not None
 
 
 def test_apply_revalidates_selected_drafts_atomically(db):

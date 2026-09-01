@@ -212,6 +212,101 @@ def test_delete_rolls_back_when_dependency_cleanup_fails(monkeypatch):
     assert db.query(models.ProjectMember).filter_by(project_id=1).count() == 3
 
 
+def _seed_task_plan_attachment_for_purge(db, task_id: int, root: Path) -> tuple[int, Path]:
+    key_task = models.SubTask(task_id=task_id, title="Key task", assignee="Owner")
+    db.add(key_task)
+    db.flush()
+    run = models.TaskPlanProposalRun(project_id=1, key_task_id=key_task.id, source_text="source")
+    db.add(run)
+    db.flush()
+    attachment = models.TaskPlanProposalAttachment(
+        run_id=run.id,
+        original_name="source.txt",
+        storage_key="1/source.txt",
+        mime_type="text/plain",
+        size_bytes=1,
+        content_hash="a" * 64,
+        extracted_text="source",
+        uploaded_by_person_id=1,
+    )
+    db.add(attachment)
+    db.commit()
+    attachment_id = attachment.id
+    payload = root / attachment.storage_key
+    payload.parent.mkdir(parents=True, exist_ok=True)
+    payload.write_bytes(b"x")
+    return attachment_id, payload
+
+
+def test_delete_restores_staged_task_plan_attachment_when_database_cleanup_fails(tmp_path: Path, monkeypatch):
+    db, task_id, *_ = _seed("active")
+    root = tmp_path / "task-plan"
+    monkeypatch.setenv("TASK_PLAN_PROPOSAL_ATTACHMENT_ROOT", str(root))
+    attachment_id, payload = _seed_task_plan_attachment_for_purge(db, task_id, root)
+
+    def fail_after_staging(_project, _db):
+        raise RuntimeError("simulated database cleanup failure")
+
+    monkeypatch.setattr(projects, "_delete_project_data", fail_after_staging)
+
+    with pytest.raises(RuntimeError, match="simulated database cleanup failure"):
+        projects.delete_project(
+            1,
+            schemas.ProjectDeletePayload(confirm_name="Project", confirm_phrase=DELETE_PHRASE),
+            current_user="moways",
+            db=db,
+        )
+
+    assert db.get(models.Project, 1) is not None
+    assert db.get(models.TaskPlanProposalAttachment, attachment_id) is not None
+    assert payload.read_bytes() == b"x"
+    assert not (root / ".project-purge").exists()
+
+
+def test_delete_restores_staged_task_plan_attachment_when_commit_fails(tmp_path: Path, monkeypatch):
+    db, task_id, *_ = _seed("active")
+    root = tmp_path / "task-plan"
+    monkeypatch.setenv("TASK_PLAN_PROPOSAL_ATTACHMENT_ROOT", str(root))
+    attachment_id, payload = _seed_task_plan_attachment_for_purge(db, task_id, root)
+
+    def fail_commit():
+        raise RuntimeError("simulated commit failure")
+
+    monkeypatch.setattr(db, "commit", fail_commit)
+
+    with pytest.raises(RuntimeError, match="simulated commit failure"):
+        projects.delete_project(
+            1,
+            schemas.ProjectDeletePayload(confirm_name="Project", confirm_phrase=DELETE_PHRASE),
+            current_user="moways",
+            db=db,
+        )
+
+    assert db.get(models.Project, 1) is not None
+    assert db.get(models.TaskPlanProposalAttachment, attachment_id) is not None
+    assert payload.read_bytes() == b"x"
+    assert not (root / ".project-purge").exists()
+
+
+def test_delete_permanently_removes_staged_task_plan_attachment(tmp_path: Path, monkeypatch):
+    db, task_id, *_ = _seed("active")
+    root = tmp_path / "task-plan"
+    monkeypatch.setenv("TASK_PLAN_PROPOSAL_ATTACHMENT_ROOT", str(root))
+    attachment_id, payload = _seed_task_plan_attachment_for_purge(db, task_id, root)
+
+    result = projects.delete_project(
+        1,
+        schemas.ProjectDeletePayload(confirm_name="Project", confirm_phrase=DELETE_PHRASE),
+        current_user="moways",
+        db=db,
+    )
+
+    assert result["cleanup_pending"] is False
+    assert db.get(models.TaskPlanProposalAttachment, attachment_id) is None
+    assert not payload.exists()
+    assert not (root / ".project-purge").exists()
+
+
 def test_delete_purges_project_scoped_records_and_task_descendants():
     db, task_id, *_ = _seed("draft")
     task = db.get(models.Task, task_id)

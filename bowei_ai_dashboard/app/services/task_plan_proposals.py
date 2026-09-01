@@ -34,10 +34,6 @@ class UploadedAttachment:
     content: bytes
 
 
-class TaskPlanProposalAttachmentCleanupError(RuntimeError):
-    """Raised when project purge cannot safely remove task-plan attachment blobs."""
-
-
 def _json_dump(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
@@ -154,7 +150,10 @@ def create_attachment_plan_proposal_run(
     text = "\n\n".join(sections)
     if not text:
         raise HTTPException(422, "请输入需要拆解的文本或上传附件")
-    if len(text) > MAX_SOURCE_TEXT_LENGTH:
+    source_content_length = len(manual_text) + sum(
+        len(extracted_text) for _, extracted_text in extracted_attachments
+    )
+    if source_content_length > MAX_SOURCE_TEXT_LENGTH:
         raise HTTPException(422, "文本和附件提取内容不能超过 40000 字符")
 
     saved_attachments: list[dict[str, Any]] = []
@@ -219,24 +218,6 @@ def create_attachment_plan_proposal_run(
         if saved_attachments and not completed:
             for saved in reversed(saved_attachments):
                 remove_task_plan_attachment(storage_root, saved["storage_key"])
-
-
-def cleanup_project_task_plan_attachments(
-    *, project_id: int, storage_root: str | PathLike[str], db: Session
-) -> None:
-    """Remove persisted blobs for a project before its attachment rows are deleted."""
-    rows = (
-        db.query(models.TaskPlanProposalAttachment)
-        .join(models.TaskPlanProposalRun, models.TaskPlanProposalAttachment.run_id == models.TaskPlanProposalRun.id)
-        .filter(models.TaskPlanProposalRun.project_id == project_id)
-        .order_by(models.TaskPlanProposalAttachment.id.asc())
-        .all()
-    )
-    try:
-        for row in rows:
-            remove_task_plan_attachment(storage_root, row.storage_key)
-    except Exception as exc:
-        raise TaskPlanProposalAttachmentCleanupError("无法清理任务计划附件") from exc
 
 
 def _json_load(value: str, fallback: Any) -> Any:

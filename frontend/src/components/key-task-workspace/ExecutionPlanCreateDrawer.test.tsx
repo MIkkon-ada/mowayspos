@@ -45,8 +45,22 @@ describe('ExecutionPlanCreateDrawer', () => {
     fireEvent.change(screen.getByLabelText('待拆解文本'), { target: { value: '先整理客户清单，再安排访谈。' } })
     fireEvent.click(screen.getByRole('button', { name: '生成计划草稿' }))
 
-    await waitFor(() => expect(planApi.createTaskPlanProposalRun).toHaveBeenCalledWith(42, '先整理客户清单，再安排访谈。'))
+    await waitFor(() => expect(planApi.createTaskPlanProposalRun).toHaveBeenCalledWith(42, '先整理客户清单，再安排访谈。', []))
     expect(api.createMonthlyPlan).not.toHaveBeenCalled()
+  })
+
+  it('sends multiple selected attachments to AI decomposition', async () => {
+    planApi.createTaskPlanProposalRun.mockResolvedValue({ id: 3, attachments: [], proposals: [] })
+    render(<ExecutionPlanCreateDrawer keyTaskId={42} defaultAssigneeId={11} members={members} onClose={vi.fn()} onCreated={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'AI 拆解' }))
+    fireEvent.change(screen.getByLabelText('上传附件'), { target: { files: [new File(['A'], '安排.txt'), new File(['B'], '清单.txt')] } })
+    fireEvent.click(screen.getByRole('button', { name: '生成计划草稿' }))
+
+    await waitFor(() => expect(planApi.createTaskPlanProposalRun).toHaveBeenCalledWith(42, '', expect.arrayContaining([
+      expect.objectContaining({ name: '安排.txt' }),
+      expect.objectContaining({ name: '清单.txt' }),
+    ])))
   })
 
   it('creates a plan for the current key task and closes on success', async () => {

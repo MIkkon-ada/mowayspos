@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiPost } from './client'
+import { apiGet, apiPatch, apiPost, apiUpload } from './client'
 
 export type DueKind = 'exact' | 'fuzzy' | 'unknown'
 
@@ -123,6 +123,7 @@ export type TaskPlanProposalRun = {
   status: 'ready_for_review' | 'completed'
   source_text: string
   model_code: string
+  attachments?: Array<{ id: number; original_name: string; mime_type: string; size_bytes: number }>
   proposals: TaskPlanProposal[]
 }
 
@@ -138,8 +139,12 @@ export const reopenKeyTask = (keyTaskId: number, reason: string) =>
 export const setKeyTaskRisk = (keyTaskId: number, riskNote: string) =>
   apiPatch<{ ok: boolean }>(`/api/key-tasks/${keyTaskId}/risk`, { risk_note: riskNote })
 
-export const createTaskPlanProposalRun = (keyTaskId: number, sourceText: string) =>
-  apiPost<TaskPlanProposalRun>(`/api/key-tasks/${keyTaskId}/task-plan-proposal-runs`, { source_text: sourceText })
+export const createTaskPlanProposalRun = (keyTaskId: number, sourceText: string, files: File[] = []) => {
+  const body = new FormData()
+  body.set('source_text', sourceText)
+  files.forEach((file) => body.append('files', file))
+  return apiUpload<TaskPlanProposalRun>(`/api/key-tasks/${keyTaskId}/task-plan-proposal-runs`, body)
+}
 
 export const updateTaskPlanProposal = (proposalId: number, plan: TaskPlanProposal['plan']) =>
   apiPatch<TaskPlanProposal>(`/api/task-plan-proposals/${proposalId}`, { plan })

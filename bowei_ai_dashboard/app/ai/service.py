@@ -305,7 +305,7 @@ class AIService:
                 current,
                 api_key,
                 prompt,
-                timeout,
+                None if capability_key == Capability.TASK_PLAN_PROPOSAL else timeout,
                 response_validator,
             ),
         )

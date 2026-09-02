@@ -46,8 +46,8 @@ test('standard minutes detail keeps the source agenda and both tracker table sha
   assert.match(source, /meeting\.copied_to/)
 })
 
-test('meeting type options use the agreed vocabulary', () => {
-  for (const label of ['项目例会', '专题会议', '启动会', '沟通会', '评审会', '复盘会']) {
-    assert.match(modal, new RegExp(label))
-  }
+test('meeting type remains an editable review field without preset vocabulary cards', () => {
+  assert.match(modal, /Field label="会议类型"/)
+  assert.doesNotMatch(modal, /MEETING_TYPE_OPTIONS/)
+  assert.doesNotMatch(modal, /请选择会议类型/)
 })

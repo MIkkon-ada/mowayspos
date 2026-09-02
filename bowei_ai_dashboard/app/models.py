@@ -591,13 +591,19 @@ class TaskPlanProposalRun(Base, TimestampMixin):
         Index("ix_task_plan_proposal_runs_project_key_task_status", "project_id", "key_task_id", "status"),
     )
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
     key_task_id = Column(Integer, ForeignKey("subtasks.id"), nullable=False, index=True)
-    source_text = Column(Text, nullable=False, default="")
-    source_hash = Column(String(64), nullable=False, default="", index=True)
-    status = Column(String(32), nullable=False, default="ready_for_review", index=True)
-    model_code = Column(String(96), nullable=False, default="")
+    source_text = Column(Text, nullable=False, default="", server_default="")
+    source_hash = Column(String(64), nullable=False, default="", server_default="", index=True)
+    status = Column(
+        String(32),
+        nullable=False,
+        default="ready_for_review",
+        server_default="ready_for_review",
+        index=True,
+    )
+    model_code = Column(String(96), nullable=False, default="", server_default="")
     invocation_log_id = Column(Integer, ForeignKey("ai_invocation_logs.id"), nullable=True, index=True)
     created_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
 
@@ -605,7 +611,7 @@ class TaskPlanProposalRun(Base, TimestampMixin):
 class TaskPlanProposalAttachment(Base, TimestampMixin):
     __tablename__ = "task_plan_proposal_attachments"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     run_id = Column(
         Integer,
         ForeignKey("task_plan_proposal_runs.id", ondelete="CASCADE"),
@@ -617,7 +623,7 @@ class TaskPlanProposalAttachment(Base, TimestampMixin):
     mime_type = Column(String(120), nullable=False)
     size_bytes = Column(Integer, nullable=False)
     content_hash = Column(String(64), nullable=False, index=True)
-    extracted_text = Column(Text, nullable=False, default="")
+    extracted_text = Column(Text, nullable=False, server_default="")
     uploaded_by_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
 
 
@@ -627,13 +633,19 @@ class TaskPlanProposal(Base, TimestampMixin):
         Index("ix_task_plan_proposals_run_status", "run_id", "status"),
     )
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     run_id = Column(Integer, ForeignKey("task_plan_proposal_runs.id"), nullable=False, index=True)
-    plan_json = Column(Text, nullable=False, default="{}")
-    evidence_json = Column(Text, nullable=False, default="{}")
-    validation_json = Column(Text, nullable=False, default="{}")
-    status = Column(String(32), nullable=False, default="needs_confirmation", index=True)
-    reviewer_edit_json = Column(Text, nullable=False, default="{}")
+    plan_json = Column(Text, nullable=False, default="{}", server_default="{}")
+    evidence_json = Column(Text, nullable=False, default="{}", server_default="{}")
+    validation_json = Column(Text, nullable=False, default="{}", server_default="{}")
+    status = Column(
+        String(32),
+        nullable=False,
+        default="needs_confirmation",
+        server_default="needs_confirmation",
+        index=True,
+    )
+    reviewer_edit_json = Column(Text, nullable=False, default="{}", server_default="{}")
     created_plan_id = Column(Integer, ForeignKey("execution_schedules.id"), nullable=True, index=True)
 
 

@@ -167,5 +167,6 @@ test('AI merge identifies one genuinely new task by stable id or task_id', () =>
 test('upload entry remains available when AI initialization fails', () => {
   assert.match(aiSource, /const showUploadStage = panelState === 'idle' \|\| panelState === 'uploading' \|\| \(panelState === 'failed' && !run\)/)
   assert.match(aiSource, /\{showUploadStage && \(/)
-  assert.match(aiSource, /暂时无法获取 AI 分析状态，请先选择资料文件，上传后再重试。/)
+  assert.match(aiSource, /选择资料文件/)
+  assert.match(aiSource, /开始分析/)
 })

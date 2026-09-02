@@ -41,6 +41,7 @@ def test_legacy_json_migrates_to_database_and_all_capabilities_are_resolvable(tm
         assert report.policy_states == {
             Capability.MEETING_ANALYSIS: "enabled",
             Capability.TASK_EXTRACTION: "enabled",
+            Capability.TASK_PLAN_PROPOSAL: "enabled",
             Capability.PROJECT_INIT_ANALYSIS: "enabled",
             Capability.SPEECH_REALTIME: "enabled",
         }

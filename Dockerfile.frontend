@@ -13,7 +13,10 @@ RUN npm run build
 
 # ===== 生产阶段：使用 Nginx 部署静态文件 =====
 FROM nginx:alpine
-RUN apk upgrade --no-cache
+# The default IPv6 listener hook can block before Nginx starts on the CVM.
+# Keep the official entrypoint and every other initialization hook intact.
+RUN rm -f /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh \
+    && apk upgrade --no-cache
 
 # 复制构建产物
 COPY --from=builder /app/dist /usr/share/nginx/html

@@ -55,6 +55,7 @@ def test_legacy_import_is_idempotent_and_creates_disabled_policies_without_an_as
     assert first.policy_states == {
         "meeting.analysis": "enabled",
         "task.extraction": "enabled",
+        "task.plan.proposal": "enabled",
         "project.init.analysis": "enabled",
         "speech.realtime": "disabled",
     }

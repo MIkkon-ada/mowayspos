@@ -61,13 +61,14 @@ test('workspace owns a flex-safe vertical scroll container', () => {
   assert.match(workspace, /<main className="flex-1 min-h-0 overflow-y-auto bg-slate-50">/)
 })
 
-test('execution plan table has approved columns, row click, and no operation column', () => {
+test('execution plan table has the compact approved columns and row action', () => {
   const table = read('src/components/key-task-workspace/ExecutionPlanTable.tsx')
-  for (const label of ['任务计划', '状态', '计划事项', '负责人', '协助人', '计划时间', '最新进展']) {
+  for (const label of ['任务计划', '状态', '计划事项', '负责人', '协助人', '时间']) {
     assert.match(table, new RegExp(label))
   }
   assert.match(table, /onOpen/)
   assert.doesNotMatch(table, />操作</)
+  assert.doesNotMatch(table, /最新进展/)
   assert.doesNotMatch(table, /%/)
 })
 
@@ -145,7 +146,7 @@ test('execution plan drawer reuses DetailDrawer and keeps actions outside table'
   const drawer = read('src/components/key-task-workspace/ExecutionPlanDetailDrawer.tsx')
 
   assert.match(drawer, /<DetailDrawer/)
-  for (const label of ['当前进展', '下一步', '关联成果', '关联问题', '推进记录']) {
+  for (const label of ['预期成果', '完成定义', '当前进展', '推进记录']) {
     assert.match(drawer, new RegExp(label))
   }
   assert.match(drawer, /编辑计划/)

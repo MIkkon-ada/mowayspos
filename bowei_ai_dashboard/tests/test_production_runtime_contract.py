@@ -121,6 +121,13 @@ def test_frontend_dockerfile_uses_tracked_lockfile_with_npm_ci():
     assert "npm install" not in dockerfile
 
 
+def test_frontend_dockerfile_disables_only_the_blocked_ipv6_entrypoint_hook():
+    dockerfile = _read("Dockerfile.frontend")
+
+    assert "rm -f /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh" in dockerfile
+    assert "ENTRYPOINT" not in dockerfile
+
+
 def test_github_actions_gate_runs_the_complete_isolated_runtime_contract():
     workflow = _read(".github/workflows/cloud-p1b2a-gate.yml")
 

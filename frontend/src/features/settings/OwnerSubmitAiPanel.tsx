@@ -89,6 +89,7 @@ function formatBytes(bytes: number): string {
 }
 
 const AI_SERVICE_UNAVAILABLE_MESSAGE = 'AI 分析服务暂时不可用，请稍后重试。'
+const INFORMATIONAL_PERSON_WARNING_CODE = 'will_join_project'
 
 function errorMessage(error: unknown): string {
   if (error instanceof ProjectInitApiError) {
@@ -134,7 +135,7 @@ function duplicateLabel(status: AgentTask['merge_status']): string {
 }
 
 function warningText(task: AgentTask | AgentSubTask): string[] {
-  return task.warnings.map((warning) => {
+  return task.warnings.filter((warning) => warning.code !== INFORMATIONAL_PERSON_WARNING_CODE).map((warning) => {
     const code = warning.code.toLowerCase()
     const message = warning.message.trim()
     const label = code.includes('low_confidence') || code.includes('confidence')
@@ -190,10 +191,14 @@ function ModelUsageSummary({ run }: { run: ProjectInitAnalysisRun }) {
   const finalLabel = finalModel && typeof finalModel === 'object'
     ? modelLabel(finalModel as ModelUsage)
     : ''
+  const deterministicProcessor = typeof run.result_metadata.model_name === 'string'
+    ? run.result_metadata.model_name.trim()
+    : ''
   return <div className="space-y-1 text-xs text-slate-500">
     <p>模型策略：{strategyLabel}</p>
     {attempted.length > 0 && <p>本次尝试：{attempted.map(modelLabel).join(' → ')}</p>}
     {finalLabel && <p>实际模型：{finalLabel}</p>}
+    {!finalLabel && deterministicProcessor && <p>实际处理器：{deterministicProcessor}</p>}
   </div>
 }
 
@@ -610,9 +615,16 @@ export function OwnerSubmitAiPanel({
   }
 
   const renderWarnings = (item: AgentTask | AgentSubTask) => {
+    const autoJoinPeople = item.warnings
+      .filter((warning) => warning.code === INFORMATIONAL_PERSON_WARNING_CODE)
+      .map((warning) => warning.person_name)
+      .filter(Boolean)
     const warnings = warningText(item)
-    if (warnings.length === 0) return null
-    return <div role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{warnings.join('；')}（未自动绑定）</div>
+    if (autoJoinPeople.length === 0 && warnings.length === 0) return null
+    return <>
+      {autoJoinPeople.length > 0 && <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">{autoJoinPeople.join('、')}：提交时自动加入项目</div>}
+      {warnings.length > 0 && <div role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{warnings.join('；')}（未自动绑定）</div>}
+    </>
   }
 
   function handleClose() {

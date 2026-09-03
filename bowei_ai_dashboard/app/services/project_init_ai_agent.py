@@ -51,11 +51,13 @@ _WORK_PLAN_HEADER_ALIASES = {
     "专项": {"专项", "重点工作", "重点工作名称", "工作模块", "一级任务"},
     "关键任务": {"关键任务", "任务名称", "任务", "子任务", "工作事项", "二级任务"},
     "关键成果": {"关键成果", "目标成果", "成果", "交付物", "预期成果"},
-    "完成标准": {"完成标准", "验收标准", "验证标准", "交付标准"},
+    "完成标准": {"完成标准", "评价标准", "验收标准", "验证标准", "交付标准"},
     "统筹人": {"统筹人", "统筹负责人", "项目统筹", "项目负责人"},
-    "负责人": {"负责人", "执行人", "执行负责人", "任务负责人"},
+    "负责人": {"负责人", "责任人", "执行人", "执行负责人", "任务负责人"},
     "协同成员": {"协同成员", "协助人", "协同人", "协作者", "协作人"},
-    "计划时间": {"计划时间", "开始时间", "开始日期", "计划开始时间", "计划日期"},
+    "计划时间": {"计划时间", "开始时间", "开始日期", "计划日期"},
+    "计划开始": {"计划开始时间", "计划开始日期"},
+    "计划结束": {"计划结束时间", "计划结束日期"},
     "当前状态": {"当前状态", "状态", "进度", "任务状态"},
     "问题与协调": {"问题与协调", "备注", "说明", "问题", "协调事项"},
 }
@@ -175,6 +177,7 @@ class PersonCandidate(BaseModel):
     id: _POSITIVE_ID
     name: str = Field(min_length=1, max_length=50)
     is_active: bool = True
+    is_project_member: bool = True
 
 
 class AgentSubTask(BaseModel):
@@ -282,6 +285,7 @@ def _person_candidates(values: Iterable[PersonCandidate | dict[str, Any]]) -> li
                     "id": value.get("id"),
                     "name": value.get("name"),
                     "is_active": value.get("is_active", True),
+                    "is_project_member": value.get("is_project_member", True),
                 }
             )
         except ValidationError as exc:
@@ -298,6 +302,7 @@ def _warning(code: str, person_name: str) -> AgentWarning:
         "ambiguous_person": "存在多个同名在职人员，未自动绑定",
         "inactive_person": "仅找到停用人员，未自动绑定",
         "person_not_found": "未找到可自动绑定的人员，保留原始姓名",
+        "will_join_project": "提交项目方案时将自动加入项目",
         "helper_conflicts_with_owner": "负责人不能同时作为协助人，已移除重复协助人",
         "helper_conflicts_with_assignee": "关键任务负责人不能同时作为协助人，已移除重复协助人",
     }
@@ -311,7 +316,8 @@ def _match_person(name: str, people: list[PersonCandidate]) -> tuple[int | None,
     matches = [person for person in people if _normalise_name(person.name) == _normalise_name(clean_name)]
     active = [person for person in matches if person.is_active]
     if len(active) == 1:
-        return active[0].id, []
+        person = active[0]
+        return person.id, [] if person.is_project_member else [_warning("will_join_project", clean_name)]
     if len(active) > 1:
         return None, [_warning("ambiguous_person", clean_name)]
     if matches:
@@ -1088,6 +1094,13 @@ def _spreadsheet_plan_dates(value: str) -> tuple[str, str]:
     return plan_start, f"{end_year}-{end_month:02d}"
 
 
+def _explicit_spreadsheet_date(value: str) -> str:
+    match = re.fullmatch(r"(\d{4}-\d{2}-\d{2})(?:T\d{2}:\d{2}:\d{2})?", str(value or "").strip())
+    if match and _is_calendar_date(match.group(1)):
+        return match.group(1)
+    return ""
+
+
 def _split_helper_names(value: str) -> list[str]:
     return [item.strip() for item in re.split(r"[、，,；;/]+", str(value or "")) if item.strip()]
 
@@ -1116,6 +1129,7 @@ def _normalise_work_plan_row(headers: list[str], values: list[str]) -> dict[str,
 
 def _structured_spreadsheet_rows(
     sources: list[tuple[str, str, str, int | None]],
+    people: list[PersonCandidate],
 ) -> list[dict[str, Any]]:
     """Build a traceable review draft when a work-progress spreadsheet is explicit."""
     task_index: dict[str, dict[str, Any]] = {}
@@ -1124,11 +1138,11 @@ def _structured_spreadsheet_rows(
         worksheet_range = _worksheet_range(location)
         if not file_name.casefold().endswith((".xlsx", ".xls")) or worksheet_range is None:
             continue
-        lines = str(text or "").splitlines()
-        if len(lines) < 2 or "\t" not in lines[0] or "\t" not in lines[1]:
+        header_line, separator, values_line = str(text or "").partition("\n")
+        if not separator or "\t" not in header_line or "\t" not in values_line:
             continue
-        headers = [item.strip() for item in lines[0].split("\t")]
-        values = [item.strip() for item in lines[1].split("\t")]
+        headers = [item.strip() for item in header_line.split("\t")]
+        values = [item.strip() for item in values_line.split("\t")]
         row = _normalise_work_plan_row(headers, values)
         if row is None:
             continue
@@ -1142,7 +1156,22 @@ def _structured_spreadsheet_rows(
         coordinator = row.get("统筹人", "").strip() or context.get("统筹人", "")
         if coordinator:
             context["统筹人"] = coordinator
-        plan_start, plan_end = _spreadsheet_plan_dates(row.get("计划时间", ""))
+        fallback_start, fallback_end = _spreadsheet_plan_dates(row.get("计划时间", ""))
+        plan_start = _explicit_spreadsheet_date(row.get("计划开始", "")) or fallback_start
+        plan_end = _explicit_spreadsheet_date(row.get("计划结束", "")) or fallback_end
+        responsible_names = _split_helper_names(row.get("负责人", ""))
+        matched_responsible_names = [
+            name for name in responsible_names if _match_person(name, people)[0] is not None
+        ]
+        assignee_name = (
+            matched_responsible_names[0]
+            if matched_responsible_names
+            else (responsible_names[0] if responsible_names else coordinator)
+        )
+        helper_names = _dedupe_strings([
+            *(name for name in responsible_names if name != assignee_name),
+            *_split_helper_names(row.get("协同成员", "")),
+        ])
         evidence = [{
             "attachment_id": attachment_id,
             "file_name": file_name,
@@ -1166,8 +1195,8 @@ def _structured_spreadsheet_rows(
         task["subtasks"].append({
             "title": subtask_title,
             "description": row.get("问题与协调", "").strip(),
-            "assignee_name": row.get("负责人", "").strip() or coordinator,
-            "helper_names": _split_helper_names(row.get("协同成员", "")),
+            "assignee_name": assignee_name,
+            "helper_names": helper_names,
             "status": row.get("当前状态", "").strip(),
             "plan_start": plan_start,
             "plan_end": plan_end,
@@ -1185,7 +1214,7 @@ def _structured_spreadsheet_fallback(
     *,
     model_name: str = "structured-spreadsheet-fallback",
 ) -> ProjectInitAiResult | None:
-    tasks = _structured_spreadsheet_rows(sources)
+    tasks = _structured_spreadsheet_rows(sources, people)
     if not tasks:
         return None
     return normalize_agent_result(

@@ -996,6 +996,39 @@ def test_merged_alias_header_workbook_is_extracted_end_to_end_without_ai(tmp_pat
     assert result.tasks[0].subtasks[1].helper_names == ["赵六"]
 
 
+def test_multiline_merged_workplan_uses_structured_import(tmp_path):
+    path = tmp_path / "工作推进表.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Sheet1"
+    sheet.append(["目标", "重点工作", "评价标准", "序号", "关键任务", "责任人", "计划开始时间", "计划结束时间", "协同人", "完成情况", "备注"])
+    sheet.append(["目标一\n目标二", "项目运营系统", "完成标准", 1, "完成系统模块梳理", "吴肖、郭熠彬", "2026-07-03", "2026-07-10", "温会林", "进行中", "保留原文"])
+    sheet.append(["", "", "", 2, "导入项目测试", "刘万超", "2026-07-13", "", "", "", ""])
+    sheet.merge_cells("B2:B3")
+    workbook.save(path)
+
+    people = [
+        {"id": 5, "name": "吴肖", "is_active": True, "is_project_member": True},
+        {"id": 7, "name": "郭熠彬", "is_active": True, "is_project_member": False},
+        {"id": 9, "name": "温会林", "is_active": True, "is_project_member": False},
+        {"id": 4, "name": "刘万超", "is_active": True, "is_project_member": False},
+    ]
+    result = generate_project_init_draft(
+        parse_project_init_file(path, path.name),
+        people,
+        [],
+        llm_call=lambda _prompt: (_ for _ in ()).throw(AssertionError("chat analysis must not run")),
+    )
+
+    first = result.tasks[0].subtasks[0]
+    assert result.model_name == "structured-spreadsheet"
+    assert (first.assignee_name, first.assignee_id) == ("吴肖", 5)
+    assert first.helper_names == ["郭熠彬", "温会林"]
+    assert first.helper_ids == [7, 9]
+    assert (first.plan_start, first.plan_end) == ("2026-07-03", "2026-07-10")
+    assert {warning.code for warning in first.warnings} == {"will_join_project"}
+
+
 def test_structured_spreadsheet_fallback_rejects_non_excel_tabular_text():
     source = {
         "attachment_id": 7,

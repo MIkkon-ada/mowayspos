@@ -129,12 +129,15 @@ def build_project_init_snapshot(
     member_ids = {row.person_id for row in member_rows}
     people = (
         db.query(models.Person)
-        .filter(models.Person.id.in_(member_ids))
+        .filter(models.Person.is_active.is_(True))
         .order_by(models.Person.id.asc())
         .all()
-        if member_ids
-        else []
     )
+
+    def _snapshot_person(person: models.Person) -> dict[str, Any]:
+        value = crud.to_dict(person)
+        value["is_project_member"] = person.id in member_ids
+        return value
     tasks = (
         db.query(models.Task)
         .filter(models.Task.project_id == project.id, models.Task.is_deleted.is_(False))
@@ -144,7 +147,7 @@ def build_project_init_snapshot(
     return {
         "project": crud.to_dict(project),
         "members": [crud.to_dict(item) for item in member_rows],
-        "people": [crud.to_dict(item) for item in people],
+        "people": [_snapshot_person(item) for item in people],
         "tasks": [_snapshot_task(db, item) for item in tasks],
         "attachments": [
             {

@@ -109,6 +109,32 @@ def test_create_run_freezes_attachments_and_project_snapshot(monkeypatch):
     assert json.loads(run.snapshot_json)["current_draft"][0]["title"] == "Existing draft"
 
 
+def test_create_run_snapshot_marks_active_organization_people():
+    from app.routers import project_init_ai
+
+    db = make_session()
+    project, owner = add_project_graph(db)
+    db.add_all([
+        models.Person(id=99, name="杨宇帆", is_active=True),
+        models.Account(username="owner", password_hash="x", person_id=owner.id, status="active"),
+    ])
+    add_attachment(db, project_id=project.id, attachment_id=10)
+    db.commit()
+
+    response = project_init_ai.create_project_init_analysis_run(
+        project.id,
+        schemas.ProjectInitAnalysisCreate(attachment_ids=[10], current_draft=[]),
+        SimpleNamespace(add_task=lambda *_: None),
+        "owner",
+        db,
+    )
+
+    snapshot = json.loads(db.get(models.ProjectInitAnalysisRun, response["id"]).snapshot_json)
+    people = {item["name"]: item for item in snapshot["people"]}
+    assert people[owner.name]["is_project_member"] is True
+    assert people["杨宇帆"]["is_project_member"] is False
+
+
 @pytest.mark.parametrize("count", [11])
 def test_create_run_rejects_more_than_ten_attachments(count):
     from app.services.project_init_analysis import validate_analysis_attachment_selection

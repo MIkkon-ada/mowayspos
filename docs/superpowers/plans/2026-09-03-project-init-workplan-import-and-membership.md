@@ -17,7 +17,7 @@
 - `bowei_ai_dashboard/tests/test_project_init_analysis.py` — snapshot regression.
 - `bowei_ai_dashboard/tests/test_project_init_ai_agent.py` — actual workplan-shape regression.
 - `frontend/src/features/settings/ownerSubmitDraft.ts` — informational warning filtering.
-- `frontend/src/features/settings/OwnerSubmitAiPanel.tsx` — pending-join presentation.
+- `frontend/src/features/settings/OwnerSubmitAiPanel.tsx` — pending-join presentation and deterministic-processor label.
 - `frontend/src/features/settings/ownerSubmitDraft.test.ts`, `OwnerSubmitAiPanel.retry.test.tsx` — focused UI checks.
 
 ### Task 1: Snapshot active organization people
@@ -189,6 +189,8 @@ const isInformationalWarning = (warning: { code?: unknown }) =>
 const pendingJoinWarnings = item.warnings.filter(isInformationalWarning)
 const blockingWarnings = item.warnings.filter((warning) => !isInformationalWarning(warning))
 ```
+
+`ModelUsageSummary` must also render `result_metadata.model_name` when `attempted_models` is empty. This is the truthful “实际模型” label for `local-rule / structured-spreadsheet`; a chat model remains preferred whenever an attempted-model record exists.
 
 - [ ] **Step 4: Verify the minimal UI and existing submit transaction, then commit**
 

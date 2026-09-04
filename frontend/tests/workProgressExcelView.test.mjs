@@ -87,16 +87,14 @@ const taskSubMap = {
   12: [],
 }
 
-test('work progress opens the shared execution detail from both views', () => {
+test('work progress keeps only the plan table while key-task detail remains available', () => {
   const source = read(PAGE_FILE)
-  assert.match(source, /useState<'execution' \| 'plan'>\('plan'\)/)
-  assert.match(source, /const SHOW_EXECUTION_DETAIL = true/)
-  assert.match(source, /if \(SHOW_EXECUTION_DETAIL\) setViewMode\('execution'\)/)
+  assert.doesNotMatch(source, /ExecutionProgressView/)
+  assert.doesNotMatch(source, /执行详情/)
   assert.match(source, /<PlanTableViewV2[\s\S]*?onOpenSubTask=\{openSubDetail\}/)
-  assert.match(source, /<ExecutionProgressView[\s\S]*?onOpenSubTask=\{openSubDetail\}/)
   assert.match(source, /<KeyTaskExecutionDetailView/)
-  assert.match(source, /SHOW_EXECUTION_DETAIL && \(/)
-  assert.match(source, /viewMode === 'execution'/)
+  assert.match(source, /selectedSubTask \? \(/)
+  assert.match(source, /fetchSubtaskDetail\(st\.id\)/)
 })
 
 test('the executable view model exposes the exact fourteen business columns', async () => {
@@ -380,12 +378,15 @@ test('table view only exposes the project-standard button when a project standar
   )
 })
 
-test('work progress header exposes both table and execution views', () => {
+test('work progress header keeps only the plan table without losing operations', () => {
   const page = read(PAGE_FILE)
-  assert.match(page, /SHOW_EXECUTION_DETAIL = true/)
   assert.match(page, /work-progress-title-group/)
-  assert.match(page, /工作推进表[\s\S]*表格视图/)
-  assert.match(page, /SHOW_EXECUTION_DETAIL && \(\s*<button[\s\S]*执行详情/)
+  assert.match(page, /工作推进表/)
+  assert.doesNotMatch(page, /执行详情/)
+  assert.match(page, /plan-execution-actions/)
+  assert.match(page, /handleExport\(\)/)
+  assert.match(page, /从大纲导入/)
+  assert.match(page, /回收站/)
   assert.doesNotMatch(page, /min-w-\[260px\]/)
 })
 

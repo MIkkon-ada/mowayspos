@@ -268,7 +268,7 @@ test('plan mode loads subtasks before search projection and disables incomplete 
   assert.match(page, /openSubDetail|onOpenSubTask/)
 })
 
-test('execution view exposes create task from the project summary row instead of the top action menu', () => {
+test('plan view exposes create task from the project summary row instead of the top action menu', () => {
   const page = read(PAGE_FILE)
 
   assert.match(page, /openTaskCreateForProject\(projectId\?:\s*number \| null\)/)
@@ -440,7 +440,7 @@ test('page resolves an archived project detail without falling back to another p
 test('archived project details suppress task and subtask write controls', () => {
   const page = read(PAGE_FILE)
 
-  assert.match(page, /subCanEdit\s*=\s*selectedSubTask\s*&&\s*!isProjectArchived\(selectedSubProject\)/)
+  assert.match(page, /subCanEdit\s*=\s*panelSubTask\s*&&\s*!isProjectArchived\(selectedSubProject\)/)
   assert.match(page, /!selectedTaskArchived\s*&&\s*\(\s*<div className="border-t px-4 py-3 flex gap-2/s)
 })
 

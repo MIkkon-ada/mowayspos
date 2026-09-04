@@ -228,7 +228,7 @@ git commit -m "refactor: remove work progress execution overview"
 Confirm before deletion:
 
 ```powershell
-rg -n "ExecutionProgressView|执行详情|SHOW_EXECUTION_DETAIL|viewMode === ['"]execution['"]" frontend/src frontend/tests bowei_ai_dashboard/tests
+rg -n 'ExecutionProgressView|SHOW_EXECUTION_DETAIL|setViewMode|viewMode.*execution' frontend/src frontend/tests bowei_ai_dashboard/tests
 ```
 
 No work-progress mode button or overview import may remain. References to “关键任务执行详情” in retained workbench files are allowed.
@@ -249,7 +249,7 @@ Keep the existing plan-table acceptance section and later work-progress recheck 
 Run:
 
 ```powershell
-rg -n "ExecutionProgressView|SHOW_EXECUTION_DETAIL|setViewMode|viewMode === ['"]execution['"]" frontend/src frontend/tests bowei_ai_dashboard/tests docs
+rg -n 'ExecutionProgressView|SHOW_EXECUTION_DETAIL|setViewMode|viewMode.*execution' frontend/src frontend/tests bowei_ai_dashboard/tests
 ```
 
 Expected: no source/test references to the removed overview or mode state. Historical design documents may mention the old behavior and should not be edited unless they are current acceptance instructions.
@@ -284,7 +284,8 @@ Expected: TypeScript and Vite build complete successfully.
 From the repository root:
 
 ```powershell
-python -m pytest bowei_ai_dashboard/tests/test_execution_submission_to_work_progress_flow.py bowei_ai_dashboard/tests/test_work_progress_plan_table_frontend.py -q
+cd bowei_ai_dashboard
+python -m pytest tests/test_execution_submission_to_work_progress_flow.py tests/test_work_progress_plan_table_frontend.py -q
 ```
 
 Expected: PASS; no backend files or database migrations are changed.
@@ -300,6 +301,4 @@ git diff --check
 ```
 
 Confirm the diff contains only the approved work-progress changes plus the committed design/plan documents. Do not stage or modify the pre-existing `CoordinatePage`, `coordinateCompanyProjectRole.test.mjs`, or `bowei_ai_dashboard/data/` changes.
-
-
 

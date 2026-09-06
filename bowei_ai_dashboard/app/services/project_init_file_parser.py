@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -46,6 +47,22 @@ MAX_ANTIWORD_STDERR_BYTES = 64 * 1024
 ANTIWORD_TIMEOUT_SECONDS = 30
 ANTIWORD_CLEANUP_WAIT_SECONDS = 2
 ANTIWORD_READER_JOIN_SECONDS = 2
+
+_WORK_PLAN_WORKSTREAM_HEADER_HINTS = {
+    "专项",
+    "重点工作",
+    "重点工作名称",
+    "工作模块",
+    "一级任务",
+}
+_WORK_PLAN_KEY_TASK_HEADER_HINTS = {
+    "关键任务",
+    "任务名称",
+    "任务",
+    "子任务",
+    "工作事项",
+    "二级任务",
+}
 
 
 class ProjectInitFileParseError(Exception):
@@ -141,10 +158,15 @@ def _parse_doc(path: Path, original_name: str) -> Iterable[SourceChunk]:
         )
     else:
         popen_kwargs["start_new_session"] = True
-    process = subprocess.Popen(
-        ["antiword", "-w", "0", str(resolved_path)],
-        **popen_kwargs,
-    )
+    try:
+        process = subprocess.Popen(
+            ["antiword", "-w", "0", str(resolved_path)],
+            **popen_kwargs,
+        )
+    except FileNotFoundError as exc:
+        raise ProjectInitFileParseError(
+            f"无法解析 .doc 文件：缺少 antiword；请安装 antiword 或使用 Docker 后端：{original_name}"
+        ) from exc
     process_group_id = _capture_process_group_id(process)
     stdout = bytearray()
     stderr = bytearray()
@@ -737,8 +759,9 @@ def _worksheet_chunks(
         yield _render_worksheet_range(rows, sheet_name, bounds, limits)
         return
 
-    header_row, header_values = header
-    data_row_count = _worksheet_data_row_count(rows, header_row, bounds)
+    header_row, header_values, table_min_column, table_max_column = header
+    table_bounds = (min_row, max_row, table_min_column, table_max_column)
+    data_row_count = _worksheet_data_row_count(rows, header_row, table_bounds)
     if not data_row_count:
         yield _render_worksheet_range(rows, sheet_name, bounds, limits)
         return
@@ -757,7 +780,7 @@ def _worksheet_chunks(
     for row_index, row in enumerate(rows()):
         if row_index <= header_row or row_index > max_row:
             continue
-        values = _worksheet_row_values(row, min_column, max_column)
+        values = _worksheet_row_values(row, table_min_column, table_max_column)
         if not any(_is_non_empty_cell(value) for value in values):
             continue
         row_text = _render_worksheet_row(values)
@@ -767,8 +790,8 @@ def _worksheet_chunks(
         ):
             location = (
                 f"{quote_sheetname(sheet_name)}!"
-                f"{get_column_letter(min_column + 1)}{batch_start_row + 1}:"
-                f"{get_column_letter(max_column + 1)}{batch_end_row + 1}"
+                f"{get_column_letter(table_min_column + 1)}{batch_start_row + 1}:"
+                f"{get_column_letter(table_max_column + 1)}{batch_end_row + 1}"
             )
             chunk = batch_builder.finish(location)
             if chunk is not None:
@@ -787,12 +810,16 @@ def _worksheet_chunks(
 
     location = (
         f"{quote_sheetname(sheet_name)}!"
-        f"{get_column_letter(min_column + 1)}{batch_start_row + 1}:"
-        f"{get_column_letter(max_column + 1)}{batch_end_row + 1}"
+        f"{get_column_letter(table_min_column + 1)}{batch_start_row + 1}:"
+        f"{get_column_letter(table_max_column + 1)}{batch_end_row + 1}"
     )
     chunk = batch_builder.finish(location)
     if chunk is not None:
         yield chunk
+
+
+def _normalise_worksheet_header(value: Any) -> str:
+    return re.sub(r"[\s：:（）()\[\]【】_-]+", "", str(value or "")).casefold()
 
 
 def _worksheet_bounds(
@@ -830,14 +857,57 @@ def _worksheet_bounds(
 def _worksheet_table_header(
     rows: Callable[[], Iterable[Sequence[Any]]],
     bounds: tuple[int, int, int, int],
-) -> tuple[int, list[Any]] | None:
+) -> tuple[int, list[Any], int, int] | None:
     min_row, max_row, min_column, max_column = bounds
     for row_index, row in enumerate(rows()):
         if row_index < min_row or row_index >= max_row:
             continue
         values = _worksheet_row_values(row, min_column, max_column)
         if all(_is_non_empty_cell(value) for value in values):
-            return row_index, values
+            return row_index, values, min_column, max_column
+        normalised_headers = {
+            _normalise_worksheet_header(value)
+            for value in values
+            if _is_non_empty_cell(value)
+        }
+        if not (
+            normalised_headers & _WORK_PLAN_WORKSTREAM_HEADER_HINTS
+            and normalised_headers & _WORK_PLAN_KEY_TASK_HEADER_HINTS
+        ):
+            continue
+        non_empty_columns = [
+            index
+            for index, value in enumerate(values)
+            if _is_non_empty_cell(value)
+        ]
+        if not non_empty_columns:
+            continue
+        runs: list[list[int]] = [[non_empty_columns[0]]]
+        for column_index in non_empty_columns[1:]:
+            if column_index == runs[-1][-1] + 1:
+                runs[-1].append(column_index)
+            else:
+                runs.append([column_index])
+        for run in runs:
+            run_values = [values[index] for index in run]
+            run_headers = {
+                _normalise_worksheet_header(value)
+                for value in run_values
+                if _is_non_empty_cell(value)
+            }
+            if not (
+                run_headers & _WORK_PLAN_WORKSTREAM_HEADER_HINTS
+                and run_headers & _WORK_PLAN_KEY_TASK_HEADER_HINTS
+            ):
+                continue
+            table_min_column = min_column + run[0]
+            table_max_column = min_column + run[-1]
+            return (
+                row_index,
+                _worksheet_row_values(row, table_min_column, table_max_column),
+                table_min_column,
+                table_max_column,
+            )
     return None
 
 
@@ -921,4 +991,7 @@ def _render_cell(value: Any) -> str:
         return str(int(value))
     if isinstance(value, (datetime, date, time)):
         return value.isoformat()
-    return str(value)
+    # Spreadsheet rows are rendered as tab-separated records. Normalize line
+    # breaks inside a cell so a multiline goal/note cannot be mistaken for a
+    # second record by downstream row-level mapping.
+    return str(value).replace("\r\n", " ").replace("\r", " ").replace("\n", " ")

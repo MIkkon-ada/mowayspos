@@ -5,6 +5,7 @@ import type { ExecutionPlan } from '../../api/keyTaskWorkspace'
 import type { ProjectMember } from '../../types'
 import { CollaboratorMultiSelect } from './CollaboratorMultiSelect'
 import { TaskPlanProposalReview } from './TaskPlanProposalReview'
+import { acceptedDocumentTypes, aiDocumentFormats } from '../../config/aiDocumentFormats'
 
 type Props = {
   keyTaskId: number
@@ -164,9 +165,9 @@ export function ExecutionPlanCreateDrawer({ keyTaskId, defaultAssigneeId, member
         {mode === 'ai' ? proposalRun ? <TaskPlanProposalReview run={proposalRun} members={selectableMembers} busy={saving} onUpdate={updateDraft} onApply={applyDrafts} /> : <div className="space-y-4">
           <p className="rounded-lg bg-sky-50 p-3 text-xs leading-5 text-sky-800">AI 只会根据您输入的文本生成多条草稿和原文依据，不会自动创建计划。涉及客户、人员或敏感内容时，请仅输入业务必需信息。</p>
           <Field label="待拆解文本"><textarea aria-label="待拆解文本" rows={7} value={sourceText} disabled={saving} onChange={(event) => setSourceText(event.target.value)} placeholder="可选：补充会议纪要、工作安排或需求说明。" className={inputClass} /></Field>
-          <label className="block text-xs font-medium text-slate-600">上传附件<input aria-label="上传附件" type="file" accept=".docx,.xlsx,.txt" multiple disabled={saving} className="mt-1 block w-full text-sm" onChange={(event) => {
+          <label className="block text-xs font-medium text-slate-600">上传附件<input aria-label="上传附件" type="file" accept={acceptedDocumentTypes('taskPlan')} multiple disabled={saving} className="mt-1 block w-full text-sm" onChange={(event) => {
             const incoming = Array.from(event.target.files ?? [])
-            const invalid = incoming.find((file) => !/\.(docx|xlsx|txt)$/i.test(file.name) || file.size > 10 * 1024 * 1024)
+            const invalid = incoming.find((file) => !aiDocumentFormats.taskPlan.some((extension) => file.name.toLowerCase().endsWith(extension)) || file.size > 10 * 1024 * 1024)
             if (invalid) { setError(`附件 ${invalid.name} 仅支持 Word、Excel 或 UTF-8 TXT，且不能超过 10 MB`); event.currentTarget.value = ''; return }
             setFiles((current) => {
               const next = [...current, ...incoming.filter((file) => !current.some((item) => item.name === file.name && item.size === file.size && item.lastModified === file.lastModified))]

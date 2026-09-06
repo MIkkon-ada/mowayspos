@@ -48,5 +48,5 @@ def test_extracts_excel_cells_for_skill_reference_material():
 
 
 def test_rejects_pdf_documents():
-    with pytest.raises(MeetingDocumentTextError, match="仅支持 Word 或 TXT"):
+    with pytest.raises(MeetingDocumentTextError, match="Word、TXT、Excel"):
         extract_meeting_document_text("minutes.pdf", b"%PDF")

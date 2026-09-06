@@ -32,6 +32,7 @@ from .project_init_attachment_storage import (
 from .project_init_analysis_routing import select_project_init_analysis_route
 from .project_init_workbook_profile import profile_project_init_workbook
 from .project_init_workbook_renderer import render_workbook_images
+from .project_init_pdf_renderer import render_project_init_pdf_images
 from .project_init_vision_analysis import generate_project_init_vision_draft
 
 logger = logging.getLogger(__name__)
@@ -413,23 +414,35 @@ def process_analysis_run(run_id: int) -> None:
 
         file_results: list[dict[str, Any]] = []
         workbook_profiles: list[dict[str, Any]] = []
-        vision_sources: list[Path] = []
+        vision_sources: list[tuple[str, Path]] = []
         chunks: list[dict[str, Any]] = []
         for index, item in enumerate(attachment_snapshot):
             attachment_id = item.get("id")
             try:
                 path = _attachment_path(str(item["storage_key"]))
                 parsed = list(parse_project_init_file(path, str(item["original_name"])))
+                original_name = str(item["original_name"])
+                is_textless_pdf = Path(original_name).suffix.lower() == ".pdf" and not parsed
                 workbook_profile = profile_project_init_workbook(
                     path,
-                    str(item["original_name"]),
+                    original_name,
                 )
                 workbook_profiles.append(workbook_profile)
                 if (
                     workbook_profile.get("risk_level") == "high"
-                    and str(item["original_name"]).casefold().endswith(".xlsx")
+                    and original_name.casefold().endswith(".xlsx")
                 ):
-                    vision_sources.append(path)
+                    vision_sources.append(("workbook", path))
+                if is_textless_pdf:
+                    vision_sources.append(("scanned_pdf", path))
+                    chunks.append(
+                        {
+                            "attachment_id": attachment_id,
+                            "file_name": original_name,
+                            "location": "扫描件（全部页）",
+                            "text": "扫描版 PDF；内容由视觉模型识别。",
+                        }
+                    )
                 for chunk in parsed:
                     file_name = chunk.get("file_name", "") if isinstance(chunk, dict) else chunk.file_name
                     location = chunk.get("location", "") if isinstance(chunk, dict) else chunk.location
@@ -480,17 +493,20 @@ def process_analysis_run(run_id: int) -> None:
             context = AIInvocationContext(resource_type="project_init", resource_id=run_id)
             result = None
             if vision_sources:
+                vision_reason_codes = [
+                    "scanned_pdf" if kind == "scanned_pdf" else "complex_workbook_layout"
+                    for kind, _source in vision_sources
+                ]
                 try:
                     with tempfile.TemporaryDirectory(prefix="project-init-vision-") as raw_directory:
                         render_directory = Path(raw_directory)
                         images: list[Path] = []
-                        for index, source in enumerate(vision_sources, start=1):
-                            images.extend(
-                                render_workbook_images(
-                                    source,
-                                    render_directory / f"source-{index}",
-                                )
-                            )
+                        for index, (kind, source) in enumerate(vision_sources, start=1):
+                            output_directory = render_directory / f"source-{index}"
+                            if kind == "scanned_pdf":
+                                images.extend(render_project_init_pdf_images(source, output_directory))
+                            else:
+                                images.extend(render_workbook_images(source, output_directory))
                         if images:
                             result = generate_project_init_vision_draft(
                                 images,
@@ -504,7 +520,7 @@ def process_analysis_run(run_id: int) -> None:
                                 analysis_route = {
                                     "mode": "vision_with_review",
                                     "review_required": True,
-                                    "reason_codes": ["complex_workbook_layout"],
+                                    "reason_codes": list(dict.fromkeys(vision_reason_codes)),
                                 }
                 except Exception as exc:
                     logger.warning(
@@ -512,6 +528,19 @@ def process_analysis_run(run_id: int) -> None:
                         run_id,
                         type(exc).__name__,
                     )
+                    if "scanned_pdf" in vision_reason_codes:
+                        analysis_route = {
+                            "mode": "text_with_review",
+                            "review_required": True,
+                            "reason_codes": list(
+                                dict.fromkeys(
+                                    [
+                                        *analysis_route.get("reason_codes", []),
+                                        "scanned_pdf_vision_unavailable",
+                                    ]
+                                )
+                            ),
+                        }
             if result is None:
                 result = generate_project_init_draft(
                     chunks,

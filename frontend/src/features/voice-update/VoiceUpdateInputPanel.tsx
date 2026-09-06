@@ -2,6 +2,7 @@ import { useState, type RefObject } from 'react'
 import type { WorkReportEntryIntent } from '../../domain/workReportEntry'
 import type { RecorderState } from './voiceRecorderProtocol'
 import type { Phase } from './voiceUpdateResultTypes'
+import { acceptedDocumentTypes } from '../../config/aiDocumentFormats'
 
 type AvailableProvider = { provider: string; display_name: string; model: string }
 export type VoiceInputMode = 'text' | 'voice' | 'upload' | 'document'
@@ -243,7 +244,7 @@ export function VoiceUpdateInputPanel({
           <input
             ref={documentInputRef}
             type="file"
-            accept=".docx,.pdf,.xlsx,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            accept={acceptedDocumentTypes('workReport')}
             disabled={controlsLocked}
             hidden
             onChange={(event) => {

@@ -50,15 +50,15 @@ _WORK_PLAN_HEADERS = {
 _WORK_PLAN_HEADER_ALIASES = {
     "专项": {"专项", "重点工作", "重点工作名称", "工作模块", "一级任务"},
     "关键任务": {"关键任务", "任务名称", "任务", "子任务", "工作事项", "二级任务"},
-    "关键成果": {"关键成果", "目标成果", "成果", "交付物", "预期成果"},
+    "关键成果": {"关键成果", "目标成果", "目标", "成果", "交付物", "预期成果"},
     "完成标准": {"完成标准", "评价标准", "验收标准", "验证标准", "交付标准"},
     "统筹人": {"统筹人", "统筹负责人", "项目统筹", "项目负责人"},
     "负责人": {"负责人", "责任人", "执行人", "执行负责人", "任务负责人"},
     "协同成员": {"协同成员", "协助人", "协同人", "协作者", "协作人"},
     "计划时间": {"计划时间", "开始时间", "开始日期", "计划日期"},
     "计划开始": {"计划开始时间", "计划开始日期"},
-    "计划结束": {"计划结束时间", "计划结束日期"},
-    "当前状态": {"当前状态", "状态", "进度", "任务状态"},
+    "计划结束": {"计划结束时间", "计划结束日期", "计划计划结束时间"},
+    "当前状态": {"当前状态", "状态", "进度", "任务状态", "完成情况"},
     "问题与协调": {"问题与协调", "备注", "说明", "问题", "协调事项"},
 }
 _WORK_PLAN_HEADER_KEYS = {
@@ -1101,8 +1101,16 @@ def _explicit_spreadsheet_date(value: str) -> str:
     return ""
 
 
+def _bounded_spreadsheet_text(value: str, max_length: int) -> str:
+    return str(value or "").strip()[:max_length]
+
+
 def _split_helper_names(value: str) -> list[str]:
-    return [item.strip() for item in re.split(r"[、，,；;/]+", str(value or "")) if item.strip()]
+    return [
+        _bounded_spreadsheet_text(item, 50)
+        for item in re.split(r"[、，,；;/]+", str(value or ""))
+        if item.strip()
+    ]
 
 
 def _normalise_spreadsheet_header(value: str) -> str:
@@ -1138,71 +1146,111 @@ def _structured_spreadsheet_rows(
         worksheet_range = _worksheet_range(location)
         if not file_name.casefold().endswith((".xlsx", ".xls")) or worksheet_range is None:
             continue
-        header_line, separator, values_line = str(text or "").partition("\n")
-        if not separator or "\t" not in header_line or "\t" not in values_line:
+        lines = str(text or "").splitlines()
+        if len(lines) < 2 or "\t" not in lines[0]:
             continue
-        headers = [item.strip() for item in header_line.split("\t")]
-        values = [item.strip() for item in values_line.split("\t")]
-        row = _normalise_work_plan_row(headers, values)
-        if row is None:
-            continue
+        headers = [item.strip() for item in lines[0].split("\t")]
         worksheet_key = (file_name, worksheet_range[0])
         context = worksheet_contexts.setdefault(worksheet_key, {})
-        task_title = row.get("专项", "").strip() or context.get("专项", "")
-        subtask_title = row.get("关键任务", "").strip()
-        if not task_title or not subtask_title:
-            continue
-        context["专项"] = task_title
-        coordinator = row.get("统筹人", "").strip() or context.get("统筹人", "")
-        if coordinator:
-            context["统筹人"] = coordinator
-        fallback_start, fallback_end = _spreadsheet_plan_dates(row.get("计划时间", ""))
-        plan_start = _explicit_spreadsheet_date(row.get("计划开始", "")) or fallback_start
-        plan_end = _explicit_spreadsheet_date(row.get("计划结束", "")) or fallback_end
-        responsible_names = _split_helper_names(row.get("负责人", ""))
-        matched_responsible_names = [
-            name for name in responsible_names if _match_person(name, people)[0] is not None
-        ]
-        assignee_name = (
-            matched_responsible_names[0]
-            if matched_responsible_names
-            else (responsible_names[0] if responsible_names else coordinator)
-        )
-        helper_names = _dedupe_strings([
-            *(name for name in responsible_names if name != assignee_name),
-            *_split_helper_names(row.get("协同成员", "")),
-        ])
-        evidence = [{
-            "attachment_id": attachment_id,
-            "file_name": file_name,
-            "location": location,
-        }]
-        task = task_index.get(task_title)
-        if task is None:
-            task = {
-                "title": task_title,
-                "description": row.get("关键成果", "").strip() or row.get("完成标准", "").strip(),
-                "owner_name": coordinator,
-                "status": row.get("当前状态", "").strip(),
+        for values_line in lines[1:]:
+            if "\t" not in values_line:
+                continue
+            values = [item.strip() for item in values_line.split("\t")]
+            row = _normalise_work_plan_row(headers, values)
+            if row is None:
+                continue
+            raw_task_title = _bounded_spreadsheet_text(row.get("专项", ""), 200)
+            if raw_task_title:
+                # A non-empty workstream cell starts a new parent context. Do
+                # not leak the previous workstream's result or coordinator.
+                context = {"专项": raw_task_title}
+                worksheet_contexts[worksheet_key] = context
+            task_title = raw_task_title or context.get("专项", "")
+            subtask_title = row.get("关键任务", "").strip()
+            if not task_title or not subtask_title:
+                continue
+
+            for field in ("关键成果", "统筹人", "计划时间", "计划开始", "计划结束", "当前状态"):
+                max_length = {
+                    "关键成果": 2_000,
+                    "统筹人": 50,
+                    "计划时间": 50,
+                    "计划开始": 50,
+                    "计划结束": 50,
+                    "当前状态": 50,
+                }[field]
+                value = _bounded_spreadsheet_text(row.get(field, ""), max_length)
+                if value:
+                    context[field] = value
+            coordinator = context.get("统筹人", "")
+            fallback_start, fallback_end = _spreadsheet_plan_dates(
+                row.get("计划时间", "").strip() or context.get("计划时间", "")
+            )
+            plan_start = _explicit_spreadsheet_date(
+                row.get("计划开始", "").strip() or context.get("计划开始", "")
+            ) or fallback_start
+            plan_end = _explicit_spreadsheet_date(
+                row.get("计划结束", "").strip() or context.get("计划结束", "")
+            ) or fallback_end
+            responsible_names = _split_helper_names(row.get("负责人", ""))
+            matched_responsible_names = [
+                name for name in responsible_names if _match_person(name, people)[0] is not None
+            ]
+            assignee_name = (
+                matched_responsible_names[0]
+                if matched_responsible_names
+                else (responsible_names[0] if responsible_names else coordinator)
+            )
+            helper_names = _dedupe_strings([
+                *(name for name in responsible_names if name != assignee_name),
+                *_split_helper_names(row.get("协同成员", "")),
+            ])[:20]
+            evidence = [{
+                "attachment_id": attachment_id,
+                "file_name": file_name,
+                "location": location,
+            }]
+            task_key = _normalise_title(task_title)
+            task = task_index.get(task_key)
+            if task is None:
+                task = {
+                    "title": task_title,
+                    "description": context.get("关键成果", "").strip()
+                    or row.get("完成标准", "").strip(),
+                    "owner_name": coordinator,
+                    "status": context.get("当前状态", "").strip(),
+                    "plan_start": plan_start,
+                    "plan_end": plan_end,
+                    "evidence": evidence,
+                    "subtasks": [],
+                }
+                task_index[task_key] = task
+            else:
+                if not task["description"] and context.get("关键成果", "").strip():
+                    task["description"] = context["关键成果"].strip()
+                elif not task["description"] and row.get("完成标准", "").strip():
+                    task["description"] = row["完成标准"].strip()
+                if not task["owner_name"] and coordinator:
+                    task["owner_name"] = coordinator
+                if not task["status"] and context.get("当前状态", "").strip():
+                    task["status"] = context["当前状态"].strip()
+                if not task["plan_start"] and plan_start:
+                    task["plan_start"] = plan_start
+                if not task["plan_end"] and plan_end:
+                    task["plan_end"] = plan_end
+                if len(task["evidence"]) < 10:
+                    task["evidence"].append(evidence[0])
+            task["subtasks"].append({
+                "title": _bounded_spreadsheet_text(subtask_title, 200),
+                "description": _bounded_spreadsheet_text(row.get("问题与协调", ""), 2_000),
+                "assignee_name": assignee_name,
+                "helper_names": helper_names,
+                "status": _bounded_spreadsheet_text(row.get("当前状态", ""), 50),
                 "plan_start": plan_start,
                 "plan_end": plan_end,
+                "evaluation_standard": _bounded_spreadsheet_text(row.get("完成标准", ""), 1_000),
                 "evidence": evidence,
-                "subtasks": [],
-            }
-            task_index[task_title] = task
-        elif len(task["evidence"]) < 10:
-            task["evidence"].append(evidence[0])
-        task["subtasks"].append({
-            "title": subtask_title,
-            "description": row.get("问题与协调", "").strip(),
-            "assignee_name": assignee_name,
-            "helper_names": helper_names,
-            "status": row.get("当前状态", "").strip(),
-            "plan_start": plan_start,
-            "plan_end": plan_end,
-            "evaluation_standard": row.get("完成标准", "").strip(),
-            "evidence": evidence,
-        })
+            })
     return list(task_index.values())
 
 
@@ -1214,6 +1262,16 @@ def _structured_spreadsheet_fallback(
     *,
     model_name: str = "structured-spreadsheet-fallback",
 ) -> ProjectInitAiResult | None:
+    # A deterministic workbook projection must never make other uploaded
+    # sources disappear. Mixed uploads stay on the evidence-bound AI route so
+    # the model can consider every source, or fail closed if that route is not
+    # available.
+    if not sources or not all(
+        file_name.casefold().endswith((".xlsx", ".xls"))
+        and _worksheet_range(location) is not None
+        for file_name, location, _text, _attachment_id in sources
+    ):
+        return None
     tasks = _structured_spreadsheet_rows(sources, people)
     if not tasks:
         return None

@@ -16,7 +16,6 @@ import { getProjectById, getProjectDisplayName, getProjectIdFromRecord } from '.
 import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
 import { getKeyTaskAssigneeNames, taskHasKeyTaskAssignee } from '../domain/keyTaskAssigneeFilter'
 import { PlanTableViewV2 } from '../components/task-management/PlanTableViewV2'
-import { ExecutionProgressView } from '../components/task-management/ExecutionProgressView'
 import { KeyTaskExecutionDetailView } from '../components/task-management/KeyTaskExecutionDetailView'
 import { MobileTaskList } from '../features/mobile-core-pages/MobileTaskList'
 import { toast } from '../utils/toast'
@@ -129,7 +128,6 @@ const TASK_PROJECT_CONTEXT_REQUIRED_MESSAGE = '请先选择项目后查看工作
 const TASK_PROJECT_CONTEXT_EMPTY_MESSAGE = '当前没有可查看的项目工作推进表'
 const TASK_PROJECT_CONTEXT_MISSING_ENTRY_MESSAGE = '当前入口缺少项目上下文，请从项目进入工作推进表，或先选择项目。'
 const TASK_PROJECT_PERMISSION_DENIED_MESSAGE = '你没有权限查看该项目工作推进表。'
-const SHOW_EXECUTION_DETAIL = true
 function avatarColor(name: string) {
   let h = 0
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff
@@ -251,7 +249,6 @@ export function TaskManagementPage() {
   const [viewProjectId, setViewProjectId] = useState<number | null>(null)
   const [autoSelectedTaskProjectId, setAutoSelectedTaskProjectId] = useState<number | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
-  const [viewMode, setViewMode] = useState<'execution' | 'plan'>('plan')
   const [planTableLoading, setPlanTableLoading] = useState(false)
   const [progressOpen, setProgressOpen] = useState(false)
   const [progressText, setProgressText] = useState('')
@@ -502,26 +499,15 @@ export function TaskManagementPage() {
   }
 
   useEffect(() => {
-    if (viewMode !== 'plan') return
+    if (showDeleted) return
     ensurePlanTableSubTasksLoaded()
-  }, [viewMode, tasks, planTableLoading, taskSubMap])
-
-  useEffect(() => {
-    if (viewMode !== 'execution') return
-    const missingIds = tasks.filter((task) => !(task.id in taskSubMap)).map((task) => task.id)
-    if (!missingIds.length) return
-    fetchSubTasksBatch(missingIds, false).then((batch) => setTaskSubMap((prev) => {
-      const next = { ...prev }
-      missingIds.forEach((id) => { next[id] = batch[String(id)] ?? [] })
-      return next
-    })).catch(() => {})
-  }, [viewMode, tasks, taskSubMap])
+  }, [showDeleted, tasks, planTableLoading, taskSubMap])
 
   // 进入计划视图时预加载项目成员列表（用于责任人下拉）
   useEffect(() => {
-    if (viewMode !== 'plan' || !focusedProject) return
+    if (!focusedProject) return
     ensureProjectMembersLoaded(focusedProject.id)
-  }, [viewMode, focusedProject])
+  }, [focusedProject])
 
   const planTableReady = !planTableLoading && tasks.every((task) => task.id in taskSubMap)
 
@@ -569,7 +555,6 @@ export function TaskManagementPage() {
   }
 
   function focusSubTask(st: SubTaskItem, opts?: { keepTask?: boolean }) {
-    if (SHOW_EXECUTION_DETAIL) setViewMode('execution')
     ensureProjectMembersLoaded(projectForSubTask(resolvedTaskProjects, tasks, st)?.id)
     setSelectedSubTask(null)
     setSubDetailLoading(true)
@@ -956,30 +941,9 @@ function handleFormSave(payload: TaskPayload) {
       )}
 
       {/* Top Bar */}
-      {!((viewMode === 'execution') && selectedSubTask) && <header className="min-h-14 px-4 py-2 lg:px-6 gap-3 flex flex-wrap items-center flex-shrink-0 bg-white border-b overflow-x-auto" style={{ borderColor: '#E9EFF6' }}>
+      {!selectedSubTask && <header className="min-h-14 px-4 py-2 lg:px-6 gap-3 flex flex-wrap items-center flex-shrink-0 bg-white border-b overflow-x-auto" style={{ borderColor: '#E9EFF6' }}>
         <div className="work-progress-title-group flex-shrink-0">
           <h1 className="text-base font-bold text-slate-800">工作推进表</h1>
-        </div>
-        <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-          <button
-            type="button"
-            onClick={() => {
-              setViewMode('plan')
-              clearSelection()
-            }}
-            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'plan' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-          >
-            表格视图
-          </button>
-          {SHOW_EXECUTION_DETAIL && (
-            <button
-              type="button"
-              onClick={() => setViewMode('execution')}
-              className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${viewMode === 'execution' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              执行详情
-            </button>
-          )}
         </div>
 
         {/* Filters */}
@@ -1020,13 +984,12 @@ function handleFormSave(payload: TaskPayload) {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder={viewMode === 'plan' ? '搜索重点工作、关键任务、责任人' : '搜索重点工作…'}
+              placeholder="搜索重点工作、关键任务、责任人"
               className="pl-8 pr-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none w-64"
             />
           </div>
         </div>
 
-        {viewMode === 'execution' && (
         <div className="plan-execution-actions flex items-center gap-2 ml-1 flex-shrink-0">
           <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
             <button
@@ -1069,11 +1032,10 @@ function handleFormSave(payload: TaskPayload) {
             )}
           </select>
         </div>
-        )}
       </header>}
 
       {/* Main */}
-      {SHOW_EXECUTION_DETAIL && viewMode === 'execution' && selectedSubTask ? (
+      {selectedSubTask ? (
         <KeyTaskExecutionDetailView
           project={focusedProject ?? focusedSubTaskProject}
           task={tasks.find((task) => task.id === selectedSubTask.task_id) ?? null}
@@ -1086,12 +1048,12 @@ function handleFormSave(payload: TaskPayload) {
           onBack={() => clearSelection()}
         />
       ) : (
-      <div className="flex-1 min-w-0 min-h-0 flex overflow-hidden" style={{ background: viewMode === 'plan' ? '#F8FAFC' : '#F1F5F9' }}>
+      <div className="flex-1 min-w-0 min-h-0 flex overflow-hidden" style={{ background: '#F8FAFC' }}>
         <div
-          className={viewMode === 'plan' ? 'work-progress-plan-shell flex-1 min-w-0 overflow-hidden flex flex-col' : 'flex-1 overflow-y-auto'}
-          style={viewMode === 'plan'
-            ? { background: '#F8FAFC' }
-            : { background: '#F1F5F9', padding: '16px 20px 20px', paddingRight: 20 }}
+          className={showDeleted ? 'flex-1 overflow-y-auto' : 'work-progress-plan-shell flex-1 min-w-0 overflow-hidden flex flex-col'}
+          style={showDeleted
+            ? { background: '#F1F5F9', padding: '16px 20px 20px', paddingRight: 20 }
+            : { background: '#F8FAFC' }}
         >
           {hasNoTaskProjects ? (
             <div className="h-40 flex items-center justify-center">
@@ -1107,7 +1069,7 @@ function handleFormSave(payload: TaskPayload) {
                 <div className="text-xs mt-1">请在顶部项目下拉框中选择一个项目。</div>
               </div>
             </div>
-          ) : viewMode === 'plan' ? (
+          ) : !showDeleted ? (
             <>
               <div className="min-[800px]:hidden flex-1 overflow-y-auto bg-slate-50 pt-3">
                 <MobileTaskList tasks={planBaseTasks} subTasksByTaskId={taskSubMap} loading={planTableLoading} onOpenSubTask={openSubDetail} />
@@ -1127,13 +1089,6 @@ function handleFormSave(payload: TaskPayload) {
                 />
               </div>
             </>
-          ) : viewMode === 'execution' ? (
-            <ExecutionProgressView
-              project={focusedProject}
-              tasks={planBaseTasks}
-              subTasks={taskSubMap}
-              onOpenSubTask={openSubDetail}
-            />
           ) : loading ? (
             <div className="h-40 flex items-center justify-center text-slate-400 text-sm">加载中...</div>
           ) : filtered.length === 0 ? (
@@ -1287,7 +1242,7 @@ function handleFormSave(payload: TaskPayload) {
                                 currentUserName: currentUser?.name,
                                 assignee: st.assignee,
                               })
-                              const isSelSub = selectedSubTask?.id === st.id
+                              const isSelSub = false
                               return (
                                 <div
                                   key={st.id}
@@ -1342,12 +1297,13 @@ function handleFormSave(payload: TaskPayload) {
           )}
         </div>
 
-        {viewMode !== 'execution' && (selectedSubTask || subDetailLoading) && <aside
+        {(selectedSubTask || subDetailLoading) && <aside
           data-testid="work-progress-detail-panel"
           className="fixed inset-y-0 right-0 z-40 w-[min(380px,calc(100vw-64px))] flex-shrink-0 border-l bg-white flex flex-col overflow-hidden shadow-2xl lg:static lg:z-auto lg:w-[340px] lg:shadow-none xl:w-[380px]"
           style={{ borderColor: '#E2E8F0' }}
         >
           {(() => {
+            const panelSubTask = selectedSubTask as SubTaskDetail | null
             const projectDetail = selectedProjectKey
               ? (
                   selectedProjectKey.startsWith('project:')
@@ -1357,18 +1313,18 @@ function handleFormSave(payload: TaskPayload) {
               : null
             const selectedTaskProject = projectForTask(resolvedTaskProjects, selectedTask)
             const selectedTaskArchived = isProjectArchived(selectedTaskProject)
-            const selectedSubProject = projectForSubTask(resolvedTaskProjects, tasks, selectedSubTask)
-            const subParent = selectedSubTask
-              ? tasks.find((task) => task.id === selectedSubTask.task_id) ?? null
+            const selectedSubProject = projectForSubTask(resolvedTaskProjects, tasks, panelSubTask)
+            const subParent = panelSubTask
+              ? tasks.find((task) => task.id === panelSubTask.task_id) ?? null
               : null
 
-            if (selectedSubTask || subDetailLoading) {
-              const badge = getBadge(selectedSubTask?.status)
-              const subCanEdit = selectedSubTask && !isProjectArchived(selectedSubProject) && canEditSubTaskStatus({
+            if (panelSubTask || subDetailLoading) {
+              const badge = getBadge(panelSubTask?.status)
+              const subCanEdit = panelSubTask && !isProjectArchived(selectedSubProject) && canEditSubTaskStatus({
                 isTechAdmin: currentUser?.is_tech_admin,
                 projectRoles: selectedSubProject?.user_roles ?? [],
                 currentUserName: currentUser?.name,
-                assignee: selectedSubTask.assignee,
+                assignee: panelSubTask.assignee,
               })
               return (
                 <div className="flex flex-col h-full overflow-hidden bg-white">
@@ -1394,14 +1350,14 @@ function handleFormSave(payload: TaskPayload) {
                       </button>
                     </div>
                     <p className="text-xs font-semibold" style={{ color: '#94A3B8' }}>关键任务详情</p>
-                    <h2 className="text-sm font-bold mt-0.5 leading-snug" style={{ color: '#1E293B' }}>{selectedSubTask?.title ?? '加载中...'}</h2>
+                    <h2 className="text-sm font-bold mt-0.5 leading-snug" style={{ color: '#1E293B' }}>{panelSubTask?.title ?? '加载中...'}</h2>
                   </div>
 
                   {/* 滚动区 — 精简紧凑 */}
                   <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                    {subDetailLoading && !selectedSubTask ? (
+                    {subDetailLoading && !panelSubTask ? (
                       <p className="text-xs text-center py-8" style={{ color: '#94A3B8' }}>加载中…</p>
-                    ) : selectedSubTask ? (
+                    ) : panelSubTask ? (
                       <>
                         {/* 状态 + 责任人 + 计划时间 */}
                         <div className="flex items-center gap-2 flex-wrap">
@@ -1414,11 +1370,11 @@ function handleFormSave(payload: TaskPayload) {
                               background: badge.label === '已完成' ? '#22C55E' : badge.label === '进行中' ? '#3B82F6' : badge.label === '暂缓' ? '#F59E0B' : '#94A3B8'
                             }} />{badge.label}
                           </span>
-                          {selectedSubTask.assignee && (
-                            <span className="text-xs font-semibold" style={{ color: '#475569' }}>责任人：{selectedSubTask.assignee}</span>
+                          {panelSubTask.assignee && (
+                            <span className="text-xs font-semibold" style={{ color: '#475569' }}>责任人：{panelSubTask.assignee}</span>
                           )}
-                          {selectedSubTask.plan_time && (
-                            <span className="text-xs" style={{ color: '#94A3B8' }}>{selectedSubTask.plan_time}</span>
+                          {panelSubTask.plan_time && (
+                            <span className="text-xs" style={{ color: '#94A3B8' }}>{panelSubTask.plan_time}</span>
                           )}
                         </div>
 
@@ -1426,8 +1382,8 @@ function handleFormSave(payload: TaskPayload) {
                         <div className="rounded border overflow-hidden" style={{ borderColor: '#E2E8F0', background: '#FFF' }}>
                           {([
                             { label: '所属项目', value: selectedSubProject?.name },
-                            { label: '重点工作', value: subParent?.key_task ?? selectedSubTask.parent_task?.key_task },
-                            { label: '负责人', value: selectedSubTask.assignee },
+                            { label: '重点工作', value: subParent?.key_task ?? panelSubTask.parent_task?.key_task },
+                            { label: '负责人', value: panelSubTask.assignee },
                           ] as { label: string; value?: string }[]).filter((r) => r.value).map((row) => (
                             <div key={row.label} className="flex gap-2 px-2.5 py-1.5 border-b last:border-b-0" style={{ borderColor: '#F1F5F9' }}>
                               <span className="w-14 shrink-0 text-xs font-semibold" style={{ color: '#94A3B8' }}>{row.label}</span>
@@ -1441,7 +1397,7 @@ function handleFormSave(payload: TaskPayload) {
                           <div>
                             <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>当前状态</p>
                             <select
-                              value={selectedSubTask.status ?? ''}
+                              value={panelSubTask.status ?? ''}
                               onChange={(e) => handleSubStatusUpdate(e.target.value)}
                               disabled={subSaving || selectedTaskArchived}
                               className="w-full rounded border px-2.5 py-1 text-xs font-bold focus:outline-none"
@@ -1453,11 +1409,11 @@ function handleFormSave(payload: TaskPayload) {
                         ) : null}
 
                         {/* 完成标准 */}
-                        {selectedSubTask.completion_criteria && (
+                        {panelSubTask.completion_criteria && (
                           <div>
                             <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>评价标准</p>
                             <div className="rounded px-2.5 py-1.5 text-xs leading-relaxed" style={{ background: '#EEF2FF', color: '#3730A3', border: '1px solid #C7D2FE' }}>
-                              {selectedSubTask.completion_criteria}
+                              {panelSubTask.completion_criteria}
                             </div>
                           </div>
                         )}
@@ -1465,9 +1421,9 @@ function handleFormSave(payload: TaskPayload) {
                         {/* 最新进展 */}
                         <div>
                           <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>最新进展</p>
-                          {parseProgressTimeline(selectedSubTask.notes).length > 0 ? (
+                          {parseProgressTimeline(panelSubTask.notes).length > 0 ? (
                             <div className="space-y-1">
-                              {parseProgressTimeline(selectedSubTask.notes).map((entry, idx) => (
+                              {parseProgressTimeline(panelSubTask.notes).map((entry, idx) => (
                                 <div key={`${entry.date}-${idx}`} className="rounded px-2.5 py-1.5" style={{ background: '#F8FAFC', border: '1px solid #F1F5F9' }}>
                                   <span className="text-xs" style={{ color: '#334155' }}>
                                     {entry.date && <span style={{ color: '#94A3B8', fontSize: '11px', marginRight: '6px' }}>[{entry.date}]</span>}
@@ -1482,28 +1438,28 @@ function handleFormSave(payload: TaskPayload) {
                         </div>
 
                         {/* 来源信息 */}
-                        {selectedSubTask.source_submission && (
+                        {panelSubTask.source_submission && (
                           <div>
                             <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>来源</p>
                             <div className="rounded px-2.5 py-1.5" style={{ background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="px-1.5 py-0.5 rounded text-xs font-bold" style={{ background: '#DBEAFE', color: '#1D4ED8' }}>{selectedSubTask.source_submission.source_type}</span>
-                                <span className="text-xs" style={{ color: '#64748B' }}>{selectedSubTask.source_submission.submitter}</span>
-                                <span className="text-xs" style={{ color: '#94A3B8' }}>{selectedSubTask.source_submission.created_at?.slice(0, 10)}</span>
+                                <span className="px-1.5 py-0.5 rounded text-xs font-bold" style={{ background: '#DBEAFE', color: '#1D4ED8' }}>{panelSubTask.source_submission.source_type}</span>
+                                <span className="text-xs" style={{ color: '#64748B' }}>{panelSubTask.source_submission.submitter}</span>
+                                <span className="text-xs" style={{ color: '#94A3B8' }}>{panelSubTask.source_submission.created_at?.slice(0, 10)}</span>
                               </div>
-                              {selectedSubTask.source_submission.title && (
-                                <p className="text-xs font-medium mt-0.5" style={{ color: '#334155' }}>{selectedSubTask.source_submission.title}</p>
+                              {panelSubTask.source_submission.title && (
+                                <p className="text-xs font-medium mt-0.5" style={{ color: '#334155' }}>{panelSubTask.source_submission.title}</p>
                               )}
                             </div>
                           </div>
                         )}
 
                         {/* 关联成果 */}
-                        {selectedSubTask.related_achievements && selectedSubTask.related_achievements.length > 0 && (
+                        {panelSubTask.related_achievements && panelSubTask.related_achievements.length > 0 && (
                           <div>
-                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>关联成果（{selectedSubTask.related_achievements.length}）</p>
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>关联成果（{panelSubTask.related_achievements.length}）</p>
                             <div className="space-y-1">
-                              {selectedSubTask.related_achievements.map((ach) => (
+                              {panelSubTask.related_achievements.map((ach) => (
                                 <div key={ach.id} className="rounded px-2.5 py-1.5" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
                                   <p className="text-xs font-semibold" style={{ color: '#92400E' }}>{ach.name}</p>
                                   <p className="text-xs" style={{ color: '#B45309' }}>{ach.achievement_type} · {ach.status}</p>
@@ -1514,11 +1470,11 @@ function handleFormSave(payload: TaskPayload) {
                         )}
 
                         {/* 关联问题 */}
-                        {selectedSubTask.related_issues && selectedSubTask.related_issues.length > 0 && (
+                        {panelSubTask.related_issues && panelSubTask.related_issues.length > 0 && (
                           <div>
-                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>关键问题（{selectedSubTask.related_issues.length}）</p>
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>关键问题（{panelSubTask.related_issues.length}）</p>
                             <div className="space-y-1">
-                              {selectedSubTask.related_issues.map((issue) => (
+                              {panelSubTask.related_issues.map((issue) => (
                                 <div key={issue.id} className="rounded px-2.5 py-1.5" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
                                   <p className="text-xs leading-relaxed" style={{ color: '#991B1B' }}>{issue.description}</p>
                                   <p className="text-xs" style={{ color: '#DC2626' }}>{issue.issue_type} · {issue.priority} · {issue.status}</p>

@@ -6,8 +6,8 @@ PAGE = (ROOT / "pages" / "TaskManagementPage.tsx").read_text(encoding="utf-8")
 PLAN = (ROOT / "components" / "task-management" / "PlanTableViewV2.tsx").read_text(encoding="utf-8")
 
 
-def test_task_management_provides_execution_and_plan_table_modes():
-    for symbol in ["PlanTableViewV2", "viewMode", "ensurePlanTableSubTasksLoaded", "fetchSubTasksBatch(missingIds, false)", "taskSubMap"]:
+def test_task_management_provides_plan_table_and_subtask_data_loading():
+    for symbol in ["PlanTableViewV2", "ensurePlanTableSubTasksLoaded", "fetchSubTasksBatch(missingIds, false)", "taskSubMap"]:
         assert symbol in PAGE
 
 

@@ -25,6 +25,11 @@ const PROJ_ROLE_CLS: Record<string, string> = {
   coordinator: 'bg-purple-100 text-purple-700',
   member:      'bg-amber-100 text-amber-700',
 }
+const COMPANY_ROLE_CLS: Record<string, string> = {
+  normal_member: 'bg-sky-100 text-sky-700',
+  company_ceo:   'bg-indigo-100 text-indigo-700',
+  super_admin:   'bg-rose-100 text-rose-700',
+}
 const PROJ_COLORS = ['#2563EB', '#059669', '#F59E0B', '#7C3AED', '#0891B2']
 const AVATAR_COLORS = ['#2563EB', '#059669', '#F59E0B', '#8B5CF6', '#0891B2', '#6366F1', '#EC4899', '#D97706']
 
@@ -183,11 +188,6 @@ export function CoordinatePage() {
     return { label: PROJ_ROLE_LABEL[best.role] ?? best.role, cls: PROJ_ROLE_CLS[best.role] ?? 'bg-amber-100 text-amber-700' }
   }
 
-  // 某人参与的专项名列表
-  function getProjectDuties(p: Person): string[] {
-    return (personRoles.get(p.id) ?? []).map((r) => r.project.name)
-  }
-
   // 当前用户可见的人员：管理员看全部，普通用户只看同项目成员
   const visiblePeople = (() => {
     if (currentUser?.can_view_all) return people
@@ -333,9 +333,8 @@ export function CoordinatePage() {
               <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
                 {displayPeople.map((p) => {
                   const roleInProject = selectedProjectId ? getRoleInProject(p, selectedProjectId) : null
-                  const companyRole = { label: systemRoleLabel(p.system_role), cls: 'bg-slate-100 text-slate-700' }
+                  const companyRole = { label: systemRoleLabel(p.system_role), cls: COMPANY_ROLE_CLS[p.system_role ?? ''] ?? COMPANY_ROLE_CLS.normal_member }
                   const { label: roleLabel, cls: roleCls } = selectedProjectId ? (roleInProject ?? companyRole) : companyRole
-                  const duties = getProjectDuties(p)
                   const isPersonSelected = selectedPersonId === p.id
                   const lit = isPersonLit(p)
                   return (
@@ -362,22 +361,16 @@ export function CoordinatePage() {
                             <span className="text-sm font-bold text-slate-800">{p.name}</span>
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold ${roleCls}`}>{roleLabel}</span>
                           </div>
-                          {duties.length > 0 && (
-                            <p className="text-xs text-slate-400 mt-0.5 truncate">
-                              负责专项：{duties.join('、')}
-                            </p>
-                          )}
                         </div>
                       </div>
                       {/* 参与项目列表 */}
-                      {(
+                      {selectedProjectId && (
                         <div className="flex flex-wrap gap-1.5 mt-2">
                           {(personRoles.get(p.id) ?? [])
+                            .filter((r) => r.project.id === selectedProjectId)
                             .sort((a, b) => (PROJ_ROLE_ORDER[a.role] ?? 9) - (PROJ_ROLE_ORDER[b.role] ?? 9))
                             .map((r) => {
                               const isActive = selectedProjectId === r.project.id
-                              const projIdx = projects.findIndex((x) => x.id === r.project.id)
-                              const color = PROJ_COLORS[projIdx % PROJ_COLORS.length] ?? '#6B7280'
                               return (
                                 <span
                                   key={r.project.id}
@@ -386,11 +379,9 @@ export function CoordinatePage() {
                                     setSelectedProjectId(isActive ? null : r.project.id)
                                     setSelectedPersonId(null)
                                   }}
-                                  className="text-xs px-2 py-0.5 rounded-full cursor-pointer transition-all hover:opacity-90"
+                                  className={`text-xs px-2 py-0.5 rounded-full cursor-pointer transition-all hover:opacity-90 ${PROJ_ROLE_CLS[r.role] ?? 'bg-amber-100 text-amber-700'}`}
                                   style={{
-                                    background: isActive ? color + '20' : '#F1F5F9',
-                                    color: isActive ? color : '#475569',
-                                    border: `1px solid ${isActive ? color + '60' : '#E9EFF6'}`,
+                                    border: '1px solid transparent',
                                   }}
                                 >
                                   {r.project.name} · {PROJ_ROLE_LABEL[r.role] ?? r.role}

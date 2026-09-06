@@ -22,7 +22,7 @@ def extract_meeting_document_text(filename: str, content: bytes) -> str:
     """Return text from one Word/TXT source without storing the uploaded file."""
     suffix = Path(filename or "").suffix.lower()
     if suffix not in {".docx", ".txt", ".xlsx"}:
-        raise MeetingDocumentTextError("仅支持 Word 或 TXT 文档，暂不支持 PDF")
+        raise MeetingDocumentTextError("仅支持 Word、TXT、Excel 文档（.docx、.txt、.xlsx），暂不支持 PDF")
     if not content:
         raise MeetingDocumentTextError("文档内容为空")
     if len(content) > MAX_DOCUMENT_BYTES:

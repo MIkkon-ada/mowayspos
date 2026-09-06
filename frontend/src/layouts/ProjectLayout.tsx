@@ -99,6 +99,7 @@ export function ProjectLayout() {
   const { currentProjectId, currentUser, globalUserRoles, logout, projects, reloadProjects } = useProject()
   const location = useLocation()
   const navigate = useNavigate()
+  const isOwnerSubmitPage = /\/owner-submit$/.test(location.pathname)
 
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
   const [platformName, setPlatformName] = useState<string | undefined>(undefined)
@@ -131,24 +132,28 @@ export function ProjectLayout() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-100">
-      <div className="hidden min-[800px]:flex">
-        <Sidebar
-          activePage={activePage}
-          onNavigate={handleNavigate}
-          currentUser={currentUser}
-          globalUserRoles={globalUserRoles}
-          onLogout={logout}
-          logoUrl={logoUrl}
-          platformName={platformName}
-        />
-      </div>
+    <div className={`flex h-screen overflow-hidden ${isOwnerSubmitPage ? 'bg-white' : 'bg-slate-100'}`}>
+      {isOwnerSubmitPage ? null : (
+        <div className="hidden min-[800px]:flex">
+          <Sidebar
+            activePage={activePage}
+            onNavigate={handleNavigate}
+            currentUser={currentUser}
+            globalUserRoles={globalUserRoles}
+            onLogout={logout}
+            logoUrl={logoUrl}
+            platformName={platformName}
+          />
+        </div>
+      )}
       <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
         <PageTransition />
       </div>
-      <div className="min-[800px]:hidden">
-        <MobileAppNavigation activePage={activePage} entries={navigationEntries} onNavigate={handleNavigate} onChangePassword={() => navigate('/change-password')} onLogout={() => void logout()} />
-      </div>
+      {isOwnerSubmitPage ? null : (
+        <div className="min-[800px]:hidden">
+          <MobileAppNavigation activePage={activePage} entries={navigationEntries} onNavigate={handleNavigate} onChangePassword={() => navigate('/change-password')} onLogout={() => void logout()} />
+        </div>
+      )}
     </div>
   )
 }

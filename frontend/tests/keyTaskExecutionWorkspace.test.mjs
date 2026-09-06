@@ -6,7 +6,7 @@ import path from 'node:path'
 const root = path.resolve(import.meta.dirname, '..')
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 
-test('shared key task workspace owns both detail entry points', () => {
+test('shared key task workspace remains available from work progress and personal tasks', () => {
   const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
   const personal = read('src/pages/MyTaskDetailPage.tsx')
   const management = read('src/components/task-management/KeyTaskExecutionDetailView.tsx')
@@ -17,8 +17,8 @@ test('shared key task workspace owns both detail entry points', () => {
   assert.match(workspace, /ExecutionTimeline/)
   assert.match(personal, /KeyTaskExecutionWorkspace/)
   assert.match(management, /KeyTaskExecutionWorkspace/)
-  assert.match(page, /SHOW_EXECUTION_DETAIL = true/)
-  assert.match(page, /viewMode === 'execution' && selectedSubTask/)
+  assert.match(page, /selectedSubTask \? \(/)
+  assert.doesNotMatch(page, /SHOW_EXECUTION_DETAIL|viewMode === ['"]execution['"]|ExecutionProgressView/)
 })
 
 test('key task header keeps owner, collaborators, and plan time on one aligned metadata rail', () => {

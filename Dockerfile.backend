@@ -7,7 +7,7 @@ WORKDIR /app
 COPY bowei_ai_dashboard/requirements.txt .
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
-    && apt-get install -y --no-install-recommends antiword \
+    && apt-get install -y --no-install-recommends antiword poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -r requirements.txt
 

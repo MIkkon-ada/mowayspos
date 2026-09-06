@@ -441,6 +441,79 @@ def test_xlsx_uses_dense_header_after_a_title_row_for_row_evidence(tmp_path):
     ]
 
 
+def test_xlsx_detects_sparse_work_plan_header_and_ignores_title_or_side_columns(tmp_path):
+    path = tmp_path / "真实推进表.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Sheet1"
+    sheet["A1"] = "AI升级转型 2026 年下半年目标与重点工作计划表"
+    sheet.merge_cells("A1:P1")
+    sheet.append([
+        "目标",
+        "重点工作",
+        "评价标准",
+        "序号",
+        "关键任务",
+        "责任人",
+        "计划开始时间",
+        "计划计划结束时间",
+        "协同人",
+        "完成情况",
+        "备注",
+    ])
+    sheet["N2"] = "项目管理辅助列"
+    sheet["O2"] = "计划开始时间"
+    sheet["P2"] = "计划结束时间"
+    sheet.append([
+        "形成 AI 资产体系",
+        "一、建立客户成功体系",
+        "形成可复用 SOP",
+        1,
+        "梳理现有客户服务流程",
+        "张三",
+        "2026-07-01",
+        "2026-07-05",
+        "李四、王五",
+        "进行中",
+        "输出流程图",
+    ] + [None] * 5)
+    sheet.append([
+        "",
+        "",
+        "",
+        2,
+        "设计客户成功 SOP",
+        "赵六",
+        "2026-07-06",
+        "2026-07-20",
+        "王五",
+        "未开始",
+        "完成评审",
+    ] + [None] * 5)
+    sheet.merge_cells("A3:A4")
+    sheet.merge_cells("B3:B4")
+    sheet.merge_cells("C3:C4")
+    sheet["P3"] = "不属于推进表字段的页边说明"
+    workbook.save(path)
+
+    chunks = parse_project_init_file(path, path.name)
+
+    assert chunks == [
+        SourceChunk(
+            path.name,
+            "'Sheet1'!A3:K3",
+            "目标\t重点工作\t评价标准\t序号\t关键任务\t责任人\t计划开始时间\t计划计划结束时间\t协同人\t完成情况\t备注\n"
+            "形成 AI 资产体系\t一、建立客户成功体系\t形成可复用 SOP\t1\t梳理现有客户服务流程\t张三\t2026-07-01\t2026-07-05\t李四、王五\t进行中\t输出流程图",
+        ),
+        SourceChunk(
+            path.name,
+            "'Sheet1'!A4:K4",
+            "目标\t重点工作\t评价标准\t序号\t关键任务\t责任人\t计划开始时间\t计划计划结束时间\t协同人\t完成情况\t备注\n"
+            "\t\t\t2\t设计客户成功 SOP\t赵六\t2026-07-06\t2026-07-20\t王五\t未开始\t完成评审",
+        ),
+    ]
+
+
 def test_xlsx_preserves_formula_text_when_cached_result_exists(tmp_path):
     source_path = tmp_path / "formula.xlsx"
     path = tmp_path / "formula-with-cache.xlsx"
@@ -1029,3 +1102,16 @@ def test_unsupported_extension_raises_domain_error(tmp_path):
 
     with pytest.raises(UnsupportedProjectInitFile, match="archive\\.csv"):
         parse_project_init_file(path, "archive.csv")
+
+
+def test_doc_reports_missing_antiword_dependency(tmp_path, monkeypatch):
+    path = tmp_path / "legacy.doc"
+    path.write_bytes(b"legacy")
+
+    def missing_antiword(*_args, **_kwargs):
+        raise FileNotFoundError("antiword")
+
+    monkeypatch.setattr(parser.subprocess, "Popen", missing_antiword)
+
+    with pytest.raises(ProjectInitFileParseError, match="antiword.*安装"):
+        parse_project_init_file(path, "legacy.doc")

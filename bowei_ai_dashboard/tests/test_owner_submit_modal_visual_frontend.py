@@ -22,7 +22,8 @@ def test_owner_submit_modal_has_current_three_zone_workbench_layout():
         "shrink-0",
     ]:
         assert expected in source
-    assert "h-[72px]" not in source
+    # Do not reject the valid `min-h-[72px]` footer class by substring match.
+    assert "className=\"h-[72px]" not in source
 
 
 def test_owner_submit_workbench_fills_the_page_area_without_modal_framing():

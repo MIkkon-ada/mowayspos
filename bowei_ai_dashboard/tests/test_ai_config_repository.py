@@ -155,3 +155,25 @@ def test_policy_persists_fallback_timeout_seconds(db):
     )
 
     assert updated.policy_version == 2
+
+
+def test_new_project_init_policy_defaults_to_longer_primary_timeout(db):
+    repo = AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY)
+    chat = _chat_model(repo)
+    repo.replace_credential(chat.id, api_key="key", app_secret=None)
+
+    project_init = repo.save_policy(
+        "project.init.analysis",
+        primary_model_id=chat.id,
+        fallback_model_ids=[],
+        enabled=True,
+    )
+    meeting = repo.save_policy(
+        "meeting.analysis",
+        primary_model_id=chat.id,
+        fallback_model_ids=[],
+        enabled=True,
+    )
+
+    assert (project_init.timeout_seconds, project_init.fallback_timeout_seconds) == (200, 25)
+    assert meeting.timeout_seconds == 60

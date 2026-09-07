@@ -251,11 +251,12 @@ class AIService:
         last_error: AIUpstreamError | None = None
         for attempt_no, model in enumerate(candidates, start=1):
             started = time.monotonic()
+            fallback_used = model.id != policy.primary_model_id
             try:
                 timeout_seconds = (
-                    policy.timeout_seconds
-                    if attempt_no == 1
-                    else policy.fallback_timeout_seconds
+                    policy.fallback_timeout_seconds
+                    if fallback_used
+                    else policy.timeout_seconds
                 )
                 result = invoke(model, self._credential(model.id), timeout_seconds)
             except Exception as exc:
@@ -265,7 +266,7 @@ class AIService:
                     model,
                     attempt_no,
                     "failed",
-                    attempt_no > 1,
+                    fallback_used,
                     int((time.monotonic() - started) * 1000),
                     error.code,
                     invocation_context,
@@ -282,7 +283,7 @@ class AIService:
                 model,
                 attempt_no,
                 "succeeded",
-                attempt_no > 1,
+                fallback_used,
                 int((time.monotonic() - started) * 1000),
                 "",
                 invocation_context,

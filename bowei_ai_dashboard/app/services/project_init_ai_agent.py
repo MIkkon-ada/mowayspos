@@ -1576,6 +1576,25 @@ def _structured_spreadsheet_fallback(
     )
 
 
+def generate_structured_project_init_draft(
+    chunks: Iterable[SourceChunk | dict[str, Any]],
+    existing_people: Iterable[PersonCandidate | dict[str, Any]],
+    existing_tasks: Iterable[dict[str, Any]],
+) -> ProjectInitAiResult | None:
+    """Project explicit Excel rows into a draft, or defer to model analysis.
+
+    The caller must first exclude sources requiring visual interpretation.
+    Mixed sources, invalid worksheet ranges, and unrecognized tables return
+    no draft so the existing model route can consider the full input.
+    """
+    source_values = [_source_parts(chunk) for chunk in chunks]
+    people = _person_candidates(existing_people)
+    indexed_tasks, _ = _existing_task_index(existing_tasks)
+    return _structured_spreadsheet_fallback(
+        source_values, people, indexed_tasks, "local-rule",
+    )
+
+
 def _validate_evidence_group(
     evidence: list[Evidence],
     *,

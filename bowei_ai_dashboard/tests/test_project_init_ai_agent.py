@@ -1176,6 +1176,56 @@ def test_out_of_bounds_coarse_worksheet_evidence_is_not_repaired(location):
         )
 
 
+@pytest.mark.parametrize("extension", ["xls", "xlsx", "XLSX"])
+def test_public_structured_draft_helper_preserves_tasks_and_source_evidence(extension):
+    from app.services.project_init_ai_agent import generate_structured_project_init_draft
+
+    source = {
+        "attachment_id": 7,
+        "file_name": f"work-plan.{extension}",
+        "location": "'推进表'!A2:D2",
+        "text": "专项\t关键任务\t负责人\t计划时间\n知识资产AI化\t修订标签\t李四\t2026-06-01",
+    }
+    result = generate_structured_project_init_draft(
+        [source], [{"id": 2, "name": "李四", "is_active": True}], [],
+    )
+
+    assert result is not None
+    assert result.model_name == "structured-spreadsheet-fallback"
+    assert result.provider == "local-rule"
+    assert result.tasks[0].title == "知识资产AI化"
+    subtask = result.tasks[0].subtasks[0]
+    assert subtask.title == "修订标签"
+    assert subtask.assignee_id == 2
+    assert subtask.plan_start == "2026-06-01"
+    assert subtask.evidence[0].attachment_id == 7
+    assert subtask.evidence[0].location == source["location"]
+
+
+@pytest.mark.parametrize("source_change", [
+    {"file_name": "work-plan.txt"},
+    {"location": "第 1 行"},
+    {"text": "无明确任务"},
+])
+def test_public_structured_draft_helper_returns_none_for_ineligible_sources(source_change):
+    from app.services.project_init_ai_agent import generate_structured_project_init_draft
+
+    source = {
+        "file_name": "work-plan.xlsx",
+        "location": "'推进表'!A2:C2",
+        "text": "专项\t关键任务\t负责人\n知识资产AI化\t修订标签\t李四",
+    }
+
+    assert generate_structured_project_init_draft([{**source, **source_change}], [], []) is None
+    assert generate_structured_project_init_draft([], [], []) is None
+    assert generate_structured_project_init_draft(
+        [source, {**source, "file_name": "notes.txt"}], [], [],
+    ) is None
+    assert generate_structured_project_init_draft(
+        [source, {**source, "file_name": "notes.txt", "text": ""}], [], [],
+    ) is None
+
+
 def test_structured_spreadsheet_fallback_uses_traceable_row_data_after_invalid_ai_evidence():
     spreadsheet_row = {
         "attachment_id": 7,

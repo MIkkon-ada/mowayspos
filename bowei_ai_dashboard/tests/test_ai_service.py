@@ -22,6 +22,7 @@ class FakeAdapters:
         self.chat_timeouts = []
         self.vision_results = {}
         self.vision_calls = []
+        self.vision_timeouts = []
 
     def complete_chat(self, model, api_key, prompt, *, timeout_seconds):
         self.chat_calls.append(model.id)
@@ -32,6 +33,7 @@ class FakeAdapters:
 
     def complete_project_init_vision(self, model, api_key, images, prompt, *, timeout_seconds):
         self.vision_calls.append((model.id, list(images)))
+        self.vision_timeouts.append(timeout_seconds)
         return self.vision_results[model.id]
 
 
@@ -216,6 +218,34 @@ def test_project_init_vision_uses_only_explicitly_opted_in_model(
     assert result.model_code == "primary"
     assert fake_adapters.vision_calls == [(primary.id, [image_path])]
     assert fallback.id not in [model_id for model_id, _ in fake_adapters.vision_calls]
+
+
+def test_project_init_vision_uses_fallback_timeout_when_primary_is_not_vision_eligible(
+    db, configured_chat_policy, fake_adapters, tmp_path
+):
+    primary, fallback = configured_chat_policy
+    fallback.provider = "deepseek"
+    fallback.config_json = '{"vision_project_init_analysis":true}'
+    AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY).save_policy(
+        Capability.PROJECT_INIT_ANALYSIS,
+        primary_model_id=primary.id,
+        fallback_model_ids=[fallback.id],
+        timeout_seconds=200,
+        fallback_timeout_seconds=25,
+        max_attempts=2,
+        enabled=True,
+    )
+    db.commit()
+    image_path = tmp_path / "sheet.png"
+    image_path.write_bytes(b"png")
+    fake_adapters.vision_results[fallback.id] = '{"tasks":[]}'
+
+    result = AIService(
+        db, adapters=fake_adapters, cipher_key=TEST_FERNET_KEY
+    ).invoke_project_init_vision([image_path], "extract")
+
+    assert result.model_code == "fallback"
+    assert fake_adapters.vision_timeouts == [25]
 
 
 def test_project_init_vision_accepts_the_generic_project_init_opt_in(

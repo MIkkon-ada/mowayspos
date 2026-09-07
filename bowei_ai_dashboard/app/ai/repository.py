@@ -184,15 +184,17 @@ class AIConfigurationRepository:
         *,
         primary_model_id: int | None,
         fallback_model_ids: list[int],
-        timeout_seconds: int,
-        max_attempts: int,
-        enabled: bool,
+        timeout_seconds: int | None = None,
+        max_attempts: int = 1,
+        enabled: bool = False,
         fallback_timeout_seconds: int = 25,
     ) -> models.AICapabilityPolicy:
         try:
             required_type = Capability.required_model_type(capability_key)
         except ValueError as exc:
             raise InvalidAIPolicy(str(exc)) from exc
+        if timeout_seconds is None:
+            timeout_seconds = 200 if capability_key == Capability.PROJECT_INIT_ANALYSIS else 60
         if timeout_seconds <= 0:
             raise InvalidAIPolicy("timeout_seconds must be positive")
         if fallback_timeout_seconds <= 0:

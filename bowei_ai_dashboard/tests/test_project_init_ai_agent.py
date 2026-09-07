@@ -153,7 +153,18 @@ def test_ai_draft_accepts_an_evidence_bound_project_profile_without_work_tasks()
     assert result.project_profile.evidence[0].file_name == "plan.txt"
 
 
-def test_schema_invalid_primary_response_uses_project_init_fallback_model():
+def test_raw_draft_classifier_sanitizes_integer_digit_limit_failure():
+    from app.services.project_init_ai_agent import _classify_raw_draft_envelope
+
+    raw = '{"tasks": [], "private_value": ' + "9" * 5_000 + "}"
+    assert _classify_raw_draft_envelope(raw) == "json_malformed"
+
+
+@pytest.mark.parametrize("invalid_kind, expected_code", [
+    ("schema", "schema_invalid"),
+    ("integer_digit_limit", "json_malformed"),
+])
+def test_invalid_primary_response_uses_project_init_fallback_model(invalid_kind, expected_code, caplog):
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = sessionmaker(bind=engine)()
@@ -194,9 +205,14 @@ def test_schema_invalid_primary_response_uses_project_init_fallback_model():
         invalid = raw_task()
         invalid["evidence"] = invalid["evidence"][0]
         invalid["subtasks"][0]["evidence"] = invalid["subtasks"][0]["evidence"][0]
+        primary_response = (
+            '{"tasks": [], "private_value": ' + "9" * 5_000 + "}"
+            if invalid_kind == "integer_digit_limit"
+            else json.dumps({"tasks": [invalid]}, ensure_ascii=False)
+        )
         adapters = SequencedChatAdapters(
             {
-                "primary": json.dumps({"tasks": [invalid]}, ensure_ascii=False),
+                "primary": primary_response,
                 "fallback": json.dumps({"tasks": [raw_task()]}, ensure_ascii=False),
             }
         )
@@ -212,9 +228,11 @@ def test_schema_invalid_primary_response_uses_project_init_fallback_model():
         assert result.tasks[0].title == "实施交付"
         logs = db.query(models.AIInvocationLog).order_by(models.AIInvocationLog.id).all()
         assert [(log.status, log.fallback_used, log.error_code) for log in logs] == [
-            ("failed", False, "schema_invalid"),
+            ("failed", False, expected_code),
             ("succeeded", True, ""),
         ]
+        assert "9999999999" not in caplog.text
+        assert "private_value" not in caplog.text
     finally:
         db.close()
         Base.metadata.drop_all(engine)

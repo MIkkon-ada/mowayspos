@@ -1144,7 +1144,8 @@ def _parse_json_response(raw: str | dict[str, Any]) -> Any:
                     candidate = text[start : index + 1]
                     try:
                         values.append(json.loads(candidate))
-                    except json.JSONDecodeError:
+                    except ValueError:
+                        # Includes malformed JSON and decoder integer-size limits.
                         raise _JsonResponseError("json_malformed") from None
                     cursor = index + 1
                     found_end = True

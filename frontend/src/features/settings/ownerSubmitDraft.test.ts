@@ -134,6 +134,23 @@ describe('mergeAiDraft', () => {
     expect((result[0].subtasks[0] as any).helper_ids).toEqual([9])
   })
 
+  it('retains bindings and omits nonblocking auto-join notices from submit warnings', () => {
+    const task = aiTask({
+      subtasks: [{
+        ...aiTask().subtasks[0],
+        warnings: [{ code: 'will_join_project', message: '提交项目方案时将自动加入项目', person_name: '王五' }],
+      }],
+    })
+
+    const result = mergeAiDraft([], { tasks: [task] }, [], { knownMemberIds: [7, 8, 9] })
+    const preview = buildAiMergePreview([], { tasks: [task] }, [], { knownMemberIds: [7, 8, 9] })
+
+    expect((result[0].subtasks[0] as any).assignee_id).toBe(8)
+    expect((result[0].subtasks[0] as any).helper_ids).toEqual([9])
+    expect(preview.warningCount).toBe(0)
+    expect(preview.warnings).toEqual([])
+  })
+
   it('rejects unknown AI owner and helper IDs before adding a new task', () => {
     expect(() => mergeAiDraft([], { tasks: [aiTask({ owner_id: 99 as any })] }, [], { knownMemberIds: [7, 8, 9] })).toThrow(/unknown member/i)
     expect(() => mergeAiDraft([], { tasks: [aiTask({ helper_ids: [99] as any } as any)] }, [], { knownMemberIds: [7, 8, 9] })).toThrow(/unknown member/i)

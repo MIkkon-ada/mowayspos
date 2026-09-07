@@ -689,7 +689,7 @@ select:focus {
     align-items: flex-start;
   }
 
-  .login-card {
+.login-card {
     padding: 28px 24px;
     border-radius: 20px;
   }
@@ -705,5 +705,220 @@ select:focus {
   }
 }
 
+@media (min-width: 1024px) {
+  .owner-submit-b-split .owner-submit-subtask-table th:first-child {
+    width: 30%;
+  }
 
+  .owner-submit-b-split .owner-submit-subtask-table th:nth-child(2) {
+    width: 13%;
+  }
 
+  .owner-submit-b-split .owner-submit-subtask-table th:nth-child(3) {
+    width: 13%;
+  }
+
+  .owner-submit-b-split .owner-submit-subtask-table th:nth-child(4) {
+    width: 14%;
+  }
+
+  .owner-submit-b-split .owner-submit-subtask-table th:nth-child(5) {
+    width: 25%;
+  }
+
+  .owner-submit-b-split .owner-submit-subtask-table th:last-child {
+    width: 5%;
+    white-space: nowrap;
+  }
+}
+
+.owner-submit-core-card {
+  box-shadow: none;
+}
+
+.owner-submit-project-info-row {
+  min-height: 40px;
+}
+
+.owner-submit-b-split input[placeholder="请输入重点工作名称"] {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #17233d;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.owner-submit-b-split input[placeholder="请输入重点工作名称"]::placeholder {
+  color: #667085;
+  opacity: 1;
+}
+
+.owner-submit-b-split input[placeholder="请输入重点工作名称"]:hover {
+  background: #f8fafc;
+}
+
+.owner-submit-b-split input[placeholder="请输入重点工作名称"]:focus {
+  border-color: #3b82f6;
+  background: #fff;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
+}
+
+.owner-submit-title-display {
+  border: 1px solid transparent;
+  background: transparent;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.owner-submit-title-display:hover {
+  border-color: #e5eaf1;
+  background: #f8fafc;
+}
+
+.owner-submit-title-filled {
+  color: #17233d;
+}
+
+.owner-submit-title-empty {
+  color: #667085;
+}
+
+.owner-submit-b-split input[placeholder="请输入目标成果"]::placeholder {
+  color: #667085;
+  opacity: 1;
+}
+
+.owner-submit-goal-result > label {
+  color: #17233d;
+  font-weight: 600;
+}
+
+.owner-submit-goal-result-input {
+  border: 1px solid transparent;
+  background: transparent;
+  color: #344054;
+}
+
+.owner-submit-b-split input[placeholder="请输入目标成果"]:not(:placeholder-shown) {
+  border-color: transparent;
+  background: transparent;
+}
+
+.owner-submit-b-split input[placeholder="请输入目标成果"]:hover {
+  border-color: #e5eaf1;
+  background: #f8fafc;
+}
+
+.owner-submit-b-split input[placeholder="请输入目标成果"]:focus {
+  border-color: #3b82f6;
+  background: #fff;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
+}
+
+.owner-submit-b-split .owner-submit-subtask-table tbody td {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.owner-submit-b-split .owner-submit-subtask-table tbody tr {
+  height: 64px;
+}
+
+.owner-submit-b-split .owner-submit-subtask-table input,
+.owner-submit-b-split .owner-submit-subtask-table button[aria-haspopup="listbox"] {
+  border-color: transparent;
+  background: transparent;
+}
+
+.owner-submit-b-split .owner-submit-subtask-table input {
+  color: #344054;
+}
+
+.owner-submit-b-split .owner-submit-subtask-table input::placeholder {
+  color: #667085;
+  opacity: 1;
+}
+
+.owner-submit-b-split .owner-submit-subtask-table input[placeholder="例如：任务名称"] {
+  color: #17233d;
+  font-weight: 500;
+}
+
+.owner-submit-b-split .owner-submit-subtask-table button[aria-haspopup="listbox"] {
+  color: #667085;
+}
+
+.owner-submit-b-split .owner-submit-subtask-table button[aria-haspopup="listbox"].owner-submit-picker-filled {
+  color: #344054;
+}
+
+.owner-submit-b-split .owner-submit-subtask-table button[aria-haspopup="listbox"]:disabled {
+  color: #b8c0cc;
+  opacity: 1;
+}
+
+.owner-submit-b-split .owner-submit-picker-chevron {
+  color: #98a2b3;
+}
+
+.owner-submit-b-split .owner-submit-picker-trigger:hover .owner-submit-picker-chevron {
+  color: #475467;
+}
+
+.owner-submit-b-split .owner-submit-subtask-drag-handle {
+  color: #98a2b3;
+  cursor: grab;
+}
+
+.owner-submit-b-split .owner-submit-subtask-drag-handle:hover,
+.owner-submit-b-split .owner-submit-subtask-drag-handle:active {
+  color: #475467;
+}
+
+.owner-submit-b-split .owner-submit-subtask-drag-handle:active {
+  cursor: grabbing;
+}
+
+.owner-submit-b-split .owner-submit-date-icon {
+  color: #98a2b3;
+}
+
+.owner-submit-b-split .owner-submit-subtask-table td:focus-within .owner-submit-date-icon {
+  color: #475467;
+}
+
+.owner-submit-b-split .owner-submit-more-menu-trigger {
+  color: #98a2b3;
+}
+
+.owner-submit-b-split .owner-submit-more-menu-trigger:hover {
+  color: #344054;
+}
+
+.owner-submit-b-split .owner-submit-subtask-delete-icon {
+  color: #b0b8c5;
+  opacity: 1;
+}
+
+.owner-submit-b-split .owner-submit-subtask-delete-icon:hover {
+  color: #d92d20;
+}
+
+.owner-submit-b-split .owner-submit-subtask-delete-icon:disabled {
+  color: #b8c0cc;
+  opacity: 1;
+}
+
+.owner-submit-b-split .owner-submit-subtask-table input:hover,
+.owner-submit-b-split .owner-submit-subtask-table button[aria-haspopup="listbox"]:hover {
+  background: #f8fafc;
+}
+
+.owner-submit-b-split .owner-submit-subtask-table input:focus,
+.owner-submit-b-split .owner-submit-subtask-table button[aria-haspopup="listbox"]:focus-visible {
+  border-color: #3b82f6;
+  background: #fff;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
+}

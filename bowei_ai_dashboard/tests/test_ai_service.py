@@ -193,6 +193,32 @@ def test_project_init_vision_uses_only_explicitly_opted_in_model(
     assert fallback.id not in [model_id for model_id, _ in fake_adapters.vision_calls]
 
 
+def test_project_init_vision_accepts_the_generic_project_init_opt_in(
+    db, configured_chat_policy, fake_adapters, tmp_path
+):
+    primary, _fallback = configured_chat_policy
+    primary.config_json = '{"vision_project_init_analysis":true}'
+    AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY).save_policy(
+        Capability.PROJECT_INIT_ANALYSIS,
+        primary_model_id=primary.id,
+        fallback_model_ids=[],
+        timeout_seconds=30,
+        max_attempts=1,
+        enabled=True,
+    )
+    db.commit()
+    image_path = tmp_path / "scanned-page.png"
+    image_path.write_bytes(b"png")
+    fake_adapters.vision_results[primary.id] = '{"tasks":[]}'
+
+    result = AIService(
+        db, adapters=fake_adapters, cipher_key=TEST_FERNET_KEY
+    ).invoke_project_init_vision([image_path], "extract")
+
+    assert result.model_code == "primary"
+    assert fake_adapters.vision_calls == [(primary.id, [image_path])]
+
+
 def test_project_init_vision_rejects_models_without_explicit_opt_in(
     db, configured_chat_policy, fake_adapters, tmp_path
 ):

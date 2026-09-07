@@ -6,21 +6,14 @@ import path from 'node:path'
 const root = path.resolve(import.meta.dirname, '..')
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 
-test('task-management keeps the shared key-task execution workspace behind its temporary entry switch', () => {
+test('task-management keeps the shared key-task execution workspace after removing the overview mode', () => {
   const detail = read('src/components/task-management/KeyTaskExecutionDetailView.tsx')
   const page = read('src/pages/TaskManagementPage.tsx')
   assert.match(detail, /KeyTaskExecutionWorkspace/)
   assert.match(detail, /keyTaskId=\{subTask\.id\}/)
-  assert.match(page, /SHOW_EXECUTION_DETAIL = true/)
-  assert.match(page, /viewMode === 'execution' && selectedSubTask/)
+  assert.match(page, /selectedSubTask \? \(/)
+  assert.doesNotMatch(page, /SHOW_EXECUTION_DETAIL|viewMode === ['"]execution['"]|ExecutionProgressView/)
   assert.match(page, /KeyTaskExecutionDetailView/)
-})
-
-test('execution progress keeps the existing table entry but has no fake aggregate percentage', () => {
-  const overview = read('src/components/task-management/ExecutionProgressView.tsx')
-  assert.match(overview, /onOpenSubTask/)
-  assert.match(overview, /completion_standard/)
-  assert.doesNotMatch(overview, /整体进度/)
 })
 
 test('legacy detail composition is no longer the source for execution facts', () => {

@@ -281,14 +281,17 @@ class AIService:
         raise last_error or AICapabilityNotConfigured("AI capability has no usable model")
 
     @staticmethod
-    def _vision_workbook_enabled(model: models.AIModel) -> bool:
+    def _project_init_vision_enabled(model: models.AIModel) -> bool:
         if model.provider != "deepseek":
             return False
         try:
             config = json.loads(model.config_json or "{}")
         except json.JSONDecodeError:
             return False
-        return isinstance(config, dict) and config.get("vision_workbook_analysis") is True
+        return isinstance(config, dict) and (
+            config.get("vision_project_init_analysis") is True
+            or config.get("vision_workbook_analysis") is True
+        )
 
     def invoke_chat(
         self,
@@ -340,38 +343,7 @@ class AIService:
             ModelType.CHAT,
         )
         vision_candidates = [
-            model for model in candidates if self._vision_workbook_enabled(model)
-        ]
-        if not vision_candidates:
-            raise AICapabilityNotConfigured(
-                "project init vision has no explicitly opted-in model"
-            )
-        text, model, log = self._invoke_candidates(
-            policy,
-            vision_candidates,
-            context,
-            lambda current, api_key, timeout: self.adapters.complete_project_init_vision(
-                current,
-                api_key,
-                images,
-                prompt,
-                timeout_seconds=timeout,
-            ),
-        )
-        return ChatResult(text=text, model_code=model.code, invocation_log_id=log.id)
-
-    def invoke_project_init_vision(
-        self,
-        images: list[Path],
-        prompt: str,
-        context: AIInvocationContext | None = None,
-    ) -> ChatResult:
-        policy, candidates = self._candidates(
-            Capability.PROJECT_INIT_ANALYSIS,
-            ModelType.CHAT,
-        )
-        vision_candidates = [
-            model for model in candidates if self._vision_workbook_enabled(model)
+            model for model in candidates if self._project_init_vision_enabled(model)
         ]
         if not vision_candidates:
             raise AICapabilityNotConfigured(

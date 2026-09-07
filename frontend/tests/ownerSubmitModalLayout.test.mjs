@@ -9,8 +9,9 @@ const sourcePath = path.resolve(here, '../src/features/settings/OwnerSubmitModal
 const source = fs.readFileSync(sourcePath, 'utf8')
 const aiSourcePath = path.resolve(here, '../src/features/settings/OwnerSubmitAiPanel.tsx')
 const aiSource = fs.readFileSync(aiSourcePath, 'utf8')
-const workbenchShellClassName = source.split(/\r?\n/).find((line) => line.includes('owner-submit-workbench-shell')) ?? ''
-const workbenchMainClassName = source.split(/\r?\n/).find((line) => line.includes('owner-submit-workbench-main')) ?? ''
+const activeSource = source.split(/\r?\n\s*\/\*/)[0]
+const workbenchShellClassName = activeSource.split(/\r?\n/).find((line) => line.includes('owner-submit-workbench-shell')) ?? ''
+const workbenchMainClassName = activeSource.split(/\r?\n/).find((line) => line.includes('owner-submit-workbench-main')) ?? ''
 
 test('assignee picker renders outside the table overflow container', () => {
   assert.match(source, /from ['"]react-dom['"]/)
@@ -40,41 +41,42 @@ test('picker menus flip upward and stay inside the viewport when the bottom area
 })
 
 test('picker triggers use a stable SVG chevron instead of a font glyph', () => {
-  assert.equal((source.match(/<svg[^>]+className=\{`shrink-0 h-4 w-4/g) ?? []).length, 2)
-  assert.doesNotMatch(source, /rotate-180[^>]*>⌄</)
+  assert.equal((activeSource.match(/owner-submit-picker-chevron shrink-0 h-4 w-4/g) ?? []).length, 2)
+  assert.doesNotMatch(activeSource, /rotate-180[^>]*>⌄</)
 })
 
 test('notes column receives a wide share without truncating its editor', () => {
-  assert.match(source, /table-fixed/)
-  assert.match(source, /w-\[24%\][^\n]*备注 \/ 标准/)
-  assert.match(source, /placeholder="填写验收标准或说明"/)
-  assert.doesNotMatch(source, /max-w-\[180px\]/)
-  assert.doesNotMatch(source, /max-w-\[180px\][^\n]*truncate/)
+  assert.match(activeSource, /owner-submit-b-split[\s\S]*?table-fixed min-w-\[680px\]/)
+  assert.match(activeSource, /w-\[23%\][^\n]*评价指标/)
+  assert.match(activeSource, /placeholder="填写评价指标"/)
+  assert.doesNotMatch(activeSource, /max-w-\[180px\]/)
+  assert.doesNotMatch(activeSource, /max-w-\[180px\][^\n]*truncate/)
 })
 
-test('expanded task header inputs use compact workbench styling', () => {
-  assert.match(source, /owner-submit-task-group-header[^\n]*py-3/)
-  assert.equal((source.match(/<label className="sr-only">/g) ?? []).length, 2)
-  assert.match(source, /placeholder="[^\"]+"[\s\S]{0,360}sm:max-w-\[360px\][\s\S]{0,160}sm:flex-none/)
-  assert.match(source, /placeholder="请输入重点工作"[\s\S]{0,360}h-8[\s\S]{0,160}font-bold[\s\S]{0,220}focus:ring-0/)
-  assert.match(source, /placeholder="请输入完成准则"[\s\S]{0,360}h-6[\s\S]{0,220}focus:ring-0/)
+test('selected task title keeps display-first editing semantics', () => {
+  assert.match(activeSource, /editingTitleIndex === selectedTaskIndex/)
+  assert.match(activeSource, /placeholder="请输入重点工作名称"/)
+  assert.match(activeSource, /owner-submit-title-display/)
+  assert.match(activeSource, /未命名重点工作/)
+  assert.match(activeSource, /owner-submit-goal-result/)
+  assert.match(activeSource, /placeholder="请输入目标成果"/)
 })
 
 test('workbench uses the final responsive project core sidebar and plan pane', () => {
   assert.match(workbenchShellClassName, /min-h-0/)
   assert.match(workbenchShellClassName, /flex-1/)
-  assert.match(source, /填写项目方案 — \{project\.name\}/)
-  assert.match(source, /完善项目计划内容，确认后提交企业教练审核/)
-  assert.match(source, /owner-submit-project-summary/)
-  assert.match(source, /owner-submit-plan-section/)
-  assert.match(source, /owner-submit-workbench-columns[^\n]*lg:flex-row/)
-  assert.match(source, /owner-submit-left-pane[^\n]*lg:w-\[280px\][^\n]*xl:w-\[300px\]/)
-  assert.match(source, /owner-submit-right-pane[^\n]*flex-1 min-w-0/)
-  assert.doesNotMatch(source, /disabled[\s\S]{0,120}value=\{project\.name\}/)
+  assert.match(activeSource, /填写项目方案 — \{project\.name\}/)
+  assert.match(activeSource, /完善项目计划内容，确认后提交企业教练审核/)
+  assert.match(activeSource, /owner-submit-project-summary/)
+  assert.match(activeSource, /owner-submit-plan-section/)
+  assert.match(activeSource, /owner-submit-workbench-columns[^\n]*lg:flex-row/)
+  assert.match(activeSource, /owner-submit-left-pane[^\n]*lg:w-\[360px\]/)
+  assert.match(activeSource, /owner-submit-right-pane[^\n]*min-w-0 flex-1/)
+  assert.doesNotMatch(activeSource, /disabled[\s\S]{0,120}value=\{project\.name\}/)
 })
 
 test('workbench is page-local while retaining a scrollable main boundary', () => {
-  assert.doesNotMatch(source, /fixed inset-0/)
+  assert.doesNotMatch(activeSource, /fixed inset-0/)
   assert.doesNotMatch(workbenchShellClassName, /max-h-\[calc\(100vh-48px\)\]/)
   assert.doesNotMatch(workbenchShellClassName, /h-\[94vh\]/)
   assert.match(workbenchMainClassName, /min-h-0/)
@@ -93,75 +95,68 @@ test('workbench fills the right-side page area without modal card framing', () =
 })
 
 test('project core card shows management-maintained base information as read-only', () => {
-  assert.match(source, /owner-submit-project-summary[^\n]*owner-submit-core-card[^\n]*py-4/)
-  assert.match(source, /mb-1\.5[^>]*>项目核心信息/)
-  assert.match(source, /基础信息由管理层维护/)
-  assert.match(source, /\{project\.name\}/)
-  assert.match(source, /composeProjectPeriod\(project\.start_date, project\.end_date\)/)
-  assert.match(source, /\{project\.objectives[^}]*\}/)
-  assert.match(source, /项目说明/)
-  assert.match(source, /\{project\.description[^}]*\}/)
-  assert.match(source, /className="grid grid-cols-1 gap-3"/)
-  assert.match(source, /项目名称<\/span>[\s\S]{0,180}mt-2 truncate text-xl font-bold/)
-  assert.match(source, /项目周期 \/ 时间段<\/span>[\s\S]{0,260}rounded-lg border border-slate-200 bg-slate-50/)
-  assert.match(source, /项目完成准则 \/ 验收标准<\/span>[\s\S]{0,320}>内容<\/span>/)
-  assert.match(source, /owner-submit-objectives-content[\s\S]{0,220}rounded-lg border border-slate-200 bg-slate-50/)
-  assert.match(source, /project\.objectives\?\.trim\(\) \? \([\s\S]{0,180}\) : \([\s\S]{0,180}未填写/)
-  assert.doesNotMatch(source, /md:grid-cols-\[minmax\(160px,0\.8fr\)_minmax\(260px,1fr\)_minmax\(360px,2fr\)\]/)
-  assert.match(source, /<details className="app-disclosure group mt-1">/)
-  assert.doesNotMatch(source, /setFillForm/)
-  assert.doesNotMatch(source, /setProjectPeriod/)
-  assert.doesNotMatch(source, /ownerSubmitProfile\(project\.id, \{[\s\S]{0,240}(?:objectives|start_date|end_date)/)
+  assert.match(activeSource, /owner-submit-project-summary[^\n]*owner-submit-core-card[^\n]*py-4/)
+  assert.match(activeSource, />项目概览<\/h3>/)
+  assert.doesNotMatch(activeSource, /基础信息由管理层维护/)
+  assert.match(activeSource, /grid-cols-\[130px_minmax\(0,1fr\)\]/)
+  assert.match(activeSource, /项目编号/)
+  assert.match(activeSource, /项目名称/)
+  assert.match(activeSource, /项目状态/)
+  assert.match(activeSource, /项目周期/)
+  assert.match(activeSource, /项目目标/)
+  assert.match(activeSource, /项目背景/)
+  assert.match(activeSource, /补充说明/)
+  assert.match(activeSource, /项目说明/)
+  assert.match(activeSource, /项目角色/)
+  assert.doesNotMatch(activeSource, /setFillForm/)
+  assert.doesNotMatch(activeSource, /setProjectPeriod/)
+  assert.doesNotMatch(activeSource, /ownerSubmitProfile\(project\.id, \{[\s\S]{0,240}(?:objectives|start_date|end_date)/)
 })
 
-test('screenshot reference keeps the project summary display-first and task cards scanable', () => {
-  assert.match(source, /owner-submit-project-summary-display/)
-  assert.match(source, /owner-submit-project-period-display/)
-  assert.match(source, /owner-submit-task-status/)
-  assert.match(source, /owner-submit-task-meta/)
-  assert.match(source, /composeTaskPeriod\(task\.plan_start, task\.plan_end\)/)
-  assert.match(source, /task\.subtasks\.map\(\(subtask\) => composeTaskPeriod\(subtask\.plan_start, subtask\.plan_end\)\)\.find\(Boolean\)/)
+test('project summary and selected task preserve scanable display-first information', () => {
+  assert.match(activeSource, /owner-submit-project-summary-display/)
+  assert.match(activeSource, /owner-submit-project-info-row/)
+  assert.match(activeSource, /owner-submit-b-split/)
+  assert.match(activeSource, /composeTaskPeriod\(task\.plan_start, task\.plan_end\)/)
+  assert.match(activeSource, /task\.subtasks\.map\(\(subtask\) => composeTaskPeriod\(subtask\.plan_start, subtask\.plan_end\)\)\.find\(Boolean\)/)
 })
 
 test('screenshot reference adds presentation-only task table affordances without removing editors', () => {
-  assert.match(source, /owner-submit-subtask-drag-handle/)
-  assert.match(source, /owner-submit-subtask-date-icon/)
-  assert.match(source, /owner-submit-subtask-delete-icon/)
-  assert.match(source, /<AssigneePicker people=\{people\}/)
-  assert.match(source, /<HelperPicker people=\{people\}/)
-  assert.match(source, /owner-submit-subtask-table table-fixed min-w-\[980px\]/)
+  assert.match(activeSource, /owner-submit-subtask-drag-handle/)
+  assert.match(activeSource, /owner-submit-subtask-delete-icon/)
+  assert.match(activeSource, /<AssigneePicker people=\{people\}/)
+  assert.match(activeSource, /<HelperPicker people=\{people\}/)
+  assert.match(activeSource, /计划时间：\{taskPeriod\}/)
+  assert.match(activeSource, /owner-submit-subtask-table table-fixed min-w-\[680px\]/)
 })
 
-test('top add action stays primary while the list tail uses a weak full-width continue action', () => {
-  assert.match(source, /className="owner-submit-primary-add[^"]*"[\s\S]{0,80}>\s*\+ 新增重点工作/)
-  assert.match(source, /className="owner-submit-continue-add[^"]*w-full[^"]*h-10[^"]*border-dashed[^"]*"[\s\S]{0,80}>\s*＋ 继续新增重点工作/)
-  assert.doesNotMatch(source, /owner-submit-continue-add[^\n]*shadow/)
-  assert.equal((source.match(/onClick=\{addTaskDraft\}/g) ?? []).length, 2)
+test('top add action is the only visible workstream creation entry', () => {
+  assert.match(activeSource, /className="owner-submit-primary-add[^"]*"[\s\S]{0,80}>\s*\+ 新增重点工作/)
+  assert.doesNotMatch(activeSource, /owner-submit-continue-add/)
+  assert.equal((activeSource.match(/onClick=\{addTaskDraft\}/g) ?? []).length, 1)
 })
 
-test('task expansion state defaults to the first task and collapsed cards are read-only summaries', () => {
-  assert.match(source, /expandedTaskIndexes, setExpandedTaskIndexes[\s\S]{0,100}new Set\(\[0\]\)/)
-  assert.match(source, /const isExpanded = expandedTaskIndexes\.has\(taskIndex\)/)
-  assert.match(source, /isExpanded \? \([\s\S]*?placeholder="请输入重点工作"[\s\S]*?\) : \([\s\S]*?未命名重点工作[\s\S]*?未填写目标成果/)
-  assert.match(source, /task\.subtasks\.length\} 个关键任务/)
-  assert.match(source, /onClick=\{\(\) => expandTask\(taskIndex\)\}/)
-  assert.match(source, /aria-label=\{`重点工作 \$\{taskIndex \+ 1\} 更多操作`\}/)
-  assert.match(source, /\) : \([\s\S]*?role="button"[\s\S]*?\)\}/)
-  assert.doesNotMatch(source, /max-w-\[180px\]/)
+test('task selection defaults to the first workstream and keeps all workstreams navigable', () => {
+  assert.match(activeSource, /selectedTaskIndex, setSelectedTaskIndex[\s\S]{0,100}useState\(0\)/)
+  assert.match(activeSource, /draftTasks\.map\(\(item, index\) => <button/)
+  assert.match(activeSource, /aria-current=\{index === selectedTaskIndex/)
+  assert.match(activeSource, /setSelectedTaskIndex\(index\)/)
+  assert.match(activeSource, /未命名重点工作/)
+  assert.doesNotMatch(activeSource, /expandedTaskIndexes/)
 })
 
-test('adding and deleting tasks preserves expansion indexes without drift', () => {
-  assert.match(source, /function addTaskDraft\(\)[\s\S]*setExpandedTaskIndexes\(\(current\) => new Set\(current\)\.add\(nextIndex\)\)/)
-  assert.match(source, /function removeTaskDraft\(index: number\)[\s\S]*expandedIndex < index[\s\S]*expandedIndex > index[\s\S]*expandedIndex - 1/)
+test('adding and deleting tasks preserves the selected workstream without index drift', () => {
+  assert.match(activeSource, /function addTaskDraft\(\)[\s\S]*setSelectedTaskIndex\(nextIndex\)/)
+  assert.match(activeSource, /function removeTaskDraft\(index: number\)[\s\S]*setSelectedTaskIndex\(\(current\) => current > index \? current - 1 : Math\.min\(current, prev\.length - 2\)\)/)
 })
 
 test('AI merge identifies one genuinely new task by stable id or task_id', () => {
-  assert.match(source, /function taskStableIdentity\(task: Pick<LocalTaskDraft, 'id' \| 'task_id'>\)/)
-  assert.match(source, /task\.task_id/)
-  assert.match(source, /task\.id/)
-  assert.match(source, /existingTaskIdentities/)
-  assert.match(source, /findIndex\(\(task\) => \{[\s\S]*const identity = taskStableIdentity\(task\)[\s\S]*!existingTaskIdentities\.has\(identity\)/)
-  assert.match(source, /firstNewTaskIndex >= 0[\s\S]*next\.add\(firstNewTaskIndex\)/)
+  assert.match(activeSource, /function taskStableIdentity\(task: Pick<LocalTaskDraft, 'id' \| 'task_id'>\)/)
+  assert.match(activeSource, /task\.task_id/)
+  assert.match(activeSource, /task\.id/)
+  assert.match(activeSource, /existingTaskIdentities/)
+  assert.match(activeSource, /findIndex\(\(task\) => \{[\s\S]*const identity = taskStableIdentity\(task\)[\s\S]*!existingTaskIdentities\.has\(identity\)/)
+  assert.match(activeSource, /setSelectedTaskIndex\(nextSelectedIndex >= 0 \? nextSelectedIndex : \(firstNewTaskIndex >= 0 \? firstNewTaskIndex : 0\)\)/)
 })
 
 test('upload entry remains available when AI initialization fails', () => {

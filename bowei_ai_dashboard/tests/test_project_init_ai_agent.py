@@ -971,6 +971,68 @@ def test_recognized_work_plan_rows_do_not_depend_on_ai_field_interpretation():
     assert result.tasks[0].subtasks[0].helper_names == ["王五"]
 
 
+def test_structured_fallback_does_not_discard_mixed_non_spreadsheet_sources():
+    spreadsheet = {
+        "attachment_id": 7,
+        "file_name": "推进表.xlsx",
+        "location": "'推进表'!A1:J2",
+        "text": (
+            "专项\t关键任务\t关键成果\t完成标准\t统筹人\t负责人\t协同成员\t计划时间\t当前状态\t问题与协调\n"
+            "表格工作\t表格任务\t表格成果\t表格标准\t张三\t李四\t\t2026-06-01\t进行中\t"
+        ),
+    }
+    text_source = {
+        "attachment_id": 8,
+        "file_name": "补充说明.txt",
+        "location": "第 1 行",
+        "text": "补充资料中的工作",
+    }
+    calls: list[str] = []
+
+    def llm(prompt: str, provider: str) -> str:
+        calls.append(prompt)
+        return json.dumps({
+            "tasks": [raw_task(title="文本工作", evidence=[{
+                "attachment_id": 8,
+                "file_name": "补充说明.txt",
+                "location": "第 1 行",
+            }])],
+        }, ensure_ascii=False)
+
+    result = generate_project_init_draft([spreadsheet, text_source], [], [], llm_call=llm)
+
+    assert calls
+    assert result.tasks[0].title == "文本工作"
+
+
+def test_structured_rows_merge_workstream_titles_after_normalization():
+    rows = [
+        {
+            "attachment_id": 7,
+            "file_name": "推进表.xlsx",
+            "location": "'推进表'!A1:J2",
+            "text": (
+                "专项\t关键任务\t关键成果\t完成标准\t统筹人\t负责人\t协同成员\t计划时间\t当前状态\t问题与协调\n"
+                "客户成功体系\t任务一\t成果\t标准\t张三\t李四\t\t2026-06-01\t进行中\t"
+            ),
+        },
+        {
+            "attachment_id": 7,
+            "file_name": "推进表.xlsx",
+            "location": "'推进表'!A3:J3",
+            "text": (
+                "专项\t关键任务\t关键成果\t完成标准\t统筹人\t负责人\t协同成员\t计划时间\t当前状态\t问题与协调\n"
+                " 客户  成功体系 \t任务二\t\t\t\t王五\t\t\t\t"
+            ),
+        },
+    ]
+
+    result = generate_project_init_draft(rows, [], [], llm_call=lambda _: pytest.fail("AI should not run"))
+
+    assert len(result.tasks) == 1
+    assert [item.title for item in result.tasks[0].subtasks] == ["任务一", "任务二"]
+
+
 def test_merged_alias_header_workbook_is_extracted_end_to_end_without_ai(tmp_path):
     path = tmp_path / "推进表.xlsx"
     workbook = Workbook()
@@ -994,6 +1056,145 @@ def test_merged_alias_header_workbook_is_extracted_end_to_end_without_ai(tmp_pat
     assert result.tasks[0].title == "知识资产AI化"
     assert [item.title for item in result.tasks[0].subtasks] == ["制定计划", "建立目录"]
     assert result.tasks[0].subtasks[1].helper_names == ["赵六"]
+
+
+def test_multiline_merged_workplan_uses_structured_import(tmp_path):
+    path = tmp_path / "工作推进表.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Sheet1"
+    sheet.append(["目标", "重点工作", "评价标准", "序号", "关键任务", "责任人", "计划开始时间", "计划结束时间", "协同人", "完成情况", "备注"])
+    sheet.append(["目标一\n目标二", "项目运营系统", "完成标准", 1, "完成系统模块梳理", "吴肖、郭熠彬", "2026-07-03", "2026-07-10", "温会林", "进行中", "保留原文"])
+    sheet.append(["", "", "", 2, "导入项目测试", "刘万超", "2026-07-13", "", "", "", ""])
+    sheet.merge_cells("B2:B3")
+    workbook.save(path)
+
+    people = [
+        {"id": 5, "name": "吴肖", "is_active": True, "is_project_member": True},
+        {"id": 7, "name": "郭熠彬", "is_active": True, "is_project_member": False},
+        {"id": 9, "name": "温会林", "is_active": True, "is_project_member": False},
+        {"id": 4, "name": "刘万超", "is_active": True, "is_project_member": False},
+    ]
+    result = generate_project_init_draft(
+        parse_project_init_file(path, path.name),
+        people,
+        [],
+        llm_call=lambda _prompt: (_ for _ in ()).throw(AssertionError("chat analysis must not run")),
+    )
+
+    first = result.tasks[0].subtasks[0]
+    assert result.model_name == "structured-spreadsheet"
+    assert result.tasks[0].description == "目标一 目标二"
+    assert (first.assignee_name, first.assignee_id) == ("吴肖", 5)
+    assert first.helper_names == ["郭熠彬", "温会林"]
+    assert first.helper_ids == [7, 9]
+    assert (first.plan_start, first.plan_end) == ("2026-07-03", "2026-07-10")
+    assert {warning.code for warning in first.warnings} == {"will_join_project"}
+
+
+def test_real_workplan_aliases_keep_target_roles_dates_and_evaluation_per_row(tmp_path):
+    path = tmp_path / "工作推进表.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Sheet1"
+    sheet.append(["AI 项目推进计划"])
+    sheet.append([
+        "目标",
+        "重点工作",
+        "评价标准",
+        "统筹人",
+        "序号",
+        "关键任务",
+        "责任人",
+        "计划开始时间",
+        "计划计划结束时间",
+        "协同人",
+        "完成情况",
+        "备注",
+    ])
+    sheet.append([
+        "完成客户成功体系建设",
+        "一、建立客户成功体系",
+        "服务流程和 SOP 可复用",
+        "王经理",
+        1,
+        "梳理现有客户服务流程",
+        "张三、李四",
+        "2026-07-01",
+        "2026-07-05",
+        "王五",
+        "进行中",
+        "输出流程图",
+    ])
+    sheet.append([
+        "",
+        "",
+        "评价指标二",
+        "",
+        2,
+        "设计客户成功 SOP",
+        "赵六",
+        "2026-07-06",
+        "2026-07-20",
+        "王五",
+        "未开始",
+        "完成评审",
+    ])
+    sheet.merge_cells("A3:A4")
+    sheet.merge_cells("B3:B4")
+    sheet.merge_cells("D3:D4")
+    workbook.save(path)
+
+    people = [
+        {"id": 1, "name": "张三", "is_active": True, "is_project_member": True},
+        {"id": 2, "name": "李四", "is_active": True, "is_project_member": True},
+        {"id": 3, "name": "王五", "is_active": True, "is_project_member": True},
+        {"id": 4, "name": "赵六", "is_active": True, "is_project_member": True},
+        {"id": 5, "name": "王经理", "is_active": True, "is_project_member": True},
+    ]
+    result = generate_project_init_draft(
+        parse_project_init_file(path, path.name),
+        people,
+        [],
+        llm_call=lambda _prompt: (_ for _ in ()).throw(AssertionError("chat analysis must not run")),
+    )
+
+    task = result.tasks[0]
+    first, second = task.subtasks
+    assert result.model_name == "structured-spreadsheet"
+    assert (task.title, task.description, task.owner_name) == (
+        "一、建立客户成功体系",
+        "完成客户成功体系建设",
+        "王经理",
+    )
+    assert (first.title, first.assignee_name, first.assignee_id, first.helper_names, first.helper_ids) == (
+        "梳理现有客户服务流程",
+        "张三",
+        1,
+        ["李四", "王五"],
+        [2, 3],
+    )
+    assert (first.plan_start, first.plan_end, first.evaluation_standard, first.status, first.description) == (
+        "2026-07-01",
+        "2026-07-05",
+        "服务流程和 SOP 可复用",
+        "进行中",
+        "输出流程图",
+    )
+    assert (second.title, second.assignee_name, second.assignee_id, second.helper_names, second.helper_ids) == (
+        "设计客户成功 SOP",
+        "赵六",
+        4,
+        ["王五"],
+        [3],
+    )
+    assert (second.plan_start, second.plan_end, second.evaluation_standard, second.status, second.description) == (
+        "2026-07-06",
+        "2026-07-20",
+        "评价指标二",
+        "未开始",
+        "完成评审",
+    )
 
 
 def test_structured_spreadsheet_fallback_rejects_non_excel_tabular_text():

@@ -109,6 +109,32 @@ def test_create_run_freezes_attachments_and_project_snapshot(monkeypatch):
     assert json.loads(run.snapshot_json)["current_draft"][0]["title"] == "Existing draft"
 
 
+def test_create_run_snapshot_marks_active_organization_people():
+    from app.routers import project_init_ai
+
+    db = make_session()
+    project, owner = add_project_graph(db)
+    db.add_all([
+        models.Person(id=99, name="杨宇帆", is_active=True),
+        models.Account(username="owner", password_hash="x", person_id=owner.id, status="active"),
+    ])
+    add_attachment(db, project_id=project.id, attachment_id=10)
+    db.commit()
+
+    response = project_init_ai.create_project_init_analysis_run(
+        project.id,
+        schemas.ProjectInitAnalysisCreate(attachment_ids=[10], current_draft=[]),
+        SimpleNamespace(add_task=lambda *_: None),
+        "owner",
+        db,
+    )
+
+    snapshot = json.loads(db.get(models.ProjectInitAnalysisRun, response["id"]).snapshot_json)
+    people = {item["name"]: item for item in snapshot["people"]}
+    assert people[owner.name]["is_project_member"] is True
+    assert people["杨宇帆"]["is_project_member"] is False
+
+
 @pytest.mark.parametrize("count", [11])
 def test_create_run_rejects_more_than_ten_attachments(count):
     from app.services.project_init_analysis import validate_analysis_attachment_selection
@@ -287,6 +313,100 @@ def test_worker_uses_vision_for_high_risk_non_tabular_workbook_and_cleans_images
     assert decision["review_required"] is True
     assert decision["task_count"] == 1
     assert "复杂布局" not in decision_log.after_json
+
+
+def test_worker_uses_vision_for_textless_pdf_and_cleans_images(monkeypatch, tmp_path):
+    from app.services import project_init_analysis as service
+
+    db = make_session()
+    project, _owner = add_project_graph(db)
+    attachment = add_attachment(db, project_id=project.id, attachment_id=1)
+    attachment.original_name = "扫描版方案.pdf"
+    run = models.ProjectInitAnalysisRun(
+        project_id=project.id,
+        attachment_ids_json="[1]",
+        snapshot_json=json.dumps({
+            "project": {}, "tasks": [], "people": [],
+            "attachments": [{"id": 1, "storage_key": "1/1", "original_name": "扫描版方案.pdf", "size_bytes": 10}],
+        }),
+        created_by="owner",
+    )
+    db.add(run)
+    db.commit()
+    run_id = run.id
+    source_path = tmp_path / "扫描版方案.pdf"
+    source_path.write_bytes(b"placeholder")
+    rendered_directories = []
+
+    def render(_path, output_directory):
+        rendered_directories.append(output_directory)
+        output_directory.mkdir(parents=True, exist_ok=True)
+        image = output_directory / "page-001.png"
+        image.write_bytes(b"png")
+        return [image]
+
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(service, "_attachment_path", lambda _key: source_path)
+    monkeypatch.setattr(service, "parse_project_init_file", lambda *_args: [])
+    monkeypatch.setattr(service, "profile_project_init_workbook", lambda *_args: {"risk_level": "low", "signals": [], "summary": {}})
+    monkeypatch.setattr(service, "render_project_init_pdf_images", render)
+    monkeypatch.setattr(service, "AIService", lambda _db: object())
+    monkeypatch.setattr(service, "generate_project_init_vision_draft", lambda *_args, **_kwargs: {"tasks": [{"title": "扫描件视觉任务"}], "warnings": []})
+    monkeypatch.setattr(service, "generate_project_init_draft", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("text route should not run")))
+
+    service.process_analysis_run(run_id)
+
+    db.expire_all()
+    stored = db.get(models.ProjectInitAnalysisRun, run_id)
+    result = json.loads(stored.result_json)
+    assert result["analysis_route"] == {
+        "mode": "vision_with_review",
+        "review_required": True,
+        "reason_codes": ["scanned_pdf"],
+    }
+    assert json.loads(stored.current_draft_json)["tasks"][0]["title"] == "扫描件视觉任务"
+    assert rendered_directories and not rendered_directories[0].exists()
+
+
+def test_worker_marks_textless_pdf_for_review_when_vision_rendering_falls_back(monkeypatch, tmp_path):
+    from app.services import project_init_analysis as service
+
+    db = make_session()
+    project, _owner = add_project_graph(db)
+    attachment = add_attachment(db, project_id=project.id, attachment_id=1)
+    attachment.original_name = "扫描版方案.pdf"
+    run = models.ProjectInitAnalysisRun(
+        project_id=project.id,
+        attachment_ids_json="[1]",
+        snapshot_json=json.dumps({
+            "project": {}, "tasks": [], "people": [],
+            "attachments": [{"id": 1, "storage_key": "1/1", "original_name": "扫描版方案.pdf", "size_bytes": 10}],
+        }),
+        created_by="owner",
+    )
+    db.add(run)
+    db.commit()
+    run_id = run.id
+    source_path = tmp_path / "扫描版方案.pdf"
+    source_path.write_bytes(b"placeholder")
+
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(service, "_attachment_path", lambda _key: source_path)
+    monkeypatch.setattr(service, "parse_project_init_file", lambda *_args: [])
+    monkeypatch.setattr(service, "profile_project_init_workbook", lambda *_args: {"risk_level": "low", "signals": [], "summary": {}})
+    monkeypatch.setattr(service, "render_project_init_pdf_images", lambda *_args: (_ for _ in ()).throw(RuntimeError("renderer unavailable")))
+    monkeypatch.setattr(service, "AIService", lambda _db: object())
+    monkeypatch.setattr(service, "generate_project_init_draft", lambda *_args, **_kwargs: {"tasks": [{"title": "降级任务"}], "warnings": []})
+
+    service.process_analysis_run(run_id)
+
+    db.expire_all()
+    stored = db.get(models.ProjectInitAnalysisRun, run_id)
+    assert json.loads(stored.result_json)["analysis_route"] == {
+        "mode": "text_with_review",
+        "review_required": True,
+        "reason_codes": ["scanned_pdf_vision_unavailable"],
+    }
 
 
 def test_worker_all_failure_is_failed_and_does_not_leak_provider_secret(monkeypatch, tmp_path):

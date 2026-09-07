@@ -41,6 +41,11 @@ const BLOCKING_PERSON_WARNINGS = new Set([
   'person_not_found',
   'helper_conflicts_with_owner',
 ])
+const INFORMATIONAL_PERSON_WARNINGS = new Set(['will_join_project'])
+
+function isInformationalPersonWarning(warning: { code?: unknown }): boolean {
+  return INFORMATIONAL_PERSON_WARNINGS.has(String(warning.code ?? ''))
+}
 
 function clone<T>(value: T): T {
   if (Array.isArray(value)) return value.map((item) => clone(item)) as T
@@ -367,15 +372,15 @@ export function mergeAiDraft(
 
 function collectWarnings(aiDraft: ProjectInitAiDraft, decisions: OwnerSubmitAiDecision[]): string[] {
   const actionMap = decisionMap(decisions)
-  const warnings = [...(aiDraft.warnings ?? []).map((item) => `${item.code}: ${item.message}`)]
+  const warnings = [...(aiDraft.warnings ?? []).filter((item) => !isInformationalPersonWarning(item)).map((item) => `${item.code}: ${item.message}`)]
   aiDraft.tasks.forEach((task, taskIndex) => {
     const taskKey = `task-${taskIndex}`
     if (task.merge_status !== 'new' && !actionMap.has(taskKey)) warnings.push(`task-${taskIndex}: duplicate candidate requires a decision`)
-    warnings.push(...task.warnings.map((item) => `${item.code}: ${item.message}`))
+    warnings.push(...task.warnings.filter((item) => !isInformationalPersonWarning(item)).map((item) => `${item.code}: ${item.message}`))
     task.subtasks.forEach((subtask, subtaskIndex) => {
       const key = `${taskKey}-subtask-${subtaskIndex}`
       if (subtask.merge_status !== 'new' && !actionMap.has(key)) warnings.push(`${key}: duplicate candidate requires a decision`)
-      warnings.push(...subtask.warnings.map((item) => `${item.code}: ${item.message}`))
+      warnings.push(...subtask.warnings.filter((item) => !isInformationalPersonWarning(item)).map((item) => `${item.code}: ${item.message}`))
     })
   })
   return [...new Set(warnings)]

@@ -20,6 +20,7 @@ import type { MeetingItem, ProjectMember } from '../../types'
 import { ErrorBar, Field, JsonListSection, SectionTitle } from './meetingShared'
 import { ReportsSection } from './MeetingReportsSection'
 import { MeetingChangeSetReviewModal } from './MeetingChangeSetReviewModal'
+import { acceptedDocumentTypes } from '../../config/aiDocumentFormats'
 
 type ModalStep = 'input' | 'analyzing' | 'clarifying' | 'review'
 
@@ -449,7 +450,7 @@ export function NewMeetingModal({
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#0069b4] text-lg text-white">▤</div>
             <div>
               <h1 className="text-2xl font-bold text-slate-900">{isEdit ? '编辑会议纪要' : '新建会议纪要'}</h1>
-              <p className="mt-0.5 text-sm text-slate-500">上传会议纪要 Word，AI 将结合项目上下文生成草稿</p>
+              <p className="mt-0.5 text-sm text-slate-500">上传会议纪要文件，AI 将结合项目上下文生成草稿</p>
             </div>
           </div>
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-800">关闭</button>
@@ -502,10 +503,10 @@ export function NewMeetingModal({
                 </div>
                 <div className="mt-5 grid gap-4 lg:grid-cols-3">
                   <div className="rounded-xl border border-dashed border-sky-200 bg-sky-50/50 p-4">
-                    <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">上传会议纪要 Word</h3><p className="mt-1 text-xs leading-5 text-slate-500">仅支持已整理的 Word（.docx）会议纪要；本流程只读取文档内容。</p></div><SourceStatus text={documentText} emptyLabel="未上传" /></div>
+                    <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">上传会议纪要文件</h3><p className="mt-1 text-xs leading-5 text-slate-500">会议纪要支持 Word、TXT、Excel（.docx、.txt、.xlsx）；本流程只读取文档内容。</p></div><SourceStatus text={documentText} emptyLabel="未上传" /></div>
                     {documentName && <p className="mt-3 truncate text-xs text-slate-600">{documentName}</p>}
-                    <button type="button" onClick={() => documentRef.current?.click()} disabled={documentUploading} className="mt-4 rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50">{documentUploading ? '读取中…' : documentText ? '更换文档' : '选择 Word'}</button>
-                    <input ref={documentRef} type="file" accept=".docx" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleDocumentSelected(file); event.currentTarget.value = '' }} />
+                    <button type="button" onClick={() => documentRef.current?.click()} disabled={documentUploading} className="mt-4 rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50">{documentUploading ? '读取中…' : documentText ? '更换文档' : '选择文件'}</button>
+                    <input ref={documentRef} type="file" accept={acceptedDocumentTypes('meeting')} className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleDocumentSelected(file); event.currentTarget.value = '' }} />
                   </div>
 
                 </div>

@@ -15,12 +15,13 @@ import {
   type ProjectInitDraft,
   uploadInitAttachments,
 } from '../../api/projectInitAi'
+import { acceptedDocumentTypes, aiDocumentFormats } from '../../config/aiDocumentFormats'
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024
 const MAX_FILES = 10
 const MAX_TOTAL_BYTES = 100 * 1024 * 1024
 const POLL_INTERVAL_MS = 1500
-const ACCEPTED_EXTENSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt'] as const
+const ACCEPTED_EXTENSIONS = aiDocumentFormats.projectInit
 
 type PanelState = 'idle' | 'uploading' | 'analyzing' | 'preview' | 'failed'
 type UploadStatus = 'queued' | 'uploading' | 'success' | 'failed' | 'cancelled'
@@ -89,6 +90,7 @@ function formatBytes(bytes: number): string {
 }
 
 const AI_SERVICE_UNAVAILABLE_MESSAGE = 'AI 分析服务暂时不可用，请稍后重试。'
+const INFORMATIONAL_PERSON_WARNING_CODE = 'will_join_project'
 
 function errorMessage(error: unknown): string {
   if (error instanceof ProjectInitApiError) {
@@ -134,7 +136,7 @@ function duplicateLabel(status: AgentTask['merge_status']): string {
 }
 
 function warningText(task: AgentTask | AgentSubTask): string[] {
-  return task.warnings.map((warning) => {
+  return task.warnings.filter((warning) => warning.code !== INFORMATIONAL_PERSON_WARNING_CODE).map((warning) => {
     const code = warning.code.toLowerCase()
     const message = warning.message.trim()
     const label = code.includes('low_confidence') || code.includes('confidence')
@@ -190,10 +192,14 @@ function ModelUsageSummary({ run }: { run: ProjectInitAnalysisRun }) {
   const finalLabel = finalModel && typeof finalModel === 'object'
     ? modelLabel(finalModel as ModelUsage)
     : ''
+  const deterministicProcessor = typeof run.result_metadata.model_name === 'string'
+    ? run.result_metadata.model_name.trim()
+    : ''
   return <div className="space-y-1 text-xs text-slate-500">
     <p>模型策略：{strategyLabel}</p>
     {attempted.length > 0 && <p>本次尝试：{attempted.map(modelLabel).join(' → ')}</p>}
     {finalLabel && <p>实际模型：{finalLabel}</p>}
+    {!finalLabel && deterministicProcessor && <p>实际处理器：{deterministicProcessor}</p>}
   </div>
 }
 
@@ -241,27 +247,30 @@ function EvidenceList({
 }) {
   if (evidence.length === 0) return <p className="text-xs text-slate-400">暂无来源证据</p>
   return (
-    <ul className="space-y-1.5" aria-label="来源证据">
-      {evidence.map((item, index) => (
-        <li key={`${item.file_name}-${item.location}-${index}`} className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-          <div className="flex flex-wrap items-center gap-2 font-semibold text-slate-700">
-            {item.attachment_id ? (
-              <button
-                type="button"
-                className="text-blue-700 underline underline-offset-2 hover:text-blue-900"
-                onClick={() => window.open(downloadInitAttachmentUrl(projectId, item.attachment_id as number), '_blank', 'noopener,noreferrer')}
-              >
-                {item.file_name}
-              </button>
-            ) : <span>{item.file_name}</span>}
-            <span className="font-normal text-slate-400">{item.location}</span>
-            <span className="rounded bg-white px-1.5 py-0.5 text-[10px] text-slate-400">source_label: {sourceLabel || item.file_name}</span>
-            <span className="rounded bg-white px-1.5 py-0.5 text-[10px] text-slate-400">attachment_id: {item.attachment_id ?? '—'}</span>
-          </div>
-          <p className="mt-1 line-clamp-3 leading-5">quote: {item.excerpt}</p>
-        </li>
-      ))}
-    </ul>
+    <details className="owner-submit-ai-evidence rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2">
+      <summary className="cursor-pointer text-xs font-semibold text-slate-600 hover:text-slate-900">查看来源证据 · {evidence.length} 条</summary>
+      <ul className="mt-2 space-y-1.5" aria-label="来源证据">
+        {evidence.map((item, index) => (
+          <li key={`${item.file_name}-${item.location}-${index}`} className="rounded-lg bg-white px-3 py-2 text-xs text-slate-600">
+            <div className="flex flex-wrap items-center gap-2 font-semibold text-slate-700">
+              {item.attachment_id ? (
+                <button
+                  type="button"
+                  className="text-blue-700 underline underline-offset-2 hover:text-blue-900"
+                  onClick={() => window.open(downloadInitAttachmentUrl(projectId, item.attachment_id as number), '_blank', 'noopener,noreferrer')}
+                >
+                  {item.file_name}
+                </button>
+              ) : <span>{item.file_name}</span>}
+              <span className="font-normal text-slate-400">{item.location}</span>
+              <span className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-400">source_label: {sourceLabel || item.file_name}</span>
+              <span className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-400">attachment_id: {item.attachment_id ?? '—'}</span>
+            </div>
+            <p className="mt-1 line-clamp-3 leading-5">quote: {item.excerpt}</p>
+          </li>
+        ))}
+      </ul>
+    </details>
   )
 }
 
@@ -610,9 +619,16 @@ export function OwnerSubmitAiPanel({
   }
 
   const renderWarnings = (item: AgentTask | AgentSubTask) => {
+    const autoJoinPeople = item.warnings
+      .filter((warning) => warning.code === INFORMATIONAL_PERSON_WARNING_CODE)
+      .map((warning) => warning.person_name)
+      .filter(Boolean)
     const warnings = warningText(item)
-    if (warnings.length === 0) return null
-    return <div role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{warnings.join('；')}（未自动绑定）</div>
+    if (autoJoinPeople.length === 0 && warnings.length === 0) return null
+    return <>
+      {autoJoinPeople.length > 0 && <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">{autoJoinPeople.join('、')}：提交时自动加入项目</div>}
+      {warnings.length > 0 && <div role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{warnings.join('；')}（未自动绑定）</div>}
+    </>
   }
 
   function handleClose() {
@@ -630,7 +646,7 @@ export function OwnerSubmitAiPanel({
   if (loading) return <section aria-busy="true" className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">正在加载 AI 分析状态…</section>
 
   return (
-    <section aria-labelledby="owner-submit-ai-title" className="space-y-4 rounded-2xl border border-blue-100 bg-white p-5 shadow-sm">
+    <section aria-labelledby="owner-submit-ai-title" className="owner-submit-ai-panel space-y-4 rounded-2xl border border-blue-100 bg-white p-5 pb-6 shadow-sm">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 id="owner-submit-ai-title" className="text-base font-bold text-slate-900">AI 从文件生成</h2>
@@ -646,7 +662,7 @@ export function OwnerSubmitAiPanel({
           <label htmlFor="owner-submit-ai-files" className="block cursor-pointer rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/50 p-5 text-center hover:border-blue-400">
             <span className="block text-sm font-semibold text-blue-800">选择资料文件</span>
             <span className="mt-1 block text-xs text-blue-600">PDF、DOC、DOCX、XLS、XLSX、TXT；单个不超过 25 MiB</span>
-            <input id="owner-submit-ai-files" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.txt" onChange={addFiles} disabled={disabled || panelState === 'uploading'} className="sr-only" aria-describedby="owner-submit-ai-file-help" />
+            <input id="owner-submit-ai-files" type="file" multiple accept={acceptedDocumentTypes('projectInit')} onChange={addFiles} disabled={disabled || panelState === 'uploading'} className="sr-only" aria-describedby="owner-submit-ai-file-help" />
           </label>
           <p id="owner-submit-ai-file-help" className="text-xs text-slate-400">最多 10 个文件，合计不超过 100 MiB。文件内容通过上传接口发送，不会放入 JSON。</p>
           {queue.length > 0 && <ul className="space-y-2" aria-label="文件上传队列">{queue.map((item) => (
@@ -694,9 +710,9 @@ export function OwnerSubmitAiPanel({
       )}
 
       {panelState === 'preview' && run && draft && (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 p-3"><div><span className="text-sm font-semibold text-slate-800">{stageLabel(run.stage)}</span><span className="ml-2 text-xs text-slate-500">{statusLabel(run.status)} · {run.progress}%</span></div><div className="flex items-center gap-2"><span className="text-xs text-slate-500">{draft.tasks.length} 项重点工作待确认</span><button type="button" onClick={resetToFreshUpload} disabled={disabled || applying || applySuccess} className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-50">重新上传资料</button></div></div>
-          <ModelUsageSummary run={run} />
+        <div className="owner-submit-ai-preview-content space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3"><div><span className="text-sm font-semibold text-slate-800">文件分析完成</span><span className="ml-2 text-xs text-slate-500">已生成 {draft.tasks.length} 项候选重点工作</span></div><div className="flex items-center gap-2"><span className="text-xs font-semibold text-slate-600">{draft.tasks.length} 项待确认</span><button type="button" onClick={resetToFreshUpload} disabled={disabled || applying || applySuccess} className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-50">重新上传资料</button></div></div>
+          <details className="owner-submit-ai-technical-details rounded-lg border border-slate-100 bg-white px-3 py-2"><summary className="cursor-pointer text-xs font-semibold text-slate-500 hover:text-slate-800">查看分析信息</summary><div className="mt-2"><ModelUsageSummary run={run} /></div></details>
           {analysisReviewNotice(run) && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{analysisReviewNotice(run)}</div>}
           {draft.warnings && renderWarningMessages(draft.warnings.map((warning) => `${warning.code}: ${warning.message}`))}
           {run.status === 'partial_failed' && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">部分文件分析失败，下面仅展示已成功生成的结果。</div>}
@@ -704,11 +720,10 @@ export function OwnerSubmitAiPanel({
           {draft.tasks.length === 0 && <p className="rounded-xl border border-slate-200 p-4 text-sm text-slate-500">暂无可预览草稿。</p>}
           <div className="space-y-3">{draft.tasks.map((task, taskIndex) => {
             const taskKey = `task-${taskIndex}`
-            return <article key={taskKey} className="rounded-xl border border-slate-200 p-4">
+            return <article key={taskKey} className="owner-submit-ai-task-card rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-bold text-slate-900">{task.title}</h3><p className="mt-1 text-xs text-slate-600">{task.description || '暂无描述'}</p><p className="mt-1 text-xs text-slate-500">负责人：{task.owner_name || '未匹配'} · 时间：{task.plan_start || '—'} 至 {task.plan_end || '—'} · 状态：{task.status || '—'} · 优先级：{task.priority || '—'}</p></div><div className="text-right"><span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">{duplicateLabel(task.merge_status)}</span><DecisionButtons value={decisions[taskKey]} disabled={disabled} onChange={(action) => setDecision(taskKey, action)} /></div></div>
               {renderWarnings(task)}
-              <div className="mt-3"><p className="mb-1 text-xs font-semibold text-slate-500">来源证据</p><EvidenceList projectId={projectId} evidence={task.evidence} sourceLabel={sourceLabel(task)} /></div>
-              <div className="mt-4 space-y-2 border-l-2 border-slate-100 pl-3"><p className="text-xs font-semibold text-slate-500">关键任务 / 子任务</p>{task.subtasks.map((subtask, subtaskIndex) => { const key = `${taskKey}-subtask-${subtaskIndex}`; return <div key={key} className="rounded-lg border border-slate-100 p-3"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs font-semibold text-slate-800">{subtask.title}</p><p className="mt-1 text-[11px] text-slate-500">负责人：{subtask.assignee_name || '未匹配'} · 协助人：{subtask.helper_names.join('、') || '—'} · 时间：{subtask.plan_start || '—'} 至 {subtask.plan_end || '—'}</p><p className="mt-1 text-[11px] text-slate-500">状态：{subtask.status || '—'} · 优先级：{subtask.priority || '—'}</p></div><div className="space-y-1 text-right"><span className="block rounded-full bg-slate-50 px-2 py-1 text-[10px] text-slate-600">{duplicateLabel(subtask.merge_status)}</span><DecisionButtons value={decisions[key]} disabled={disabled} onChange={(action) => setDecision(key, action)} /></div></div>{renderWarnings(subtask)}<div className="mt-2"><EvidenceList projectId={projectId} evidence={subtask.evidence} sourceLabel={sourceLabel(subtask)} /></div></div> })}</div>
+              <div className="mt-4 space-y-2 border-l-2 border-slate-100 pl-3"><p className="text-xs font-semibold text-slate-500">关键任务 / 子任务</p>{task.subtasks.map((subtask, subtaskIndex) => { const key = `${taskKey}-subtask-${subtaskIndex}`; return <div key={key} className="owner-submit-ai-subtask-card rounded-lg border border-slate-100 p-3"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs font-semibold text-slate-800">{subtask.title}</p><p className="mt-1 text-[11px] text-slate-500">负责人：{subtask.assignee_name || '未匹配'} · 协助人：{subtask.helper_names.join('、') || '—'} · 时间：{subtask.plan_start || '—'} 至 {subtask.plan_end || '—'}</p><p className="mt-1 text-[11px] text-slate-500">状态：{subtask.status || '—'} · 优先级：{subtask.priority || '—'}</p></div><div className="space-y-1 text-right"><span className="block rounded-full bg-slate-50 px-2 py-1 text-[10px] text-slate-600">{duplicateLabel(subtask.merge_status)}</span><DecisionButtons value={decisions[key]} disabled={disabled} onChange={(action) => setDecision(key, action)} /></div></div>{renderWarnings(subtask)}<div className="mt-2"><EvidenceList projectId={projectId} evidence={subtask.evidence} sourceLabel={sourceLabel(subtask)} /></div></div> })}</div>
             </article>
           })}</div>
           {applySuccess && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">草稿已提交给推进表页面处理。</p>}

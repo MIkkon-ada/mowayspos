@@ -171,6 +171,12 @@ jobs:
         working-directory: bowei_ai_dashboard
         run: python -m pytest tests/test_production_runtime_security.py -q
 
+      - name: Install scanned-PDF renderer dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+          pdftoppm -v
+
       - name: Backend full pytest with known structural baseline
         working-directory: bowei_ai_dashboard
         shell: bash

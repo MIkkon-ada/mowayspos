@@ -71,6 +71,9 @@ describe('projects workbench pure helpers', () => {
       objectives: '目标', start_date: '2026-08-01', end_date: '2026-08-31',
     }))).toBe(true)
     expect(isProjectDispatchReady(project('draft', {
+      objectives: '目标', start_date: '2026-08-01', end_date: '',
+    }))).toBe(true)
+    expect(isProjectDispatchReady(project('draft', {
       objectives: '   ', start_date: '2026-08-01', end_date: '2026-08-31',
     }))).toBe(false)
     expect(isProjectDispatchReady(project('draft', {

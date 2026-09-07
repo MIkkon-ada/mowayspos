@@ -235,6 +235,8 @@ def _default_route(account: models.Account | None, context: dict) -> str:
     # tech_admin / CEO / can_view_all 统一默认进入 dashboard（与前端 authFlow 保持一致）
     if context.get("is_tech_admin") or context.get("is_ceo") or context.get("can_view_all"):
         return "/home/dashboard"
+    if context.get("owned_projects") or context.get("ceo_projects"):
+        return "/home/projects"
     if context.get("visible_projects"):
         return "/projects"
     return "/home"

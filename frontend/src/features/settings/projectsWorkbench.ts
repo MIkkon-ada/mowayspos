@@ -42,9 +42,14 @@ export type ProjectLifecycleStage = {
 const STAGE_NODES = ['立项准备', '启动', '执行', '结束', '归档'] as const
 
 export function isProjectDispatchReady(project: Pick<Project, 'objectives' | 'start_date' | 'end_date'>): boolean {
-  const startDate = parseCalendarDate(project.start_date)
-  const endDate = parseCalendarDate(project.end_date)
-  return Boolean(project.objectives?.trim() && startDate && endDate && startDate <= endDate)
+  return Boolean(project.objectives?.trim() && isProjectPeriodReady(project.start_date, project.end_date))
+}
+
+function isProjectPeriodReady(startDateValue?: string, endDateValue?: string): boolean {
+  const startDate = parseCalendarDate(startDateValue)
+  const endDate = parseCalendarDate(endDateValue)
+  const hasValidEndDate = !endDateValue?.trim() || Boolean(endDate && startDate && startDate <= endDate)
+  return Boolean(startDate && hasValidEndDate)
 }
 
 function parseCalendarDate(value?: string): string | null {
@@ -78,7 +83,7 @@ export function getProjectMaterialChecklist(
 ): ProjectMaterialCheck[] {
   return [
     { key: 'objectives', label: '项目目标', complete: Boolean(project.objectives?.trim()) },
-    { key: 'period', label: '项目周期', complete: Boolean(project.start_date && project.end_date) },
+    { key: 'period', label: '项目周期', complete: isProjectPeriodReady(project.start_date, project.end_date) },
     { key: 'tasks', label: '重点工作', complete: tasks.length > 0 },
     { key: 'subtasks', label: '关键任务', complete: subtasks.length > 0 },
   ]
@@ -106,8 +111,8 @@ export function getProjectTodo(
       secondaryActionLabel: dispatchReady ? '修改基础信息' : undefined,
       title: dispatchReady ? '项目已完成基础信息' : '请先完善项目基础信息',
       description: dispatchReady
-        ? '项目目标和项目周期已齐全，可下发给负责人完善项目计划。'
-        : '请先完善项目目标、开始日期和结束日期，再下发给负责人。',
+        ? '项目目标和开始日期已齐全，可下发给负责人完善项目计划；结束日期可后续补充。'
+        : '请先完善项目目标和开始日期；结束日期可选择待定，再下发给负责人。',
       materialChecks,
     }
   }

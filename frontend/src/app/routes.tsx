@@ -12,6 +12,7 @@ import {
 } from '../layouts/AppLayout'
 import { ProjectLayout } from '../layouts/ProjectLayout'
 import { AdminLayout } from '../layouts/AdminLayout'
+import { getPostLoginDestination } from '../domain/authFlow'
 
 const DashboardPage = lazy(() => import('../pages/DashboardPage').then((m) => ({ default: m.DashboardPage })))
 const ConfirmPage = lazy(() => import('../pages/ConfirmPage').then((m) => ({ default: m.ConfirmPage })))
@@ -40,14 +41,8 @@ const MyTasksPage = lazy(() => import('../pages/MyTasksPage').then((m) => ({ def
 const MyTaskDetailPage = lazy(() => import('../pages/MyTaskDetailPage').then((m) => ({ default: m.MyTaskDetailPage })))
 
 function HomeIndex() {
-  const { currentUser, globalUserRoles } = useProject()
-  const isPrivileged = !!(
-    currentUser?.is_tech_admin ||
-    currentUser?.is_ceo ||
-    currentUser?.can_view_all ||
-    globalUserRoles.some((role) => ['owner', 'coordinator', 'project_ceo'].includes(role))
-  )
-  return <Navigate to={isPrivileged ? '/home/dashboard' : '/member/tasks'} replace />
+  const { currentUser, projects, getPreferredProjectId } = useProject()
+  return <Navigate to={getPostLoginDestination(currentUser, projects, getPreferredProjectId())} replace />
 }
 
 function LegacyProjectRedirect({ to, includeProjectId = false }: { to: string; includeProjectId?: boolean }) {

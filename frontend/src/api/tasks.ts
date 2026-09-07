@@ -14,6 +14,7 @@ export type TaskPayload = {
   key_task: string
   key_achievement?: string
   completion_standard?: string
+  plan_process?: string
   coordinator?: string
   owner?: string
   collaborators?: string

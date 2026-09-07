@@ -82,6 +82,7 @@ def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[d
     """Attach latest confirmed progress and display-safe status facts without N+1 queries."""
     subtask_ids = [row.id for row in rows]
     latest_by_subtask: dict[int, dict] = {}
+    latest_next_step_by_subtask: dict[int, str] = {}
     if subtask_ids:
         submissions = (
             db.query(models.UpdateSubmission)
@@ -107,9 +108,29 @@ def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[d
                 "summary": _submission_summary(submission, subtask_id),
             }
 
+        execution_events = (
+            db.query(models.KeyTaskExecutionEvent)
+            .filter(
+                models.KeyTaskExecutionEvent.key_task_id.in_(subtask_ids),
+                models.KeyTaskExecutionEvent.authority == "confirmed",
+                models.KeyTaskExecutionEvent.affects_current_progress.is_(True),
+            )
+            .order_by(
+                models.KeyTaskExecutionEvent.key_task_id.asc(),
+                models.KeyTaskExecutionEvent.effective_at.desc(),
+                models.KeyTaskExecutionEvent.id.desc(),
+            )
+            .all()
+        )
+        for event in execution_events:
+            if event.key_task_id in latest_next_step_by_subtask:
+                continue
+            latest_next_step_by_subtask[event.key_task_id] = (event.next_step or "").strip()
+
     today = date.today()
     for row, payload in zip(rows, payloads):
         payload["latest_confirmed_submission"] = latest_by_subtask.get(row.id)
+        payload["latest_next_step"] = latest_next_step_by_subtask.get(row.id, "")
         payload["is_overdue"] = bool(
             row.due_kind == "exact"
             and row.due_date is not None

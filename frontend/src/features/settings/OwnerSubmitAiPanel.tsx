@@ -8,6 +8,7 @@ import {
   ProjectInitApiError,
   type AgentSubTask,
   type AgentTask,
+  EMPTY_PROJECT_INIT_AI_PROFILE,
   type ProjectInitAiDraft,
   type ProjectInitAnalysisRun,
   type ProjectInitAttachment,
@@ -16,6 +17,14 @@ import {
   uploadInitAttachments,
 } from '../../api/projectInitAi'
 import { acceptedDocumentTypes, aiDocumentFormats } from '../../config/aiDocumentFormats'
+import {
+  applyProjectProfileDecisions,
+  buildProjectProfileMergePreview,
+  PROJECT_PROFILE_FIELDS,
+  type ProjectProfileDecision,
+  type ProjectProfileField,
+  type ProjectProfileValues,
+} from './projectInitProfileDraft'
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024
 const MAX_FILES = 10
@@ -67,6 +76,11 @@ export type OwnerSubmitAiPanelProps = {
   currentDraft: ProjectInitCurrentDraft
   existingAttachments?: ProjectInitAttachment[]
   onApplyDraft: (draft: ProjectInitAiDraft, decisions: ProjectInitAiDecision[], runId: number) => void | Promise<void>
+  /** Project owners can inspect profile suggestions but must not overwrite core project data. */
+  currentProjectProfile?: ProjectProfileValues
+  /** Provided only in the draft-stage project editor, where an initiator confirms profile changes. */
+  onApplyProfile?: (values: ProjectProfileValues, runId: number) => void | Promise<void>
+  showWorkProgress?: boolean
   onClose?: () => void
   disabled?: boolean
 }
@@ -236,6 +250,24 @@ function sourceLabel(task: AgentTask | AgentSubTask): string {
   return task.source || 'AI 分析结果'
 }
 
+const PROFILE_FIELD_LABELS: Record<ProjectProfileField, string> = {
+  name: '项目名称',
+  background: '项目背景',
+  objectives: '项目目标',
+  expected_outcomes: '预期成果',
+  start_date: '开始日期',
+  end_date: '结束日期',
+  description: '项目说明',
+}
+
+const PROFILE_STATUS_LABELS = {
+  empty: '未识别',
+  same: '与当前一致',
+  supplement: '可补充',
+  change: '待确认变更',
+  unverified: '缺少来源证据',
+} as const
+
 function EvidenceList({
   projectId,
   evidence,
@@ -305,6 +337,9 @@ export function OwnerSubmitAiPanel({
   projectId,
   currentDraft,
   onApplyDraft,
+  currentProjectProfile = {},
+  onApplyProfile,
+  showWorkProgress = true,
   onClose,
   disabled = false,
 }: OwnerSubmitAiPanelProps) {
@@ -318,6 +353,9 @@ export function OwnerSubmitAiPanel({
   const [decisions, setDecisions] = useState<Record<string, ProjectInitAiDecisionAction>>({})
   const [applying, setApplying] = useState(false)
   const [applySuccess, setApplySuccess] = useState(false)
+  const [profileDecisions, setProfileDecisions] = useState<Partial<Record<ProjectProfileField, ProjectProfileDecision>>>({})
+  const [profileApplySuccess, setProfileApplySuccess] = useState(false)
+  const [previewModule, setPreviewModule] = useState<'profile' | 'work_progress'>('profile')
   const mountedRef = useRef(true)
   const pollInFlightTokenRef = useRef<number | undefined>(undefined)
   const activeRunIdRef = useRef<number | undefined>(undefined)
@@ -356,11 +394,16 @@ export function OwnerSubmitAiPanel({
       activeRunIdRef.current = nextRun.id
     }
     setRun(nextRun)
-    if (isAiDraft(nextRun.draft)) setDraft(nextRun.draft)
+    if (isAiDraft(nextRun.draft)) {
+      setDraft(nextRun.draft)
+      const profile = nextRun.draft.project_profile ?? EMPTY_PROJECT_INIT_AI_PROFILE
+      const hasProfile = PROJECT_PROFILE_FIELDS.some((field) => Boolean(profile[field]?.trim()))
+      setPreviewModule(onApplyProfile && (hasProfile || !showWorkProgress) ? 'profile' : 'work_progress')
+    }
     setPanelState(nextRun.status === 'failed' ? 'failed' : isTerminal(nextRun.status) ? 'preview' : 'analyzing')
     setError(nextRun.status === 'failed' ? nextRun.error_message : '')
     if (isTerminal(nextRun.status)) clearPolling()
-  }, [clearPolling])
+  }, [clearPolling, onApplyProfile, showWorkProgress])
 
   const pollRun = useCallback(async (runId: number, token: number, controller: AbortController) => {
     if (controller.signal.aborted || activeRunIdRef.current !== runId || pollInFlightTokenRef.current !== undefined) return
@@ -370,7 +413,15 @@ export function OwnerSubmitAiPanel({
       if (controller.signal.aborted || !mountedRef.current || activeRunIdRef.current !== runId || nextRun.id !== runId || pollTokenRef.current !== token) return
       updateRun(nextRun)
     } catch (nextError) {
-      if (mountedRef.current && !controller.signal.aborted && activeRunIdRef.current === runId && pollTokenRef.current === token) setError(errorMessage(nextError))
+      if (mountedRef.current && !controller.signal.aborted && activeRunIdRef.current === runId && pollTokenRef.current === token) {
+        // Do not leave the last server progress (for example, 55%) on screen
+        // after the status request itself has failed. The run can no longer be
+        // observed reliably, so stop polling and expose an actionable failure
+        // state instead of showing a contradictory error banner plus spinner.
+        setError(errorMessage(nextError))
+        setPanelState('failed')
+        clearPolling()
+      }
     } finally {
       if (pollInFlightTokenRef.current === token) pollInFlightTokenRef.current = undefined
     }
@@ -490,6 +541,8 @@ export function OwnerSubmitAiPanel({
     const nextPreview = freshAnalysisPreviewState()
     setDecisions(nextPreview.decisions)
     setApplySuccess(nextPreview.applySuccess)
+    setProfileDecisions({})
+    setProfileApplySuccess(false)
     setDraft(nextPreview.draft)
   }
 
@@ -599,6 +652,28 @@ export function OwnerSubmitAiPanel({
     }
   }
 
+  async function applyProfile() {
+    if (!draft || !run?.id || !onApplyProfile) return
+    const profile = draft.project_profile ?? EMPTY_PROJECT_INIT_AI_PROFILE
+    const preview = buildProjectProfileMergePreview(currentProjectProfile, profile)
+    const values = applyProjectProfileDecisions(preview, profileDecisions)
+    if (Object.keys(values).length === 0) {
+      setError('没有可应用且已验证的项目基本信息')
+      return
+    }
+    setError('')
+    setApplying(true)
+    setProfileApplySuccess(false)
+    try {
+      await onApplyProfile(values, run.id)
+      if (mountedRef.current) setProfileApplySuccess(true)
+    } catch (nextError) {
+      if (mountedRef.current) setError(`应用基本信息失败：${errorMessage(nextError)}`)
+    } finally {
+      if (mountedRef.current) setApplying(false)
+    }
+  }
+
   const renderWarningMessages = (warnings: string[]) => {
     if (warnings.length === 0) return null
     return <div role="alert" className="mt-2 space-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{warnings.map((warning, index) => <p key={`${warning}-${index}`}>{warning}</p>)}</div>
@@ -642,6 +717,10 @@ export function OwnerSubmitAiPanel({
 
   const canStartAnalysis = successfulAttachmentIds.length > 0 || queue.some((item) => item.status === 'queued' || ((item.status === 'failed' || item.status === 'cancelled') && item.retryable === true))
   const showUploadStage = panelState === 'idle' || panelState === 'uploading' || (panelState === 'failed' && !run)
+  const projectProfile = draft?.project_profile ?? EMPTY_PROJECT_INIT_AI_PROFILE
+  const profilePreview = buildProjectProfileMergePreview(currentProjectProfile, projectProfile)
+  const hasProfileSuggestion = PROJECT_PROFILE_FIELDS.some((field) => Boolean(projectProfile[field]?.trim()))
+  const suggestedProfileFieldCount = PROJECT_PROFILE_FIELDS.filter((field) => Boolean(projectProfile[field]?.trim())).length
 
   if (loading) return <section aria-busy="true" className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">正在加载 AI 分析状态…</section>
 
@@ -711,23 +790,39 @@ export function OwnerSubmitAiPanel({
 
       {panelState === 'preview' && run && draft && (
         <div className="owner-submit-ai-preview-content space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3"><div><span className="text-sm font-semibold text-slate-800">文件分析完成</span><span className="ml-2 text-xs text-slate-500">已生成 {draft.tasks.length} 项候选重点工作</span></div><div className="flex items-center gap-2"><span className="text-xs font-semibold text-slate-600">{draft.tasks.length} 项待确认</span><button type="button" onClick={resetToFreshUpload} disabled={disabled || applying || applySuccess} className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-50">重新上传资料</button></div></div>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3"><div><span className="text-sm font-semibold text-slate-800">文件分析完成</span><span className="ml-2 text-xs text-slate-500">识别到 {suggestedProfileFieldCount} 项项目基本信息、{draft.tasks.length} 项候选重点工作</span></div><div className="flex items-center gap-2"><span className="text-xs font-semibold text-slate-600">{draft.tasks.length} 项待确认</span><button type="button" onClick={resetToFreshUpload} disabled={disabled || applying || applySuccess} className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-50">重新上传资料</button></div></div>
           <details className="owner-submit-ai-technical-details rounded-lg border border-slate-100 bg-white px-3 py-2"><summary className="cursor-pointer text-xs font-semibold text-slate-500 hover:text-slate-800">查看分析信息</summary><div className="mt-2"><ModelUsageSummary run={run} /></div></details>
           {analysisReviewNotice(run) && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{analysisReviewNotice(run)}</div>}
           {draft.warnings && renderWarningMessages(draft.warnings.map((warning) => `${warning.code}: ${warning.message}`))}
           {run.status === 'partial_failed' && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">部分文件分析失败，下面仅展示已成功生成的结果。</div>}
           {renderFileResults(run)}
+          <div className="flex flex-wrap gap-2 border-b border-slate-200" role="tablist" aria-label="AI 识别模块">
+            <button type="button" role="tab" aria-selected={previewModule === 'profile'} onClick={() => setPreviewModule('profile')} className={`border-b-2 px-3 py-2 text-sm font-bold ${previewModule === 'profile' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>项目基本信息</button>
+            {showWorkProgress && <button type="button" role="tab" aria-selected={previewModule === 'work_progress'} onClick={() => setPreviewModule('work_progress')} className={`border-b-2 px-3 py-2 text-sm font-bold ${previewModule === 'work_progress' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>工作推进方案</button>}
+          </div>
+          {previewModule === 'profile' && <section aria-label="项目基本信息识别结果" className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+            <div><h3 className="text-sm font-bold text-slate-900">项目基本信息识别结果</h3><p className="mt-1 text-xs text-slate-500">每一项均需有来源证据；缺少证据的信息不会被应用。</p></div>
+            {!hasProfileSuggestion && <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">未从本次资料中识别到可确认的项目基本信息。</p>}
+            <div className="space-y-2">{PROJECT_PROFILE_FIELDS.map((field) => {
+              const item = profilePreview.fields[field]
+              return <div key={field} className="rounded-lg border border-slate-100 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-semibold text-slate-700">{PROFILE_FIELD_LABELS[field]}</p><span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${item.status === 'unverified' ? 'bg-amber-50 text-amber-700' : item.status === 'change' ? 'bg-blue-50 text-blue-700' : 'bg-slate-50 text-slate-500'}`}>{PROFILE_STATUS_LABELS[item.status]}</span></div>{item.suggested && <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">{item.suggested}</p>}{item.current && item.status === 'change' && <p className="mt-1 text-xs text-slate-500">当前值：{item.current}</p>}{onApplyProfile && item.status === 'change' && <div className="mt-2 flex gap-2"><button type="button" onClick={() => setProfileDecisions((current) => ({ ...current, [field]: 'apply' }))} aria-pressed={profileDecisions[field] === 'apply'} className={`rounded px-2 py-1 text-xs font-semibold ${profileDecisions[field] === 'apply' ? 'bg-blue-600 text-white' : 'border border-blue-200 text-blue-700'}`}>采用 AI 建议</button><button type="button" onClick={() => setProfileDecisions((current) => ({ ...current, [field]: 'keep' }))} aria-pressed={profileDecisions[field] === 'keep'} className={`rounded px-2 py-1 text-xs font-semibold ${profileDecisions[field] === 'keep' ? 'bg-slate-700 text-white' : 'border border-slate-200 text-slate-600'}`}>保留当前值</button></div>}</div>
+            })}</div>
+            <EvidenceList projectId={projectId} evidence={projectProfile.evidence} sourceLabel="项目基本信息" />
+            {onApplyProfile ? <><button type="button" onClick={() => void applyProfile()} disabled={disabled || applying || !hasProfileSuggestion} className="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{applying ? '应用中…' : '应用已确认的基本信息'}</button>{profileApplySuccess && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">基本信息建议已带回立项表单，请点击“保存”完成更新。</p>}</> : <p className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">项目基本信息由立项人确认，本页不会直接覆盖。</p>}
+          </section>}
+          {previewModule === 'work_progress' && showWorkProgress && <>
           {draft.tasks.length === 0 && <p className="rounded-xl border border-slate-200 p-4 text-sm text-slate-500">暂无可预览草稿。</p>}
           <div className="space-y-3">{draft.tasks.map((task, taskIndex) => {
             const taskKey = `task-${taskIndex}`
             return <article key={taskKey} className="owner-submit-ai-task-card rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-bold text-slate-900">{task.title}</h3><p className="mt-1 text-xs text-slate-600">{task.description || '暂无描述'}</p><p className="mt-1 text-xs text-slate-500">负责人：{task.owner_name || '未匹配'} · 时间：{task.plan_start || '—'} 至 {task.plan_end || '—'} · 状态：{task.status || '—'} · 优先级：{task.priority || '—'}</p></div><div className="text-right"><span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">{duplicateLabel(task.merge_status)}</span><DecisionButtons value={decisions[taskKey]} disabled={disabled} onChange={(action) => setDecision(taskKey, action)} /></div></div>
+              <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-bold text-slate-900">{task.title}</h3><p className="mt-1 text-xs text-slate-600"><span className="font-semibold text-slate-700">目标：</span>{task.goal || task.description || '暂无目标'}</p><p className="mt-1 whitespace-pre-wrap text-xs text-slate-600"><span className="font-semibold text-slate-700">验收标准 / 关键成果：</span>{task.acceptance_criteria || '暂无'}</p><p className="mt-1 whitespace-pre-wrap text-xs text-slate-600"><span className="font-semibold text-slate-700">推进流程：</span>{task.process || '暂无'}</p><p className="mt-1 text-xs text-slate-500">负责人：{task.owner_name || '未匹配'} · 时间：{task.plan_start || '—'} 至 {task.plan_end || '—'} · 状态：{task.status || '—'} · 优先级：{task.priority || '—'}</p></div><div className="text-right"><span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">{duplicateLabel(task.merge_status)}</span><DecisionButtons value={decisions[taskKey]} disabled={disabled} onChange={(action) => setDecision(taskKey, action)} /></div></div>
               {renderWarnings(task)}
               <div className="mt-4 space-y-2 border-l-2 border-slate-100 pl-3"><p className="text-xs font-semibold text-slate-500">关键任务 / 子任务</p>{task.subtasks.map((subtask, subtaskIndex) => { const key = `${taskKey}-subtask-${subtaskIndex}`; return <div key={key} className="owner-submit-ai-subtask-card rounded-lg border border-slate-100 p-3"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs font-semibold text-slate-800">{subtask.title}</p><p className="mt-1 text-[11px] text-slate-500">负责人：{subtask.assignee_name || '未匹配'} · 协助人：{subtask.helper_names.join('、') || '—'} · 时间：{subtask.plan_start || '—'} 至 {subtask.plan_end || '—'}</p><p className="mt-1 text-[11px] text-slate-500">状态：{subtask.status || '—'} · 优先级：{subtask.priority || '—'}</p></div><div className="space-y-1 text-right"><span className="block rounded-full bg-slate-50 px-2 py-1 text-[10px] text-slate-600">{duplicateLabel(subtask.merge_status)}</span><DecisionButtons value={decisions[key]} disabled={disabled} onChange={(action) => setDecision(key, action)} /></div></div>{renderWarnings(subtask)}<div className="mt-2"><EvidenceList projectId={projectId} evidence={subtask.evidence} sourceLabel={sourceLabel(subtask)} /></div></div> })}</div>
             </article>
           })}</div>
           {applySuccess && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">草稿已提交给推进表页面处理。</p>}
           <button type="button" onClick={() => void applyDraft()} disabled={disabled || applying || requiredDecisionKeys(draft).some((key) => !decisions[key])} className="w-full rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">{applying ? '应用中…' : '应用到推进表'}</button>
+          </>}
         </div>
       )}
     </section>

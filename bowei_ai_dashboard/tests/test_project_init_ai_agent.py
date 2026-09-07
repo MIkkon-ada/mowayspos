@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app import models
-from app.ai.contracts import AIInvocationContext, Capability
+from app.ai.contracts import AIInvocationContext, AIUpstreamError, Capability
 from app.ai.repository import AIConfigurationRepository
 from app.ai.service import AIService
 from app.database import Base
@@ -84,6 +84,33 @@ def fake_llm(result: dict):
     return call
 
 
+def test_ai_draft_accepts_an_evidence_bound_project_profile_without_work_tasks():
+    source = chunk("项目名称：岗位 AI 应用优化\n项目背景：岗位知识分散\n项目目标：提升复用率")
+    result = generate_project_init_draft(
+        [source],
+        [],
+        [],
+        llm_call=fake_llm({
+            "project_profile": {
+                "name": "岗位 AI 应用优化",
+                "background": "岗位知识分散",
+                "objectives": "提升复用率",
+                "evidence": [{
+                    "attachment_id": 7,
+                    "file_name": "plan.txt",
+                    "location": "lines 1-2",
+                    "excerpt": "",
+                }],
+            },
+            "tasks": [],
+        }),
+    )
+
+    assert result.tasks == []
+    assert result.project_profile.name == "岗位 AI 应用优化"
+    assert result.project_profile.evidence[0].file_name == "plan.txt"
+
+
 def test_schema_invalid_primary_response_uses_project_init_fallback_model():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -146,6 +173,61 @@ def test_schema_invalid_primary_response_uses_project_init_fallback_model():
             ("failed", False, "AI_RESPONSE_INVALID"),
             ("succeeded", True, ""),
         ]
+    finally:
+        db.close()
+        Base.metadata.drop_all(engine)
+
+
+def test_semantic_workbook_uses_deterministic_projection_when_all_models_fail():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        repo = AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY)
+        primary = repo.create_model(
+            code="primary",
+            display_name="Primary",
+            provider="deepseek",
+            model_name="deepseek-chat",
+            model_type="chat",
+            base_url="https://api.example.test",
+            config={},
+            enabled=True,
+            source="custom",
+        )
+        repo.replace_credential(primary.id, api_key="test-key", app_secret=None)
+        repo.save_policy(
+            Capability.PROJECT_INIT_ANALYSIS,
+            primary_model_id=primary.id,
+            fallback_model_ids=[],
+            timeout_seconds=30,
+            max_attempts=1,
+            enabled=True,
+        )
+
+        class FailingAdapter:
+            def complete_chat(self, _model, _api_key, _prompt, *, timeout_seconds):
+                raise AIUpstreamError("AI_UPSTREAM_TIMEOUT", retryable=True)
+
+        result = generate_project_init_draft(
+            [
+                chunk(
+                    "主要工作\t关键任务\t目标\t推进流程\n"
+                    "联合拓展\t明确客户范围\t完成客户筛选\t拜访并复盘",
+                    name="工作推进表.xlsx",
+                    location="Sheet1!A1:D2",
+                )
+            ],
+            [{"id": 1, "name": "张三", "is_active": True}],
+            [],
+            ai_service=AIService(db, adapters=FailingAdapter(), cipher_key=TEST_FERNET_KEY),
+            invocation_context=AIInvocationContext(resource_type="project_init", resource_id=99),
+        )
+
+        assert result.model_name == "structured-spreadsheet-fallback"
+        assert result.tasks[0].title == "联合拓展"
+        assert result.tasks[0].subtasks[0].title == "明确客户范围"
+        assert result.tasks[0].goal == "完成客户筛选"
     finally:
         db.close()
         Base.metadata.drop_all(engine)
@@ -258,7 +340,180 @@ def test_source_evidence_is_preserved_and_model_text_is_not_used_as_evidence():
     assert item.file_name == "source.docx"
     assert item.location == "paragraphs 2-3"
     assert item.source_label == "source.docx · paragraphs 2-3"
-    assert result.tasks[0].source == item.source_label
+
+
+def test_ai_draft_routes_project_profile_and_work_progress_with_traceable_evidence():
+    result = generate_project_init_draft(
+        [chunk(
+            "项目名称：岗位 AI 应用优化\n"
+            "建设背景：岗位知识分散\n"
+            "项目目标：提升复用率\n"
+            "预期成果：形成案例库\n"
+            "项目周期：2026-07-01 至 2026-09-30\n"
+            "工作模块：岗位优化\n"
+            "关键任务：建立应用记录表",
+            name="项目方案.xlsx",
+            location="概况!A1:B8",
+        )],
+        [],
+        [],
+        llm_call=fake_llm({
+            "project_profile": {
+                "name": "岗位 AI 应用优化",
+                "background": "岗位知识分散",
+                "objectives": "提升复用率",
+                "expected_outcomes": "形成案例库",
+                "start_date": "2026-07-01",
+                "end_date": "2026-09-30",
+                "description": "",
+                "confidence": 0.96,
+                "evidence": [{
+                    "attachment_id": 7,
+                    "file_name": "项目方案.xlsx",
+                    "location": "概况!A1:B8",
+                    "excerpt": "项目名称：岗位 AI 应用优化",
+                }],
+                "warnings": [],
+            },
+            "tasks": [raw_task(
+                title="岗位优化",
+                evidence=[{
+                    "attachment_id": 7,
+                    "file_name": "项目方案.xlsx",
+                    "location": "概况!A1:B8",
+                    "excerpt": "工作模块：岗位优化",
+                }],
+            )],
+        }),
+    )
+
+    assert result.project_profile.name == "岗位 AI 应用优化"
+    assert result.project_profile.background == "岗位知识分散"
+    assert result.project_profile.objectives == "提升复用率"
+    assert result.project_profile.expected_outcomes == "形成案例库"
+    assert result.project_profile.start_date == "2026-07-01"
+    assert result.project_profile.end_date == "2026-09-30"
+    assert result.project_profile.evidence[0].location == "概况!A1:B8"
+    assert [task.title for task in result.tasks] == ["岗位优化"]
+
+
+def test_semantic_workbook_shape_preserves_goal_acceptance_process_and_numbered_tasks(tmp_path):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "复制推广"
+    sheet.merge_cells("A1:E1")
+    sheet["A1"] = "第三阶段五项工作的简要方案"
+    sheet.append(["主要工作", "目标", "验收标准与关键成果", "关键任务", "推进流程"])
+    sheet.append([
+        "1. 试点岗位AI应用优化",
+        "AI全面嵌入试点岗位，真实运行与优化",
+        "1. 完成岗位应用\n2. 形成复盘记录",
+        "1. 设定优化期间的绩效提升目标\n2. 建立应用记录表",
+        "宣贯 → 试用 → 复盘 → 优化",
+    ])
+    workbook_path = tmp_path / "第三阶段五项工作的简要方案_v0.2.xlsx"
+    workbook.save(workbook_path)
+    parsed_chunks = parse_project_init_file(workbook_path, workbook_path.name)
+    source = next(item for item in parsed_chunks if item.location.endswith("A3:E3"))
+
+    data = {
+        "tasks": [
+            {
+                "title": "1. 试点岗位AI应用优化",
+                "goal": "AI全面嵌入试点岗位，真实运行与优化",
+                "acceptance_criteria": "1. 完成岗位应用\n2. 形成复盘记录",
+                "process": "宣贯 → 试用 → 复盘 → 优化",
+                "description": "AI全面嵌入试点岗位，真实运行与优化",
+                "evidence": [{"attachment_id": 7, "file_name": source.file_name, "location": source.location}],
+                "subtasks": [
+                    {
+                        "title": "设定优化期间的绩效提升目标",
+                        "evaluation_standard": "完成岗位应用",
+                        "evidence": [{"attachment_id": 7, "file_name": source.file_name, "location": source.location}],
+                    },
+                    {
+                        "title": "建立应用记录表",
+                        "evaluation_standard": "形成复盘记录",
+                        "evidence": [{"attachment_id": 7, "file_name": source.file_name, "location": source.location}],
+                    },
+                ],
+            }
+        ]
+    }
+    result = generate_project_init_draft(
+        [{"attachment_id": 7, "file_name": source.file_name, "location": source.location, "text": source.text}],
+        [],
+        [],
+        llm_call=fake_llm(data),
+    )
+
+    task = result.tasks[0]
+    assert task.goal == "AI全面嵌入试点岗位，真实运行与优化"
+    assert task.acceptance_criteria.startswith("1. 完成岗位应用")
+    assert task.process == "宣贯 → 试用 → 复盘 → 优化"
+    assert [subtask.title for subtask in task.subtasks] == [
+        "设定优化期间的绩效提升目标",
+        "建立应用记录表",
+    ]
+    assert task.evidence[0].location == source.location
+
+
+def test_semantic_workbook_missing_fields_get_one_bounded_ai_repair():
+    source = chunk(
+        "主要工作\t目标\t验收标准与关键成果\t关键任务\t推进流程\n"
+        "试点优化\t岗位真实运行\t完成验收\t1.建立记录表 2.完成复盘\t试用 → 复盘",
+        name="推进表.xlsx",
+        location="'复制推广'!A3:E3",
+    )
+    first = raw_task(
+        title="试点优化",
+        evidence=[{"attachment_id": 7, "file_name": "推进表.xlsx", "location": "'复制推广'!A3:E3"}],
+    )
+    repaired = {
+        **first,
+        "goal": "岗位真实运行",
+        "acceptance_criteria": "完成验收",
+        "process": "试用 → 复盘",
+    }
+    calls: list[str] = []
+
+    def llm(prompt: str, _provider: str) -> str:
+        calls.append(prompt)
+        return json.dumps({"tasks": [first if len(calls) == 1 else repaired]}, ensure_ascii=False)
+
+    result = generate_project_init_draft([source], [], [], llm_call=llm)
+
+    assert len(calls) == 2
+    assert result.tasks[0].goal == "岗位真实运行"
+    assert result.tasks[0].acceptance_criteria == "完成验收"
+    assert result.tasks[0].process == "试用 → 复盘"
+
+
+def test_semantic_workbook_falls_back_to_source_fields_when_ai_omits_them():
+    source = chunk(
+        "主要工作\t目标\t验收标准与关键成果\t关键任务\t推进流程\n"
+        "试点优化\t岗位真实运行\t完成验收\t1.建立记录表 2.完成复盘\t试用 → 复盘",
+        name="第三阶段五项工作的简要方案_v0.2.xlsx",
+        location="'复制推广'!A3:E3",
+    )
+    candidate = raw_task(
+        title="试点优化",
+        evidence=[{"attachment_id": 7, "file_name": source["file_name"], "location": source["location"]}],
+    )
+    calls: list[str] = []
+
+    def llm(prompt: str, _provider: str) -> str:
+        calls.append(prompt)
+        return json.dumps({"tasks": [candidate]}, ensure_ascii=False)
+
+    result = generate_project_init_draft([source], [], [], llm_call=llm)
+
+    assert len(calls) == 2
+    task = result.tasks[0]
+    assert task.goal == "岗位真实运行"
+    assert task.acceptance_criteria == "完成验收"
+    assert task.process == "试用 → 复盘"
+    assert {"建立记录表", "完成复盘"}.issubset({item.title for item in task.subtasks})
 
 
 def test_strict_models_reject_coerced_ids_and_extra_fields():

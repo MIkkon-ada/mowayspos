@@ -58,7 +58,7 @@ test('member routes preserve projects and add the personal task center', () => {
 })
 test('home and legacy mytasks routes enter the new center', () => {
   const routes = read('src/app/routes.tsx')
-  assert.match(routes, /isPrivileged \? '\/home\/dashboard' : '\/member\/tasks'/)
+  assert.match(routes, /getPostLoginDestination\(currentUser, projects, getPreferredProjectId\(\)\)/)
   assert.match(routes, /path="mytasks" element=\{<LegacyProjectRedirect to="\/member\/tasks" includeProjectId \/>\}/)
 })
 

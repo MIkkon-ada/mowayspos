@@ -26,7 +26,7 @@ test('owner submit is a guarded project-detail child route rather than an overla
 test('all existing owner-submit entries navigate to the project child page', () => {
   assert.doesNotMatch(dashboardSource, /OwnerSubmitModal/)
   assert.doesNotMatch(projectsSource, /OwnerSubmitModal/)
-  for (const source of [dashboardSource, projectsSource, detailSource]) {
+  for (const source of [projectsSource, detailSource]) {
     assert.match(source, /projectOwnerSubmitPath/)
   }
   assert.match(detailSource, /projectEditPath/)
@@ -51,6 +51,7 @@ test('draft owners have no detail-panel or dashboard submit entry', () => {
   assert.doesNotMatch(projectsSource, /status === 'draft' && roles\.isRealOwner[\s\S]{0,160}onOwnerSubmit/)
   assert.match(projectsSource, /status === 'dispatched' && roles\.isRealOwner[\s\S]{0,160}onOwnerSubmit/)
   assert.match(projectsSource, /status === 'returned' && roles\.isRealOwner[\s\S]{0,160}onOwnerSubmit/)
-  assert.match(dashboardSource, /canShowProjectSubmitAction\(dashboardProject\) && dashboardProjectRoles\.includes\('owner'\)/)
+  assert.doesNotMatch(dashboardSource, /canShowProjectSubmitAction\(dashboardProject\)/)
+  assert.doesNotMatch(dashboardSource, /待完善立项项目列表/)
   assert.match(lifecycleSource, /return status === 'dispatched' \|\| status === 'returned'/)
 })

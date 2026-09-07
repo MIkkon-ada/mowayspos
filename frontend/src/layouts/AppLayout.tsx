@@ -293,7 +293,7 @@ function LoginPanel() {
     try {
       await bindWecomAccount(wecomUserid, bindUsername.trim(), bindPassword)
       // 绑定成功，后端已种 cookie，跳转首页
-      window.location.replace('/home/dashboard')
+      window.location.replace('/home')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '绑定失败，请检查账号密码'
       setBindError(msg)

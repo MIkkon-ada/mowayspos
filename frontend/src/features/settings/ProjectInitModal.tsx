@@ -4,6 +4,7 @@ import type { Dispatch, SetStateAction } from 'react'
 import type { Person } from '../../types'
 import { getProjectRoleLabel } from '../../domain/roleLabels'
 import { getPickerPosition } from './projectPickerPosition.js'
+import { OwnerSubmitAiPanel } from './OwnerSubmitAiPanel'
 
 export type TeamMap = {
   owner: number[]
@@ -14,6 +15,7 @@ export type TeamMap = {
 
 export type NewProjectForm = {
   name: string
+  description: string
   project_type: string
   client_name: string
   background: string
@@ -70,6 +72,8 @@ type ProjectInitModalProps = {
   open: boolean
   creating: boolean
   mode?: 'create' | 'edit'
+  projectId?: number
+  allowProfileImport?: boolean
   people: Person[]
   form: NewProjectForm
   setForm: Dispatch<SetStateAction<NewProjectForm>>
@@ -83,6 +87,8 @@ export function ProjectInitModal({
   open,
   creating,
   mode = 'create',
+  projectId,
+  allowProfileImport = false,
   people,
   form,
   setForm,
@@ -93,12 +99,14 @@ export function ProjectInitModal({
 }: ProjectInitModalProps) {
   const [picker, setPicker] = useState<PickerState | null>(null)
   const [endDatePending, setEndDatePending] = useState(false)
+  const [showProfileImport, setShowProfileImport] = useState(false)
   const roleOrder: TeamRole[] = TEAM_ROLES
 
   useEffect(() => {
     if (!open) {
       setPicker(null)
       setEndDatePending(false)
+      setShowProfileImport(false)
     }
   }, [open])
 
@@ -107,6 +115,7 @@ export function ProjectInitModal({
 
   function closeModal() {
     setPicker(null)
+    setShowProfileImport(false)
     onClose()
   }
 
@@ -147,10 +156,14 @@ export function ProjectInitModal({
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-lg text-white">＋</div>
             <h1 className="text-xl font-semibold tracking-tight text-slate-900">{mode === 'edit' ? '编辑项目' : '项目立项'}</h1>
           </div>
-          <button type="button" onClick={closeModal} className="flex h-8 w-8 items-center justify-center rounded-md text-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="关闭弹窗">×</button>
+          <div className="flex items-center gap-2">
+            {mode === 'edit' && projectId && allowProfileImport && <button type="button" onClick={() => setShowProfileImport((open) => !open)} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-bold text-violet-700 hover:bg-violet-100">{showProfileImport ? '收起 AI 分析' : 'AI 分析立项资料'}</button>}
+            <button type="button" onClick={closeModal} className="flex h-8 w-8 items-center justify-center rounded-md text-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="关闭弹窗">×</button>
+          </div>
         </header>
 
         <main className="project-init-workbench-columns grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-3">
+          {showProfileImport && projectId && <section className="border-b border-slate-200 bg-slate-50 p-6 lg:col-span-3"><OwnerSubmitAiPanel projectId={projectId} currentDraft={[]} currentProjectProfile={form} showWorkProgress={false} onApplyDraft={() => undefined} onApplyProfile={async (values) => { setForm((previous) => ({ ...previous, ...values })); setShowProfileImport(false) }} onClose={() => setShowProfileImport(false)} /></section>}
           <section className="border-b border-slate-200 px-6 py-5 lg:border-b-0 lg:border-r">
             <h2 className="mb-5 text-base font-semibold text-slate-800">1. 基本信息</h2>
             <div className="space-y-4">
@@ -178,6 +191,9 @@ export function ProjectInitModal({
               </div>
               <label className={`block text-xs font-semibold text-slate-600 ${form.project_type === '博维内部项目' ? 'opacity-50' : ''}`}>客户名称
                 <input value={form.client_name} disabled={form.project_type === '博维内部项目'} onChange={(event) => setForm((prev) => ({ ...prev, client_name: event.target.value }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 px-2.5 text-sm font-normal text-slate-700 outline-none focus:border-blue-500 disabled:bg-slate-50" />
+              </label>
+              <label className="block text-xs font-semibold text-slate-600">项目说明
+                <textarea value={form.description} onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))} className="mt-1.5 h-20 w-full resize-none rounded-md border border-slate-300 px-2.5 py-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500" />
               </label>
             </div>
           </section>

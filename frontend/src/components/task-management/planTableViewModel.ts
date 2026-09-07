@@ -56,6 +56,7 @@ export type PlanTableRow = {
   planStart: string
   planEnd: string
   assistingPerson: string
+  nextStep: string
   status: string
   statusTone: 'neutral' | 'blue' | 'green' | 'red' | 'amber'
   latestConfirmedSubmission: SubTaskItem['latest_confirmed_submission'] | null
@@ -258,6 +259,7 @@ export function buildPlanRows({
         planStart: planTime.start,
         planEnd: planTime.end,
         assistingPerson: subtask ? parsedNotes.assistingPerson : EMPTY_PLAN_CELL,
+        nextStep: subtask ? textOrFallback(subtask.latest_next_step, EMPTY_PLAN_CELL) : EMPTY_PLAN_CELL,
         status,
         statusTone: getPlanStatusTone(status),
         latestConfirmedSubmission: subtask?.latest_confirmed_submission ?? null,

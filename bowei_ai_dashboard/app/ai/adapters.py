@@ -189,16 +189,14 @@ class AnthropicChatAdapter:
 
             client = Anthropic(api_key=api_key, base_url=model.base_url, timeout=timeout_seconds)
             messages = [{"role": "user", "content": prompt}]
-            json_object = response_format == {"type": "json_object"}
-            if json_object:
+            if response_format == {"type": "json_object"}:
                 messages[0]["content"] += "\nReturn exactly one JSON object and no other text."
-                messages.append({"role": "assistant", "content": "{"})
             response = client.messages.create(
                 model=model.model_name,
                 max_tokens=4096,
                 messages=messages,
             )
-            return ("{" if json_object else "") + "".join(
+            return "".join(
                 block.text for block in response.content if getattr(block, "type", "") == "text"
             )
         except AIUpstreamError:

@@ -211,6 +211,9 @@ function prepareTask(task: AgentTask, _isNew: boolean, memberIds?: ReadonlySet<n
   const result: DraftRecord = {
     title: source.title ?? '',
     description: source.description ?? '',
+    goal: source.goal ?? source.description ?? '',
+    acceptance_criteria: source.acceptance_criteria ?? '',
+    process: source.process ?? '',
     owner: source.owner_name ?? '',
     helper: '',
     plan_start: source.plan_start ?? '',
@@ -274,7 +277,7 @@ function findSubtaskIndex(current: DraftRecord[], subtask: DraftRecord, duplicat
 }
 
 function applyTaskSupplement(target: DraftRecord, source: DraftRecord, memberIds?: ReadonlySet<number>): void {
-  mergeEmptyFields(target, source, ['description', 'owner', 'helper', 'plan_start', 'plan_end', 'status', 'priority'])
+  mergeEmptyFields(target, source, ['description', 'goal', 'acceptance_criteria', 'process', 'owner', 'helper', 'plan_start', 'plan_end', 'status', 'priority'])
   const ownerId = readOptionalId(target, ['owner_id', 'ownerId'], 'task member', memberIds) ?? readOptionalId(source, ['owner_id', 'ownerId'], 'task member', memberIds)
   if (ownerId !== null && isBlank(readFirst(target, ['owner_id', 'ownerId']))) target.owner_id = ownerId
   const mergedHelpers = [...readHelperIds(target, 'task helper', memberIds), ...readHelperIds(source, 'task helper', memberIds)]
@@ -451,6 +454,9 @@ export function toCurrentDraft(tasks: Array<{
   task_id?: number
   title: string
   description?: string
+  goal?: string
+  acceptance_criteria?: string
+  process?: string
   owner?: string
   helper?: string
   plan_start?: string
@@ -473,6 +479,9 @@ export function toCurrentDraft(tasks: Array<{
     ...(task.task_id !== undefined ? { task_id: task.task_id } : {}),
     title: task.title ?? '',
     description: task.description ?? '',
+    goal: task.goal ?? task.description ?? '',
+    acceptance_criteria: task.acceptance_criteria ?? '',
+    process: task.process ?? '',
     owner: task.owner ?? '',
     helper: task.helper ?? '',
     plan_start: task.plan_start ?? '',
@@ -498,6 +507,9 @@ export function toSubmitDraft(tasks: ProjectInitCurrentDraft): SubmitTaskDraft[]
     return {
       title: String(record.title ?? '').trim(),
       description: String(record.description ?? '').trim(),
+      goal: String(record.goal ?? record.description ?? '').trim(),
+      acceptance_criteria: String(record.acceptance_criteria ?? '').trim(),
+      process: String(record.process ?? '').trim(),
       owner: String(record.owner ?? '').trim(),
       helper: String(record.helper ?? '').trim(),
       plan_start: String(record.plan_start ?? ''),

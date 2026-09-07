@@ -51,6 +51,7 @@ const EMPTY_TEAM: TeamMap = { owner: [], coordinator: [], member: [], project_ce
 
 const EMPTY_NEW_FORM: NewProjectForm = {
   name: '',
+  description: '',
   project_type: '博维内部项目',
   client_name: '',
   background: '',
@@ -80,7 +81,7 @@ const STATUS_COLOR_MAP: Record<string, string> = {
 }
 
 const STAGE_DESCRIPTIONS: Record<string, string> = {
-  draft: '管理者需先完善项目目标和项目周期；基础信息齐全后方可下发给负责人。',
+  draft: '管理者需先完善项目目标和开始日期；结束日期可待定，基础信息齐全后即可下发给负责人。',
   dispatched: '项目已下发给负责人，可继续完善立项信息。',
   pending_kickoff: '历史项目状态：项目已进入执行阶段，启动会作为执行事件留痕。',
   pending_review: '负责人已提交，等待企业教练审核立项和推进表草案。',
@@ -92,7 +93,7 @@ const STAGE_DESCRIPTIONS: Record<string, string> = {
 }
 
 const ACTION_REMINDERS: Record<string, string> = {
-  draft: '请由管理者完善项目目标、开始日期和结束日期；信息齐全后下发给负责人。',
+  draft: '请由管理者完善项目目标和开始日期；结束日期可待定，信息齐全后下发给负责人。',
   dispatched: '项目已下发给负责人，可继续完善立项信息和工作推进表雏形。',
   pending_kickoff: '项目已进入执行阶段，启动会可作为执行事件补录。',
   pending_review: '负责人已提交立项信息和工作推进表雏形，请企业教练审核项目完成准则、重点工作和关键任务安排。',
@@ -135,6 +136,7 @@ const IMPORT_COL_MAP: Record<string, keyof BatchImportRow> = {
 function buildProjectForm(project: Project): NewProjectForm {
   return {
     name: project.name ?? '',
+    description: project.description?.trim() || '',
     project_type: project.project_type?.trim() || '博维内部项目',
     client_name: project.client_name?.trim() || '',
     background: project.background?.trim() || '',
@@ -477,6 +479,7 @@ export function ProjectsMgmtSection() {
     try {
       const project = await createProject({
         name,
+        description: newForm.description.trim(),
         project_type: newForm.project_type,
         client_name: newForm.client_name.trim(),
         background: newForm.background.trim(),
@@ -563,6 +566,7 @@ export function ProjectsMgmtSection() {
     try {
       const updated = await patchProject(editProjectId, {
         name,
+        description: editForm.description.trim(),
         project_type: editForm.project_type,
         client_name: editForm.client_name.trim(),
         background: editForm.background.trim(),
@@ -726,7 +730,7 @@ export function ProjectsMgmtSection() {
 
   async function handleDispatch(project: Project) {
     if (!isProjectDispatchReady(project)) {
-      toast.warning('请先完善项目目标、开始日期和结束日期，再下发给负责人')
+      toast.warning('请先完善项目目标和开始日期；结束日期可选择待定，再下发给负责人')
       return
     }
     try {
@@ -998,6 +1002,11 @@ export function ProjectsMgmtSection() {
           open={showEdit}
           creating={editingProject}
           mode="edit"
+          projectId={editProjectId}
+          allowProfileImport={(() => {
+            const project = projects.find((item) => item.id === editProjectId)
+            return project?.lifecycle_status === 'draft' || project?.status === 'draft'
+          })()}
           people={people}
           form={editForm}
           setForm={setEditForm}

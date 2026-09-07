@@ -34,8 +34,6 @@ export type MobileDashboardContentProps = {
   onOpenAchievements: () => void
   onOpenRoleQueue: (type: RoleQueueType) => void
   onOpenNotifications: () => void
-  projectNotice?: { title: string; detail: string; tone: 'warning' | 'review'; actionLabel?: string }
-  onOpenProjectNotice?: () => void
   formatPlanTime: (value?: string | null) => string
   projectNameFromRecord: (record: DashboardRecord) => string
 }
@@ -82,7 +80,6 @@ export function MobileDashboardContent(props: MobileDashboardContentProps) {
     scopeOptions, selectedScope, selectedMonth, monthOptions, onScopeChange, onMonthChange,
     total, notStarted, inProgress, completed, delayed, paused, achievements, pendingDecisions, canViewDecisions,
     recentTasks, delayedTasks, roleQueue, completionRows, onOpenTasks, onOpenAchievements, onOpenRoleQueue, onOpenNotifications,
-    projectNotice, onOpenProjectNotice,
     formatPlanTime, projectNameFromRecord,
   } = props
   const roleQueueMeta = ROLE_QUEUE_META[roleQueue.type]
@@ -121,8 +118,6 @@ export function MobileDashboardContent(props: MobileDashboardContentProps) {
           {monthOptions.map((month) => <option key={month} value={month}>{month}</option>)}
         </select>
       </div>
-
-      {projectNotice ? <section className={`mt-4 rounded-2xl border p-4 ${projectNotice.tone === 'warning' ? 'border-amber-200 bg-amber-50' : 'border-violet-200 bg-violet-50'}`}><p className={`text-sm font-semibold ${projectNotice.tone === 'warning' ? 'text-amber-800' : 'text-violet-800'}`}>{projectNotice.title}</p><p className={`mt-1 text-xs leading-5 ${projectNotice.tone === 'warning' ? 'text-amber-700' : 'text-violet-700'}`}>{projectNotice.detail}</p>{projectNotice.actionLabel && onOpenProjectNotice ? <button type="button" onClick={onOpenProjectNotice} className="mt-3 rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white">{projectNotice.actionLabel}</button> : null}</section> : null}
 
       <section className="mt-4 grid grid-cols-2 gap-2" aria-label="风险与待办">
         <button type="button" onClick={() => onOpenTasks('延期')} className="rounded-2xl border border-red-200 bg-red-50 p-4 text-left text-red-700">

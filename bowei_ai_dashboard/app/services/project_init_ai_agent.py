@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-from ..ai.contracts import AIInvocationContext, Capability
+from ..ai.contracts import AIInvocationContext, AIUpstreamError, Capability
 from ..ai.service import AIService
 from .project_init_file_parser import SourceChunk
 
@@ -48,10 +48,13 @@ _WORK_PLAN_HEADERS = {
     "问题与协调",
 }
 _WORK_PLAN_HEADER_ALIASES = {
-    "专项": {"专项", "重点工作", "重点工作名称", "工作模块", "一级任务"},
+    "专项": {"专项", "主要工作", "重点工作", "重点工作名称", "工作模块", "一级任务"},
     "关键任务": {"关键任务", "任务名称", "任务", "子任务", "工作事项", "二级任务"},
-    "关键成果": {"关键成果", "目标成果", "目标", "成果", "交付物", "预期成果"},
-    "完成标准": {"完成标准", "评价标准", "验收标准", "验证标准", "交付标准"},
+    "关键成果": {"关键成果", "目标成果", "成果", "交付物", "预期成果"},
+    "目标": {"目标", "预期目标", "工作目标", "目标描述"},
+    "验收标准": {"验收标准", "验收标准与关键成果", "评价标准", "验证标准", "交付标准"},
+    "完成标准": {"完成标准"},
+    "推进流程": {"推进流程", "实施流程", "流程", "执行流程", "工作流程"},
     "统筹人": {"统筹人", "统筹负责人", "项目统筹", "项目负责人"},
     "负责人": {"负责人", "责任人", "执行人", "执行负责人", "任务负责人"},
     "协同成员": {"协同成员", "协助人", "协同人", "协作者", "协作人"},
@@ -93,10 +96,14 @@ class ProjectInitAiInvalidDraft(ProjectInitAiError):
 
 
 _VALIDATION_PATH_SEGMENTS = {
+    "project_profile",
     "tasks",
     "subtasks",
     "title",
     "description",
+    "goal",
+    "acceptance_criteria",
+    "process",
     "owner_name",
     "owner_id",
     "assignee_name",
@@ -119,6 +126,11 @@ _VALIDATION_PATH_SEGMENTS = {
     "duplicate_of",
     "duplicate_reason",
     "warnings",
+    "background",
+    "objectives",
+    "expected_outcomes",
+    "start_date",
+    "end_date",
 }
 
 
@@ -208,6 +220,9 @@ class AgentTask(BaseModel):
 
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=2_000)
+    goal: str = Field(default="", max_length=2_000)
+    acceptance_criteria: str = Field(default="", max_length=2_000)
+    process: str = Field(default="", max_length=2_000)
     owner_name: str = Field(default="", max_length=50)
     owner_id: _POSITIVE_ID | None = None
     priority: str = Field(default="", max_length=30)
@@ -224,10 +239,42 @@ class AgentTask(BaseModel):
     subtasks: list[AgentSubTask] = Field(min_length=1, max_length=100)
 
 
+class ProjectProfileDraft(BaseModel):
+    """Evidence-bound project-level suggestions extracted from source files."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    name: str = Field(default="", max_length=100)
+    background: str = Field(default="", max_length=10_000)
+    objectives: str = Field(default="", max_length=10_000)
+    expected_outcomes: str = Field(default="", max_length=10_000)
+    start_date: str = Field(default="", max_length=20)
+    end_date: str = Field(default="", max_length=20)
+    description: str = Field(default="", max_length=10_000)
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    evidence: list[Evidence] = Field(default_factory=list, max_length=20)
+    warnings: list[AgentWarning] = Field(default_factory=list, max_length=20)
+
+    def has_content(self) -> bool:
+        return any(
+            getattr(self, field_name).strip()
+            for field_name in (
+                "name",
+                "background",
+                "objectives",
+                "expected_outcomes",
+                "start_date",
+                "end_date",
+                "description",
+            )
+        )
+
+
 class ProjectInitAiResult(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    tasks: list[AgentTask] = Field(min_length=1, max_length=100)
+    project_profile: ProjectProfileDraft = Field(default_factory=ProjectProfileDraft)
+    tasks: list[AgentTask] = Field(default_factory=list, max_length=100)
     provider: str = ""
     model_name: str = ""
 
@@ -235,6 +282,7 @@ class ProjectInitAiResult(BaseModel):
 class _RawEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
+    project_profile: ProjectProfileDraft = Field(default_factory=ProjectProfileDraft)
     tasks: list[AgentTask] = Field(default_factory=list, max_length=100)
 
 
@@ -399,6 +447,9 @@ def _merge_task_values(left: AgentTask, right: AgentTask) -> AgentTask:
     merged = left.model_dump(mode="python")
     for field_name in (
         "description",
+        "goal",
+        "acceptance_criteria",
+        "process",
         "owner_name",
         "priority",
         "status",
@@ -502,6 +553,58 @@ def _safe_evidence_list(values: list[Evidence], sources: list[tuple[str, str, st
     if values and not sources:
         raise ProjectInitAiError("AI 返回了无法追溯的来源")
     return [_safe_evidence(value, sources) for value in values]
+
+
+def _reconcile_project_profile(
+    profile: ProjectProfileDraft,
+    sources: list[tuple[str, str, str, int | None]],
+) -> ProjectProfileDraft:
+    """Keep project fields only when their source evidence is verifiable."""
+    reconciled = profile.model_copy(deep=True)
+    if not reconciled.has_content():
+        reconciled.evidence = []
+        reconciled.warnings = []
+        return reconciled
+    if not reconciled.evidence:
+        raise ProjectInitAiInvalidDraft(
+            "AI 项目基本信息缺少来源证据",
+            validation_errors=[{"path": "project_profile.evidence", "type": "missing_evidence"}],
+        )
+    reconciled.evidence = _safe_evidence_list(reconciled.evidence, sources)
+    for field_name in ("start_date", "end_date"):
+        value = getattr(reconciled, field_name).strip()
+        if value and (not _ISO_DATE.fullmatch(value) or not _is_calendar_date(value)):
+            raise ProjectInitAiInvalidDraft(
+                "AI 项目基本信息日期格式无效",
+                validation_errors=[{"path": f"project_profile.{field_name}", "type": "invalid_date"}],
+            )
+    if reconciled.start_date and reconciled.end_date and reconciled.end_date < reconciled.start_date:
+        raise ProjectInitAiInvalidDraft(
+            "AI 项目基本信息结束日期早于开始日期",
+            validation_errors=[{"path": "project_profile.end_date", "type": "invalid_date_range"}],
+        )
+    return reconciled
+
+
+def _merge_project_profiles(values: Iterable[ProjectProfileDraft]) -> ProjectProfileDraft:
+    merged = ProjectProfileDraft()
+    for profile in values:
+        candidate = ProjectProfileDraft.model_validate(profile)
+        for field_name in (
+            "name",
+            "background",
+            "objectives",
+            "expected_outcomes",
+            "start_date",
+            "end_date",
+            "description",
+        ):
+            if not getattr(merged, field_name).strip() and getattr(candidate, field_name).strip():
+                setattr(merged, field_name, getattr(candidate, field_name))
+        merged.confidence = max(merged.confidence, candidate.confidence)
+        merged.evidence = _dedupe_evidence([*merged.evidence, *candidate.evidence], limit=20)
+        merged.warnings = _dedupe_warnings([*merged.warnings, *candidate.warnings], limit=20)
+    return merged
 
 
 def _existing_task_index(existing_tasks: Iterable[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -622,6 +725,13 @@ def _reconcile_task(
         reconciled_subtasks.append(AgentSubTask.model_validate(subtask_data))
     task_data = task.model_dump(mode="python")
     _normalise_start_only_dates(task_data)
+    # `description` predates the explicit semantic fields and is still sent by
+    # historical clients. Keep it as a displayed-goal alias in both directions
+    # so old and new AI responses remain readable during the migration.
+    if not task_data["goal"].strip() and task_data["description"].strip():
+        task_data["goal"] = task_data["description"].strip()
+    if not task_data["description"].strip() and task_data["goal"].strip():
+        task_data["description"] = task_data["goal"].strip()
     if reconciled_subtasks and _normalise_title(task.description) == _normalise_title(reconciled_subtasks[0].title):
         task_data["description"] = ""
     if not task.description.strip():
@@ -665,16 +775,22 @@ def normalize_agent_result(
         envelope = _RawEnvelope.model_validate(raw_result)
     except ValidationError as exc:
         raise ProjectInitAiError("AI 草稿结构或字段类型无效") from exc
-    if not envelope.tasks:
-        raise ProjectInitAiEmptyResult("AI 未提取到可用任务")
     people = _person_candidates(existing_people)
     indexed_tasks, indexed_subtasks = _existing_task_index(existing_tasks or [])
     source_values = _source_index(chunks or [])
+    project_profile = _reconcile_project_profile(envelope.project_profile, source_values)
+    if not envelope.tasks and not project_profile.has_content():
+        raise ProjectInitAiEmptyResult("AI 未提取到可用项目基本信息或任务")
     tasks = [
         _reconcile_task(task, people, indexed_tasks, indexed_subtasks, source_values)
         for task in envelope.tasks
     ]
-    return ProjectInitAiResult(tasks=tasks, provider=provider, model_name=model_name)
+    return ProjectInitAiResult(
+        project_profile=project_profile,
+        tasks=tasks,
+        provider=provider,
+        model_name=model_name,
+    )
 
 
 def _split_batches(chunks: list[tuple[str, str, str, int | None]]) -> list[list[tuple[str, str, str, int | None]]]:
@@ -723,24 +839,90 @@ def _context_prompt(
     ]
     people_context = [person.model_dump() for person in people]
     return (
-        "你是项目初始化工作推进表草稿提取 Agent。只返回 JSON 对象，结构必须是 {\"tasks\": [...] }。"
+        "你是项目立项资料草稿提取 Agent。只返回 JSON 对象，结构必须是 {\"project_profile\": {...}, \"tasks\": [...] }。"
         "不要输出 Markdown、解释文字或代码围栏。"
         "不执行数据库、项目或成员修改；不得发明人员、日期或人员 ID。"
         "所有任务和子任务必须来自来源文本，并提供 evidence 的 attachment_id、file_name、location 定位器。"
         "Evidence 必须引用本批来源目录；attachment_id、file_name、location 必须完全一致。"
         "来源目录中的 attachment_id 为 null 时，evidence 的 attachment_id 必须为 null，禁止伪造非空 ID。"
         "日期字段使用 plan_start、plan_end，不使用 deadline；只有开始月份时，plan_start 写 YYYY-MM-01，plan_end 置为空字符串，不能把开始月份写入 plan_end。"
-        "父任务 description 不得重复第一个 subtask 的 title；重复时使用空字符串。"
-        "来源内容层级映射：专项映射到 task title；关键任务映射到 subtasks；关键成果或完成标准映射到父任务 description。"
-        "输出字段必须严格遵循：task 只能包含 title、description、owner_name、priority、status、plan_start、plan_end、evidence、subtasks；"
+        "父任务 description 是历史兼容字段，优先复制 goal；不得重复第一个 subtask 的 title。"
+        "请先按语义把内容分为项目基本信息和工作推进方案，不要要求固定表头或固定字体。项目名称、建设背景、立项原因、项目目标、预期成果、项目周期、项目说明分别映射到 project_profile 的 name、background、objectives、expected_outcomes、start_date、end_date、description；主要工作/专项映射到 task title；目标、目标成果映射到 task goal；验收标准、关键成果、验收标准与关键成果映射到 task acceptance_criteria；推进流程、实施流程、流程映射到 task process；关键任务映射到 subtasks。兼容旧字段：关键成果或完成标准映射到父任务 description。"
+        "如果一个单元格包含 1.、2.、3. 等编号条目，请拆成多个 subtasks 或 acceptance_criteria 条目，不要把整格当成一个任务标题；保留未知列的有效信息到最接近的 description、subtask description 或 evidence 中。"
+        "输出字段必须严格遵循：project_profile 只能包含 name、background、objectives、expected_outcomes、start_date、end_date、description、evidence；task 只能包含 title、description、goal、acceptance_criteria、process、owner_name、priority、status、plan_start、plan_end、evidence、subtasks；"
         "subtask 只能包含 title、description、assignee_name、helper_names、priority、status、plan_start、plan_end、evaluation_standard、evidence。"
         "evidence 只能包含 attachment_id、file_name、location；不要输出 excerpt 或 source_label，服务端会生成真实摘录。"
         "不要输出 source、任何人员 ID、confidence、merge_status、duplicate_of、duplicate_reason 或 warnings；这些字段由服务端统一计算。"
-        "每个 task 必须至少包含一个 subtasks 项；未知或空缺的可选字符串字段使用空字符串，不要使用 null。"
+        "project_profile 只要有任一非空字段就必须包含至少一个 evidence；每个 task 必须至少包含一个 subtasks 项；未知或空缺的可选字符串字段使用空字符串，不要使用 null。"
         "人员姓名只作为待匹配文本，服务端会重新匹配人员 ID；不要自动合并已有任务。"
         f"\n本地预计算人员候选：{json.dumps(people_context, ensure_ascii=False)}"
         f"\n本地已有任务重复索引：{json.dumps(existing_tasks, ensure_ascii=False)}"
         f"\n本批来源（总文本不超过 {MAX_BATCH_CHARS} 字符）：{json.dumps(sources, ensure_ascii=False)}"
+    )
+
+
+def _semantic_workbook_batch(batch: list[tuple[str, str, str, int | None]]) -> bool:
+    """Detect a semantic table without requiring one exact header vocabulary."""
+    markers = ("目标", "验收", "关键成果", "推进流程", "实施流程", "主要工作")
+    return any(
+        "\t" in text
+        and any(marker in text.splitlines()[0] for marker in markers)
+        for _file_name, _location, text, _attachment_id in batch
+    )
+
+
+def _requires_semantic_ai_route(
+    sources: list[tuple[str, str, str, int | None]],
+) -> bool:
+    """Keep explicit semantic tables on the AI route before deterministic repair."""
+    for _file_name, _location, text, _attachment_id in sources:
+        if "\t" not in text or not text.splitlines():
+            continue
+        header_line = text.splitlines()[0]
+        # Legacy work-plan tables also contain columns such as “目标” and
+        # “评价标准”. Route the newer semantic layout to AI only when its
+        # distinctive work/process headers are present together.
+        if "主要工作" in header_line and (
+            "推进流程" in header_line
+            or "实施流程" in header_line
+            or "验收标准与关键成果" in header_line
+        ):
+            return True
+    return False
+
+
+def _missing_semantic_fields(tasks: Iterable[AgentTask]) -> set[str]:
+    missing: set[str] = set()
+    for task in tasks:
+        for field_name in ("goal", "acceptance_criteria", "process"):
+            if not getattr(task, field_name).strip():
+                missing.add(field_name)
+    return missing
+
+
+def _semantic_repair_prompt(
+    batch: list[tuple[str, str, str, int | None]],
+    tasks: list[AgentTask],
+    missing_fields: set[str],
+) -> str:
+    sources = [
+        {
+            "attachment_id": attachment_id,
+            "file_name": file_name,
+            "location": location,
+            "text": text,
+        }
+        for file_name, location, text, attachment_id in batch
+    ]
+    return (
+        "你是项目初始化工作推进表的语义字段修复 Agent。只返回严格 JSON 对象，结构必须是 {\"tasks\": [...]}。"
+        "下面的候选已经完成任务和子任务识别，请只根据来源补齐缺失的语义字段，不要改动任务标题、子任务标题、人员、日期或 evidence。"
+        "目标字段：goal=目标/预期结果，acceptance_criteria=验收标准/关键成果，process=推进流程/实施流程。"
+        "如果来源对应字段确实为空，使用空字符串；禁止臆造。每个 task 仍须包含至少一个 subtasks 项。"
+        "不要输出来源目录之外的 evidence，不要输出任何服务端计算字段。"
+        f"\n只需修复这些字段：{json.dumps(sorted(missing_fields), ensure_ascii=False)}"
+        f"\n已有候选：{json.dumps([task.model_dump(mode='python') for task in tasks], ensure_ascii=False)}"
+        f"\n来源表格：{json.dumps(sources, ensure_ascii=False)}"
     )
 
 
@@ -763,8 +945,8 @@ def _final_merge_prompt(
         "请将批次候选中归一化标题相同的任务合并为一条，保留全部 evidence 和 subtasks；"
         "不得发明任务、人员或来源，也不得删除唯一来源。每条 evidence 必须引用下方候选或来源目录中的真实 attachment_id、file_name、location；null attachment_id 不得改为非空。"
         "日期字段使用 plan_start、plan_end，不使用 deadline；只有开始月份时，plan_start 写 YYYY-MM-01，plan_end 置为空字符串，不能把开始月份写入 plan_end。"
-        "父任务 description 不得重复第一个 subtask 的 title；重复时使用空字符串。"
-        "来源内容层级映射：专项映射到 task title；关键任务映射到 subtasks；关键成果或完成标准映射到父任务 description。"
+        "父任务 description 是历史兼容字段，优先复制 goal；不得重复第一个 subtask 的 title。"
+        "来源内容层级映射：专项映射到 task title；目标映射到 goal；验收标准或关键成果映射到 acceptance_criteria；推进流程映射到 process；关键任务映射到 subtasks。兼容旧字段：关键成果或完成标准映射到父任务 description。"
         "evidence 只能包含 attachment_id、file_name、location；不要输出 excerpt 或 source_label，服务端会生成真实摘录。每个 task 必须至少包含一个 subtasks 项；可选字符串为空时使用空字符串，不要使用 null。"
         "不要输出 source、任何人员 ID、confidence、merge_status、duplicate_of、duplicate_reason 或 warnings；这些字段由服务端统一计算。"
         f"\n候选任务：{json.dumps([task.model_dump() for task in tasks], ensure_ascii=False)}"
@@ -774,6 +956,9 @@ def _final_merge_prompt(
 
 _TASK_OPTIONAL_TEXT_FIELDS = {
     "description",
+    "goal",
+    "acceptance_criteria",
+    "process",
     "owner_name",
     "priority",
     "status",
@@ -795,6 +980,9 @@ _SUBTASK_OPTIONAL_TEXT_FIELDS = {
 _TASK_TEXT_FIELD_LIMITS = {
     "title": 200,
     "description": 2_000,
+    "goal": 2_000,
+    "acceptance_criteria": 2_000,
+    "process": 2_000,
     "owner_name": 50,
     "priority": 30,
     "status": 50,
@@ -872,10 +1060,40 @@ def _normalise_task_payload(value: object, *, is_subtask: bool = False) -> objec
     return result
 
 
+_PROJECT_PROFILE_SERVER_OWNED_FIELDS = {"confidence", "warnings"}
+_PROJECT_PROFILE_TEXT_FIELD_LIMITS = {
+    "name": 100,
+    "background": 10_000,
+    "objectives": 10_000,
+    "expected_outcomes": 10_000,
+    "start_date": 20,
+    "end_date": 20,
+    "description": 10_000,
+}
+
+
+def _normalise_project_profile_payload(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+    result = dict(value)
+    for key in _PROJECT_PROFILE_SERVER_OWNED_FIELDS:
+        result.pop(key, None)
+    for key, limit in _PROJECT_PROFILE_TEXT_FIELD_LIMITS.items():
+        if result.get(key) is None:
+            result[key] = ""
+        elif isinstance(result.get(key), str):
+            result[key] = result[key][:limit]
+    if isinstance(result.get("evidence"), list):
+        result["evidence"] = [_normalise_evidence_payload(item) for item in result["evidence"]]
+    return result
+
+
 def _normalise_llm_payload(value: object) -> object:
     if not isinstance(value, dict):
         return value
     result = dict(value)
+    if isinstance(result.get("project_profile"), dict):
+        result["project_profile"] = _normalise_project_profile_payload(result["project_profile"])
     if isinstance(result.get("tasks"), list):
         result["tasks"] = [_normalise_task_payload(item) for item in result["tasks"]]
     return result
@@ -1105,6 +1323,23 @@ def _bounded_spreadsheet_text(value: str, max_length: int) -> str:
     return str(value or "").strip()[:max_length]
 
 
+def _split_numbered_spreadsheet_items(value: str) -> list[str]:
+    """Split a cell containing numbered items while preserving unnumbered text."""
+    text = str(value or "").strip()
+    if not text:
+        return []
+    markers = list(re.finditer(r"(?<!\d)\d{1,3}\s*[.．、)]\s*", text))
+    if not markers:
+        return [text]
+    items: list[str] = []
+    for index, marker in enumerate(markers):
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+        item = text[marker.end():end].strip()
+        if item:
+            items.append(item)
+    return items or [text]
+
+
 def _split_helper_names(value: str) -> list[str]:
     return [
         _bounded_spreadsheet_text(item, 50)
@@ -1166,13 +1401,29 @@ def _structured_spreadsheet_rows(
                 context = {"专项": raw_task_title}
                 worksheet_contexts[worksheet_key] = context
             task_title = raw_task_title or context.get("专项", "")
-            subtask_title = row.get("关键任务", "").strip()
-            if not task_title or not subtask_title:
+            subtask_titles = _split_numbered_spreadsheet_items(row.get("关键任务", ""))
+            if not task_title or not subtask_titles:
                 continue
+            subtask_title = subtask_titles[0]
 
-            for field in ("关键成果", "统筹人", "计划时间", "计划开始", "计划结束", "当前状态"):
+            for field in (
+                "关键成果",
+                "目标",
+                "验收标准",
+                "完成标准",
+                "推进流程",
+                "统筹人",
+                "计划时间",
+                "计划开始",
+                "计划结束",
+                "当前状态",
+            ):
                 max_length = {
                     "关键成果": 2_000,
+                    "目标": 2_000,
+                    "验收标准": 2_000,
+                    "完成标准": 2_000,
+                    "推进流程": 2_000,
                     "统筹人": 50,
                     "计划时间": 50,
                     "计划开始": 50,
@@ -1216,7 +1467,16 @@ def _structured_spreadsheet_rows(
                 task = {
                     "title": task_title,
                     "description": context.get("关键成果", "").strip()
+                    or context.get("目标", "").strip()
+                    or context.get("验收标准", "").strip()
                     or row.get("完成标准", "").strip(),
+                    "goal": context.get("目标", "").strip(),
+                    "acceptance_criteria": (
+                        context.get("验收标准", "").strip()
+                        or context.get("关键成果", "").strip()
+                        or context.get("完成标准", "").strip()
+                    ),
+                    "process": context.get("推进流程", "").strip(),
                     "owner_name": coordinator,
                     "status": context.get("当前状态", "").strip(),
                     "plan_start": plan_start,
@@ -1228,8 +1488,22 @@ def _structured_spreadsheet_rows(
             else:
                 if not task["description"] and context.get("关键成果", "").strip():
                     task["description"] = context["关键成果"].strip()
+                if not task["description"] and context.get("目标", "").strip():
+                    task["description"] = context["目标"].strip()
+                if not task["description"] and context.get("验收标准", "").strip():
+                    task["description"] = context["验收标准"].strip()
                 elif not task["description"] and row.get("完成标准", "").strip():
                     task["description"] = row["完成标准"].strip()
+                if not task["goal"] and context.get("目标", "").strip():
+                    task["goal"] = context["目标"].strip()
+                if not task["acceptance_criteria"]:
+                    task["acceptance_criteria"] = (
+                        context.get("验收标准", "").strip()
+                        or context.get("关键成果", "").strip()
+                        or context.get("完成标准", "").strip()
+                    )
+                if not task["process"] and context.get("推进流程", "").strip():
+                    task["process"] = context["推进流程"].strip()
                 if not task["owner_name"] and coordinator:
                     task["owner_name"] = coordinator
                 if not task["status"] and context.get("当前状态", "").strip():
@@ -1240,17 +1514,25 @@ def _structured_spreadsheet_rows(
                     task["plan_end"] = plan_end
                 if len(task["evidence"]) < 10:
                     task["evidence"].append(evidence[0])
-            task["subtasks"].append({
-                "title": _bounded_spreadsheet_text(subtask_title, 200),
+            subtask_data = {
                 "description": _bounded_spreadsheet_text(row.get("问题与协调", ""), 2_000),
                 "assignee_name": assignee_name,
                 "helper_names": helper_names,
                 "status": _bounded_spreadsheet_text(row.get("当前状态", ""), 50),
                 "plan_start": plan_start,
                 "plan_end": plan_end,
-                "evaluation_standard": _bounded_spreadsheet_text(row.get("完成标准", ""), 1_000),
+                "evaluation_standard": _bounded_spreadsheet_text(
+                    row.get("完成标准", "") or row.get("验收标准", ""),
+                    1_000,
+                ),
                 "evidence": evidence,
-            })
+            }
+            task["subtasks"].extend(
+                [
+                    {"title": _bounded_spreadsheet_text(title, 200), **subtask_data}
+                    for title in subtask_titles
+                ]
+            )
     return list(task_index.values())
 
 
@@ -1300,8 +1582,23 @@ def _validate_evidence_group(
             )
 
 
-def _validate_batch_sources(tasks: Iterable[AgentTask], batch: list[tuple[str, str, str, int | None]]) -> None:
+def _validate_batch_sources(
+    tasks: Iterable[AgentTask],
+    batch: list[tuple[str, str, str, int | None]],
+    project_profile: ProjectProfileDraft | None = None,
+) -> None:
     """Fail closed if one batch cites a file/location from another batch."""
+    if project_profile is not None and project_profile.has_content():
+        if not project_profile.evidence:
+            raise ProjectInitAiInvalidDraft(
+                "AI 项目基本信息缺少来源证据",
+                validation_errors=[{"path": "project_profile.evidence", "type": "missing_evidence"}],
+            )
+        _validate_evidence_group(
+            project_profile.evidence,
+            path="project_profile.evidence",
+            batch=batch,
+        )
     for task_index, task in enumerate(tasks):
         task_path = f"tasks[{task_index}]"
         if not task.evidence and not any(subtask.evidence for subtask in task.subtasks):
@@ -1348,13 +1645,15 @@ def generate_project_init_draft(
         raise ProjectInitAiEmptyResult("没有可分析的来源片段")
     people = _person_candidates(existing_people)
     indexed_tasks, _ = _existing_task_index(existing_tasks)
-    structured_draft = _structured_spreadsheet_fallback(
-        source_values,
-        people,
-        indexed_tasks,
-        "local-rule",
-        model_name="structured-spreadsheet",
-    )
+    structured_draft = None
+    if not _requires_semantic_ai_route(source_values):
+        structured_draft = _structured_spreadsheet_fallback(
+            source_values,
+            people,
+            indexed_tasks,
+            "local-rule",
+            model_name="structured-spreadsheet",
+        )
     if structured_draft is not None:
         return structured_draft
     if llm_call is not None:
@@ -1373,13 +1672,22 @@ def generate_project_init_draft(
     batches = _split_batches(source_values)
     canonical_sources = [source for batch in batches for source in batch]
     all_tasks: list[AgentTask] = []
+    all_profiles: list[ProjectProfileDraft] = []
     for batch in batches:
         prompt = _context_prompt(batch, people, indexed_tasks)
         try:
             raw = _invoke_llm(caller, prompt, provider)
             payload = _parse_json_response(raw)
             envelope = _RawEnvelope.model_validate(_normalise_llm_payload(payload))
-        except ProjectInitAiError:
+        except (ProjectInitAiError, AIUpstreamError):
+            fallback = _structured_spreadsheet_fallback(
+                canonical_sources,
+                people,
+                indexed_tasks,
+                provider,
+            )
+            if fallback is not None:
+                return fallback
             raise
         except ValidationError as exc:
             raise ProjectInitAiInvalidDraft(
@@ -1388,9 +1696,43 @@ def generate_project_init_draft(
             ) from exc
         except Exception as exc:
             raise ProjectInitAiError("AI 草稿处理失败") from exc
+        envelope.project_profile = _reconcile_project_profile(envelope.project_profile, batch)
+        missing_fields = _missing_semantic_fields(envelope.tasks) if _semantic_workbook_batch(batch) else set()
+        if missing_fields:
+            try:
+                repair_raw = _invoke_llm(
+                    caller,
+                    _semantic_repair_prompt(batch, envelope.tasks, missing_fields),
+                    provider,
+                )
+                repair_payload = _parse_json_response(repair_raw)
+                repair_envelope = _RawEnvelope.model_validate(_normalise_llm_payload(repair_payload))
+                envelope.tasks = _merge_tasks([*envelope.tasks, *repair_envelope.tasks])
+            except Exception:
+                # Optional AI repair must not discard a valid, evidence-bound draft.
+                pass
+            source_repair = _structured_spreadsheet_fallback(
+                batch,
+                people,
+                indexed_tasks,
+                provider,
+                model_name="semantic-source-repair",
+            )
+            if source_repair is not None:
+                envelope.tasks = _merge_tasks([*envelope.tasks, *source_repair.tasks])
+            remaining_missing_fields = _missing_semantic_fields(envelope.tasks)
+            if remaining_missing_fields:
+                # The warning is surfaced to the reviewer instead of hiding the gap.
+                for task in envelope.tasks:
+                    task.warnings.append(
+                        AgentWarning(
+                            code="missing_source_field",
+                            message=f"AI 未能补齐语义字段：{'、'.join(sorted(remaining_missing_fields))}，请人工核对来源。",
+                        )
+                    )
         envelope.tasks = [_repair_batch_evidence(task, batch) for task in envelope.tasks]
         try:
-            _validate_batch_sources(envelope.tasks, batch)
+            _validate_batch_sources(envelope.tasks, batch, envelope.project_profile)
         except ProjectInitAiInvalidDraft:
             fallback = _structured_spreadsheet_fallback(
                 canonical_sources,
@@ -1401,10 +1743,12 @@ def generate_project_init_draft(
             if fallback is not None:
                 return fallback
             raise
+        all_profiles.append(envelope.project_profile)
         all_tasks = _merge_tasks([*all_tasks, *_merge_tasks(envelope.tasks)])
-    if not all_tasks:
-        raise ProjectInitAiEmptyResult("AI 未提取到可用任务")
-    if len(batches) > 1:
+    merged_profile = _merge_project_profiles(all_profiles)
+    if not all_tasks and not merged_profile.has_content():
+        raise ProjectInitAiEmptyResult("AI 未提取到可用项目基本信息或任务")
+    if len(batches) > 1 and all_tasks:
         try:
             merge_raw = _invoke_llm(caller, _final_merge_prompt(all_tasks, canonical_sources), provider)
             merge_payload = _parse_json_response(merge_raw)
@@ -1437,7 +1781,10 @@ def generate_project_init_draft(
         all_tasks = _merge_tasks([*all_tasks, *_merge_tasks(merge_envelope.tasks)])
     try:
         return normalize_agent_result(
-            {"tasks": [task.model_dump() for task in all_tasks]},
+            {
+                "project_profile": merged_profile.model_dump(),
+                "tasks": [task.model_dump() for task in all_tasks],
+            },
             people,
             existing_tasks=indexed_tasks,
             chunks=canonical_sources,

@@ -11,6 +11,7 @@ import secrets
 from datetime import datetime, timedelta
 
 import bcrypt
+from sqlalchemy.exc import OperationalError
 
 from .database import SessionLocal
 from .models import Account, AuthSession, LoginAttempt, Person
@@ -18,6 +19,7 @@ from .time_utils import utc_now
 from .settings import get_auth_passwords, get_settings, legacy_password_login_enabled
 
 IMPERSONATE_ALLOWED = {"mowasyadmin"}
+_SESSION_TOUCH_INTERVAL = timedelta(seconds=60)
 
 
 def _now() -> datetime:
@@ -174,9 +176,19 @@ def get_session_user(session_id: str) -> str | None:
             db.delete(session)
             db.commit()
             return None
-        session.last_seen_at = now
-        db.commit()
-        return session.username
+        username = session.username
+        # auth/me is called by several page widgets every few seconds. Touch
+        # the session at most once per minute so harmless reads do not become
+        # a continuous SQLite write stream during AI background work.
+        if session.last_seen_at < now - _SESSION_TOUCH_INTERVAL:
+            session.last_seen_at = now
+            try:
+                db.commit()
+            except OperationalError:
+                # A temporary SQLite lock must not turn a valid session into a
+                # false session-expired redirect.
+                db.rollback()
+        return username
 
 
 def delete_session(session_id: str) -> None:

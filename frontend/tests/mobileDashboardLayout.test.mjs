@@ -22,10 +22,9 @@ test('mobile dashboard keeps an entry to the existing notification center', () =
   assert.match(page, /onOpenNotifications=\{\(\) => navigate\('\/home\/notifications'\)\}/)
 })
 
-test('mobile dashboard preserves owner project notices from the desktop dashboard', () => {
+test('mobile dashboard does not render project-init notices', () => {
   const mobile = readFileSync(mobileUrl, 'utf8')
-  assert.match(mobile, /projectNotice/)
-  assert.match(mobile, /actionLabel/)
-  assert.match(page, /actionLabel: '去填写'/)
-  assert.match(page, /projectNotice=\{mobileProjectNotice\}/)
+  assert.doesNotMatch(mobile, /projectNotice/)
+  assert.doesNotMatch(page, /projectNotice=\{/)
+  assert.doesNotMatch(page, /actionLabel: '去填写'/)
 })

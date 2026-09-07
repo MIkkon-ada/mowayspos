@@ -96,6 +96,7 @@ class RealtimeASRHandle:
                     error.code,
                     self._context,
                 )
+                self._service.db.commit()
                 last_error = error
                 if not error.retryable:
                     raise error from exc
@@ -110,6 +111,7 @@ class RealtimeASRHandle:
                 "",
                 self._context,
             )
+            self._service.db.commit()
             self._session = session
             self.model_code = model.code
             self.invocation_log_id = log.id
@@ -263,6 +265,9 @@ class AIService:
                     error.code,
                     invocation_context,
                 )
+                # Release SQLite's write lock before contacting the next
+                # provider. A model request can take tens of seconds.
+                self.db.commit()
                 last_error = error
                 if not error.retryable:
                     raise error from exc
@@ -277,6 +282,7 @@ class AIService:
                 "",
                 invocation_context,
             )
+            self.db.commit()
             return result, model, log
         raise last_error or AICapabilityNotConfigured("AI capability has no usable model")
 

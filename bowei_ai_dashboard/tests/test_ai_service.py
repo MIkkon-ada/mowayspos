@@ -163,6 +163,31 @@ def test_task_plan_drafting_has_no_client_request_timeout(db, configured_chat_po
     assert fake_adapters.chat_timeouts == [None]
 
 
+def test_project_init_analysis_uses_primary_and_fallback_timeouts_after_retryable_failure(
+    db, configured_chat_policy, fake_adapters
+):
+    primary, fallback = configured_chat_policy
+    AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY).save_policy(
+        Capability.PROJECT_INIT_ANALYSIS,
+        primary_model_id=primary.id,
+        fallback_model_ids=[fallback.id],
+        timeout_seconds=200,
+        fallback_timeout_seconds=25,
+        max_attempts=2,
+        enabled=True,
+    )
+    fake_adapters.chat_errors[primary.id] = AIUpstreamError(
+        "AI_UPSTREAM_TIMEOUT", retryable=True
+    )
+    fake_adapters.chat_results[fallback.id] = '{"tasks":[]}'
+
+    AIService(db, adapters=fake_adapters, cipher_key=TEST_FERNET_KEY).invoke_chat(
+        Capability.PROJECT_INIT_ANALYSIS, "extract"
+    )
+
+    assert fake_adapters.chat_timeouts == [200, 25]
+
+
 def test_project_init_vision_uses_only_explicitly_opted_in_model(
     db, configured_chat_policy, fake_adapters, tmp_path
 ):

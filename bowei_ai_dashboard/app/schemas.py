@@ -70,6 +70,7 @@ class AIPolicyWrite(BaseModel):
     primary_model_id: int | None = Field(default=None, gt=0)
     fallback_model_ids: list[int] = Field(default_factory=list)
     timeout_seconds: int = Field(gt=0, le=600)
+    fallback_timeout_seconds: int = Field(default=25, gt=0, le=600)
     max_attempts: int = Field(ge=1, le=10)
     enabled: bool
 

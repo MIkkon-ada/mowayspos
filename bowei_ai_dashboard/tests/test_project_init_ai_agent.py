@@ -1226,6 +1226,53 @@ def test_public_structured_draft_helper_returns_none_for_ineligible_sources(sour
     ) is None
 
 
+@pytest.mark.parametrize("extra_text", [
+    "项目名称\t知识升级\n建设背景\t提升知识复用能力",
+    "项目名称\t知识升级\n\t",
+    "专项\t关键任务\t负责人\n\t\t李四",
+    "专项\t关键任务\t负责人\n补充项目介绍",
+    "项目名称：知识升级",
+])
+def test_structured_fast_path_requires_every_meaningful_chunk_to_be_recognized(extra_text):
+    from app.services.project_init_ai_agent import generate_structured_project_init_draft
+
+    plan = {
+        "attachment_id": 7, "file_name": "plan.xlsx", "location": "'工作计划'!A2:C2",
+        "text": "专项\t关键任务\t负责人\n知识资产AI化\t修订标签\t李四",
+    }
+    extra = {**plan, "location": "'项目概况'!A1:B2", "text": extra_text}
+
+    assert generate_structured_project_init_draft([plan, extra], [], []) is None
+
+
+def test_workbook_with_overview_reaches_chat_and_preserves_project_profile():
+    from unittest.mock import Mock
+
+    plan = {
+        "attachment_id": 7, "file_name": "plan.xlsx", "location": "'工作计划'!A2:C2",
+        "text": "专项\t关键任务\t负责人\n知识资产AI化\t修订标签\t李四",
+    }
+    overview = {
+        **plan, "location": "'项目概况'!A1:B2",
+        "text": "项目名称\t知识升级\n建设背景\t提升知识复用能力",
+    }
+    task_evidence = [{key: plan[key] for key in ("attachment_id", "file_name", "location")}]
+    profile_evidence = [{key: overview[key] for key in ("attachment_id", "file_name", "location")}]
+    chat = Mock(return_value=json.dumps({
+        "tasks": [raw_task(title="知识资产AI化", evidence=task_evidence)],
+        "project_profile": {
+            "name": "知识升级", "background": "提升知识复用能力", "evidence": profile_evidence,
+        },
+    }, ensure_ascii=False))
+
+    result = generate_project_init_draft([plan, overview], [], [], llm_call=chat)
+
+    assert chat.called
+    assert result.project_profile.name == "知识升级"
+    assert result.project_profile.background == "提升知识复用能力"
+    assert result.tasks[0].title == "知识资产AI化"
+
+
 def test_structured_spreadsheet_fallback_uses_traceable_row_data_after_invalid_ai_evidence():
     spreadsheet_row = {
         "attachment_id": 7,

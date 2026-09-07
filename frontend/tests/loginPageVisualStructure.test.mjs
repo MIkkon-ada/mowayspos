@@ -25,7 +25,7 @@ test('login page defines the 1920px desktop composition', () => {
   assert.match(css, /\.login-body \{[\s\S]*?max-width: none;/)
   assert.match(css, /\.login-body \{[\s\S]*?grid-template-columns:\s*minmax\(0, 1\.5fr\) minmax\(400px, 1fr\);/)
   assert.match(css, /\.login-form-panel \{[\s\S]*?top: 13vh;[\s\S]*?right: 10vw;[\s\S]*?width: 29vw;/)
-  assert.doesNotMatch(css, /\.login-card \{[\s\S]*?min-height:/)
+  assert.doesNotMatch(css, /\.login-card \{[^}]*min-height:/)
   assert.match(css, /\.login-bg \{[\s\S]*?background-image:\s*url\('\/login-background-v5\.png'\)/)
   assert.match(css, /\.login-submit \{[\s\S]*?linear-gradient\(90deg,/)
   assert.match(source, /<h1 className="login-title-cn">项目管理协同平台<\/h1>/)

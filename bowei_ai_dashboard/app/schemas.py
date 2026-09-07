@@ -164,6 +164,7 @@ class TaskPayload(BaseModel):
     key_task: str = Field(..., max_length=200)        # 重点工作名称
     key_achievement: str = Field("", max_length=200)
     completion_standard: str = ""
+    plan_process: str = ""
     coordinator: str = Field("", max_length=50)
     owner: str = Field("", max_length=50)
     collaborators: str = Field("", max_length=200)
@@ -439,7 +440,12 @@ class ProjectWorkProgressSubTaskDraft(BaseModel):
 
 class ProjectWorkProgressTaskDraft(BaseModel):
     title: str = Field("", max_length=200)
+    # `description` remains the legacy displayed-goal field used by older
+    # clients and stored drafts.
     description: str = ""
+    goal: str = ""
+    acceptance_criteria: str = ""
+    process: str = ""
     owner: str = Field("", max_length=50)
     helper: str = Field("", max_length=200)
     plan_start: str = Field("", max_length=20)

@@ -58,6 +58,9 @@ export type AgentSubTask = {
 export type AgentTask = {
   title: string
   description: string
+  goal?: string
+  acceptance_criteria?: string
+  process?: string
   owner_name: string
   owner_id: PositiveId | null
   priority: string
@@ -74,7 +77,34 @@ export type AgentTask = {
   subtasks: AgentSubTask[]
 }
 
+export type ProjectInitAiProjectProfile = {
+  name: string
+  background: string
+  objectives: string
+  expected_outcomes: string
+  start_date: string
+  end_date: string
+  description: string
+  confidence: number
+  evidence: Evidence[]
+  warnings: AgentWarning[]
+}
+
+export const EMPTY_PROJECT_INIT_AI_PROFILE: ProjectInitAiProjectProfile = {
+  name: '',
+  background: '',
+  objectives: '',
+  expected_outcomes: '',
+  start_date: '',
+  end_date: '',
+  description: '',
+  confidence: 0,
+  evidence: [],
+  warnings: [],
+}
+
 export type ProjectInitAiDraft = {
+  project_profile?: ProjectInitAiProjectProfile
   tasks: AgentTask[]
   warnings?: AgentWarning[]
   provider?: string
@@ -95,6 +125,9 @@ export type ProjectWorkProgressSubTaskDraft = {
 export type ProjectWorkProgressTaskDraft = {
   title: string
   description: string
+  goal?: string
+  acceptance_criteria?: string
+  process?: string
   owner: string
   helper: string
   plan_start: string
@@ -195,6 +228,11 @@ function invalidResponse(message: string, body: unknown, status = 200): never {
 function required(record: UnknownRecord, key: string, body: unknown): unknown {
   if (!Object.prototype.hasOwnProperty.call(record, key)) invalidResponse(`missing ${key}`, body)
   return record[key]
+}
+
+function optionalString(record: UnknownRecord, key: string, label: string, body: unknown, maxLength = Number.POSITIVE_INFINITY): string {
+  if (!Object.prototype.hasOwnProperty.call(record, key)) return ''
+  return stringValue(record[key], label, body, 0, maxLength)
 }
 
 function stringValue(value: unknown, label: string, body: unknown, minLength = 0, maxLength = Number.POSITIVE_INFINITY): string {
@@ -300,6 +338,9 @@ function task(value: unknown, body: unknown): AgentTask {
   return {
     title: stringValue(required(record, 'title', body), 'task.title', body, 1, 200),
     description: stringValue(required(record, 'description', body), 'task.description', body, 0, 2_000),
+    goal: optionalString(record, 'goal', 'task.goal', body, 2_000) || stringValue(required(record, 'description', body), 'task.description', body, 0, 2_000),
+    acceptance_criteria: optionalString(record, 'acceptance_criteria', 'task.acceptance_criteria', body, 2_000),
+    process: optionalString(record, 'process', 'task.process', body, 2_000),
     owner_name: stringValue(required(record, 'owner_name', body), 'task.owner_name', body, 0, 50),
     owner_id: optionalPositiveId(required(record, 'owner_id', body), 'task.owner_id', body),
     priority: stringValue(required(record, 'priority', body), 'task.priority', body, 0, 30),
@@ -314,6 +355,29 @@ function task(value: unknown, body: unknown): AgentTask {
     duplicate_reason: stringValue(required(record, 'duplicate_reason', body), 'task.duplicate_reason', body, 0, 300),
     warnings: arrayValue(required(record, 'warnings', body), 'task.warnings', body, 0, 20).map((item) => warning(item, body)),
     subtasks: arrayValue(required(record, 'subtasks', body), 'task.subtasks', body, 1, 100).map((item) => subTask(item, body)),
+  }
+}
+
+function projectProfile(value: unknown, body: unknown): ProjectInitAiProjectProfile {
+  if (value === undefined || value === null) return { ...EMPTY_PROJECT_INIT_AI_PROFILE }
+  const record = recordValue(value, 'draft.project_profile', body)
+  return {
+    name: optionalString(record, 'name', 'draft.project_profile.name', body, 100),
+    background: optionalString(record, 'background', 'draft.project_profile.background', body, 10_000),
+    objectives: optionalString(record, 'objectives', 'draft.project_profile.objectives', body, 10_000),
+    expected_outcomes: optionalString(record, 'expected_outcomes', 'draft.project_profile.expected_outcomes', body, 10_000),
+    start_date: optionalString(record, 'start_date', 'draft.project_profile.start_date', body, 20),
+    end_date: optionalString(record, 'end_date', 'draft.project_profile.end_date', body, 20),
+    description: optionalString(record, 'description', 'draft.project_profile.description', body, 10_000),
+    confidence: Object.prototype.hasOwnProperty.call(record, 'confidence')
+      ? numberValue(record.confidence, 'draft.project_profile.confidence', body, 0, 1)
+      : 0,
+    evidence: Object.prototype.hasOwnProperty.call(record, 'evidence')
+      ? arrayValue(record.evidence, 'draft.project_profile.evidence', body, 0, 20).map((item) => evidence(item, body))
+      : [],
+    warnings: Object.prototype.hasOwnProperty.call(record, 'warnings')
+      ? arrayValue(record.warnings, 'draft.project_profile.warnings', body, 0, 20).map((item) => warning(item, body))
+      : [],
   }
 }
 
@@ -336,6 +400,9 @@ function currentTask(value: unknown, body: unknown): ProjectWorkProgressTaskDraf
   return {
     title: stringValue(required(record, 'title', body), 'current_draft.task.title', body),
     description: stringValue(required(record, 'description', body), 'current_draft.task.description', body),
+    goal: optionalString(record, 'goal', 'current_draft.task.goal', body, 2_000) || stringValue(required(record, 'description', body), 'current_draft.task.description', body),
+    acceptance_criteria: optionalString(record, 'acceptance_criteria', 'current_draft.task.acceptance_criteria', body, 2_000),
+    process: optionalString(record, 'process', 'current_draft.task.process', body, 2_000),
     owner: stringValue(required(record, 'owner', body), 'current_draft.task.owner', body),
     helper: stringValue(required(record, 'helper', body), 'current_draft.task.helper', body),
     plan_start: stringValue(required(record, 'plan_start', body), 'current_draft.task.plan_start', body),
@@ -355,6 +422,7 @@ function decodeDraft(value: unknown, body: unknown): ProjectInitDraft {
     // Failed provider runs legitimately persist an empty task list. Non-empty
     // tasks still pass through the full task/subtask/evidence validators below.
     tasks: arrayValue(required(record, 'tasks', body), 'draft.tasks', body, 0, 100).map((item) => task(item, body)),
+    project_profile: projectProfile(record.project_profile, body),
   }
   if (Object.prototype.hasOwnProperty.call(record, 'warnings')) {
     decoded.warnings = arrayValue(record.warnings, 'draft.warnings', body, 0, 20).map((item) => warning(item, body))

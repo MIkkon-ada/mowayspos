@@ -51,6 +51,7 @@ const EMPTY_TEAM: TeamMap = { owner: [], coordinator: [], member: [], project_ce
 
 const EMPTY_NEW_FORM: NewProjectForm = {
   name: '',
+  description: '',
   project_type: '博维内部项目',
   client_name: '',
   background: '',
@@ -135,6 +136,7 @@ const IMPORT_COL_MAP: Record<string, keyof BatchImportRow> = {
 function buildProjectForm(project: Project): NewProjectForm {
   return {
     name: project.name ?? '',
+    description: project.description?.trim() || '',
     project_type: project.project_type?.trim() || '博维内部项目',
     client_name: project.client_name?.trim() || '',
     background: project.background?.trim() || '',
@@ -477,6 +479,7 @@ export function ProjectsMgmtSection() {
     try {
       const project = await createProject({
         name,
+        description: newForm.description.trim(),
         project_type: newForm.project_type,
         client_name: newForm.client_name.trim(),
         background: newForm.background.trim(),
@@ -563,6 +566,7 @@ export function ProjectsMgmtSection() {
     try {
       const updated = await patchProject(editProjectId, {
         name,
+        description: editForm.description.trim(),
         project_type: editForm.project_type,
         client_name: editForm.client_name.trim(),
         background: editForm.background.trim(),
@@ -998,6 +1002,11 @@ export function ProjectsMgmtSection() {
           open={showEdit}
           creating={editingProject}
           mode="edit"
+          projectId={editProjectId}
+          allowProfileImport={(() => {
+            const project = projects.find((item) => item.id === editProjectId)
+            return project?.lifecycle_status === 'draft' || project?.status === 'draft'
+          })()}
           people={people}
           form={editForm}
           setForm={setEditForm}

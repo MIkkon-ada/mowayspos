@@ -33,6 +33,10 @@ if _is_sqlite:
         # WAL 模式允许读写并发，避免读操作阻塞写操作
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA journal_mode=WAL")
+        # Keep short-lived web/session writes from failing while a background
+        # worker is finishing an AI invocation log transaction.
+        cur.execute("PRAGMA busy_timeout=30000")
+        cur.execute("PRAGMA synchronous=NORMAL")
         cur.close()
 
 SessionLocal = sessionmaker(

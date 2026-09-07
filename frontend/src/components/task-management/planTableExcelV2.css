@@ -262,8 +262,8 @@
 
 /* ── 表格 ── */
 .v2-grid {
-  width: 1305px;
-  min-width: 100%;
+  width: 100%;
+  min-width: 1120px;
   table-layout: fixed;
   border-spacing: 0;
   border-collapse: separate;
@@ -598,6 +598,13 @@
 .v2-td--latest-submission {
   padding: 8px 10px;
   color: #475569;
+}
+
+.v2-td--next-step {
+  padding: 8px 10px;
+  color: #475569;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .v2-latest-submission {

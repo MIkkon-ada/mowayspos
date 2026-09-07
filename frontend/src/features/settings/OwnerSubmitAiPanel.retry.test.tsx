@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
   createInitAnalysisRun: vi.fn(),
+  getInitAnalysisRun: vi.fn(),
   getLatestInitAnalysisRun: vi.fn(),
   listInitAttachments: vi.fn(),
   retryInitAnalysisRun: vi.fn(),
@@ -20,6 +21,18 @@ const completedStructuredRun = {
   progress: 100,
   error_message: '',
   draft: {
+    project_profile: {
+      name: '岗位 AI 应用优化',
+      background: '岗位知识分散',
+      objectives: '提升复用率',
+      expected_outcomes: '形成案例库',
+      start_date: '2026-07-01',
+      end_date: '2026-09-30',
+      description: '',
+      confidence: 0.9,
+      evidence: [{ attachment_id: 2, file_name: '工作推进表.xlsx', location: '概况!A1:B8', excerpt: '项目目标：提升复用率' }],
+      warnings: [],
+    },
     tasks: [{
       title: '重点工作', description: '', owner_name: '', owner_id: null, priority: '', status: '', plan_start: '', plan_end: '', evidence: [], source: '', confidence: 1, merge_status: 'new', duplicate_of: null, duplicate_reason: '', warnings: [],
       subtasks: [{
@@ -78,5 +91,41 @@ describe('project-init analysis single-use upload flow', () => {
     expect(await screen.findByText('实际处理器：structured-spreadsheet')).toBeTruthy()
     expect(screen.getByText('郭熠彬：提交时自动加入项目')).toBeTruthy()
     expect(screen.queryByText(/未自动绑定/)).toBeNull()
+  })
+
+  it('separates project-profile suggestions from work-progress suggestions', async () => {
+    api.uploadInitAttachments.mockResolvedValueOnce([{ id: 2, original_name: '工作推进表.xlsx' }])
+    api.createInitAnalysisRun.mockResolvedValueOnce(completedStructuredRun)
+
+    renderPanel()
+    fireEvent.change(await screen.findByLabelText(/选择资料文件/), { target: { files: [new File(['source'], '工作推进表.xlsx')] } })
+    fireEvent.click(screen.getByRole('button', { name: '开始分析' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '项目基本信息' }))
+
+    expect(await screen.findByText('项目基本信息识别结果')).toBeTruthy()
+    expect(screen.getByText('岗位知识分散')).toBeTruthy()
+    expect(screen.getByText('项目基本信息由立项人确认，本页不会直接覆盖。')).toBeTruthy()
+    expect(screen.getByText('工作推进方案')).toBeTruthy()
+  })
+
+  it('leaves processing state when the run status request fails', async () => {
+    api.uploadInitAttachments.mockResolvedValueOnce([{ id: 2, original_name: '工作推进表.xlsx' }])
+    api.createInitAnalysisRun.mockResolvedValueOnce({
+      id: 11,
+      status: 'processing',
+      stage: 'extracting',
+      progress: 55,
+      error_message: '',
+      draft: { tasks: [] },
+      result_metadata: {},
+    } as any)
+    api.getInitAnalysisRun.mockRejectedValueOnce(new Error('AI 分析服务暂时不可用，请稍后重试。'))
+
+    renderPanel()
+    fireEvent.change(await screen.findByLabelText(/选择资料文件/), { target: { files: [new File(['source'], '工作推进表.xlsx')] } })
+    fireEvent.click(screen.getByRole('button', { name: '开始分析' }))
+
+    expect(await screen.findByText('分析失败')).toBeTruthy()
+    expect(screen.queryByText(/处理中.*55%/)).toBeNull()
   })
 })

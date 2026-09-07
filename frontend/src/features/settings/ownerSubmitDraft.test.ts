@@ -13,6 +13,9 @@ function aiTask(overrides: Partial<AgentTask> = {}): AgentTask {
   return {
     title: '新任务',
     description: 'AI 描述',
+    goal: 'AI 目标',
+    acceptance_criteria: 'AI 验收标准',
+    process: '准备 → 执行 → 复盘',
     owner_name: '张三',
     owner_id: 7 as any,
     priority: '高',
@@ -81,6 +84,9 @@ describe('mergeAiDraft', () => {
     expect(result).not.toBe(current)
     expect(result[0]).not.toBe(current[0])
     expect(result[0].description).toBe('手工描述')
+    expect((result[0] as any).goal).toBe('AI 目标')
+    expect((result[0] as any).acceptance_criteria).toBe('AI 验收标准')
+    expect((result[0] as any).process).toBe('准备 → 执行 → 复盘')
     expect(result[0].owner).toBe('已有负责人')
     expect(result[0].plan_start).toBe('2026-08-01')
     expect(result[0].subtasks[0].title).toBe('已有子任务')

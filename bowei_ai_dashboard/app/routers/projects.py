@@ -815,7 +815,12 @@ def _save_work_progress_draft(
             db.add(task)
 
         task.special_project = project_name
-        task.completion_standard = (task_draft.description or "").strip()
+        legacy_goal = (task_draft.description or "").strip()
+        goal = (task_draft.goal or "").strip() or legacy_goal
+        acceptance_criteria = (task_draft.acceptance_criteria or "").strip()
+        task.key_achievement = goal[:200]
+        task.completion_standard = acceptance_criteria or legacy_goal
+        task.plan_process = (task_draft.process or "").strip()
         task.owner = (task_draft.owner or "").strip()
         task.owner_id = _person_id_for_name(task.owner, db)
         task.collaborators = (task_draft.helper or "").strip()

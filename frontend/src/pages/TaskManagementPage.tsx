@@ -1559,6 +1559,14 @@ function handleFormSave(payload: TaskPayload) {
                       </div>
                     )}
 
+                    {/* 推进流程 */}
+                    {selectedTask.plan_process && (
+                      <div>
+                        <p className="text-xs font-bold text-slate-500 mb-1.5">推进流程</p>
+                        <div className="whitespace-pre-wrap rounded-lg bg-sky-50 border border-sky-100 px-3 py-2.5 text-xs text-sky-900 leading-relaxed">{selectedTask.plan_process}</div>
+                      </div>
+                    )}
+
                     {/* 当前问题 */}
                     {selectedTask.problem_note && (
                       <div>

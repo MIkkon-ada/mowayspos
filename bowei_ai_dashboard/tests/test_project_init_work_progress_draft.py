@@ -144,25 +144,28 @@ def test_owner_submit_persists_xlsx_ai_draft_with_end_only_month_and_raw_importe
 
     payload = schemas.ProjectProfilePayload(
         work_progress_draft=[
-            schemas.ProjectWorkProgressTaskDraft(
-                title=ai_task.title,
-                description=ai_task.description,
-                owner=ai_task.owner_name,
-                plan_start=ai_task.plan_start,
-                plan_end=ai_task.plan_end,
-                subtasks=[
-                    schemas.ProjectWorkProgressSubTaskDraft(
-                        title=ai_subtask.title,
-                        evaluation_standard=ai_subtask.evaluation_standard,
-                        assignee=ai_subtask.assignee_name,
-                        assignee_id=ai_subtask.assignee_id,
-                        helper="、".join(ai_subtask.helper_names),
-                        helper_ids=ai_subtask.helper_ids,
-                        plan_start=ai_subtask.plan_start,
-                        plan_end=ai_subtask.plan_end,
-                    )
-                ],
-            )
+                schemas.ProjectWorkProgressTaskDraft(
+                    title=ai_task.title,
+                    description=ai_task.description,
+                    goal="现场部署目标",
+                    acceptance_criteria="现场部署完成并验收",
+                    process="准备 → 部署 → 验收",
+                    owner=ai_task.owner_name,
+                    plan_start=ai_task.plan_start,
+                    plan_end=ai_task.plan_end,
+                    subtasks=[
+                        schemas.ProjectWorkProgressSubTaskDraft(
+                            title=ai_subtask.title,
+                            evaluation_standard=ai_subtask.evaluation_standard,
+                            assignee=ai_subtask.assignee_name,
+                            assignee_id=ai_subtask.assignee_id,
+                            helper="、".join(ai_subtask.helper_names),
+                            helper_ids=ai_subtask.helper_ids,
+                            plan_start=ai_subtask.plan_start,
+                            plan_end=ai_subtask.plan_end,
+                        )
+                    ],
+                )
         ]
     )
     db = _make_session()
@@ -181,6 +184,9 @@ def test_owner_submit_persists_xlsx_ai_draft_with_end_only_month_and_raw_importe
     all_owner_actions = {log.action for log in db.query(models.OperationLog).filter_by(operator="owner").all()}
 
     assert task.plan_time == "2026-06-01"
+    assert task.key_achievement == "现场部署目标"
+    assert task.completion_standard == "现场部署完成并验收"
+    assert task.plan_process == "准备 → 部署 → 验收"
     assert subtask.assignee_id == assignee.id
     assert subtask.collaborator_ids == [helper.id]
     assert {

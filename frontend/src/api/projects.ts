@@ -137,6 +137,9 @@ export type ProjectWorkProgressSubTaskDraft = {
 export type ProjectWorkProgressTaskDraft = {
   title: string
   description?: string
+  goal?: string
+  acceptance_criteria?: string
+  process?: string
   owner?: string
   helper?: string
   plan_start?: string

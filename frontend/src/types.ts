@@ -15,6 +15,7 @@ export type TaskItem = {
   key_task: string
   key_achievement: string
   completion_standard: string
+  plan_process?: string
   coordinator: string
   owner: string
   collaborators: string
@@ -442,6 +443,7 @@ export type SubTaskItem = {
     confirmed_at: string
     summary: string
   } | null
+  latest_next_step?: string | null
   is_overdue?: boolean
   has_risk?: boolean
   is_deleted?: boolean

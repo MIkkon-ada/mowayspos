@@ -179,7 +179,7 @@ def _safe_error(kind: str) -> str:
     return {
         "parse": "attachment parsing failed; please check the source and retry",
         "ai": "AI analysis failed; please retry later",
-        "empty": "no usable tasks were extracted",
+        "empty": "no usable project information or tasks were extracted",
         "stale": "analysis run became stale; please retry",
         "generic": "analysis failed; please retry",
     }.get(kind, "analysis failed; please retry")
@@ -364,10 +364,17 @@ def _result_metadata(
 ) -> dict[str, Any]:
     tasks = draft.get("tasks") if isinstance(draft.get("tasks"), list) else []
     warnings = draft.get("warnings") if isinstance(draft.get("warnings"), list) else []
+    project_profile = draft.get("project_profile") if isinstance(draft.get("project_profile"), dict) else {}
+    profile_field_count = sum(
+        1
+        for field_name in ("name", "background", "objectives", "expected_outcomes", "start_date", "end_date", "description")
+        if str(project_profile.get(field_name) or "").strip()
+    )
     return {
         "provider": provider,
         "model_name": model_name,
         "task_count": len(tasks),
+        "project_profile_field_count": profile_field_count,
         "warning_count": len(warnings),
         "file_count": len(file_results or []),
         "attempted_models": attempted_models or [],

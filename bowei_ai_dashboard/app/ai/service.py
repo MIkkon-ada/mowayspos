@@ -252,7 +252,12 @@ class AIService:
         for attempt_no, model in enumerate(candidates, start=1):
             started = time.monotonic()
             try:
-                result = invoke(model, self._credential(model.id), policy.timeout_seconds)
+                timeout_seconds = (
+                    policy.timeout_seconds
+                    if attempt_no == 1
+                    else policy.fallback_timeout_seconds
+                )
+                result = invoke(model, self._credential(model.id), timeout_seconds)
             except Exception as exc:
                 error = self._to_upstream_error(exc)
                 self._log(

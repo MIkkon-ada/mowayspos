@@ -141,8 +141,8 @@ def add_attachment(db, *, project_id: int, attachment_id: int, size: int = 10, d
     return row
 
 
-@pytest.mark.parametrize("complex_workbook", [False, True])
-def test_worker_uses_structured_workbook_draft_only_without_vision_sources(monkeypatch, tmp_path, complex_workbook):
+@pytest.mark.parametrize("workbook_kind", ["regular", "complex", "with_overview"])
+def test_worker_uses_structured_workbook_draft_only_without_vision_sources(monkeypatch, tmp_path, workbook_kind):
     from unittest.mock import Mock
 
     from openpyxl import Workbook
@@ -155,8 +155,12 @@ def test_worker_uses_structured_workbook_draft_only_without_vision_sources(monke
     sheet.title = "工作计划"
     sheet.append(["专项", "关键任务", "关键成果", "完成标准", "统筹人", "负责人", "协同成员", "计划时间"])
     sheet.append(["知识资产AI化", "完成标签体系修订", "知识资产标签框架", "负责人确认", "张三", "李四", "王五", "2026-06-01"])
-    if complex_workbook:
+    if workbook_kind == "complex":
         workbook.create_sheet("hidden-context").sheet_state = "hidden"
+    if workbook_kind == "with_overview":
+        overview = workbook.create_sheet("项目概况")
+        overview.append(["项目名称", "知识升级"])
+        overview.append(["建设背景", "提升知识复用能力"])
     workbook.save(source_path)
     workbook.close()
 
@@ -177,6 +181,11 @@ def test_worker_uses_structured_workbook_draft_only_without_vision_sources(monke
     monkeypatch.setattr(service, "SessionLocal", lambda: db)
     monkeypatch.setattr(service, "_attachment_path", lambda _key: source_path)
     chat = Mock(side_effect=AssertionError("regular Excel must bypass the chat draft generator"))
+    if workbook_kind == "with_overview":
+        chat = Mock(return_value={
+            "tasks": [{"title": "知识资产AI化"}], "warnings": [],
+            "project_profile": {"name": "知识升级", "background": "提升知识复用能力"},
+        })
     vision = Mock(return_value={"tasks": [{"title": "视觉任务"}], "warnings": []})
     monkeypatch.setattr(service, "generate_project_init_draft", chat)
     monkeypatch.setattr(service, "generate_project_init_vision_draft", vision)
@@ -186,15 +195,22 @@ def test_worker_uses_structured_workbook_draft_only_without_vision_sources(monke
 
     db.expire_all()
     stored = db.get(models.ProjectInitAnalysisRun, run_id)
-    chat.assert_not_called()
     assert stored.status == "completed"
     result = json.loads(stored.result_json)
     draft = json.loads(stored.current_draft_json)
-    if complex_workbook:
+    if workbook_kind == "with_overview":
+        chat.assert_called_once()
+        vision.assert_not_called()
+        assert any("建设背景" in chunk["text"] for chunk in chat.call_args.args[0])
+        assert draft["project_profile"]["name"] == "知识升级"
+        assert draft["project_profile"]["background"] == "提升知识复用能力"
+    elif workbook_kind == "complex":
+        chat.assert_not_called()
         vision.assert_called_once()
         assert draft["tasks"][0]["title"] == "视觉任务"
         assert result["analysis_route"]["mode"] == "vision_with_review"
     else:
+        chat.assert_not_called()
         vision.assert_not_called()
         assert result["model_name"] == "structured-spreadsheet-fallback"
         assert result["model_attempts"] == []

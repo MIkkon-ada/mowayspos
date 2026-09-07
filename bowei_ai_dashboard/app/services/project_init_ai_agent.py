@@ -1382,6 +1382,8 @@ def _normalise_work_plan_row(headers: list[str], values: list[str]) -> dict[str,
 def _structured_spreadsheet_rows(
     sources: list[tuple[str, str, str, int | None]],
     people: list[PersonCandidate],
+    *,
+    require_full_coverage: bool = False,
 ) -> list[dict[str, Any]]:
     """Build a traceable review draft when a work-progress spreadsheet is explicit."""
     task_index: dict[str, dict[str, Any]] = {}
@@ -1392,16 +1394,26 @@ def _structured_spreadsheet_rows(
             continue
         lines = str(text or "").splitlines()
         if len(lines) < 2 or "\t" not in lines[0]:
+            if require_full_coverage and text.strip():
+                return []
             continue
         headers = [item.strip() for item in lines[0].split("\t")]
+        if require_full_coverage and _normalise_work_plan_row(headers, []) is None:
+            return []
         worksheet_key = (file_name, worksheet_range[0])
         context = worksheet_contexts.setdefault(worksheet_key, {})
         for values_line in lines[1:]:
+            if not values_line.strip():
+                continue
             if "\t" not in values_line:
+                if require_full_coverage:
+                    return []
                 continue
             values = [item.strip() for item in values_line.split("\t")]
             row = _normalise_work_plan_row(headers, values)
             if row is None:
+                if require_full_coverage:
+                    return []
                 continue
             raw_task_title = _bounded_spreadsheet_text(row.get("专项", ""), 200)
             if raw_task_title:
@@ -1412,6 +1424,8 @@ def _structured_spreadsheet_rows(
             task_title = raw_task_title or context.get("专项", "")
             subtask_titles = _split_numbered_spreadsheet_items(row.get("关键任务", ""))
             if not task_title or not subtask_titles:
+                if require_full_coverage:
+                    return []
                 continue
             subtask_title = subtask_titles[0]
 
@@ -1552,6 +1566,7 @@ def _structured_spreadsheet_fallback(
     provider: str,
     *,
     model_name: str = "structured-spreadsheet-fallback",
+    require_full_coverage: bool = False,
 ) -> ProjectInitAiResult | None:
     # A deterministic workbook projection must never make other uploaded
     # sources disappear. Mixed uploads stay on the evidence-bound AI route so
@@ -1563,7 +1578,7 @@ def _structured_spreadsheet_fallback(
         for file_name, location, _text, _attachment_id in sources
     ):
         return None
-    tasks = _structured_spreadsheet_rows(sources, people)
+    tasks = _structured_spreadsheet_rows(sources, people, require_full_coverage=require_full_coverage)
     if not tasks:
         return None
     return normalize_agent_result(
@@ -1584,14 +1599,15 @@ def generate_structured_project_init_draft(
     """Project explicit Excel rows into a draft, or defer to model analysis.
 
     The caller must first exclude sources requiring visual interpretation.
-    Mixed sources, invalid worksheet ranges, and unrecognized tables return
-    no draft so the existing model route can consider the full input.
+    Mixed sources, invalid worksheet ranges, and any unrecognized meaningful
+    chunk or row return no draft so model analysis can consider the full input.
     """
     source_values = [_source_parts(chunk) for chunk in chunks]
     people = _person_candidates(existing_people)
     indexed_tasks, _ = _existing_task_index(existing_tasks)
     return _structured_spreadsheet_fallback(
         source_values, people, indexed_tasks, "local-rule",
+        require_full_coverage=True,
     )
 
 
@@ -1681,6 +1697,7 @@ def generate_project_init_draft(
             indexed_tasks,
             "local-rule",
             model_name="structured-spreadsheet",
+            require_full_coverage=True,
         )
     if structured_draft is not None:
         return structured_draft

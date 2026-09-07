@@ -13,21 +13,24 @@ from app.ai.contracts import AIUpstreamError
 from app.ai.adapters import OpenAICompatibleChatAdapter
 
 
-def test_anthropic_json_mode_uses_native_object_prefill(monkeypatch):
+def test_anthropic_json_mode_works_without_unsupported_assistant_prefill(monkeypatch):
     import anthropic
     from app.ai.adapters import DefaultAIAdapters
 
     captured = {}
     def create(**kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(content=[SimpleNamespace(type="text", text='"tasks": []}')])
+        assert kwargs["messages"][-1]["role"] == "user"
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text='{"tasks": []}')])
     monkeypatch.setattr(anthropic, "Anthropic", lambda **_kwargs: SimpleNamespace(messages=SimpleNamespace(create=create)))
-    model = models.AIModel(provider="anthropic", model_name="claude", base_url="https://example.test")
+    model = models.AIModel(provider="anthropic", model_name="claude-sonnet-4-6", base_url="https://example.test")
 
     text = DefaultAIAdapters().complete_chat(model, "secret", "extract JSON", timeout_seconds=30,
                                             response_format={"type": "json_object"})
     assert json.loads(text) == {"tasks": []}
-    assert captured["messages"][-1] == {"role": "assistant", "content": "{"}
+    assert captured["model"] == "claude-sonnet-4-6"
+    assert all(message["role"] == "user" for message in captured["messages"])
+    assert "Return exactly one JSON object" in captured["messages"][0]["content"]
     assert "response_format" not in captured
 
 

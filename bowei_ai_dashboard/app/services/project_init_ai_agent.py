@@ -1361,7 +1361,9 @@ def _normalise_spreadsheet_header(value: str) -> str:
     return re.sub(r"[\s：:（）()\[\]【】_-]+", "", str(value or "")).casefold()
 
 
-def _normalise_work_plan_row(headers: list[str], values: list[str]) -> dict[str, str] | None:
+def _normalise_work_plan_row(
+    headers: list[str], values: list[str], *, require_full_coverage: bool = False,
+) -> dict[str, str] | None:
     """Map common, non-standard spreadsheet headers to the review draft fields."""
 
     columns: dict[str, int] = {}
@@ -1373,6 +1375,10 @@ def _normalise_work_plan_row(headers: list[str], values: list[str]) -> dict[str,
                 break
     if not {"专项", "关键任务"}.issubset(columns):
         return None
+    if require_full_coverage:
+        projected_columns = set(columns.values())
+        if any(value.strip() and index not in projected_columns for index, value in enumerate(values)):
+            return None
     return {
         canonical: values[index].strip() if index < len(values) else ""
         for canonical, index in columns.items()
@@ -1410,7 +1416,7 @@ def _structured_spreadsheet_rows(
                     return []
                 continue
             values = [item.strip() for item in values_line.split("\t")]
-            row = _normalise_work_plan_row(headers, values)
+            row = _normalise_work_plan_row(headers, values, require_full_coverage=require_full_coverage)
             if row is None:
                 if require_full_coverage:
                     return []

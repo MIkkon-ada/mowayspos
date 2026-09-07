@@ -21,7 +21,11 @@ from sqlalchemy.orm import Session, object_session
 from .. import crud, models
 from ..database import SessionLocal
 from ..time_utils import utc_now
-from .project_init_ai_agent import ProjectInitAiInvalidDraft, generate_project_init_draft
+from .project_init_ai_agent import (
+    ProjectInitAiInvalidDraft,
+    generate_project_init_draft,
+    generate_structured_project_init_draft,
+)
 from ..ai.service import AIService, sanitize_invocation_error_code
 from ..ai.contracts import AIInvocationContext
 from .project_init_file_parser import parse_project_init_file
@@ -513,9 +517,11 @@ def process_analysis_run(run_id: int) -> None:
         people = snapshot.get("people", []) if isinstance(snapshot, dict) else []
         existing_tasks = snapshot.get("tasks", []) if isinstance(snapshot, dict) else []
         try:
-            ai_service = AIService(db)
-            context = AIInvocationContext(resource_type="project_init", resource_id=run_id)
             result = None
+            if not vision_sources:
+                result = generate_structured_project_init_draft(chunks, people, existing_tasks)
+            ai_service = AIService(db) if result is None else None
+            context = AIInvocationContext(resource_type="project_init", resource_id=run_id)
             if vision_sources:
                 vision_reason_codes = [
                     "scanned_pdf" if kind == "scanned_pdf" else "complex_workbook_layout"

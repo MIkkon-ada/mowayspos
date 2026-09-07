@@ -141,6 +141,70 @@ def add_attachment(db, *, project_id: int, attachment_id: int, size: int = 10, d
     return row
 
 
+@pytest.mark.parametrize("complex_workbook", [False, True])
+def test_worker_uses_structured_workbook_draft_only_without_vision_sources(monkeypatch, tmp_path, complex_workbook):
+    from unittest.mock import Mock
+
+    from openpyxl import Workbook
+
+    from app.services import project_init_analysis as service
+
+    source_path = tmp_path / "work-plan.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "工作计划"
+    sheet.append(["专项", "关键任务", "关键成果", "完成标准", "统筹人", "负责人", "协同成员", "计划时间"])
+    sheet.append(["知识资产AI化", "完成标签体系修订", "知识资产标签框架", "负责人确认", "张三", "李四", "王五", "2026-06-01"])
+    if complex_workbook:
+        workbook.create_sheet("hidden-context").sheet_state = "hidden"
+    workbook.save(source_path)
+    workbook.close()
+
+    db = make_session()
+    project, _owner = add_project_graph(db)
+    run = models.ProjectInitAnalysisRun(
+        project_id=project.id,
+        attachment_ids_json="[1]",
+        snapshot_json=json.dumps({
+            "project": {}, "tasks": [], "people": [],
+            "attachments": [{"id": 1, "storage_key": "1/1", "original_name": source_path.name}],
+        }),
+        created_by="owner",
+    )
+    db.add(run)
+    db.commit()
+    run_id = run.id
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(service, "_attachment_path", lambda _key: source_path)
+    chat = Mock(side_effect=AssertionError("regular Excel must bypass the chat draft generator"))
+    vision = Mock(return_value={"tasks": [{"title": "视觉任务"}], "warnings": []})
+    monkeypatch.setattr(service, "generate_project_init_draft", chat)
+    monkeypatch.setattr(service, "generate_project_init_vision_draft", vision)
+    monkeypatch.setattr(service, "render_workbook_images", lambda *_args: [tmp_path / "sheet.png"])
+
+    service.process_analysis_run(run_id)
+
+    db.expire_all()
+    stored = db.get(models.ProjectInitAnalysisRun, run_id)
+    chat.assert_not_called()
+    assert stored.status == "completed"
+    result = json.loads(stored.result_json)
+    draft = json.loads(stored.current_draft_json)
+    if complex_workbook:
+        vision.assert_called_once()
+        assert draft["tasks"][0]["title"] == "视觉任务"
+        assert result["analysis_route"]["mode"] == "vision_with_review"
+    else:
+        vision.assert_not_called()
+        assert result["model_name"] == "structured-spreadsheet-fallback"
+        assert result["model_attempts"] == []
+        task = draft["tasks"][0]
+        assert task["title"] == "知识资产AI化"
+        assert task["subtasks"][0]["title"] == "完成标签体系修订"
+        assert task["subtasks"][0]["assignee_name"] == "李四"
+        assert task["evidence"][0]["attachment_id"] == 1
+
+
 def test_run_model_has_frozen_snapshot_and_worker_timestamps():
     table = models.ProjectInitAnalysisRun.__table__
     assert {"snapshot_json", "started_at", "finished_at"} <= set(table.c.keys())

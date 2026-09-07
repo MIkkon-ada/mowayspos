@@ -28,7 +28,15 @@ from .contracts import (
 from .crypto import AICredentialCipher, AIConfigurationKeyError
 
 
+RESPONSE_VALIDATION_ERROR_CODES = frozenset({
+    "json_missing_or_multiple",
+    "json_malformed",
+    "schema_invalid",
+})
+
+
 _SAFE_ERROR_CODES = {
+    *RESPONSE_VALIDATION_ERROR_CODES,
     "AI_RESPONSE_INVALID",
     "AI_UPSTREAM_TIMEOUT",
     "AI_UPSTREAM_RATE_LIMIT",
@@ -38,6 +46,10 @@ _SAFE_ERROR_CODES = {
     "AI_UPSTREAM_AUTH",
     "AI_UPSTREAM_UNKNOWN",
 }
+
+
+def sanitize_invocation_error_code(error_code: str) -> str:
+    return error_code if not error_code or error_code in _SAFE_ERROR_CODES else "AI_UPSTREAM_UNKNOWN"
 
 
 @dataclass(frozen=True)
@@ -215,13 +227,7 @@ class AIService:
             status=status,
             fallback_used=fallback_used,
             duration_ms=max(0, duration_ms),
-            error_code=(
-                ""
-                if not error_code
-                else error_code
-                if error_code in _SAFE_ERROR_CODES
-                else "AI_UPSTREAM_UNKNOWN"
-            ),
+            error_code=sanitize_invocation_error_code(error_code),
             resource_type=context.resource_type,
             resource_id=context.resource_id,
             actor=context.actor,
@@ -310,7 +316,7 @@ class AIService:
         capability_key: str,
         prompt: str,
         context: AIInvocationContext | None = None,
-        response_validator: Callable[[str], bool] | None = None,
+        response_validator: Callable[[str], bool | str | None] | None = None,
     ) -> ChatResult:
         text, model, log = self._invoke(
             capability_key,
@@ -322,6 +328,7 @@ class AIService:
                 prompt,
                 None if capability_key == Capability.TASK_PLAN_PROPOSAL else timeout,
                 response_validator,
+                {"type": "json_object"} if capability_key == Capability.PROJECT_INIT_ANALYSIS else None,
             ),
         )
         return ChatResult(text=text, model_code=model.code, invocation_log_id=log.id)
@@ -332,16 +339,23 @@ class AIService:
         api_key: str,
         prompt: str,
         timeout_seconds: int,
-        response_validator: Callable[[str], bool] | None,
+        response_validator: Callable[[str], bool | str | None] | None,
+        response_format: dict[str, str] | None = None,
     ) -> str:
+        options = {"response_format": response_format} if response_format is not None else {}
         text = self.adapters.complete_chat(
             model,
             api_key,
             prompt,
             timeout_seconds=timeout_seconds,
+            **options,
         )
-        if response_validator is not None and not response_validator(text):
-            raise AIUpstreamError("AI_RESPONSE_INVALID", retryable=True)
+        if response_validator is not None:
+            validation = response_validator(text)
+            # Legacy validators return bool; classifiers return None or a safe code.
+            if validation is not None and validation is not True:
+                code = validation if isinstance(validation, str) and validation in RESPONSE_VALIDATION_ERROR_CODES else "AI_RESPONSE_INVALID"
+                raise AIUpstreamError(code, retryable=True)
         return text
 
     def invoke_project_init_vision(

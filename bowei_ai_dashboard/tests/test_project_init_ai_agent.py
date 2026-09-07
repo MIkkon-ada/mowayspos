@@ -29,13 +29,55 @@ from app.services.project_init_file_parser import SourceChunk, parse_project_ini
 TEST_FERNET_KEY = "m6F5dBXMRy1ZOQ4Dv_rwuPhtchxZzTCBuRUg-hxeF6U="
 
 
+@pytest.mark.parametrize(("raw", "expected"), [
+    ('{"tasks": []}', None),
+    ('```json\n{"tasks": []}\n```', None),
+    ('PRIVATE_MODEL_SOURCE', "json_missing_or_multiple"),
+    ('{"tasks": []} {"tasks": []}', "json_missing_or_multiple"),
+    ('{"tasks": [}', "json_malformed"),
+    ('{"tasks": []', "json_malformed"),
+    ('{"tasks": [],}', "json_malformed"),
+    ('{"tasks": "PRIVATE_MODEL_SOURCE"}', "schema_invalid"),
+    ('[]', "schema_invalid"),
+])
+def test_raw_draft_classifier_returns_only_safe_categories(raw, expected):
+    from app.services.project_init_ai_agent import _classify_raw_draft_envelope
+
+    assert _classify_raw_draft_envelope(raw) == expected
+
+
 class SequencedChatAdapters:
     def __init__(self, responses: dict[str, str]) -> None:
         self.responses = responses
 
-    def complete_chat(self, model, _api_key, _prompt, *, timeout_seconds):
-        assert timeout_seconds == 30
+    def complete_chat(self, model, _api_key, _prompt, *, timeout_seconds, response_format=None):
+        assert timeout_seconds == (30 if model.code == "primary" else 25)
+        assert response_format == {"type": "json_object"}
         return self.responses[model.code]
+
+
+@pytest.fixture
+def project_init_service():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    repo = AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY)
+    model = repo.create_model(code="primary", display_name="Primary", provider="deepseek",
+        model_name="chat", model_type="chat", base_url="https://example.test", config={}, enabled=True, source="custom")
+    repo.replace_credential(model.id, api_key="test-key", app_secret=None)
+    repo.save_policy(Capability.PROJECT_INIT_ANALYSIS, primary_model_id=model.id,
+        fallback_model_ids=[], timeout_seconds=30, max_attempts=1, enabled=True)
+
+    def factory(llm):
+        class Adapter:
+            def complete_chat(self, _model, _key, prompt, *, timeout_seconds, response_format=None):
+                assert response_format == {"type": "json_object"}
+                return llm(prompt, "injected")
+        return AIService(db, adapters=Adapter(), cipher_key=TEST_FERNET_KEY)
+
+    yield factory
+    db.close()
+    engine.dispose()
 
 
 def chunk(text: str, *, name: str = "plan.txt", location: str = "lines 1-2") -> dict:
@@ -170,7 +212,7 @@ def test_schema_invalid_primary_response_uses_project_init_fallback_model():
         assert result.tasks[0].title == "实施交付"
         logs = db.query(models.AIInvocationLog).order_by(models.AIInvocationLog.id).all()
         assert [(log.status, log.fallback_used, log.error_code) for log in logs] == [
-            ("failed", False, "AI_RESPONSE_INVALID"),
+            ("failed", False, "schema_invalid"),
             ("succeeded", True, ""),
         ]
     finally:
@@ -206,7 +248,7 @@ def test_semantic_workbook_uses_deterministic_projection_when_all_models_fail():
         )
 
         class FailingAdapter:
-            def complete_chat(self, _model, _api_key, _prompt, *, timeout_seconds):
+            def complete_chat(self, _model, _api_key, _prompt, *, timeout_seconds, response_format=None):
                 raise AIUpstreamError("AI_UPSTREAM_TIMEOUT", retryable=True)
 
         result = generate_project_init_draft(
@@ -458,7 +500,8 @@ def test_semantic_workbook_shape_preserves_goal_acceptance_process_and_numbered_
     assert task.evidence[0].location == source.location
 
 
-def test_semantic_workbook_missing_fields_get_one_bounded_ai_repair():
+@pytest.mark.parametrize("use_service", [False, True])
+def test_semantic_workbook_missing_fields_get_one_bounded_ai_repair(use_service, project_init_service):
     source = chunk(
         "主要工作\t目标\t验收标准与关键成果\t关键任务\t推进流程\n"
         "试点优化\t岗位真实运行\t完成验收\t1.建立记录表 2.完成复盘\t试用 → 复盘",
@@ -481,7 +524,8 @@ def test_semantic_workbook_missing_fields_get_one_bounded_ai_repair():
         calls.append(prompt)
         return json.dumps({"tasks": [first if len(calls) == 1 else repaired]}, ensure_ascii=False)
 
-    result = generate_project_init_draft([source], [], [], llm_call=llm)
+    invocation = {"ai_service": project_init_service(llm)} if use_service else {"llm_call": llm}
+    result = generate_project_init_draft([source], [], [], **invocation)
 
     assert len(calls) == 2
     assert result.tasks[0].goal == "岗位真实运行"
@@ -1552,7 +1596,8 @@ def test_source_chunk_cannot_be_used_to_forge_an_attachment_id():
         )
 
 
-def test_same_title_tasks_across_batches_merge_all_evidence_and_subtasks():
+@pytest.mark.parametrize("use_service", [False, True])
+def test_same_title_tasks_across_batches_merge_all_evidence_and_subtasks(use_service, project_init_service):
     calls: list[str] = []
 
     def llm(prompt: str, provider: str) -> str:
@@ -1572,6 +1617,7 @@ def test_same_title_tasks_across_batches_merge_all_evidence_and_subtasks():
             "evidence": evidence,
         }]}]}, ensure_ascii=False)
 
+    invocation = {"ai_service": project_init_service(llm)} if use_service else {"llm_call": llm}
     result = generate_project_init_draft(
         [
             {"attachment_id": 7, "file_name": "a.txt", "location": "lines 1", "text": "A" * 21_000},
@@ -1579,7 +1625,7 @@ def test_same_title_tasks_across_batches_merge_all_evidence_and_subtasks():
         ],
         [],
         [],
-        llm_call=llm,
+        **invocation,
     )
 
     assert len(calls) >= 2

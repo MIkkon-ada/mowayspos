@@ -22,7 +22,7 @@ from .. import crud, models
 from ..database import SessionLocal
 from ..time_utils import utc_now
 from .project_init_ai_agent import ProjectInitAiInvalidDraft, generate_project_init_draft
-from ..ai.service import AIService
+from ..ai.service import AIService, sanitize_invocation_error_code
 from ..ai.contracts import AIInvocationContext
 from .project_init_file_parser import parse_project_init_file
 from .project_init_attachment_storage import (
@@ -336,7 +336,7 @@ def _draft_payload(result: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {"tasks": []}
 
 
-def _attempted_models(db: Session, run_id: int) -> list[dict[str, Any]]:
+def _model_attempts(db: Session, run_id: int) -> list[dict[str, Any]]:
     rows = (
         db.query(models.AIInvocationLog, models.AIModel)
         .join(models.AIModel, models.AIInvocationLog.model_id == models.AIModel.id)
@@ -348,9 +348,24 @@ def _attempted_models(db: Session, run_id: int) -> list[dict[str, Any]]:
         .all()
     )
     return [
-        {"id": model.id, "code": model.code, "display_name": model.display_name, "provider": model.provider, "model_name": model.model_name}
-        for _, model in rows
+        {
+            "id": model.id, "code": model.code, "display_name": model.display_name,
+            "provider": model.provider, "model_name": model.model_name,
+            "status": log.status if log.status in {"failed", "succeeded"} else "failed",
+            "duration_ms": max(0, log.duration_ms or 0),
+            "error_code": sanitize_invocation_error_code(log.error_code),
+            "fallback_used": bool(log.fallback_used),
+        }
+        for log, model in rows
     ]
+
+
+def _attempted_models(db: Session, run_id: int) -> list[dict[str, Any]]:
+    return [_attempt_model_identity(attempt) for attempt in _model_attempts(db, run_id)]
+
+
+def _attempt_model_identity(attempt: dict[str, Any]) -> dict[str, Any]:
+    return {key: attempt[key] for key in ("id", "code", "display_name", "provider", "model_name")}
 
 
 def _result_metadata(
@@ -360,6 +375,7 @@ def _result_metadata(
     model_name: str = "",
     file_results=None,
     attempted_models=None,
+    model_attempts=None,
     analysis_route: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     tasks = draft.get("tasks") if isinstance(draft.get("tasks"), list) else []
@@ -378,6 +394,7 @@ def _result_metadata(
         "warning_count": len(warnings),
         "file_count": len(file_results or []),
         "attempted_models": attempted_models or [],
+        "model_attempts": model_attempts or [],
         "final_model": attempted_models[-1] if attempted_models else {},
         "analysis_route": analysis_route or {
             "mode": "text_structured",
@@ -568,6 +585,7 @@ def process_analysis_run(run_id: int) -> None:
                 run_id,
                 type(exc).__name__,
             )
+            model_attempts = _model_attempts(db, run_id)
             _update_processing(
                 db,
                 run_id,
@@ -579,7 +597,8 @@ def process_analysis_run(run_id: int) -> None:
                         {
                             "tasks": 0,
                             "warnings": 0,
-                            "attempted_models": _attempted_models(db, run_id),
+                            "attempted_models": [_attempt_model_identity(attempt) for attempt in model_attempts],
+                            "model_attempts": model_attempts,
                             "analysis_route": analysis_route,
                             "failure_category": failure_category,
                             "validation_errors": (
@@ -604,12 +623,14 @@ def process_analysis_run(run_id: int) -> None:
         provider = str(getattr(result, "provider", "") or "")[:30]
         model_name = str(getattr(result, "model_name", "") or "")[:100]
         failed_files = sum(1 for item in file_results if item.get("status") == "failed")
+        model_attempts = _model_attempts(db, run_id)
         result_metadata = _result_metadata(
             draft,
             provider=provider,
             model_name=model_name,
             file_results=file_results,
-            attempted_models=_attempted_models(db, run_id),
+            attempted_models=[_attempt_model_identity(attempt) for attempt in model_attempts],
+            model_attempts=model_attempts,
             analysis_route=analysis_route,
         )
         crud.log(

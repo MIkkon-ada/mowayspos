@@ -21,6 +21,79 @@ def make_session():
     return sessionmaker(bind=engine)()
 
 
+def test_model_attempt_metadata_is_log_derived_and_sanitized():
+    from app.services import project_init_analysis as service
+
+    db = make_session()
+    try:
+        model = models.AIModel(code="primary", display_name="Primary", provider="deepseek",
+                               model_name="chat", model_type="chat", base_url="https://example.test")
+        db.add(model)
+        db.flush()
+        for code in ("json_malformed", "PRIVATE_MODEL_SOURCE"):
+            db.add(models.AIInvocationLog(capability_key="project_init_analysis", policy_version=1,
+                model_id=model.id, model_revision=1, attempt_no=1, status="failed", duration_ms=1200,
+                error_code=code, fallback_used=False, resource_type="project_init", resource_id=99))
+        db.flush()
+
+        attempts = service._model_attempts(db, 99)
+        metadata = service._result_metadata({"tasks": []}, model_attempts=attempts,
+                                            attempted_models=service._attempted_models(db, 99))
+        assert metadata["model_attempts"][0] == {
+            "id": model.id, "code": "primary", "display_name": "Primary", "provider": "deepseek",
+            "model_name": "chat", "status": "failed", "duration_ms": 1200,
+            "error_code": "json_malformed", "fallback_used": False,
+        }
+        assert metadata["model_attempts"][1]["error_code"] == "AI_UPSTREAM_UNKNOWN"
+        assert metadata["final_model"] == metadata["attempted_models"][-1]
+        assert "PRIVATE_MODEL_SOURCE" not in json.dumps(metadata)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_worker_persists_sanitized_model_attempts_for_each_outcome(monkeypatch, tmp_path, failed, caplog):
+    from app.ai.contracts import AIUpstreamError
+    from app.services import project_init_analysis as service
+
+    db = make_session()
+    project, _owner = add_project_graph(db)
+    add_attachment(db, project_id=project.id, attachment_id=1)
+    run = models.ProjectInitAnalysisRun(project_id=project.id, attachment_ids_json="[1]",
+        snapshot_json=json.dumps({"project": {}, "tasks": [], "people": []}), created_by="owner")
+    model = models.AIModel(code="primary", display_name="Primary", provider="deepseek",
+                           model_name="chat", model_type="chat", base_url="https://example.test")
+    db.add_all([run, model])
+    db.commit()
+    run_id = run.id
+    model_id = model.id
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(service, "AIService", lambda _db: object())
+    monkeypatch.setattr(service, "_attachment_path", lambda _key: tmp_path / "source.txt")
+    monkeypatch.setattr(service, "parse_project_init_file", lambda *_args: [
+        {"file_name": "source.txt", "location": "lines 1", "text": "source"}])
+
+    def generate(*_args, **_kwargs):
+        db.add(models.AIInvocationLog(capability_key="project_init_analysis", policy_version=1,
+            model_id=model_id, model_revision=1, attempt_no=1, status="failed" if failed else "succeeded",
+            duration_ms=1200, error_code="json_malformed" if failed else "", fallback_used=False,
+            resource_type="project_init", resource_id=run_id))
+        db.commit()
+        if failed:
+            raise AIUpstreamError("json_malformed", retryable=True)
+        return {"tasks": [], "warnings": []}
+
+    monkeypatch.setattr(service, "generate_project_init_draft", generate)
+    service.process_analysis_run(run_id)
+    stored = db.get(models.ProjectInitAnalysisRun, run_id)
+    metadata = json.loads(stored.result_json)
+    assert stored.status == ("failed" if failed else "completed")
+    assert metadata["model_attempts"][0]["error_code"] == ("json_malformed" if failed else "")
+    assert metadata["model_attempts"][0]["duration_ms"] == 1200
+    assert "response_text" not in stored.result_json
+    assert "AI upstream request failed" not in caplog.text
+
+
 def add_project_graph(db, *, project_id: int = 1, status: str = "dispatched"):
     project = models.Project(id=project_id, name=f"Project {project_id}", status=status)
     owner = models.Person(id=project_id, name=f"Owner {project_id}", is_active=True)

@@ -141,7 +141,7 @@ def add_attachment(db, *, project_id: int, attachment_id: int, size: int = 10, d
     return row
 
 
-@pytest.mark.parametrize("workbook_kind", ["regular", "complex", "with_overview"])
+@pytest.mark.parametrize("workbook_kind", ["regular", "complex", "with_overview", "inline_overview"])
 def test_worker_uses_structured_workbook_draft_only_without_vision_sources(monkeypatch, tmp_path, workbook_kind):
     from unittest.mock import Mock
 
@@ -161,6 +161,11 @@ def test_worker_uses_structured_workbook_draft_only_without_vision_sources(monke
         overview = workbook.create_sheet("项目概况")
         overview.append(["项目名称", "知识升级"])
         overview.append(["建设背景", "提升知识复用能力"])
+    if workbook_kind == "inline_overview":
+        sheet.cell(1, 9, "项目名称")
+        sheet.cell(1, 10, "建设背景")
+        sheet.cell(2, 9, "知识升级")
+        sheet.cell(2, 10, "提升知识复用能力")
     workbook.save(source_path)
     workbook.close()
 
@@ -181,7 +186,7 @@ def test_worker_uses_structured_workbook_draft_only_without_vision_sources(monke
     monkeypatch.setattr(service, "SessionLocal", lambda: db)
     monkeypatch.setattr(service, "_attachment_path", lambda _key: source_path)
     chat = Mock(side_effect=AssertionError("regular Excel must bypass the chat draft generator"))
-    if workbook_kind == "with_overview":
+    if workbook_kind in ("with_overview", "inline_overview"):
         chat = Mock(return_value={
             "tasks": [{"title": "知识资产AI化"}], "warnings": [],
             "project_profile": {"name": "知识升级", "background": "提升知识复用能力"},
@@ -198,7 +203,7 @@ def test_worker_uses_structured_workbook_draft_only_without_vision_sources(monke
     assert stored.status == "completed"
     result = json.loads(stored.result_json)
     draft = json.loads(stored.current_draft_json)
-    if workbook_kind == "with_overview":
+    if workbook_kind in ("with_overview", "inline_overview"):
         chat.assert_called_once()
         vision.assert_not_called()
         assert any("建设背景" in chunk["text"] for chunk in chat.call_args.args[0])

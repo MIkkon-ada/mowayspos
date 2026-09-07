@@ -1245,7 +1245,8 @@ def test_structured_fast_path_requires_every_meaningful_chunk_to_be_recognized(e
     assert generate_structured_project_init_draft([plan, extra], [], []) is None
 
 
-def test_workbook_with_overview_reaches_chat_and_preserves_project_profile():
+@pytest.mark.parametrize("same_sheet", [False, True])
+def test_workbook_with_overview_reaches_chat_and_preserves_project_profile(same_sheet):
     from unittest.mock import Mock
 
     plan = {
@@ -1256,6 +1257,12 @@ def test_workbook_with_overview_reaches_chat_and_preserves_project_profile():
         **plan, "location": "'项目概况'!A1:B2",
         "text": "项目名称\t知识升级\n建设背景\t提升知识复用能力",
     }
+    if same_sheet:
+        plan = {
+            **plan, "location": "'工作计划'!A2:D2",
+            "text": "专项\t关键任务\t项目名称\t建设背景\n知识资产AI化\t修订标签\t知识升级\t提升知识复用能力",
+        }
+        overview = plan
     task_evidence = [{key: plan[key] for key in ("attachment_id", "file_name", "location")}]
     profile_evidence = [{key: overview[key] for key in ("attachment_id", "file_name", "location")}]
     chat = Mock(return_value=json.dumps({
@@ -1265,12 +1272,32 @@ def test_workbook_with_overview_reaches_chat_and_preserves_project_profile():
         },
     }, ensure_ascii=False))
 
-    result = generate_project_init_draft([plan, overview], [], [], llm_call=chat)
+    sources = [plan] if same_sheet else [plan, overview]
+    result = generate_project_init_draft(sources, [], [], llm_call=chat)
 
     assert chat.called
     assert result.project_profile.name == "知识升级"
     assert result.project_profile.background == "提升知识复用能力"
     assert result.tasks[0].title == "知识资产AI化"
+
+
+@pytest.mark.parametrize("headers,values,eligible", [
+    ("专项\t关键任务\t项目名称\t建设背景", "知识资产AI化\t修订标签\t知识升级\t提升知识复用能力", False),
+    ("专项\t关键任务\t项目名称\t建设背景", "知识资产AI化\t修订标签\t\t", True),
+    ("专项\t关键任务\t负责人\t执行人", "知识资产AI化\t修订标签\t张三\t李四", False),
+    ("专项\t关键任务", "知识资产AI化\t修订标签\t附加信息", False),
+])
+def test_structured_fast_path_requires_every_populated_column_to_be_projected(headers, values, eligible):
+    from app.services.project_init_ai_agent import generate_structured_project_init_draft
+
+    source = {
+        "file_name": "plan.xlsx", "location": "'工作计划'!A2:D2",
+        "text": f"{headers}\n{values}",
+    }
+
+    result = generate_structured_project_init_draft([source], [], [])
+
+    assert (result is not None) is eligible
 
 
 def test_structured_spreadsheet_fallback_uses_traceable_row_data_after_invalid_ai_evidence():
@@ -1472,7 +1499,7 @@ def test_merged_alias_header_workbook_is_extracted_end_to_end_without_ai(tmp_pat
     assert result.tasks[0].subtasks[1].helper_names == ["赵六"]
 
 
-def test_multiline_merged_workplan_uses_structured_import(tmp_path):
+def test_multiline_merged_workplan_retains_structured_fallback_after_model_failure(tmp_path):
     path = tmp_path / "工作推进表.xlsx"
     workbook = Workbook()
     sheet = workbook.active
@@ -1493,11 +1520,11 @@ def test_multiline_merged_workplan_uses_structured_import(tmp_path):
         parse_project_init_file(path, path.name),
         people,
         [],
-        llm_call=lambda _prompt: (_ for _ in ()).throw(AssertionError("chat analysis must not run")),
+        llm_call=lambda _prompt: (_ for _ in ()).throw(ProjectInitAiError("model unavailable")),
     )
 
     first = result.tasks[0].subtasks[0]
-    assert result.model_name == "structured-spreadsheet"
+    assert result.model_name == "structured-spreadsheet-fallback"
     assert result.tasks[0].description == "目标一 目标二"
     assert (first.assignee_name, first.assignee_id) == ("吴肖", 5)
     assert first.helper_names == ["郭熠彬", "温会林"]
@@ -1506,7 +1533,7 @@ def test_multiline_merged_workplan_uses_structured_import(tmp_path):
     assert {warning.code for warning in first.warnings} == {"will_join_project"}
 
 
-def test_real_workplan_aliases_keep_target_roles_dates_and_evaluation_per_row(tmp_path):
+def test_real_workplan_fallback_aliases_keep_target_roles_dates_and_evaluation_per_row(tmp_path):
     path = tmp_path / "工作推进表.xlsx"
     workbook = Workbook()
     sheet = workbook.active
@@ -1570,12 +1597,12 @@ def test_real_workplan_aliases_keep_target_roles_dates_and_evaluation_per_row(tm
         parse_project_init_file(path, path.name),
         people,
         [],
-        llm_call=lambda _prompt: (_ for _ in ()).throw(AssertionError("chat analysis must not run")),
+        llm_call=lambda _prompt: (_ for _ in ()).throw(ProjectInitAiError("model unavailable")),
     )
 
     task = result.tasks[0]
     first, second = task.subtasks
-    assert result.model_name == "structured-spreadsheet"
+    assert result.model_name == "structured-spreadsheet-fallback"
     assert (task.title, task.description, task.owner_name) == (
         "一、建立客户成功体系",
         "完成客户成功体系建设",

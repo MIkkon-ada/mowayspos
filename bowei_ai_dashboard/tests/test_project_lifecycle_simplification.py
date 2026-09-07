@@ -61,7 +61,8 @@ def test_dispatch_changes_draft_to_dispatched_and_notifies_owner():
     project = db.get(models.Project, 1)
     assert project.status == "dispatched"
     assert project.is_active is False
-    assert db.query(models.Notification).filter_by(type="project_owner_notify", project_id=1).count() == 1
+    notification = db.query(models.Notification).filter_by(type="project_owner_notify", project_id=1).one()
+    assert notification.link == "/home/projects/1/owner-submit"
 
 
 def test_dispatch_allows_a_missing_end_date_and_notifies_owner():
@@ -95,6 +96,23 @@ def test_dispatch_notifies_only_strict_project_owners():
     assert result["notified_to"] == 1
     assert db.query(models.Notification).filter_by(type="project_owner_notify", project_id=1, recipient_id=2).count() == 1
     assert db.query(models.Notification).filter_by(type="project_owner_notify", project_id=1, recipient_id=4).count() == 0
+
+
+def test_return_notifies_only_strict_project_owners_and_links_to_owner_submit():
+    db = _db("pending_review")
+    db.add(
+        models.Person(id=4, name="Coordinator", system_role="normal_member", is_active=True),
+    )
+    db.add(
+        models.ProjectMember(project_id=1, person_id=4, person_name_snapshot="Coordinator", role="coordinator"),
+    )
+    db.commit()
+
+    projects.return_project(1, current_user="coach", reason="补充目标", db=db)
+
+    owner_notification = db.query(models.Notification).filter_by(type="project_returned", recipient_id=2).one()
+    assert owner_notification.link == "/home/projects/1/owner-submit"
+    assert db.query(models.Notification).filter_by(type="project_returned", recipient_id=4).count() == 0
 
 
 def test_dispatch_locks_target_project_before_lifecycle_transition(monkeypatch):

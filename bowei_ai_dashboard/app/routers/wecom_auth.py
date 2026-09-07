@@ -173,7 +173,7 @@ def wecom_callback(
         db.rollback()
 
     # 5. 重定向回前端首页，带 cookie
-    resp = RedirectResponse(_frontend_url("/home/dashboard"))
+    resp = RedirectResponse(_frontend_url("/home"))
     resp.set_cookie(
         settings.session_cookie_name,
         sid,

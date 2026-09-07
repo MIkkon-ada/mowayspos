@@ -5,12 +5,9 @@ import { ApiError } from '../api/client'
 import { toast } from '../utils/toast'
 import { useProject } from '../context/ProjectContext'
 import {
-  canShowProjectApproveAction,
-  canShowProjectSubmitAction,
   getProjectPrimaryStatus,
   getProjectStatusBadge,
 } from '../domain/projectLifecycleStatus'
-import { projectOwnerSubmitPath } from '../domain/projectEntryRoutes'
 import type { DashboardOverview, GovernanceAction, GovernanceInitiative, Project } from '../types'
 import { fmtMonth, fmtPlanTime } from '../utils/time'
 import { Skel, SkeletonStatCard } from '../components/Skeleton'
@@ -87,7 +84,7 @@ function aggregateDashboardOverviews(projects: Project[], overviews: DashboardOv
 }
 
 export function DashboardPage() {
-  const { currentProjectId, projects, currentProject, currentProjectRoles, currentUser, reloadProjects } = useProject()
+  const { currentProjectId, projects, currentUser, reloadProjects } = useProject()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
@@ -344,27 +341,13 @@ export function DashboardPage() {
     return () => document.removeEventListener('mousedown', handler)
   }, [showNotif])
 
-  function openFillModal(project?: Project | null) {
-    const target = project ?? dashboardProject
-    if (target) navigate(projectOwnerSubmitPath(target.id))
-  }
-
   const now = new Date()
   const monthStr = `${now.getFullYear()}年${now.getMonth() + 1}月`
 
-  const dashboardProject = scopeMode === 'project' && scopeId ? (projects.find((p) => p.id === scopeId) ?? currentProject) : currentProject
-  const dashboardProjectRoles = dashboardProject?.user_roles ?? currentProjectRoles
-  const isFillableForOwner = canShowProjectSubmitAction(dashboardProject) && dashboardProjectRoles.includes('owner')
-  const isPendingReviewForOwner = canShowProjectApproveAction(dashboardProject) && dashboardProjectRoles.includes('owner')
   const exportTitle = scopeMode === 'my'
     ? '请选择单个项目后导出周报；多项目周报将在后续聚合导出中支持。'
     : undefined
   const exportLabel = exportLoading ? '生成中…' : (scopeMode === 'my' ? '导出我的项目周报' : '导出周报')
-  const mobileProjectNotice = isFillableForOwner
-    ? { title: `项目「${currentProject?.name ?? ''}」待补全立项信息`, detail: '请填写项目背景、目标、预期交付物等内容，填完后可直接发布或提交企业教练审核。', tone: 'warning' as const, actionLabel: '去填写' }
-    : isPendingReviewForOwner
-      ? { title: '立项信息已提交，等待企业教练审核', detail: '企业教练审核通过后项目将正式启动，届时会通知全体成员。', tone: 'review' as const }
-      : undefined
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -404,8 +387,6 @@ export function DashboardPage() {
               if (pid) navigate(`/project/${pid}/${route}`)
             }}
             onOpenNotifications={() => navigate('/home/notifications')}
-            projectNotice={mobileProjectNotice}
-            onOpenProjectNotice={isFillableForOwner ? () => openFillModal() : undefined}
             formatPlanTime={fmtPlanTime}
             projectNameFromRecord={projectNameFromRecord}
           />
@@ -604,82 +585,6 @@ export function DashboardPage() {
             ) : (
               <p className="text-xs text-slate-400 mt-4">当前没有可查看的项目驾驶舱。</p>
             )}
-          </div>
-        )}
-
-        {/* 待完善立项项目列表（owner 全项目扫描） */}
-        {(() => {
-          const fillableProjects = projects.filter((p) => {
-            const status = getProjectPrimaryStatus(p)
-            return (status === 'dispatched' || status === 'returned') && p.user_roles?.includes('owner')
-          })
-          if (fillableProjects.length === 0) return null
-          return (
-            <div className="rounded-2xl border px-5 py-4" style={{ background: '#FFFBEB', borderColor: '#FDE68A' }}>
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: '#FEF3C7' }}>
-                  <svg style={{ width: 14, height: 14, color: '#D97706' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                  </svg>
-                </div>
-                <p className="text-sm font-semibold text-amber-800">待完善立项</p>
-                <span className="text-xs text-amber-500">{fillableProjects.length} 个项目</span>
-              </div>
-              <div className="space-y-2">
-                {fillableProjects.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between gap-3 rounded-xl bg-white/60 px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
-                      <p className="text-xs text-amber-600 mt-0.5">请补全项目背景、目标、预期交付物和重点工作，提交企业教练审核。</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => openFillModal(p)}
-                      className="cursor-pointer flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold text-white"
-                      style={{ background: '#D97706' }}
-                    >
-                      完善立项信息
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )
-        })()}
-
-        {/* 负责人填报横幅 */}
-        {isFillableForOwner && (
-          <div className="flex items-center gap-4 px-5 py-4 rounded-2xl border"
-            style={{ background: '#FFFBEB', borderColor: '#FDE68A' }}>
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#FEF3C7' }}>
-              <svg style={{ width: 18, height: 18, color: '#D97706' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-amber-800">项目「{currentProject?.name}」待补全立项信息</p>
-              <p className="text-xs text-amber-600 mt-0.5">请填写项目背景、目标、预期交付物等内容，填完后可直接发布或提交企业教练审核</p>
-            </div>
-            <button type="button" onClick={() => openFillModal()}
-              className="cursor-pointer flex-shrink-0 px-4 py-2 rounded-xl text-sm font-semibold"
-              style={{ background: '#D97706', color: '#fff' }}>
-              去填写
-            </button>
-          </div>
-        )}
-
-        {isPendingReviewForOwner && (
-          <div className="flex items-center gap-4 px-5 py-4 rounded-2xl border"
-            style={{ background: '#FDF4FF', borderColor: '#E9D5FF' }}>
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#F3E8FF' }}>
-              <svg style={{ width: 18, height: 18, color: '#7E22CE' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-purple-800">立项信息已提交，等待企业教练审核</p>
-              <p className="text-xs text-purple-600 mt-0.5">企业教练审核通过后项目将正式启动，届时会通知全体成员</p>
-            </div>
           </div>
         )}
 

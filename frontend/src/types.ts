@@ -79,6 +79,8 @@ export type CurrentUser = {
   can_view_all: boolean
   can_confirm_all: boolean
   visible_projects: string[]
+  owned_projects?: string[]
+  ceo_projects?: string[]
   project_roles: Record<string, string>
   must_change_password?: boolean
 }

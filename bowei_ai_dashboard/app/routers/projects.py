@@ -2578,7 +2578,7 @@ def dispatch_project(
         ntype="project_owner_notify",
         title="项目负责人待完善立项信息",
         body=f"项目《{project.name}》已完成团队配置，请负责人补全立项信息",
-        link=f"/home/dashboard?projectId={project_id}",
+        link=f"/home/projects/{project_id}/owner-submit",
         project_id=project_id,
     )
     crud.log(db, current_user, "dispatch_project", "project", project_id, {"status": lifecycle}, {"status": PL.S_DISPATCHED})
@@ -2670,14 +2670,14 @@ def return_project(
         end_date=(payload.end_date or "").strip() if payload.end_date is not None else None,
         description=(payload.description or "").strip() if payload.description is not None else None,
     )
-    recipient_ids = project_owner_ids(project_id, db)
+    recipient_ids = project_strict_owner_ids(project_id, db)
     _notify_people(
         db,
         recipient_ids,
         ntype="project_returned",
         title="项目启动申请已退回",
         body=f"项目《{project.name}》需要补充后重新提交{f'，原因：{reason}' if reason else ''}",
-        link=f"/home/dashboard?projectId={project_id}",
+        link=f"/home/projects/{project_id}/owner-submit",
         project_id=project_id,
     )
     crud.log(db, current_user, "return_project", "project", project_id, {"status": lifecycle, "reason": reason or ""}, {"status": "returned"})

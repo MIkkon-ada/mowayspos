@@ -7,6 +7,7 @@ type ApiLikeError = {
 
 type ProjectRef = {
   id: number
+  user_roles?: readonly string[]
 }
 
 type ProjectAccessRef = number | string | { id?: number; name?: string }
@@ -47,7 +48,7 @@ function getFirstProjectId(projects: ProjectRef[]): number | null {
 }
 
 export function getPostLoginDestination(
-  currentUserOrProjects: Pick<CurrentUser, 'is_tech_admin' | 'is_ceo' | 'can_view_all' | 'must_change_password'> | ProjectRef[] | null | undefined,
+  currentUserOrProjects: Pick<CurrentUser, 'is_tech_admin' | 'is_ceo' | 'can_view_all' | 'must_change_password' | 'owned_projects' | 'ceo_projects'> | ProjectRef[] | null | undefined,
   projectsOrPreferred: ProjectRef[] | number | null,
   preferredProjectId?: number | null,
 ): string {
@@ -57,8 +58,14 @@ export function getPostLoginDestination(
 
   const currentUser = currentUserOrProjects
   const projects = Array.isArray(projectsOrPreferred) ? projectsOrPreferred : []
-  if (projects.length === 0) return '/home/dashboard'
   if (currentUser?.is_tech_admin || currentUser?.is_ceo || currentUser?.can_view_all) return '/home/dashboard'
+  if (
+    Boolean(currentUser?.owned_projects?.length || currentUser?.ceo_projects?.length) ||
+    projects.some((project) => project.user_roles?.some((role) => role === 'owner' || role === 'project_ceo'))
+  ) {
+    return '/home/projects'
+  }
+  if (projects.length === 0) return '/home/dashboard'
 
   const preferred = preferredProjectId ?? null
   return '/member/tasks'

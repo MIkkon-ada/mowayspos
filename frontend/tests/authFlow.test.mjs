@@ -27,6 +27,17 @@ test('ordinary members enter the personal task center after login', async () => 
   assert.equal(getPostLoginDestination(member, [{ id: 4 }], null), '/member/tasks')
   assert.equal(getPostLoginDestination(member, [{ id: 4 }, { id: 5 }], 5), '/member/tasks')
 })
+test('project owners enter project management after login', async () => {
+  const { getPostLoginDestination } = await loadAuthFlow()
+  assert.equal(getPostLoginDestination(member, [{ id: 4, user_roles: ['owner'] }], null), '/home/projects')
+  assert.equal(getPostLoginDestination({ ...member, owned_projects: ['Draft project'] }, [], null), '/home/projects')
+})
+
+test('external auth returns to the shared home route resolver', () => {
+  assert.match(read('src/layouts/AppLayout.tsx'), /window\.location\.replace\('\/home'\)/)
+  const backendAuth = fs.readFileSync(path.resolve(root, '..', 'bowei_ai_dashboard/app/routers/wecom_auth.py'), 'utf8')
+  assert.match(backendAuth, /RedirectResponse\(_frontend_url\(["']\/home["']\)\)/)
+})
 test('mytasks sidebar navigation always enters the personal task center', async () => {
   const { getProjectScopedNavigationDestination } = await loadAuthFlow()
   assert.equal(getProjectScopedNavigationDestination('mytasks', null, []), '/member/tasks')

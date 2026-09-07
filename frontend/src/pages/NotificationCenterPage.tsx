@@ -11,6 +11,8 @@ function cleanText(s?: string | null): string {
 // ── 是否需要用户处理 ──────────────────────────────────────────
 function requiresAction(type: string): boolean {
   return [
+    'project_owner_notify',
+    'project_returned',
     'project_dispatch',
     'submission_rejected',
     'submission_pending',

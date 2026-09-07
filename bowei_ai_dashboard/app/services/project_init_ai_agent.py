@@ -1099,11 +1099,17 @@ def _normalise_llm_payload(value: object) -> object:
     return result
 
 
+class _JsonResponseError(ProjectInitAiError):
+    def __init__(self, code: str) -> None:
+        super().__init__("AI 返回的 JSON 不唯一或无法解析")
+        self.code = code
+
+
 def _parse_json_response(raw: str | dict[str, Any]) -> Any:
     if isinstance(raw, dict):
         return raw
     if not isinstance(raw, str):
-        raise ProjectInitAiError("AI 返回格式无效")
+        raise _JsonResponseError("json_missing_or_multiple")
     text = raw.strip()
     values: list[Any] = []
     cursor = 0
@@ -1139,24 +1145,26 @@ def _parse_json_response(raw: str | dict[str, Any]) -> Any:
                     try:
                         values.append(json.loads(candidate))
                     except json.JSONDecodeError:
-                        pass
+                        raise _JsonResponseError("json_malformed") from None
                     cursor = index + 1
                     found_end = True
                     break
         if not found_end:
-            cursor = start + 1
+            raise _JsonResponseError("json_malformed")
     if len(values) != 1:
-        raise ProjectInitAiError("AI 返回的 JSON 不唯一或无法解析")
+        raise _JsonResponseError("json_missing_or_multiple")
     return values[0]
 
 
-def _is_valid_raw_draft_envelope(raw: str) -> bool:
+def _classify_raw_draft_envelope(raw: str) -> str | None:
     try:
         payload = _parse_json_response(raw)
         _RawEnvelope.model_validate(_normalise_llm_payload(payload))
-    except (ProjectInitAiError, ValidationError):
-        return False
-    return True
+    except _JsonResponseError as exc:
+        return exc.code
+    except ValidationError:
+        return "schema_invalid"
+    return None
 
 
 def _evidence_traceability_error(raw: Evidence, sources: list[tuple[str, str, str, int | None]]) -> str | None:
@@ -1665,7 +1673,7 @@ def generate_project_init_draft(
             Capability.PROJECT_INIT_ANALYSIS,
             prompt,
             invocation_context or AIInvocationContext(resource_type="project_init"),
-            response_validator=_is_valid_raw_draft_envelope,
+            response_validator=_classify_raw_draft_envelope,
         ).text
     else:
         raise ProjectInitAiError("AI capability service is required")

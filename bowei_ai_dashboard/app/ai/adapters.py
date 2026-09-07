@@ -24,6 +24,7 @@ class ChatAdapter(Protocol):
         prompt: str,
         *,
         timeout_seconds: int,
+        response_format: dict[str, str] | None = None,
     ) -> str: ...
 
 
@@ -77,6 +78,7 @@ class OpenAICompatibleChatAdapter:
         prompt: str,
         *,
         timeout_seconds: int,
+        response_format: dict[str, str] | None = None,
     ) -> str:
         try:
             from openai import APIConnectionError, APITimeoutError, OpenAI
@@ -98,7 +100,8 @@ class OpenAICompatibleChatAdapter:
             max_output_tokens = config.get("max_output_tokens") if isinstance(config, dict) else None
             if isinstance(max_output_tokens, int) and not isinstance(max_output_tokens, bool) and max_output_tokens > 0:
                 request["max_tokens"] = max_output_tokens
-            response_format = config.get("response_format") if isinstance(config, dict) else None
+            if response_format is None:
+                response_format = config.get("response_format") if isinstance(config, dict) else None
             if response_format == {"type": "json_object"}:
                 request["response_format"] = response_format
             response = client.chat.completions.create(**request)
@@ -179,17 +182,23 @@ class AnthropicChatAdapter:
         prompt: str,
         *,
         timeout_seconds: int,
+        response_format: dict[str, str] | None = None,
     ) -> str:
         try:
             from anthropic import Anthropic
 
             client = Anthropic(api_key=api_key, base_url=model.base_url, timeout=timeout_seconds)
+            messages = [{"role": "user", "content": prompt}]
+            json_object = response_format == {"type": "json_object"}
+            if json_object:
+                messages[0]["content"] += "\nReturn exactly one JSON object and no other text."
+                messages.append({"role": "assistant", "content": "{"})
             response = client.messages.create(
                 model=model.model_name,
                 max_tokens=4096,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
             )
-            return "".join(
+            return ("{" if json_object else "") + "".join(
                 block.text for block in response.content if getattr(block, "type", "") == "text"
             )
         except AIUpstreamError:
@@ -308,11 +317,13 @@ class DefaultAIAdapters:
         prompt: str,
         *,
         timeout_seconds: int,
+        response_format: dict[str, str] | None = None,
     ) -> str:
+        options = {"response_format": response_format} if response_format is not None else {}
         if model.provider == "anthropic":
-            return self._anthropic.complete(model, api_key, prompt, timeout_seconds=timeout_seconds)
+            return self._anthropic.complete(model, api_key, prompt, timeout_seconds=timeout_seconds, **options)
         if model.provider in {"deepseek", "dashscope", "glm"}:
-            return self._openai.complete(model, api_key, prompt, timeout_seconds=timeout_seconds)
+            return self._openai.complete(model, api_key, prompt, timeout_seconds=timeout_seconds, **options)
         raise AIUpstreamError("AI_UPSTREAM_UNKNOWN", retryable=False)
 
     def transcribe_file(

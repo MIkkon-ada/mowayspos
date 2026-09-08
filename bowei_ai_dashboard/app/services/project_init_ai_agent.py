@@ -294,6 +294,21 @@ def _normalise_title(value: object) -> str:
     return re.sub(r"[\W_]+", "", str(value or "").strip().casefold())
 
 
+def has_cross_batch_task_conflict(batch_tasks: Iterable[Iterable[AgentTask]]) -> bool:
+    """Detect plausible title duplicates across batches before local merging."""
+    previous_titles: set[str] = set()
+    for tasks in batch_tasks:
+        titles = {_normalise_title(task.title) for task in tasks}
+        for title in titles:
+            if any(
+                title == previous or SequenceMatcher(None, title, previous).ratio() >= 0.88
+                for previous in previous_titles
+            ):
+                return True
+        previous_titles.update(titles)
+    return False
+
+
 def _is_calendar_date(value: str) -> bool:
     try:
         date.fromisoformat(value)
@@ -1723,6 +1738,7 @@ def generate_project_init_draft(
     batches = _split_batches(source_values)
     canonical_sources = [source for batch in batches for source in batch]
     all_tasks: list[AgentTask] = []
+    batch_tasks: list[list[AgentTask]] = []
     all_profiles: list[ProjectProfileDraft] = []
     for batch in batches:
         prompt = _context_prompt(batch, people, indexed_tasks)
@@ -1795,11 +1811,12 @@ def generate_project_init_draft(
                 return fallback
             raise
         all_profiles.append(envelope.project_profile)
+        batch_tasks.append(envelope.tasks)
         all_tasks = _merge_tasks([*all_tasks, *_merge_tasks(envelope.tasks)])
     merged_profile = _merge_project_profiles(all_profiles)
     if not all_tasks and not merged_profile.has_content():
         raise ProjectInitAiEmptyResult("AI 未提取到可用项目基本信息或任务")
-    if len(batches) > 1 and all_tasks:
+    if has_cross_batch_task_conflict(batch_tasks):
         try:
             merge_raw = _invoke_llm(caller, _final_merge_prompt(all_tasks, canonical_sources), provider)
             merge_payload = _parse_json_response(merge_raw)

@@ -147,10 +147,10 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
         </div>
       </div>
 
-      <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
+      <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
         {navEntries.map((entry, idx) => {
           if ('kind' in entry) {
-            return <div key={idx} className="pt-3" />
+            return <div key={idx} className="pt-2" />
           }
 
           const isActive = activePage === entry.page
@@ -165,7 +165,7 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
-                padding: '8px 10px',
+                padding: '6px 10px',
                 borderRadius: 8,
                 color: isActive ? '#38BDF8' : '#94A3B8',
                 fontSize: 13,

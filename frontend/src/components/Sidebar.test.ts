@@ -8,4 +8,12 @@ describe('Sidebar navigation styles', () => {
 
     expect(source).not.toMatch(/borderLeft:[\s\S]{0,500}border:\s*['"]none['"]/)
   })
+
+  it('uses the approved compact vertical density for expanded navigation', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/components/Sidebar.tsx'), 'utf8')
+
+    expect(source).toContain('className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto"')
+    expect(source).toContain('className="pt-2"')
+    expect(source).toContain("padding: '6px 10px'")
+  })
 })

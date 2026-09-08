@@ -1739,6 +1739,45 @@ def test_source_chunk_cannot_be_used_to_forge_an_attachment_id():
 
 
 @pytest.mark.parametrize("use_service", [False, True])
+def test_distinct_tasks_across_batches_skip_final_merge(use_service, project_init_service):
+    calls: list[str] = []
+    sources = [
+        chunk("调研" * 20_000, name="research.txt"),
+        chunk("培训" * 20_000, name="training.txt"),
+    ]
+    tasks = [
+        raw_task(
+            title=title,
+            owner_name="",
+            assignee_name="",
+            evidence=[{
+                "attachment_id": source["attachment_id"],
+                "file_name": source["file_name"],
+                "location": source["location"],
+                "excerpt": title,
+            }],
+        )
+        for title, source in zip(("调研", "培训"), sources)
+    ]
+
+    def llm(prompt: str, provider: str) -> str:
+        calls.append(prompt)
+        if "最终合并 Agent" in prompt:
+            return json.dumps({"tasks": tasks}, ensure_ascii=False)
+        index = 0 if "research.txt · lines 1-2" in prompt else 1
+        return json.dumps({"tasks": [tasks[index]]}, ensure_ascii=False)
+
+    invocation = {"ai_service": project_init_service(llm)} if use_service else {"llm_call": llm}
+    result = generate_project_init_draft(sources, [], [], **invocation)
+
+    assert len(calls) == 2
+    assert all("最终合并 Agent" not in prompt for prompt in calls)
+    assert [task.title for task in result.tasks] == ["调研", "培训"]
+    assert [task.evidence[0].file_name for task in result.tasks] == ["research.txt", "training.txt"]
+    assert all(task.subtasks[0].evidence == task.evidence for task in result.tasks)
+
+
+@pytest.mark.parametrize("use_service", [False, True])
 def test_same_title_tasks_across_batches_merge_all_evidence_and_subtasks(use_service, project_init_service):
     calls: list[str] = []
 
@@ -1775,6 +1814,50 @@ def test_same_title_tasks_across_batches_merge_all_evidence_and_subtasks(use_ser
     assert len(result.tasks) == 1
     assert {item.file_name for item in result.tasks[0].evidence} == {"a.txt", "b.txt"}
     assert {item.title for item in result.tasks[0].subtasks} == {"方案确认", "上线确认"}
+
+
+@pytest.mark.parametrize(("batch_titles", "expected_calls"), [
+    ((("调研", "调研"), ("培训",)), 2),
+    ((("开展客户需求调研第一阶段", "开展客户需求调研第二阶段"), ("培训",)), 2),
+    (((" Research - PLAN! ",), ("research_plan",)), 3),
+    ((("需求调研第一阶段",), ("需求调研第二阶段",)), 2),
+    ((("开展客户需求调研第一阶段",), ("开展客户需求调研第二阶段",)), 3),
+    ((("a" * 22 + "bcd",), ("a" * 22 + "efg",)), 3),
+    ((("a" * 21 + "bcde",), ("a" * 21 + "fghi",)), 2),
+    ((("需求调研",), ()), 2),
+])
+def test_final_merge_only_considers_conflicting_titles_from_distinct_batches(batch_titles, expected_calls):
+    calls: list[str] = []
+    sources = [chunk("A" * 40_000, name="a.txt"), chunk("B" * 40_000, name="b.txt")]
+    batch_tasks = [
+        [raw_task(
+            title=title,
+            owner_name="",
+            assignee_name="",
+            evidence=[{
+                "attachment_id": source["attachment_id"],
+                "file_name": source["file_name"],
+                "location": source["location"],
+                "excerpt": source["text"][0],
+            }],
+        ) for title in titles]
+        for source, titles in zip(sources, batch_titles)
+    ]
+
+    def llm(prompt: str, provider: str) -> str:
+        calls.append(prompt)
+        if "最终合并 Agent" in prompt:
+            return json.dumps({"tasks": [task for batch in batch_tasks for task in batch]}, ensure_ascii=False)
+        index = 0 if "a.txt · lines 1-2" in prompt else 1
+        return json.dumps({"tasks": batch_tasks[index]}, ensure_ascii=False)
+
+    result = generate_project_init_draft(sources, [], [], llm_call=llm)
+
+    assert len(calls) == expected_calls
+    assert ("最终合并 Agent" in calls[-1]) is (expected_calls == 3)
+    assert {item.file_name for task in result.tasks for item in task.evidence} == {
+        source["file_name"] for source, titles in zip(sources, batch_titles) if titles
+    }
 
 
 def test_all_task_and_subtask_ids_are_positive_strict_ints_or_none():

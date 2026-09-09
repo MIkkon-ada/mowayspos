@@ -54,7 +54,7 @@ describe('owner submit approved B layout', () => {
     expect(screen.getByText('P-TEST1')).toBeTruthy()
     expect(screen.getByText('工作推进方案')).toBeTruthy()
     expect(screen.getAllByText('未命名重点工作').length).toBe(2)
-    expect(screen.getByText('目标成果')).toBeTruthy()
+    expect(screen.getByText('目标')).toBeTruthy()
     expect(screen.getByText('验收标准 / 关键成果')).toBeTruthy()
     expect(screen.getByText('推进流程')).toBeTruthy()
     expect(screen.getByTestId('owner-submit-goal-result').getAttribute('data-layout')).toBe('stacked')

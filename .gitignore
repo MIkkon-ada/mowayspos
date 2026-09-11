@@ -65,6 +65,7 @@ bowei_ai_dashboard/.pytest_tmp_*/
 
 # Runtime meeting attachments are stored outside Git.
 bowei_ai_dashboard/data/meeting_documents/
+bowei_ai_dashboard/data/
 *.docx
 
 # Local screenshots / temporary images
@@ -106,6 +107,8 @@ bowei_ai_dashboard/attachment-storage/
 
 # Local operator artifacts (never version)
 /tmp/
+/bowei_ai_dashboard/tmp/
+/bowei_ai_dashboard/*.db.codex-backup-*
 /frontend/dist.zip
 /.superpowers/
 /_inspect_db.py

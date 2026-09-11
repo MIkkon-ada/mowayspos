@@ -17,10 +17,16 @@ from ..domain import source_type as ST
 from ..domain import task_status as TS
 from ..domain import project_lifecycle as PL
 from ..domain.project_permissions import (
+    A_ARCHIVE,
+    A_CANCEL_CLOSE_REQUEST,
     A_EDIT_SOURCE,
+    A_EDIT_CLOSE_REQUEST,
     A_MANAGE_MEMBERS_DIRECT,
     A_REQUEST_MEMBER_CHANGE,
+    A_REQUEST_CLOSE,
+    A_REVIEW_CLOSE_REQUEST,
     A_REVIEW_MEMBER_CHANGE,
+    A_DELETE,
     A_CREATE,
     A_BATCH_IMPORT,
     A_DISPATCH,
@@ -33,13 +39,8 @@ from ..permissions import (
     PROJECT_ROLE_COLLABORATOR,
     PROJECT_ROLE_COORDINATOR,
     PROJECT_ROLE_OWNER,
-    get_all_project_roles,
     get_current_user_name,
     get_user_context_from_db,
-    require_project_manager,
-    require_project_access,
-    require_project_owner_or_admin,
-    require_tech_admin,
 )
 from ..time_utils import utc_now
 from ..services.notify import (
@@ -355,67 +356,6 @@ def _project_row_lifecycle(raw: dict) -> str:
     if is_active is False:
         return "archived"
     return "draft"
-
-
-def _require_super_admin(current_user: str, db: Session):
-    ctx = get_user_context_from_db(current_user, db)
-    if not ctx.get("is_tech_admin"):
-        raise HTTPException(403, "仅超级管理员可执行此操作")
-
-
-def _require_project_manager(current_user: str, db: Session):
-    """阶段 2B 收口：项目主数据管理仅 tech_admin。"""
-    return require_tech_admin(current_user, db)
-
-
-def _require_ceo_or_tech_admin(current_user: str, db: Session):
-    ctx = get_user_context_from_db(current_user, db)
-    if not (ctx.get("is_tech_admin") or ctx.get("is_ceo")):
-        raise HTTPException(403, "仅公司管理或超级管理员可执行此操作")
-
-
-def _require_project_coach_or_tech_admin(current_user: str, project_id: int, db: Session):
-    """审核立项权限：仅企业教练（project_ceo）或超级管理员可执行。
-
-    公司管理（system_role=company_ceo）不能仅凭系统角色审核立项。
-    企业教练必须在该项目的 project_members 中有 project_ceo 角色。
-    """
-    ctx = get_user_context_from_db(current_user, db)
-    if ctx.get("is_tech_admin"):
-        return
-    person_id = ctx.get("person_id")
-    if person_id:
-        roles = get_all_project_roles(person_id, project_id, db)
-        if "project_ceo" in roles:
-            return
-    raise HTTPException(403, "仅企业教练或超级管理员可执行此操作")
-
-
-def _require_project_source_manager(current_user: str, project_id: int, db: Session):
-    """立项源头管理权限：super_admin 全阶段兜底；company_ceo 仅 draft 阶段可直接操作。
-
-    项目下发后，编辑基础信息 / 配置成员等直接写操作需走变更申请流（本轮未实现），
-    故非 draft 阶段仅 super_admin 可技术兜底，company_ceo / project_ceo / owner 均拒绝。
-    """
-    ctx = get_user_context_from_db(current_user, db)
-    if ctx.get("is_tech_admin"):
-        return
-    if ctx.get("is_ceo"):
-        status = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
-        if status == "draft":
-            return
-    raise HTTPException(403, "项目已下发，当前仅支持查看。如需调整，请走变更申请流程。")
-
-
-def _require_archive_via_approval(current_user: str, db: Session):
-    """归档需审核流（本轮未实现），仅 super_admin 可技术兜底直接归档。
-
-    company_ceo / project_ceo / owner 均不可直接归档，需提交归档申请由公司管理审核。
-    """
-    ctx = get_user_context_from_db(current_user, db)
-    if ctx.get("is_tech_admin"):
-        return
-    raise HTTPException(403, "项目归档需提交公司管理审核。")
 
 
 def _person_name(member: models.ProjectMember, db: Session) -> str:
@@ -1777,34 +1717,6 @@ def _close_context(current_user: str, db: Session) -> dict:
     return get_user_context_from_db(current_user, db)
 
 
-def _require_close_request_owner(current_user: str, project_id: int, db: Session) -> dict:
-    context = _close_context(current_user, db)
-    if context.get("is_tech_admin"):
-        return context
-    person_id = context.get("person_id")
-    if person_id and "owner" in get_all_project_roles(person_id, project_id, db):
-        return context
-    raise HTTPException(403, "仅项目负责人或超级管理员可执行此操作")
-
-
-def _require_original_close_requester(
-    current_user: str,
-    request: models.ProjectCloseRequest,
-    db: Session,
-) -> dict:
-    context = _close_context(current_user, db)
-    if context.get("is_tech_admin"):
-        return context
-    person_id = context.get("person_id")
-    if (
-        person_id
-        and request.requester_person_id == person_id
-        and "owner" in get_all_project_roles(person_id, request.project_id, db)
-    ):
-        return context
-    raise HTTPException(403, "仅原申请人或超级管理员可执行此操作")
-
-
 def _require_close_request_view(current_user: str, project: models.Project, db: Session) -> dict:
     context = _close_context(current_user, db)
     if not _can_view_project(project.id, project.name, context, db):
@@ -1903,7 +1815,7 @@ def _ensure_pending_close_pair(
     request: models.ProjectCloseRequest,
 ) -> None:
     if request.status != "pending" or PL.normalize(project.status) != PL.S_PENDING_CLOSE:
-        raise HTTPException(409, "结束申请已不处于待审核状态")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "结束申请已不处于待审核状态")
 
 
 def _raise_close_blocked(blockers: list[dict]) -> None:
@@ -1920,14 +1832,15 @@ def create_project_close_request(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    context = _require_close_request_owner(current_user, project_id, db)
+    access = authorize_project_action(current_user, project, A_REQUEST_CLOSE, db)
+    context = access.context
     project = _lock_project_for_close(project_id, db)
     if not project:
         raise HTTPException(404, "project not found")
     if PL.normalize(project.status) != PL.S_ACTIVE:
-        raise HTTPException(409, "仅进行中的项目可申请结束")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "仅进行中的项目可申请结束")
     if db.query(models.ProjectCloseRequest).filter_by(project_id=project_id, status="pending").first():
-        raise HTTPException(409, "项目已有待审核的结束申请")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目已有待审核的结束申请")
 
     material_data = payload.model_dump()
     blockers, _warnings = evaluate_project_close(db, project_id, material_data)
@@ -2026,7 +1939,14 @@ def update_project_close_request(
     request = _lock_close_request(project_id, request_id, db)
     if not request:
         raise HTTPException(404, "project close request not found")
-    context = _require_original_close_requester(current_user, request, db)
+    access = authorize_project_action(
+        current_user,
+        project,
+        A_EDIT_CLOSE_REQUEST,
+        db,
+        requester_person_id=request.requester_person_id,
+    )
+    context = access.context
     _ensure_pending_close_pair(project, request)
 
     current, _valid = material_values(request)
@@ -2082,7 +2002,14 @@ def cancel_project_close_request(
     request = _lock_close_request(project_id, request_id, db)
     if not request:
         raise HTTPException(404, "project close request not found")
-    context = _require_original_close_requester(current_user, request, db)
+    access = authorize_project_action(
+        current_user,
+        project,
+        A_CANCEL_CLOSE_REQUEST,
+        db,
+        requester_person_id=request.requester_person_id,
+    )
+    context = access.context
     _ensure_pending_close_pair(project, request)
     before = _close_state(request, project)
     request.status = "cancelled"
@@ -2124,14 +2051,14 @@ def approve_project_close_request(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    _require_project_coach_or_tech_admin(current_user, project_id, db)
+    access = authorize_project_action(current_user, project, A_REVIEW_CLOSE_REQUEST, db)
     project = _lock_project_for_close(project_id, db)
     if not project:
         raise HTTPException(404, "project not found")
     request = _lock_close_request(project_id, request_id, db)
     if not request:
         raise HTTPException(404, "project close request not found")
-    context = _close_context(current_user, db)
+    context = access.context
     _ensure_pending_close_pair(project, request)
     blockers, _warnings = evaluate_project_close(db, project_id, request)
     if blockers:
@@ -2179,14 +2106,14 @@ def reject_project_close_request(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    _require_project_coach_or_tech_admin(current_user, project_id, db)
+    access = authorize_project_action(current_user, project, A_REVIEW_CLOSE_REQUEST, db)
     project = _lock_project_for_close(project_id, db)
     if not project:
         raise HTTPException(404, "project not found")
     request = _lock_close_request(project_id, request_id, db)
     if not request:
         raise HTTPException(404, "project close request not found")
-    context = _close_context(current_user, db)
+    context = access.context
     _ensure_pending_close_pair(project, request)
     if not payload.review_comment:
         raise HTTPException(422, "退回结束申请必须填写审核意见")
@@ -2424,7 +2351,7 @@ def delete_project(
     db: Session = Depends(get_db),
 ):
     """Permanently remove a project of any lifecycle after double confirmation."""
-    _require_super_admin(current_user, db)
+    authorize_global_project_action(current_user, A_DELETE, db)
     project = _lock_project_for_delete(project_id, db)
     if not project:
         raise HTTPException(404, "项目不存在")
@@ -2478,7 +2405,7 @@ def retry_project_purge_cleanup(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    _require_super_admin(current_user, db)
+    authorize_global_project_action(current_user, A_DELETE, db)
     try:
         cleaned = retry_project_payload_cleanup(
             cleanup_key,
@@ -2511,14 +2438,14 @@ def archive_project(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    _require_archive_via_approval(current_user, db)
+    authorize_global_project_action(current_user, A_ARCHIVE, db)
     project = _lock_project_for_close(project_id, db)
     if not project:
         raise HTTPException(404, "project not found")
 
     lifecycle = PL.normalize(project.status)
     if lifecycle != PL.S_ENDED:
-        raise HTTPException(409, "仅已结束项目可以归档")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "仅已结束项目可以归档")
 
     _set_project_lifecycle(project, "archived", db=db, project_id=project_id)
     crud.log(db, current_user, "archive_project", "project", project_id, {"is_active": True}, {"is_active": False})

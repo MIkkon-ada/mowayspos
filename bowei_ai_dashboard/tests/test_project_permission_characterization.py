@@ -10,10 +10,16 @@ from sqlalchemy.orm import sessionmaker
 from app import models, schemas
 from app.database import Base
 from app.domain.project_permissions import (
+    A_ARCHIVE,
     A_BATCH_IMPORT,
+    A_CANCEL_CLOSE_REQUEST,
     A_CREATE,
+    A_DELETE,
     A_DISPATCH,
+    A_EDIT_CLOSE_REQUEST,
     A_OWNER_SUBMIT,
+    A_REQUEST_CLOSE,
+    A_REVIEW_CLOSE_REQUEST,
     A_REVIEW_START,
     A_TECHNICAL_KICKOFF,
     A_VIEW,
@@ -28,6 +34,8 @@ from app.routers.projects import (
     create_member_change_request,
     create_project,
     create_project_close_request,
+    cancel_project_close_request,
+    delete_project,
     delete_project,
     dispatch_project,
     kickoff_project,
@@ -35,6 +43,7 @@ from app.routers.projects import (
     list_members,
     owner_submit_project_profile,
     return_project,
+    update_project_close_request,
 )
 
 
@@ -276,3 +285,65 @@ def test_global_and_lifecycle_endpoints_use_access_services(monkeypatch):
 
     assert global_calls == [A_CREATE, A_BATCH_IMPORT, A_TECHNICAL_KICKOFF]
     assert project_calls == [A_DISPATCH, A_OWNER_SUBMIT, A_REVIEW_START, A_REVIEW_START]
+
+
+def test_terminal_endpoints_use_access_services(monkeypatch):
+    global_calls: list[str] = []
+    project_calls: list[tuple[str, dict]] = []
+
+    def global_spy(current_user, action, db):
+        global_calls.append(action)
+        return SimpleNamespace(context=projects.get_user_context_from_db(current_user, db))
+
+    def project_spy(current_user, project, action, db, **kwargs):
+        project_calls.append((action, kwargs))
+        roles = {"project_ceo"} if current_user == "coach" else {"owner"}
+        return SimpleNamespace(
+            context=projects.get_user_context_from_db(current_user, db),
+            subject=SimpleNamespace(
+                is_tech_admin=current_user == "admin",
+                project_roles=frozenset(roles),
+            ),
+        )
+
+    monkeypatch.setattr(projects, "authorize_global_project_action", global_spy, raising=False)
+    monkeypatch.setattr(projects, "authorize_project_action", project_spy, raising=False)
+
+    close_db = _seed()
+    request = create_project_close_request(1, _close_payload(), current_user="owner", db=close_db)
+    update_project_close_request(
+        1,
+        request["id"],
+        schemas.ProjectCloseRequestUpdatePayload(summary="Updated"),
+        current_user="owner",
+        db=close_db,
+    )
+    cancel_project_close_request(1, request["id"], current_user="owner", db=close_db)
+
+    review_db = _seed()
+    review_request = create_project_close_request(1, _close_payload(), current_user="owner", db=review_db)
+    approve_project_close_request(
+        1,
+        review_request["id"],
+        schemas.ProjectCloseReviewPayload(),
+        current_user="coach",
+        db=review_db,
+    )
+
+    archive_project(1, current_user="admin", db=_seed(lifecycle="ended"))
+    delete_project(
+        1,
+        schemas.ProjectDeletePayload(confirm_name="Characterization Project", confirm_phrase="永久删除"),
+        current_user="admin",
+        db=_seed(),
+    )
+
+    assert [action for action, _ in project_calls] == [
+        A_REQUEST_CLOSE,
+        A_EDIT_CLOSE_REQUEST,
+        A_CANCEL_CLOSE_REQUEST,
+        A_REQUEST_CLOSE,
+        A_REVIEW_CLOSE_REQUEST,
+    ]
+    assert global_calls == [A_ARCHIVE, A_DELETE]
+    assert project_calls[1][1]["requester_person_id"] == 4

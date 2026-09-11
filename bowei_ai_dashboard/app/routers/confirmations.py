@@ -16,6 +16,12 @@ from ..domain import source_type as ST
 from ..domain import submission_result_type as RT
 from ..domain import submission_status as SS
 from ..domain import task_status as TS
+from ..domain.workflow_permissions import (
+    A_CONFIRMATION_CEO_DECIDE,
+    A_CONFIRMATION_COORDINATOR_FEEDBACK,
+    A_CONFIRMATION_ESCALATE,
+    A_CONFIRMATION_REVIEW,
+)
 from ..permissions import (
     can_access_confirmation_center,
     can_assign_submission,
@@ -523,7 +529,12 @@ def _require_owner_style_actor(context: dict, row: models.UpdateSubmission, db: 
 def _can_owner_style_action(context: dict, row: models.UpdateSubmission, db: Session, *, allow_assign: bool = False) -> bool:
     if context.get("is_tech_admin"):
         return True
-    if P.can_confirm(context, row, db):
+    if P.decide_workflow_for_project(
+        context,
+        row.project_id,
+        A_CONFIRMATION_REVIEW,
+        db,
+    ).allowed:
         return True
     if allow_assign and can_assign_submission(context):
         return True
@@ -1811,7 +1822,12 @@ def coordinator_feedback_task_card(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    if not (context.get("is_tech_admin") or P.can_coordinate(context, row, db)):
+    if not P.decide_workflow_for_project(
+        context,
+        row.project_id,
+        A_CONFIRMATION_COORDINATOR_FEEDBACK,
+        db,
+    ).allowed:
         raise HTTPException(403, "permission denied — 仅该项目统筹人或管理员可反馈")
     if W.submission_status(row) != SS.S_PENDING_OWNER:
         raise HTTPException(409, "submission is no longer waiting for owner processing")
@@ -1903,7 +1919,12 @@ def escalate_task_card_to_ceo(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    if not (context.get("is_tech_admin") or P.can_escalate(context, row, db)):
+    if not P.decide_workflow_for_project(
+        context,
+        row.project_id,
+        A_CONFIRMATION_ESCALATE,
+        db,
+    ).allowed:
         raise HTTPException(403, "permission denied")
     W.require_submission_status(row, SS.OWNER_ACTIONABLE)
 
@@ -1961,7 +1982,12 @@ def ceo_decide_task_card(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    if not (context.get("is_tech_admin") or P.can_ceo_decide(context, row, db)):
+    if not P.decide_workflow_for_project(
+        context,
+        row.project_id,
+        A_CONFIRMATION_CEO_DECIDE,
+        db,
+    ).allowed:
         raise HTTPException(403, "permission denied — 仅该项目企业教练或管理员可批示")
 
     # 主状态校验：仅 S_PENDING_OWNER 时允许单卡批示
@@ -2198,7 +2224,12 @@ def coordinator_feedback(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    if not (context.get("is_tech_admin") or P.can_coordinate(context, row, db)):
+    if not P.decide_workflow_for_project(
+        context,
+        row.project_id,
+        A_CONFIRMATION_COORDINATOR_FEEDBACK,
+        db,
+    ).allowed:
         raise HTTPException(403, "permission denied — 仅该专项统筹人（coordinator）可反馈")
     W.require_submission_status(row, SS.WAITING_COORDINATOR_FEEDBACK)
     before = crud.to_dict(row)
@@ -2231,7 +2262,12 @@ def escalate_ceo(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    if not (context.get("is_tech_admin") or P.can_escalate(context, row, db)):
+    if not P.decide_workflow_for_project(
+        context,
+        row.project_id,
+        A_CONFIRMATION_ESCALATE,
+        db,
+    ).allowed:
         raise HTTPException(403, "permission denied — 仅项目负责人（owner）或超级管理员可上报企业教练")
     W.require_submission_status(row, SS.ESCALATABLE_TO_CEO)
     before = crud.to_dict(row)
@@ -2270,7 +2306,12 @@ def ceo_decide(
     context = get_user_context_from_db(current_user or payload.operator, db)
     _require_submission_writable(row, context, db)
     _require_confirmation_center(context)
-    if not (context.get("is_tech_admin") or P.can_ceo_decide(context, row, db)):
+    if not P.decide_workflow_for_project(
+        context,
+        row.project_id,
+        A_CONFIRMATION_CEO_DECIDE,
+        db,
+    ).allowed:
         raise HTTPException(403, "permission denied — 仅该项目企业教练或管理员可批示")
     W.require_submission_status(row, SS.WAITING_CEO_DECISION)
     before = crud.to_dict(row)

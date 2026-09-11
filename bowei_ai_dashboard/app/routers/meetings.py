@@ -18,6 +18,16 @@ from ..ai.contracts import AIInvocationContext, Capability
 from ..ai.service import AIService
 from ..domain import task_status as TS
 from ..domain import project_lifecycle as PL
+from ..domain.workflow_permissions import (
+    A_MEETING_APPLY_CHANGES,
+    A_MEETING_CREATE,
+    A_MEETING_EDIT,
+    A_MEETING_KICKOFF_DECIDE,
+    A_MEETING_KICKOFF_SUBMIT,
+    A_MEETING_PROGRESS_REVIEW,
+    A_MEETING_PUBLISH,
+    A_MEETING_REVIEW_CHANGES,
+)
 from ..database import get_db
 
 logger = logging.getLogger("bowei.meetings")
@@ -78,6 +88,7 @@ from ..services.meeting_progress_review import (
     parse_named_reports,
 )
 from ..services.key_task_execution import record_execution_event
+from ..services import policy as P
 from ..time_utils import utc_now
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
@@ -186,7 +197,8 @@ def create_kickoff_run(
     db: Session = Depends(get_db),
 ):
     current_user = require_login(current_user, db)
-    require_project_role(current_user, project_id, [PROJECT_ROLE_OWNER_KEY], db)
+    context = get_user_context_from_db(current_user, db)
+    _require_workflow_action(context, project_id, A_MEETING_KICKOFF_SUBMIT, db)
     project = db.get(models.Project, project_id)
     if not project or not PL.is_execution_available(project.status):
         raise HTTPException(409, "当前项目阶段不可发起启动会")
@@ -231,7 +243,8 @@ def submit_kickoff_run(
     run = db.get(models.KickoffAgentRun, run_id)
     if not run:
         raise HTTPException(404, "启动会审核包不存在")
-    require_project_role(current_user, run.project_id, [PROJECT_ROLE_OWNER_KEY], db)
+    context = get_user_context_from_db(current_user, db)
+    _require_workflow_action(context, run.project_id, A_MEETING_KICKOFF_SUBMIT, db)
     if run.status != "draft":
         raise HTTPException(409, "启动会审核包不能重复提交")
     package = json.loads(run.result_json or "{}")
@@ -253,8 +266,8 @@ def confirm_kickoff_run(
     run = db.get(models.KickoffAgentRun, run_id)
     if not run:
         raise HTTPException(404, "启动会审核包不存在")
-    require_project_role(current_user, run.project_id, [PROJECT_ROLE_CEO_KEY], db)
     context = get_user_context_from_db(current_user, db)
+    _require_workflow_action(context, run.project_id, A_MEETING_KICKOFF_DECIDE, db)
     project, meeting = confirm_kickoff_start(run_id, context.get("name") or current_user, db)
     db.commit()
     return {"project": crud.to_dict(project), "meeting": crud.to_dict(meeting)}
@@ -273,7 +286,8 @@ def review_kickoff_proposal(
     proposal = db.get(models.KickoffChangeProposal, proposal_id)
     if not run or not proposal or proposal.run_id != run.id:
         raise HTTPException(404, "启动会提案不存在")
-    require_project_role(current_user, run.project_id, [PROJECT_ROLE_CEO_KEY], db)
+    context = get_user_context_from_db(current_user, db)
+    _require_workflow_action(context, run.project_id, A_MEETING_KICKOFF_DECIDE, db)
     account = db.query(models.Account).filter_by(username=current_user).first()
     if account and account.person_id and run.created_by_person_id == account.person_id:
         raise HTTPException(403, "PM 不能审核自己提交的启动会")
@@ -290,6 +304,25 @@ def review_kickoff_proposal(
 def _require_global_read_scope(context: dict) -> None:
     if not (context.get("is_tech_admin") or context.get("is_ceo")):
         raise HTTPException(403, "permission denied")
+
+
+def _require_workflow_action(
+    context: dict,
+    project_id: int | None,
+    action: str,
+    db: Session,
+    *,
+    creator_person_id: int | None = None,
+) -> None:
+    decision = P.decide_workflow_for_project(
+        context,
+        project_id,
+        action,
+        db,
+        creator_person_id=creator_person_id,
+    )
+    if not decision.allowed:
+        raise HTTPException(decision.status_code, decision.detail or "permission denied")
 
 
 def _meeting_project_id_or_raise(row: models.Meeting, context: dict, db: Session) -> int | None:
@@ -387,19 +420,11 @@ def create_meeting(
     db: Session = Depends(get_db),
 ):
     current_user = require_login(current_user, db)
+    context = get_user_context_from_db(current_user, db)
     if payload.project_id is None:
         raise HTTPException(422, "project_id is required")
 
-    require_project_role(
-        current_user,
-        payload.project_id,
-        [
-            PROJECT_ROLE_OWNER_KEY,
-            PROJECT_ROLE_COORD_KEY,
-            PROJECT_ROLE_MEMBER_KEY,
-        ],
-        db,
-    )
+    _require_workflow_action(context, payload.project_id, A_MEETING_CREATE, db)
     require_project_business_writable(payload.project_id, db)
     _require_skill_run_ready(payload.skill_run_id, payload.project_id, db)
     project = db.get(models.Project, payload.project_id)
@@ -1076,7 +1101,13 @@ def review_project_meeting(
     meeting = _meeting_for_read(meeting_id, current_user, db)
     if not meeting.project_id or not meeting.document_source_id:
         raise HTTPException(409, "only project document meetings support this review flow")
-    require_project_role(current_user, meeting.project_id, [PROJECT_ROLE_OWNER_KEY], db)
+    context = get_user_context_from_db(current_user, db)
+    review_action = (
+        A_MEETING_APPLY_CHANGES
+        if payload.action == "apply_changes"
+        else A_MEETING_PUBLISH
+    )
+    _require_workflow_action(context, meeting.project_id, review_action, db)
     account = db.query(models.Account).filter_by(username=current_user).first()
     if payload.action == "return":
         if meeting.review_status not in {"pending_review", "returned"}:
@@ -1445,12 +1476,7 @@ def patch_progress_review(
         raise HTTPException(404, "progress review not found")
     project_id = _meeting_project_id_or_raise(meeting, context, db)
     if project_id is not None:
-        require_project_role(
-            current_user,
-            project_id,
-            [PROJECT_ROLE_OWNER_KEY, PROJECT_ROLE_COORD_KEY],
-            db,
-        )
+        _require_workflow_action(context, project_id, A_MEETING_PROGRESS_REVIEW, db)
     if review.review_status == "accepted":
         raise HTTPException(409, "accepted progress review cannot be edited")
     if payload.status is not None:
@@ -1481,12 +1507,7 @@ def confirm_progress_review(
         raise HTTPException(404, "progress review not found")
     project_id = _meeting_project_id_or_raise(meeting, context, db)
     if project_id is not None:
-        require_project_role(
-            current_user,
-            project_id,
-            [PROJECT_ROLE_OWNER_KEY, PROJECT_ROLE_COORD_KEY],
-            db,
-        )
+        _require_workflow_action(context, project_id, A_MEETING_PROGRESS_REVIEW, db)
     if review.review_status != "pending":
         raise HTTPException(409, "progress review is not pending")
 
@@ -1671,12 +1692,8 @@ def patch_meeting_change_proposal(
     if not proposal:
         raise HTTPException(404, "meeting change proposal not found")
     if _json_value(proposal.lineage_json, {}):
-        require_project_role(
-            current_user,
-            change_set.project_id,
-            [PROJECT_ROLE_OWNER_KEY],
-            db,
-        )
+        context = get_user_context_from_db(current_user, db)
+        _require_workflow_action(context, change_set.project_id, A_MEETING_REVIEW_CHANGES, db)
         edit_project_meeting_lineage_proposal(
             proposal=proposal,
             change_set=change_set,
@@ -1709,6 +1726,8 @@ def execute_reviewed_meeting_change_set(
 ):
     current_user = require_login(current_user, db)
     meeting = _meeting_for_read(row_id, current_user, db)
+    context = get_user_context_from_db(current_user, db)
+    _require_workflow_action(context, meeting.project_id, A_MEETING_APPLY_CHANGES, db)
     proposals = execute_meeting_change_set(
         meeting=meeting,
         proposal_ids=payload.proposal_ids,
@@ -1775,13 +1794,13 @@ def update_meeting(
         raise HTTPException(404, "meeting not found")
 
     project_id = _meeting_project_id_or_raise(row, context, db)
-    if project_id is not None and not _is_meeting_creator(current_user, context, row):
-        require_project_role(
-            current_user,
-            project_id,
-            [PROJECT_ROLE_OWNER_KEY],
-            db,
-        )
+    _require_workflow_action(
+        context,
+        project_id,
+        A_MEETING_EDIT,
+        db,
+        creator_person_id=row.creator_person_id,
+    )
 
     require_project_business_writable(project_id, db)
     before = crud.to_dict(row)
@@ -1820,13 +1839,7 @@ def patch_meeting_status(
         raise HTTPException(404, "meeting not found")
 
     project_id = _meeting_project_id_or_raise(row, context, db)
-    if project_id is not None:
-        require_project_role(
-            current_user,
-            project_id,
-            [PROJECT_ROLE_OWNER_KEY],
-            db,
-        )
+    _require_workflow_action(context, project_id, A_MEETING_PUBLISH, db)
 
     require_project_business_writable(project_id, db)
     allowed = {"draft", "published", "returned"}

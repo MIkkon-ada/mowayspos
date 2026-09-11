@@ -21,6 +21,24 @@ export type ProjectAction =
   | 'project.delete'
   | 'project.technical_kickoff'
 
+export type WorkflowAction =
+  | 'confirmation.view'
+  | 'confirmation.review'
+  | 'confirmation.coordinator_feedback'
+  | 'confirmation.escalate'
+  | 'confirmation.ceo_decide'
+  | 'confirmation.resubmit'
+  | 'confirmation.withdraw'
+  | 'meeting.view'
+  | 'meeting.create'
+  | 'meeting.edit'
+  | 'meeting.publish'
+  | 'meeting.review_changes'
+  | 'meeting.apply_changes'
+  | 'meeting.progress_review'
+  | 'meeting.kickoff_submit'
+  | 'meeting.kickoff_decide'
+
 export type ProjectPermissionInput = {
   isTechAdmin?: boolean
   isCompanyCeo?: boolean
@@ -28,6 +46,15 @@ export type ProjectPermissionInput = {
   projectRoles?: readonly string[] | null
   lifecycle?: string | null
   requesterPersonId?: number | null
+}
+
+export type WorkflowPermissionInput = {
+  isTechAdmin?: boolean
+  isCompanyCeo?: boolean
+  personId?: number | null
+  projectRoles?: readonly string[] | null
+  submitterPersonId?: number | null
+  creatorPersonId?: number | null
 }
 
 type CurrentUserLike = Pick<CurrentUser, 'is_tech_admin' | 'is_ceo'> | null | undefined
@@ -99,6 +126,52 @@ export function canProjectAction(action: ProjectAction, input: ProjectPermission
   }
 }
 
+export function canWorkflowAction(action: WorkflowAction, input: WorkflowPermissionInput): boolean {
+  const roles = input.projectRoles ?? []
+  const has = (...allowed: ProjectRole[]) => roles.some((role) => allowed.includes(role as ProjectRole))
+  const tech = Boolean(input.isTechAdmin)
+  const companyCeo = Boolean(input.isCompanyCeo)
+  const isSubmitter = input.personId != null && input.personId === input.submitterPersonId
+  const isCreator = input.personId != null && input.personId === input.creatorPersonId
+
+  if (action === 'confirmation.resubmit') {
+    return isSubmitter
+  }
+  if (tech) {
+    return true
+  }
+
+  switch (action) {
+    case 'confirmation.view':
+      return companyCeo || has('owner', 'coordinator', 'project_ceo') || isSubmitter
+    case 'confirmation.review':
+    case 'confirmation.escalate':
+      return has('owner')
+    case 'confirmation.coordinator_feedback':
+      return has('coordinator')
+    case 'confirmation.ceo_decide':
+      return has('project_ceo')
+    case 'confirmation.withdraw':
+      return isSubmitter
+    case 'meeting.view':
+      return companyCeo || has('owner', 'coordinator', 'member', 'project_ceo')
+    case 'meeting.create':
+      return has('owner', 'coordinator', 'member')
+    case 'meeting.edit':
+      return has('owner') || isCreator
+    case 'meeting.publish':
+    case 'meeting.review_changes':
+    case 'meeting.apply_changes':
+      return has('owner')
+    case 'meeting.progress_review':
+      return has('owner', 'coordinator')
+    case 'meeting.kickoff_submit':
+      return has('owner')
+    case 'meeting.kickoff_decide':
+      return has('project_ceo')
+  }
+}
+
 export function canViewProjectDashboard(user: CurrentUserLike, roles: readonly string[] | null | undefined): boolean {
   return hasProjectAccess(user, roles)
 }
@@ -116,7 +189,11 @@ export function canViewIssues(user: CurrentUserLike, roles: readonly string[] | 
 }
 
 export function canViewMeetings(user: CurrentUserLike, roles: readonly string[] | null | undefined): boolean {
-  return isSuperAdmin(user) || Boolean(user?.is_ceo) || hasAnyProjectRole(roles)
+  return canWorkflowAction('meeting.view', {
+    isTechAdmin: user?.is_tech_admin,
+    isCompanyCeo: user?.is_ceo,
+    projectRoles: roles,
+  })
 }
 
 export function canSubmitUpdate(user: CurrentUserLike, roles: readonly string[] | null | undefined): boolean {
@@ -136,11 +213,12 @@ export function canViewOwnerConfirmCenter(user: CurrentUserLike, roles: readonly
 }
 
 export function canViewConfirmCenter(user: CurrentUserLike, roles: readonly string[] | null | undefined): boolean {
-  return (
-    canViewOwnerConfirmCenter(user, roles) ||
-    canViewCoordinatorReview(user, roles) ||
-    canViewCeoDecision(user, roles)
-  )
+  const canViewCoach = canViewCeoDecision(user, roles)
+  return canWorkflowAction('confirmation.view', {
+    isTechAdmin: user?.is_tech_admin,
+    isCompanyCeo: user?.is_ceo,
+    projectRoles: roles,
+  }) || canViewCoach
 }
 
 export function canViewCoordinatorReview(user: CurrentUserLike, roles: readonly string[] | null | undefined): boolean {

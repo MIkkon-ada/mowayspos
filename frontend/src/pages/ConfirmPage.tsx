@@ -27,6 +27,7 @@ import { isProjectArchived } from '../domain/projectLifecycleStatus'
 import { buildConfirmationTaskCards, normalizeReviewCardData } from '../domain/confirmationTaskCards'
 import { buildConfirmationAssetProjection } from '../domain/confirmationAssets'
 import { getProjectDisplayName } from '../domain/projectDisplay'
+import { canWorkflowAction } from '../domain/permissions'
 import { AiConfirmationIssueActions } from '../features/confirmations/AiConfirmationIssueActions'
 import { MobileConfirmationStream } from '../features/mobile-core-pages/MobileConfirmationStream'
 import { ChevronDownIcon } from '../components/icons/ChevronDownIcon'
@@ -275,10 +276,12 @@ export function ConfirmPage() {
 
   const selectedProject = selected?.project_id != null ? projects.find((p) => p.id === selected.project_id) ?? null : null
   const projectArchived = isProjectArchived(selectedProject)
-  const canUseOwnerActions = Boolean(
-    currentUser?.is_tech_admin ||
-    selectedProject?.user_roles?.includes('owner'),
-  )
+  const canUseOwnerActions = canWorkflowAction('confirmation.review', {
+    isTechAdmin: currentUser?.is_tech_admin,
+    isCompanyCeo: currentUser?.is_ceo,
+    personId: currentUser?.person_id,
+    projectRoles: selectedProject?.user_roles ?? (selected?.project_id === currentProjectId ? globalUserRoles : []),
+  })
 
   const urlProjectId = useMemo(() => {
     const raw = searchParams.get('projectId')
@@ -932,12 +935,16 @@ export function ConfirmPage() {
   const cardWaitingCoordinator =
     activeCard?.confirmationStatus === 'transferred_to_coordinator'
   const selectedProjectRoles = selectedProject?.user_roles ?? []
-  const canCoordinatorAct = Boolean(
-    currentUser?.is_tech_admin || selectedProjectRoles.includes('coordinator'),
-  )
-  const canCoachAct = Boolean(
-    currentUser?.is_tech_admin || selectedProjectRoles.includes('project_ceo'),
-  )
+  const coordinatorRoles = selectedProjectRoles.includes('coordinator') ? ['coordinator'] : []
+  const coachRoles = selectedProjectRoles.includes('project_ceo') ? ['project_ceo'] : []
+  const canCoordinatorAct = canWorkflowAction('confirmation.coordinator_feedback', {
+    isTechAdmin: currentUser?.is_tech_admin,
+    projectRoles: selectedProjectRoles.includes('coordinator') ? coordinatorRoles : [],
+  })
+  const canCoachAct = canWorkflowAction('confirmation.ceo_decide', {
+    isTechAdmin: currentUser?.is_tech_admin,
+    projectRoles: selectedProjectRoles.includes('project_ceo') ? coachRoles : [],
+  })
   const activeReviewCard = activeCard ? normalizeReviewCardData(activeCard, {
     cardIndex: activeCardIndex,
     totalCards: taskCards.length,

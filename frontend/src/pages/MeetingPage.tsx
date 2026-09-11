@@ -15,6 +15,7 @@ import { getProjectDisplayName } from '../domain/projectDisplay'
 import { isProjectArchived, isProjectExecutionAvailable } from '../domain/projectLifecycleStatus'
 import { ProjectMeetingReviewWorkspace } from '../features/meeting/ProjectMeetingReviewWorkspace'
 import { MobileMeetingTimeline } from '../features/mobile-core-pages/MobileMeetingTimeline'
+import { canWorkflowAction } from '../domain/permissions'
 
 export function MeetingPage() {
   const { currentProjectId, projects, currentUser, currentProjectRoles } = useProject()
@@ -48,6 +49,25 @@ export function MeetingPage() {
   const effectiveProject = projects.find((p) => p.id === effectiveProjectId) ?? null
   const projectArchived = isProjectArchived(effectiveProject)
   const canOpenKickoff = Boolean(effectiveProjectId && !projectArchived && isProjectExecutionAvailable(effectiveProject))
+  const canCreateMeeting = canWorkflowAction('meeting.create', {
+    isTechAdmin: currentUser?.is_tech_admin,
+    isCompanyCeo: currentUser?.is_ceo,
+    personId: currentUser?.person_id,
+    projectRoles: effectiveProject?.user_roles ?? currentProjectRoles,
+  })
+  const canEditMeeting = canWorkflowAction('meeting.edit', {
+    isTechAdmin: currentUser?.is_tech_admin,
+    isCompanyCeo: currentUser?.is_ceo,
+    personId: currentUser?.person_id,
+    projectRoles: effectiveProject?.user_roles ?? currentProjectRoles,
+    creatorPersonId: typeof selected?.creator_person_id === 'number' ? selected.creator_person_id : null,
+  })
+  const canPublishMeeting = canWorkflowAction('meeting.publish', {
+    isTechAdmin: currentUser?.is_tech_admin,
+    isCompanyCeo: currentUser?.is_ceo,
+    personId: currentUser?.person_id,
+    projectRoles: effectiveProject?.user_roles ?? currentProjectRoles,
+  })
   const canDeleteMeeting = Boolean(currentUser?.is_tech_admin || (effectiveProject?.user_roles ?? currentProjectRoles).includes('owner'))
   const legacySelected = selected as MeetingItem
   const noProject = !effectiveProjectId
@@ -240,7 +260,12 @@ export function MeetingPage() {
     })))
     const scheduleChanges = projectMeetingReview.review_package?.proposals ?? projectMeetingReview.result.execution_schedule_changes ?? []
     const meetingDraft = selected
-    const isOwner = Boolean(currentUser?.is_tech_admin || currentProjectRoles.includes('owner'))
+    const isOwner = canWorkflowAction('meeting.publish', {
+      isTechAdmin: currentUser?.is_tech_admin,
+      isCompanyCeo: currentUser?.is_ceo,
+      personId: currentUser?.person_id,
+      projectRoles: effectiveProject?.user_roles ?? currentProjectRoles,
+    })
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
         <main className="flex-1 overflow-y-auto">
@@ -387,6 +412,8 @@ export function MeetingPage() {
           meeting={selected}
           projectName={effectiveProject?.name ?? ''}
           projectArchived={projectArchived}
+          canEdit={canEditMeeting}
+          canPublish={canPublishMeeting}
           actionLoading={actionLoading}
           onBack={() => {
             setSelected(null)
@@ -443,9 +470,9 @@ export function MeetingPage() {
               />
             </div>
           )}
-          <button
-            onClick={() => setShowNewModal(true)}
-            disabled={noProject || projectArchived}
+            <button
+              onClick={() => setShowNewModal(true)}
+              disabled={noProject || projectArchived || !canCreateMeeting}
             title={projectArchived ? '项目已归档，不可写入。' : noProject ? '请先选择下方项目' : undefined}
             className="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-semibold transition-all hover:opacity-90 disabled:opacity-50"
             style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)', boxShadow: '0 2px 8px rgba(3,105,161,0.25)' }}
@@ -589,6 +616,8 @@ export function MeetingPage() {
             meeting={selected}
             projectName={effectiveProject?.name ?? ''}
             projectArchived={projectArchived}
+            canEdit={canEditMeeting}
+            canPublish={canPublishMeeting}
             actionLoading={actionLoading}
             onBack={() => {
               setSelected(null)
@@ -776,7 +805,7 @@ export function MeetingPage() {
               <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-slate-50 text-xl text-slate-300" aria-hidden="true">▤</div>
               <h4 className="text-base font-medium text-slate-700">还没有会议纪要</h4>
               <p className="mt-2 text-sm text-slate-400">创建第一条会议纪要，记录项目关键决策和待办。</p>
-              <button type="button" onClick={() => setShowNewModal(true)} disabled={projectArchived} className="mt-5 inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-slate-300">
+              <button type="button" onClick={() => setShowNewModal(true)} disabled={projectArchived || !canCreateMeeting} className="mt-5 inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-slate-300">
                 <span className="text-lg leading-none">＋</span> 新建会议纪要
               </button>
             </div>

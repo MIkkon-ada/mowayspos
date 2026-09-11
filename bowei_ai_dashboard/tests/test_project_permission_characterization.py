@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
@@ -7,6 +9,8 @@ from sqlalchemy.orm import sessionmaker
 
 from app import models, schemas
 from app.database import Base
+from app.domain.project_permissions import A_VIEW
+from app.routers import projects
 from app.routers.projects import (
     approve_project,
     approve_project_close_request,
@@ -197,3 +201,23 @@ def test_source_edit_is_restricted_after_dispatch():
         ),
         detail="项目已下发，当前仅支持查看。如需调整，请走变更申请流程。",
     )
+
+
+def test_get_project_uses_access_service(monkeypatch):
+    db = _seed()
+    calls: list[str] = []
+
+    def access_spy(current_user, project, action, db, **kwargs):
+        calls.append(action)
+        return SimpleNamespace(
+            context=projects.get_user_context_from_db(current_user, db),
+            subject=SimpleNamespace(project_roles=frozenset()),
+            resource=SimpleNamespace(),
+            role_source="project_members",
+        )
+
+    monkeypatch.setattr(projects, "authorize_project_action", access_spy, raising=False)
+
+    projects.get_project(1, current_user="member", db=db)
+
+    assert calls == [A_VIEW]

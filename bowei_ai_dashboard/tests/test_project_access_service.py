@@ -8,7 +8,8 @@ from app import models
 from app.api_errors import CodedHTTPException
 from app.database import Base
 from app.domain.project_permissions import A_OWNER_SUBMIT, A_REVIEW_START, A_VIEW
-from app.services.project_access import authorize_project_action
+from app.permissions import get_user_context_from_db
+from app.services.project_access import authorize_project_action, resolve_visible_project_ids
 
 
 def _seed():
@@ -71,3 +72,11 @@ def test_company_ceo_cannot_review_as_project_coach():
 
     assert error.value.status_code == 403
     assert error.value.code == "PROJECT_ACTION_DENIED"
+
+
+def test_visible_project_ids_union_member_and_explicit_legacy_sources():
+    db, project = _seed()
+    context = get_user_context_from_db("legacy_owner", db)
+
+    assert resolve_visible_project_ids(context, db, allow_legacy=False) == frozenset()
+    assert resolve_visible_project_ids(context, db, allow_legacy=True) == frozenset({project.id})

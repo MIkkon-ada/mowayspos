@@ -82,3 +82,43 @@ def authorize_global_project_action(
     decision = decide_project_action(subject, resource, action)
     _raise_if_denied(decision)
     return ProjectAccessContext(context, subject, resource, "none")
+
+
+def resolve_visible_project_ids(
+    context: dict,
+    db: Session,
+    *,
+    allow_legacy: bool,
+) -> frozenset[int] | None:
+    """Resolve list visibility in bounded queries without per-project role loads."""
+    if context.get("can_view_all"):
+        return None
+
+    person_id = context.get("person_id")
+    member_ids = {
+        int(row[0])
+        for row in (
+            db.query(models.ProjectMember.project_id)
+            .filter(models.ProjectMember.person_id == person_id)
+            .distinct()
+            .all()
+        )
+    } if person_id is not None else set()
+
+    if not allow_legacy:
+        return frozenset(member_ids)
+
+    legacy_names = [
+        str(name).strip()
+        for name in context.get("visible_projects") or []
+        if str(name).strip()
+    ]
+    legacy_ids = {
+        int(row[0])
+        for row in (
+            db.query(models.Project.id)
+            .filter(models.Project.name.in_(legacy_names))
+            .all()
+        )
+    } if legacy_names else set()
+    return frozenset(member_ids | legacy_ids)

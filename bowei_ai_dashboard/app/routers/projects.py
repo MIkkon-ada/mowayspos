@@ -11,10 +11,18 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
+from ..api_errors import CodedHTTPException
 from ..database import get_db
 from ..domain import source_type as ST
 from ..domain import task_status as TS
 from ..domain import project_lifecycle as PL
+from ..domain.project_permissions import (
+    A_EDIT_SOURCE,
+    A_MANAGE_MEMBERS_DIRECT,
+    A_REQUEST_MEMBER_CHANGE,
+    A_REVIEW_MEMBER_CHANGE,
+    A_VIEW,
+)
 from ..permissions import (
     PROJECT_ROLE_COLLABORATOR,
     PROJECT_ROLE_COORDINATOR,
@@ -49,6 +57,7 @@ from ..services.project_purge_storage import (
     stage_project_payloads,
 )
 from ..services.project_init_attachment_storage import project_init_attachment_root
+from ..services.project_access import authorize_project_action, resolve_visible_project_ids
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -1002,29 +1011,7 @@ def list_projects(
 
     if not context["can_view_all"]:
         q = q.filter(models.Project.status.notin_(["archived", PL.S_DRAFT]))
-        person_id = context.get("person_id")
-
-        # 从 project_members 取可见 project_id
-        pm_ids: set[int] = set()
-        if person_id:
-            rows = db.execute(
-                text("SELECT DISTINCT project_id FROM project_members WHERE person_id = :pid"),
-                {"pid": person_id},
-            ).fetchall()
-            pm_ids = {r[0] for r in rows}
-
-        # 过渡期：旧 visible_projects（从旧字符串字段推导）
-        old_names = context.get("visible_projects") or []
-        old_ids: set[int] = set()
-        if old_names:
-            old_rows = (
-                db.query(models.Project.id)
-                .filter(models.Project.name.in_(old_names))
-                .all()
-            )
-            old_ids = {r[0] for r in old_rows}
-
-        visible_ids = pm_ids | old_ids
+        visible_ids = resolve_visible_project_ids(context, db, allow_legacy=True)
         if not visible_ids:
             return []
         q = q.filter(models.Project.id.in_(visible_ids))
@@ -1201,9 +1188,15 @@ def list_members(
     if not project:
         raise HTTPException(404, "project not found")
 
-    context = get_user_context_from_db(current_user, db)
-    if not _can_view_project(project_id, project.name, context, db):
-        raise HTTPException(403, "permission denied — 仅项目成员可查看")
+    access = authorize_project_action(
+        current_user,
+        project,
+        A_VIEW,
+        db,
+        allow_legacy_roles=True,
+        denial_detail="permission denied — 仅项目成员可查看",
+    )
+    context = access.context
 
     members = (
         db.query(models.ProjectMember)
@@ -1228,7 +1221,7 @@ def add_member(
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
-    _require_project_source_manager(current_user, project_id, db)
+    authorize_project_action(current_user, project, A_MANAGE_MEMBERS_DIRECT, db)
     person = db.get(models.Person, payload.person_id)
     if not person:
         raise HTTPException(404, f"person id={payload.person_id} not found")
@@ -1287,7 +1280,7 @@ def update_member(
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
-    _require_project_source_manager(current_user, project_id, db)
+    authorize_project_action(current_user, project, A_MANAGE_MEMBERS_DIRECT, db)
 
     before = _member_to_dict(row)
     if payload.role is not None:
@@ -1331,7 +1324,7 @@ def remove_member(
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
-    _require_project_source_manager(current_user, project_id, db)
+    authorize_project_action(current_user, project, A_MANAGE_MEMBERS_DIRECT, db)
 
     before = _member_to_dict(row)
 
@@ -1420,12 +1413,11 @@ def create_member_change_request(
     if status == "archived":
         raise HTTPException(400, "归档项目不允许发起成员变更申请。")
 
-    ctx = get_user_context_from_db(current_user, db)
+    access = authorize_project_action(current_user, project, A_REQUEST_MEMBER_CHANGE, db)
+    ctx = access.context
     person_id = ctx.get("person_id")
-    is_tech_admin = bool(ctx.get("is_tech_admin"))
-    requester_roles = get_all_project_roles(person_id, project_id, db) if person_id else []
-    if not (is_tech_admin or "owner" in requester_roles or "project_ceo" in requester_roles):
-        raise HTTPException(403, "仅项目负责人或企业教练可发起成员变更申请。")
+    is_tech_admin = access.subject.is_tech_admin
+    requester_roles = access.subject.project_roles
 
     to_role = (payload.to_role or "").strip()
     if to_role == "owner":
@@ -1520,7 +1512,14 @@ def list_member_change_requests(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    require_project_access(current_user, project_id, db)
+    authorize_project_action(
+        current_user,
+        project,
+        A_VIEW,
+        db,
+        allow_legacy_roles=True,
+        denial_detail="permission denied",
+    )
 
     q = db.query(models.MemberChangeRequest).filter_by(project_id=project_id)
     if status:
@@ -1542,7 +1541,7 @@ def approve_member_change_request(
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
-    _require_project_coach_or_tech_admin(current_user, project_id, db)
+    access = authorize_project_action(current_user, project, A_REVIEW_MEMBER_CHANGE, db)
 
     req = db.get(models.MemberChangeRequest, request_id)
     if not req or req.project_id != project_id:
@@ -1566,7 +1565,7 @@ def approve_member_change_request(
     if existing:
         raise HTTPException(409, "该成员已拥有该项目角色")
 
-    ctx = get_user_context_from_db(current_user, db)
+    ctx = access.context
     new_member = models.ProjectMember(
         project_id=project_id,
         person_id=req.target_person_id,
@@ -1604,7 +1603,7 @@ def reject_member_change_request(
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
-    _require_project_coach_or_tech_admin(current_user, project_id, db)
+    access = authorize_project_action(current_user, project, A_REVIEW_MEMBER_CHANGE, db)
 
     req = db.get(models.MemberChangeRequest, request_id)
     if not req or req.project_id != project_id:
@@ -1612,7 +1611,7 @@ def reject_member_change_request(
     if req.status != "pending":
         raise HTTPException(409, f"申请当前状态为 {req.status}，不可重复审核")
 
-    ctx = get_user_context_from_db(current_user, db)
+    ctx = access.context
     req.status = "rejected"
     req.reviewer_person_id = ctx.get("person_id")
     req.reviewed_at = utc_now()
@@ -1635,9 +1634,15 @@ def get_project(
     if not project:
         raise HTTPException(404, "project not found")
 
-    context = get_user_context_from_db(current_user, db)
-    if not _can_view_project(project_id, project.name, context, db):
-        raise HTTPException(403, "permission denied — 仅项目成员可查看")
+    access = authorize_project_action(
+        current_user,
+        project,
+        A_VIEW,
+        db,
+        allow_legacy_roles=True,
+        denial_detail="permission denied — 仅项目成员可查看",
+    )
+    context = access.context
 
     raw = _read_project_raw(project_id, db)
     user_roles = _get_user_roles(project_id, project.name, context, db)
@@ -1656,7 +1661,7 @@ def update_project(
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
-    _require_project_source_manager(current_user, project_id, db)
+    authorize_project_action(current_user, project, A_EDIT_SOURCE, db)
 
     warnings: list[str] = []
 
@@ -2828,7 +2833,14 @@ def project_capabilities(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    require_project_access(current_user, project_id, db)
+    authorize_project_action(
+        current_user,
+        project,
+        A_VIEW,
+        db,
+        allow_legacy_roles=True,
+        denial_detail="permission denied",
+    )
 
     roles = sorted(user_roles_in_project(context, project_id, db))
 

@@ -179,7 +179,9 @@ test('failed analysis runs accept an empty draft and preserve status and error m
   const run = await api.getInitAnalysisRun(7, 9)
   assert.equal(run.status, 'failed')
   assert.equal(run.error_message, 'AI provider unavailable')
-  assert.deepEqual(run.draft, { tasks: [], warnings: [] })
+  assert.deepEqual(run.draft.tasks, [])
+  assert.deepEqual(run.draft.project_profile, api.EMPTY_PROJECT_INIT_AI_PROFILE)
+  assert.deepEqual(run.draft.warnings, [])
 })
 
 test('analysis draft validators still reject invalid task elements and IDs', async () => {

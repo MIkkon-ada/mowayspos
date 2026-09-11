@@ -28,7 +28,7 @@ os.environ["ALLOW_PROTECTED_DATABASE_MIGRATION"] = "true"
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-BASE_URL = "http://127.0.0.1:8008"
+BASE_URL = "http://127.0.0.1:8011"
 USERNAME = "moways"
 PASSWORD = "123456"
 

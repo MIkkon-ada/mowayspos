@@ -14,8 +14,6 @@ _DEFAULT_COOKIE_SAMESITE = "lax"
 _DEFAULT_SESSION_TTL_DAYS = 7
 _DEFAULT_LOG_LEVEL = "INFO"
 _DEFAULT_ALLOWED_ORIGINS = {
-    "http://127.0.0.1:6001",
-    "http://localhost:6001",
     "http://127.0.0.1:6004",
     "http://localhost:6004",
     "http://127.0.0.1:5174",

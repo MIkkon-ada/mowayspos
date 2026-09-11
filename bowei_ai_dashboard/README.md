@@ -56,7 +56,7 @@ python migrate_project_members.py --report-only
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8008
+uvicorn app.main:app --host 127.0.0.1 --port 8011
 ```
 
 如果 `DATABASE_URL` 未设置，项目会默认使用本地 SQLite 文件 `bowei_ai_dashboard.db`。

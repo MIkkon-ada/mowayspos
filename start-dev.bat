@@ -12,12 +12,12 @@ start "博维-前端" cmd /k ""%~dp0frontend\start-frontend-dev.bat""
 echo 等待服务启动...
 timeout /t 6 /nobreak > nul
 
-start "" "http://127.0.0.1:6001"
+start "" "http://127.0.0.1:6004"
 
 echo.
 echo 已启动：
-echo   后端：http://127.0.0.1:8008
-echo   前端：http://127.0.0.1:6001
+echo   后端：http://127.0.0.1:8011
+echo   前端：http://127.0.0.1:6004
 echo.
 echo 关闭此窗口不会影响服务运行。
 pause

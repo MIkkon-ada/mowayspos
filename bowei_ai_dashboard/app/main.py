@@ -401,7 +401,7 @@ def health_check():
 @app.get("/login")
 def login_page():
     return PlainTextResponse(
-        "Legacy UI removed. Open the new frontend at http://127.0.0.1:6001",
+        "Legacy UI removed. Open the new frontend at http://127.0.0.1:6004",
         status_code=200,
     )
 
@@ -546,7 +546,7 @@ async def auth_change_password(request: Request):
 @app.get("/")
 def index():
     return PlainTextResponse(
-        "Legacy UI removed. Open the new frontend at http://127.0.0.1:6001",
+        "Legacy UI removed. Open the new frontend at http://127.0.0.1:6004",
         status_code=200,
     )
 

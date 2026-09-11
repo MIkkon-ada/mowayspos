@@ -29,8 +29,8 @@ start-dev.bat
 ```
 
 这会同时打开两个终端窗口：
-- 后端：`http://127.0.0.1:8008`
-- 前端：`http://127.0.0.1:6001`
+- 后端：`http://127.0.0.1:8011`
+- 前端：`http://127.0.0.1:6004`
 
 等待约 6 秒后自动打开浏览器。
 
@@ -40,7 +40,7 @@ start-dev.bat
 # 终端1 - 后端
 cd bowei_ai_dashboard
 call .venv\Scripts\activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8008
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8011
 
 # 终端2 - 前端
 cd frontend
@@ -51,8 +51,8 @@ npm run dev
 
 | 服务 | 端口 | 说明 |
 |------|------|------|
-| 后端 API | `8008` | FastAPI + uvicorn |
-| 前端 | `6001` | Vite dev server |
+| 后端 API | `8011` | FastAPI + uvicorn |
+| 前端 | `6004` | Vite dev server |
 
 ### 2.3 数据库
 
@@ -166,7 +166,7 @@ npm run dev
 
 **步骤：**
 
-1. 打开浏览器访问 `http://127.0.0.1:6001`
+1. 打开浏览器访问 `http://127.0.0.1:6004`
 2. 使用 **super_admin** API Key 登录
 3. 登录成功后进入首页，标题为"博维 AI 升级项目驾驶舱"（案例项目名）
 

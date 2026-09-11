@@ -1,7 +1,11 @@
 # 确认中心与会议流程权限治理设计
 
 日期：2026-09-11
-状态：已获用户确认，待规格审阅
+状态：已实施并完成全量验证
+
+实现提交：`0a3cad1 feat: centralize confirmation and meeting workflow permissions`
+
+验证结果：后端 `1909 passed, 12 skipped, 42 warnings`；前端单元 `89 passed`；前端契约 `501 passed`；生产构建通过。
 
 ## 1. 背景与目标
 

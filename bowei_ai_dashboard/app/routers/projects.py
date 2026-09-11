@@ -72,6 +72,9 @@ from ..services.project_access import (
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
+# 项目全局动作的统一拒绝提示：仅公司管理或超级管理员可执行此操作。
+# 项目归档需提交公司管理审核。
+
 _VALID_ROLES = {"project_ceo", "owner", "coordinator", "member"}
 _LIFECYCLE_STATUSES = PL.ALL_STATUSES
 _IMPORTABLE_PERSON_NAME = re.compile(r"^[\u4e00-\u9fff]{2,8}$")

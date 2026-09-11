@@ -23,7 +23,7 @@ import { fetchTasks } from '../../api/tasks'
 import { fetchSubtasksByProject } from '../../api/subtasks'
 import { fmtPlanTime, fmtDate } from '../../utils/time'
 import { toast } from '../../utils/toast'
-import { canManageProjects } from '../../domain/permissions'
+import { canManageProjects, canProjectAction } from '../../domain/permissions'
 import { projectOwnerSubmitPath } from '../../domain/projectEntryRoutes'
 import {
   getProjectPrimaryStatus,
@@ -244,19 +244,31 @@ function getMainAction(
   if (closeAction && status !== 'active') return closeAction
   switch (status) {
     case 'draft':
-      return isSuperAdmin || isCompanyCeo
+      return canProjectAction('project.dispatch', {
+        isTechAdmin: isSuperAdmin,
+        isCompanyCeo,
+        lifecycle: status,
+      })
         ? isProjectDispatchReady(project)
           ? { label: '下发给负责人', type: 'dispatch' }
           : { label: '完善基础信息', type: 'edit' }
         : { label: '查看详情', type: 'viewDetail' }
     case 'dispatched':
-      return isRealOwner
+      return canProjectAction('project.owner_submit', {
+        isTechAdmin: isSuperAdmin,
+        projectRoles: isRealOwner ? ['owner'] : [],
+        lifecycle: status,
+      })
         ? { label: '完善项目计划', type: 'ownerSubmit' }
         : { label: '查看详情', type: 'viewDetail' }
     case 'pending_review':
       return { label: '审核项目', type: 'approvalMaterials' }
     case 'returned':
-      return isRealOwner
+      return canProjectAction('project.owner_submit', {
+        isTechAdmin: isSuperAdmin,
+        projectRoles: isRealOwner ? ['owner'] : [],
+        lifecycle: status,
+      })
         ? { label: '修改项目计划', type: 'ownerSubmit' }
         : { label: '查看详情', type: 'viewDetail' }
     case 'active':
@@ -398,7 +410,13 @@ export function ProjectsMgmtSection() {
     !currentUser?.is_tech_admin && !currentUser?.is_ceo
     && globalUserRoles.includes('project_ceo')
 
-  const isFullAdmin = Boolean(currentUser?.is_tech_admin || currentUser?.is_ceo)
+  const canCreateProject = canProjectAction('project.create', {
+    isTechAdmin: currentUser?.is_tech_admin,
+    isCompanyCeo: currentUser?.is_ceo,
+  })
+  const canBatchImport = canProjectAction('project.batch_import', {
+    isTechAdmin: currentUser?.is_tech_admin,
+  })
   const canManage = canManageProjects(currentUser, globalUserRoles)
   const myPersonId = currentUser?.person_id
 
@@ -784,16 +802,16 @@ export function ProjectsMgmtSection() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">项目管理</h1>
           <p className="mt-1 text-sm text-slate-500">管理项目从立项、启动到执行与归档</p>
         </div>
-        {isFullAdmin && (
+        {(canCreateProject || canBatchImport) && (
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setImportOpen(true)}
+            {canBatchImport && <button type="button" onClick={() => setImportOpen(true)}
               className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50">
               批量导入
-            </button>
-            <button type="button" onClick={() => setShowNew(true)}
+            </button>}
+            {canCreateProject && <button type="button" onClick={() => setShowNew(true)}
               className="h-10 cursor-pointer rounded-lg bg-[#2170e4] px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#1b5fc7]">
               ＋ 新建项目
-            </button>
+            </button>}
           </div>
         )}
       </header>
@@ -853,7 +871,11 @@ export function ProjectsMgmtSection() {
                         mainBusy={false}
                         showReturn={mainAction.type === 'approvalMaterials'}
                         isSelected={false}
-                        hasMore={roles.isSuperAdmin || (roles.isCompanyCeo && status === 'draft')}
+                        hasMore={canProjectAction('project.edit_source', {
+                          isTechAdmin: roles.isSuperAdmin,
+                          isCompanyCeo: roles.isCompanyCeo,
+                          lifecycle: status,
+                        })}
                         onSelect={() => navigate(`/home/projects/${project.id}`)}
                         onMainAction={() => handleProjectMainAction(project)}
                         onReturn={() => void handleReturn(project.id, project.name)}
@@ -1039,7 +1061,11 @@ export function ProjectsMgmtSection() {
           subtasks={projectSubtasksMap[approvalMaterialsProject.id] ?? []}
           canReview={(() => {
             const roles = getProjectRoles(approvalMaterialsProject.id)
-            return roles.isRealProjectCeo || roles.isSuperAdmin
+            return canProjectAction('project.review_start', {
+              isTechAdmin: roles.isSuperAdmin,
+              projectRoles: roles.isRealProjectCeo ? ['project_ceo'] : [],
+              lifecycle: getProjectPrimaryStatus(approvalMaterialsProject),
+            })
           })()}
           loading={approveLoading}
           onClose={() => !approveLoading && setApprovalMaterialsProject(null)}
@@ -1068,10 +1094,17 @@ export function ProjectsMgmtSection() {
               const status = getProjectPrimaryStatus(menuProject)
               const roles = getProjectRoles(menuProject.id)
               const items: { label: string; tone?: 'danger'; onClick: () => void }[] = []
-              if (roles.isSuperAdmin || (roles.isCompanyCeo && status === 'draft')) {
+              if (canProjectAction('project.edit_source', {
+                isTechAdmin: roles.isSuperAdmin,
+                isCompanyCeo: roles.isCompanyCeo,
+                lifecycle: status,
+              })) {
                 items.push({ label: '编辑项目', onClick: () => { setMenuState(null); void openProjectEditor(menuProject) } })
               }
-              if (canPermanentlyDeleteProject(status, roles.isSuperAdmin)) {
+              if (canPermanentlyDeleteProject(status, canProjectAction('project.delete', {
+                isTechAdmin: roles.isSuperAdmin,
+                lifecycle: status,
+              }))) {
                 items.push({
                   label: '永久删除项目',
                   tone: 'danger',
@@ -1391,8 +1424,21 @@ export function DetailPanel({
   const summary = getDraftSummary(tasks, subtasks, project)
   const stageDesc = STAGE_DESCRIPTIONS[status] ?? ''
   const actionReminder = ACTION_REMINDERS[status] ?? stageDesc
-  const showReturn = status === 'pending_review' && (roles.isRealProjectCeo || roles.isSuperAdmin)
-  const canEditDraft = roles.isSuperAdmin || roles.isCompanyCeo
+  const showReturn = status === 'pending_review' && canProjectAction('project.review_start', {
+    isTechAdmin: roles.isSuperAdmin,
+    projectRoles: roles.isRealProjectCeo ? ['project_ceo'] : [],
+    lifecycle: status,
+  })
+  const canEditDraft = canProjectAction('project.edit_source', {
+    isTechAdmin: roles.isSuperAdmin,
+    isCompanyCeo: roles.isCompanyCeo,
+    lifecycle: status,
+  })
+  const canOwnerSubmit = canProjectAction('project.owner_submit', {
+    isTechAdmin: roles.isSuperAdmin,
+    projectRoles: roles.isRealOwner ? ['owner'] : [],
+    lifecycle: status,
+  })
   const coreReady = Boolean(project.name?.trim() && project.objectives?.trim())
   const draftReady = summary.taskCount > 0 && summary.subtaskCount > 0
   const projectType = project.project_type?.trim() || '未填写'
@@ -1410,7 +1456,7 @@ export function DetailPanel({
   if (status === 'draft' && canEditDraft) {
     actionButtons.push({ label: '编辑项目', primary: true, onClick: onEdit })
   }
-  if (status === 'dispatched' && roles.isRealOwner) {
+  if (status === 'dispatched' && roles.isRealOwner && canOwnerSubmit) {
     actionButtons.push({ label: '完善立项信息', primary: true, onClick: onOwnerSubmit })
   }
   if (status === 'pending_review') {
@@ -1419,15 +1465,25 @@ export function DetailPanel({
   if (showReturn) {
     actionButtons.push({ label: '退回修改', danger: true, onClick: onReturn })
   }
-  if (status === 'returned' && roles.isRealOwner) {
+  if (status === 'returned' && roles.isRealOwner && canOwnerSubmit) {
     actionButtons.push({ label: '修改立项信息', primary: true, onClick: onOwnerSubmit })
   }
   if (status === 'active') {
     actionButtons.push({ label: '进入工作推进表', primary: true, onClick: onWorkProgress })
-    if (roles.isRealOwner || roles.isSuperAdmin) actionButtons.push({ label: '申请项目结束', onClick: onOpenCloseFlow })
+    if (roles.isRealOwner || roles.isSuperAdmin) {
+      if (canProjectAction('project.request_close', {
+        isTechAdmin: roles.isSuperAdmin,
+        projectRoles: roles.isRealOwner ? ['owner'] : [],
+        lifecycle: status,
+      })) actionButtons.push({ label: '申请项目结束', onClick: onOpenCloseFlow })
+    }
   }
   if (status === 'pending_close') {
-    actionButtons.push({ label: roles.isRealProjectCeo || roles.isSuperAdmin ? '审核结束申请' : '查看结束申请', primary: true, onClick: onOpenCloseFlow })
+    actionButtons.push({ label: canProjectAction('project.review_close_request', {
+      isTechAdmin: roles.isSuperAdmin,
+      projectRoles: roles.isRealProjectCeo ? ['project_ceo'] : [],
+      lifecycle: status,
+    }) ? '审核结束申请' : '查看结束申请', primary: true, onClick: onOpenCloseFlow })
   }
   if (status === 'ended') {
     actionButtons.push({ label: '查看结束档案', onClick: onOpenCloseFlow })

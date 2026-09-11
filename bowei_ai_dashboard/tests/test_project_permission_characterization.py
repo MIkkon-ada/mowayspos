@@ -9,21 +9,32 @@ from sqlalchemy.orm import sessionmaker
 
 from app import models, schemas
 from app.database import Base
-from app.domain.project_permissions import A_VIEW
+from app.domain.project_permissions import (
+    A_BATCH_IMPORT,
+    A_CREATE,
+    A_DISPATCH,
+    A_OWNER_SUBMIT,
+    A_REVIEW_START,
+    A_TECHNICAL_KICKOFF,
+    A_VIEW,
+)
 from app.routers import projects
 from app.routers.projects import (
     approve_project,
     approve_project_close_request,
     add_member,
     archive_project,
+    batch_import_projects,
     create_member_change_request,
     create_project,
     create_project_close_request,
     delete_project,
     dispatch_project,
     kickoff_project,
+    kickoff_project,
     list_members,
     owner_submit_project_profile,
+    return_project,
 )
 
 
@@ -221,3 +232,47 @@ def test_get_project_uses_access_service(monkeypatch):
     projects.get_project(1, current_user="member", db=db)
 
     assert calls == [A_VIEW]
+
+
+def test_global_and_lifecycle_endpoints_use_access_services(monkeypatch):
+    global_calls: list[str] = []
+    project_calls: list[str] = []
+
+    def global_spy(current_user, action, db):
+        global_calls.append(action)
+        return SimpleNamespace(context=projects.get_user_context_from_db(current_user, db))
+
+    def project_spy(current_user, project, action, db, **kwargs):
+        project_calls.append(action)
+        return SimpleNamespace(
+            context=projects.get_user_context_from_db(current_user, db),
+            subject=SimpleNamespace(is_tech_admin=current_user == "admin", project_roles=frozenset()),
+        )
+
+    monkeypatch.setattr(projects, "authorize_global_project_action", global_spy, raising=False)
+    monkeypatch.setattr(projects, "authorize_project_action", project_spy, raising=False)
+
+    create_project(schemas.ProjectCreatePayload(name="Created by spy"), current_user="company_ceo", db=_seed())
+    batch_import_projects(schemas.ProjectBatchImportPayload(rows=[]), current_user="admin", db=_seed())
+    dispatch_project(1, current_user="company_ceo", db=_seed(lifecycle="draft"))
+    owner_submit_project_profile(
+        1,
+        schemas.ProjectProfilePayload(
+            objectives="Updated",
+            work_progress_draft=[
+                schemas.ProjectWorkProgressTaskDraft(
+                    title="Workstream",
+                    owner="Owner",
+                    subtasks=[schemas.ProjectWorkProgressSubTaskDraft(title="Task", assignee="Member")],
+                )
+            ],
+        ),
+        current_user="owner",
+        db=_seed(lifecycle="dispatched"),
+    )
+    return_project(1, current_user="coach", db=_seed())
+    approve_project(1, current_user="coach", db=_seed())
+    kickoff_project(1, current_user="admin", db=_seed())
+
+    assert global_calls == [A_CREATE, A_BATCH_IMPORT, A_TECHNICAL_KICKOFF]
+    assert project_calls == [A_DISPATCH, A_OWNER_SUBMIT, A_REVIEW_START, A_REVIEW_START]

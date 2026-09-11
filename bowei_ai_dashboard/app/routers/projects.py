@@ -21,6 +21,12 @@ from ..domain.project_permissions import (
     A_MANAGE_MEMBERS_DIRECT,
     A_REQUEST_MEMBER_CHANGE,
     A_REVIEW_MEMBER_CHANGE,
+    A_CREATE,
+    A_BATCH_IMPORT,
+    A_DISPATCH,
+    A_OWNER_SUBMIT,
+    A_REVIEW_START,
+    A_TECHNICAL_KICKOFF,
     A_VIEW,
 )
 from ..permissions import (
@@ -57,7 +63,11 @@ from ..services.project_purge_storage import (
     stage_project_payloads,
 )
 from ..services.project_init_attachment_storage import project_init_attachment_root
-from ..services.project_access import authorize_project_action, resolve_visible_project_ids
+from ..services.project_access import (
+    authorize_global_project_action,
+    authorize_project_action,
+    resolve_visible_project_ids,
+)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -1034,8 +1044,8 @@ def create_project(
     db: Session = Depends(get_db),
 ):
     """仅公司管理 / 技术管理员可新建项目。"""
-    _require_ceo_or_tech_admin(current_user, db)
-    context = get_user_context_from_db(current_user, db)
+    access = authorize_global_project_action(current_user, A_CREATE, db)
+    context = access.context
 
     name = (payload.name or "").strip()
     if not name:
@@ -1089,7 +1099,7 @@ def batch_import_projects(
     批量导入：从 Excel 粘贴的结构化数据创建专项+关键任务+问题。
     专项已存在则复用，关键任务逐行创建，问题有内容则写入问题库。
     """
-    _require_super_admin(current_user, db)
+    authorize_global_project_action(current_user, A_BATCH_IMPORT, db)
 
     projects_created = 0
     projects_matched = 0
@@ -2536,49 +2546,48 @@ def dispatch_project(
     db: Session = Depends(get_db),
 ):
     """公司管理下发项目给负责人。"""
-    _require_ceo_or_tech_admin(current_user, db)
-
     project = db.execute(
         select(models.Project).where(models.Project.id == project_id).with_for_update()
     ).scalar_one_or_none()
     if not project:
         raise HTTPException(404, "project not found")
+    authorize_project_action(current_user, project, A_DISPATCH, db)
     _require_project_not_close_frozen(project)
     lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
     if lifecycle == "archived":
-        raise HTTPException(409, "已归档项目不可下发")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "已归档项目不可下发")
     if lifecycle == "active":
-        raise HTTPException(409, "项目已启动，无需重新下发")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目已启动，无需重新下发")
     if lifecycle != PL.S_DRAFT:
-        raise HTTPException(409, "当前项目阶段不可下发")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "当前项目阶段不可下发")
 
     # 兜底校验：下发前必须已配置企业教练(project_ceo)和负责人(owner)
     # super_admin / company_ceo 也不能绕过此业务校验
     _role_counts = _member_summary(project_id, db)
     if _role_counts.get("project_ceo", 0) <= 0:
-        raise HTTPException(409, "请先配置企业教练后再下发项目。")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "请先配置企业教练后再下发项目。")
     if _role_counts.get("owner", 0) <= 0:
-        raise HTTPException(409, "请先配置项目负责人后再下发项目。")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "请先配置项目负责人后再下发项目。")
     objectives = (project.objectives or "").strip()
     start_date = (project.start_date or "").strip()
     end_date = (project.end_date or "").strip()
     if not objectives or not start_date:
-        raise HTTPException(409, "\u8bf7\u5148\u586b\u5199\u9879\u76ee\u76ee\u6807\u548c\u5f00\u59cb\u65e5\u671f\u540e\u518d\u4e0b\u53d1\u9879\u76ee\u3002")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "\u8bf7\u5148\u586b\u5199\u9879\u76ee\u76ee\u6807\u548c\u5f00\u59cb\u65e5\u671f\u540e\u518d\u4e0b\u53d1\u9879\u76ee\u3002")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start_date):
-        raise HTTPException(409, "\u9879\u76ee\u5f00\u59cb\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "\u9879\u76ee\u5f00\u59cb\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
     try:
         parsed_start_date = date.fromisoformat(start_date)
     except ValueError:
-        raise HTTPException(409, "\u9879\u76ee\u5f00\u59cb\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目开始日期必须使用 YYYY-MM-DD 格式。")
     if end_date:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", end_date):
-            raise HTTPException(409, "\u9879\u76ee\u7ed3\u675f\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
+            raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目结束日期必须使用 YYYY-MM-DD 格式。")
         try:
             parsed_end_date = date.fromisoformat(end_date)
         except ValueError:
-            raise HTTPException(409, "\u9879\u76ee\u7ed3\u675f\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
+            raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目结束日期必须使用 YYYY-MM-DD 格式。")
         if parsed_end_date < parsed_start_date:
-            raise HTTPException(409, "\u9879\u76ee\u7ed3\u675f\u65e5\u671f\u4e0d\u5f97\u65e9\u4e8e\u5f00\u59cb\u65e5\u671f\u3002")
+            raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目结束日期不得早于开始日期。")
 
     _set_project_lifecycle(project, PL.S_DISPATCHED, db=db, project_id=project_id)
     recipient_ids = project_strict_owner_ids(project_id, db)
@@ -2608,15 +2617,21 @@ def owner_submit_project_profile(
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
-    require_project_owner_or_admin(current_user, project_id, db)
+    authorize_project_action(
+        current_user,
+        project,
+        A_OWNER_SUBMIT,
+        db,
+        denial_detail="permission denied",
+    )
 
     lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
     if not PL.is_owner_plan_editable(lifecycle):
         if lifecycle == "archived":
-            raise HTTPException(409, "已归档项目不可提交")
+            raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "已归档项目不可提交")
         if lifecycle == "pending_review":
-            raise HTTPException(409, "项目已在审核中")
-        raise HTTPException(409, "当前项目阶段不可提交立项信息")
+            raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目已在审核中")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "当前项目阶段不可提交立项信息")
 
     try:
         resolved_people = _resolve_work_progress_people(
@@ -2656,15 +2671,14 @@ def return_project(
     db: Session = Depends(get_db),
 ):
     """企业教练 / 超级管理员将项目启动申请退回给负责人。"""
-    _require_project_coach_or_tech_admin(current_user, project_id, db)
-
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
+    authorize_project_action(current_user, project, A_REVIEW_START, db)
     _require_project_not_close_frozen(project)
     lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
     if lifecycle == "archived":
-        raise HTTPException(409, "已归档项目不可退回")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "已归档项目不可退回")
 
     payload = payload or schemas.ProjectProfilePayload()
     _set_project_lifecycle(project, "returned", db=db, project_id=project_id)
@@ -2706,15 +2720,14 @@ def approve_project(
     db: Session = Depends(get_db),
 ):
     """企业教练审核通过并确立项目。"""
-    _require_project_coach_or_tech_admin(current_user, project_id, db)
-
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
+    authorize_project_action(current_user, project, A_REVIEW_START, db)
     _require_project_not_close_frozen(project)
     lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
     if lifecycle == "archived":
-        raise HTTPException(409, "已归档项目不可启动")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "已归档项目不可启动")
 
     payload = payload or schemas.ProjectProfilePayload()
     _set_project_lifecycle(project, PL.S_ACTIVE, db=db, project_id=project_id)
@@ -2758,15 +2771,14 @@ def kickoff_project(
     db: Session = Depends(get_db),
 ):
     """技术兜底：直接将项目切换为 active。仅超级管理员可执行，正常流程不应使用。"""
-    _require_super_admin(current_user, db)
-
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
+    authorize_global_project_action(current_user, A_TECHNICAL_KICKOFF, db)
     _require_project_not_close_frozen(project)
     lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
     if lifecycle == "archived":
-        raise HTTPException(409, "已归档项目不可启动")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "已归档项目不可启动")
 
     _set_project_lifecycle(project, "active", db=db, project_id=project_id)
     kickoff_value = (kickoff_date or utc_now().date().isoformat()).strip()

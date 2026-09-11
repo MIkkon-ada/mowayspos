@@ -36,7 +36,7 @@
 - Modify: `bowei_ai_dashboard/app/models.py:34`
 - Test: `bowei_ai_dashboard/tests/test_migration_bootstrap.py`
 
-- [ ] **Step 1: Reproduce the focused failure**
+- [x] **Step 1: Reproduce the focused failure**
 
   Run from `bowei_ai_dashboard`:
 
@@ -46,7 +46,7 @@
 
   Expected before the fix: FAIL, identifying `tasks.plan_process` default drift.
 
-- [ ] **Step 2: Make the ORM declare the same server default as the migration**
+- [x] **Step 2: Make the ORM declare the same server default as the migration**
 
   Change only the `Task.plan_process` declaration:
 
@@ -56,7 +56,7 @@
 
   Do not create a new migration: `k2l3m4n5o6p7_add_task_plan_process.py` already establishes the intended database default.
 
-- [ ] **Step 3: Verify schema bootstrap and migration graph**
+- [x] **Step 3: Verify schema bootstrap and migration graph**
 
   ```powershell
   python -m pytest tests/test_migration_bootstrap.py -q
@@ -66,7 +66,7 @@
 
   Expected: migration bootstrap tests pass; `alembic heads` prints exactly one head; upgrade exits 0.
 
-- [ ] **Step 4: Commit only the model fix**
+- [x] **Step 4: Commit only the model fix**
 
   ```powershell
   git add bowei_ai_dashboard/app/models.py
@@ -83,7 +83,7 @@
 - Verify: `frontend/src/features/meeting/NewMeetingModal.tsx`
 - Verify: `frontend/src/features/voice-update/VoiceUpdateInputPanel.tsx`
 
-- [ ] **Step 1: Run the two stale contracts and confirm they fail**
+- [x] **Step 1: Run the two stale contracts and confirm they fail**
 
   Run from `frontend`:
 
@@ -93,7 +93,7 @@
 
   Expected before test correction: both document-acceptance assertions fail because components now use the shared format configuration.
 
-- [ ] **Step 2: Replace the meeting upload test with a shared-config contract**
+- [x] **Step 2: Replace the meeting upload test with a shared-config contract**
 
   Add this source read next to the existing `modal` and `api` constants:
 
@@ -111,7 +111,7 @@
   })
   ```
 
-- [ ] **Step 3: Replace the work-report literal-string assertion with a shared-config contract**
+- [x] **Step 3: Replace the work-report literal-string assertion with a shared-config contract**
 
   In `workReportDocumentInput.test.mjs`, use the existing `read()` helper and assert:
 
@@ -126,7 +126,7 @@
 
   Preserve the file-size, upload-progress, cancellation, and parsing-flow assertions already present in that file.
 
-- [ ] **Step 4: Run both corrected contracts**
+- [x] **Step 4: Run both corrected contracts**
 
   ```powershell
   node --test tests/newMeetingMultiSource.test.mjs tests/workReportDocumentInput.test.mjs
@@ -134,7 +134,7 @@
 
   Expected: PASS.
 
-- [ ] **Step 5: Commit the contract corrections**
+- [x] **Step 5: Commit the contract corrections**
 
   ```powershell
   git add frontend/tests/newMeetingMultiSource.test.mjs frontend/tests/workReportDocumentInput.test.mjs
@@ -148,7 +148,7 @@
 - Modify: `frontend/tests/loginPageVisualStructure.test.mjs`
 - Verify: `frontend/src/styles.css`
 
-- [ ] **Step 1: Reproduce the single login contract failure**
+- [x] **Step 1: Reproduce the single login contract failure**
 
   ```powershell
   node --test tests/loginPageVisualStructure.test.mjs
@@ -156,7 +156,7 @@
 
   Expected before the fix: the desktop-composition test fails even though the `.login-card` rule itself has no `min-height`; the broad regular expression crosses into later CSS rules.
 
-- [ ] **Step 2: Add a rule-scoped CSS helper**
+- [x] **Step 2: Add a rule-scoped CSS helper**
 
   Add after the `css` constant:
 
@@ -169,7 +169,7 @@
   }
   ```
 
-- [ ] **Step 3: Scope the negative assertion to `.login-card`**
+- [x] **Step 3: Scope the negative assertion to `.login-card`**
 
   Replace:
 
@@ -183,7 +183,7 @@
   assert.doesNotMatch(cssRule('.login-card'), /min-height:/)
   ```
 
-- [ ] **Step 4: Verify the focused contract**
+- [x] **Step 4: Verify the focused contract**
 
   ```powershell
   node --test tests/loginPageVisualStructure.test.mjs
@@ -191,7 +191,7 @@
 
   Expected: all tests in the file pass.
 
-- [ ] **Step 5: Commit the test repair**
+- [x] **Step 5: Commit the test repair**
 
   ```powershell
   git add frontend/tests/loginPageVisualStructure.test.mjs
@@ -210,7 +210,7 @@
 - Verify: `frontend/src/components/task-management/PlanTableViewV2.tsx`
 - Verify: `frontend/src/components/task-management/planTableExcelV2.css`
 
-- [ ] **Step 1: Reproduce the three stale contracts**
+- [x] **Step 1: Reproduce the three stale contracts**
 
   ```powershell
   node --test tests/ownerSubmitAiPanelPresentation.test.mjs tests/projectInitAiClient.test.mjs tests/workProgressExcelView.test.mjs
@@ -218,7 +218,7 @@
 
   Expected before correction: one failure in each file.
 
-- [ ] **Step 2: Update the AI preview summary assertion**
+- [x] **Step 2: Update the AI preview summary assertion**
 
   Replace the old `已生成` assertion with:
 
@@ -230,7 +230,7 @@
 
   Preserve assertions for completion status, pending count, technical details, evidence, task cards, and apply action.
 
-- [ ] **Step 3: Update the failed-analysis decoder expectation**
+- [x] **Step 3: Update the failed-analysis decoder expectation**
 
   In the test named `failed analysis runs accept an empty draft and preserve status and error message`, replace the obsolete whole-object equality with:
 
@@ -242,7 +242,7 @@
 
   This verifies the current invariant that every decoded draft has a module-aware `project_profile` shape.
 
-- [ ] **Step 4: Update work-progress width assertions to the approved proportional layout**
+- [x] **Step 4: Update work-progress width assertions to the approved proportional layout**
 
   Replace fixed pixel-column assertions with:
 
@@ -257,7 +257,7 @@
   assert.doesNotMatch(css, /min-width:\s*1305px/)
   ```
 
-- [ ] **Step 5: Verify all three corrected contracts**
+- [x] **Step 5: Verify all three corrected contracts**
 
   ```powershell
   node --test tests/ownerSubmitAiPanelPresentation.test.mjs tests/projectInitAiClient.test.mjs tests/workProgressExcelView.test.mjs
@@ -265,7 +265,7 @@
 
   Expected: PASS.
 
-- [ ] **Step 6: Commit these contract corrections**
+- [x] **Step 6: Commit these contract corrections**
 
   ```powershell
   git add frontend/tests/ownerSubmitAiPanelPresentation.test.mjs frontend/tests/projectInitAiClient.test.mjs frontend/tests/workProgressExcelView.test.mjs
@@ -281,7 +281,7 @@
 - Modify: `frontend/src/features/settings/OwnerSubmitModal.layout.test.tsx`
 - Reference: `docs/superpowers/specs/2026-09-04-owner-submit-layout-design.md`
 
-- [ ] **Step 1: Add a failing behavior test for add/select/delete**
+- [x] **Step 1: Add a failing behavior test for add/select/delete**
 
   Append to `OwnerSubmitModal.layout.test.tsx`:
 
@@ -302,7 +302,7 @@
 
   Ensure `waitFor` is imported from `@testing-library/react`.
 
-- [ ] **Step 2: Replace obsolete source-shape tests with approved-layout invariants**
+- [x] **Step 2: Replace obsolete source-shape tests with approved-layout invariants**
 
   In `ownerSubmitModalLayout.test.mjs`, preserve the four picker behavior tests and the AI upload-recovery test. Remove the obsolete tests from `picker triggers use a stable SVG chevron` through `AI merge identifies one genuinely new task`. Add these tests:
 
@@ -337,7 +337,7 @@
   })
   ```
 
-- [ ] **Step 3: Confirm tests fail while the commented legacy JSX remains**
+- [x] **Step 3: Confirm tests fail while the commented legacy JSX remains**
 
   ```powershell
   npm run test:unit -- src/features/settings/OwnerSubmitModal.layout.test.tsx
@@ -346,7 +346,7 @@
 
   Expected: at least the “one add action and no legacy expansion UI” contract fails because the dead commented block is still present.
 
-- [ ] **Step 4: Delete the entire superseded commented JSX block**
+- [x] **Step 4: Delete the entire superseded commented JSX block**
 
   In `OwnerSubmitModal.tsx`, keep:
 
@@ -356,7 +356,7 @@
 
   Delete everything from the following `/*` through its matching closing `*/`. Do not change the active `renderApprovedLayout()` implementation in this step.
 
-- [ ] **Step 5: Verify active B-layout behavior and source contracts**
+- [x] **Step 5: Verify active B-layout behavior and source contracts**
 
   ```powershell
   npm run test:unit -- src/features/settings/OwnerSubmitModal.layout.test.tsx
@@ -366,7 +366,7 @@
 
   Expected: all focused tests and the TypeScript production build pass.
 
-- [ ] **Step 6: Commit the dead-code removal and replacement tests**
+- [x] **Step 6: Commit the dead-code removal and replacement tests**
 
   ```powershell
   git add frontend/src/features/settings/OwnerSubmitModal.tsx frontend/src/features/settings/OwnerSubmitModal.layout.test.tsx frontend/tests/ownerSubmitModalLayout.test.mjs
@@ -380,7 +380,7 @@
 - Create: `frontend/scripts/run-contract-tests.mjs`
 - Modify: `frontend/package.json`
 
-- [ ] **Step 1: Demonstrate that the unified command does not exist**
+- [x] **Step 1: Demonstrate that the unified command does not exist**
 
   ```powershell
   npm run test:all
@@ -388,7 +388,7 @@
 
   Expected before implementation: npm reports a missing `test:all` script.
 
-- [ ] **Step 2: Add the deterministic Node contract-test runner**
+- [x] **Step 2: Add the deterministic Node contract-test runner**
 
   Create `frontend/scripts/run-contract-tests.mjs`:
 
@@ -415,7 +415,7 @@
   process.exit(result.status ?? 1)
   ```
 
-- [ ] **Step 3: Add package scripts without changing existing commands**
+- [x] **Step 3: Add package scripts without changing existing commands**
 
   Extend `frontend/package.json` scripts to:
 
@@ -430,7 +430,7 @@
   }
   ```
 
-- [ ] **Step 4: Verify both suites are reached through one command**
+- [x] **Step 4: Verify both suites are reached through one command**
 
   ```powershell
   npm run test:all
@@ -438,7 +438,7 @@
 
   Expected: Vitest summary appears first, Node test-runner summary appears second, and the command exits 0.
 
-- [ ] **Step 5: Commit the unified frontend test entry point**
+- [x] **Step 5: Commit the unified frontend test entry point**
 
   ```powershell
   git add frontend/package.json frontend/scripts/run-contract-tests.mjs
@@ -451,7 +451,7 @@
 
 - Modify: `.github/workflows/cloud-p1b2a-gate.yml`
 
-- [ ] **Step 1: Expand the pull-request path filter**
+- [x] **Step 1: Expand the pull-request path filter**
 
   Preserve `workflow_dispatch` and the existing production-runtime push branch. Replace the narrow `pull_request.paths` list with:
 
@@ -470,7 +470,7 @@
       - 'docs/ghcr-private-image-publish.md'
   ```
 
-- [ ] **Step 2: Delete the backend known-failure whitelist**
+- [x] **Step 2: Delete the backend known-failure whitelist**
 
   Replace the entire `Backend full pytest with known structural baseline` step, including its generated `allowed` set, with:
 
@@ -482,7 +482,7 @@
 
   No `continue-on-error`, exit-code capture, or failure allowlist may remain.
 
-- [ ] **Step 3: Route CI frontend tests through the unified command**
+- [x] **Step 3: Route CI frontend tests through the unified command**
 
   Replace the Bash `find tests ... node --test` step with:
 
@@ -494,7 +494,7 @@
 
   Keep the subsequent `npm run build`, Compose configuration, image builds, PostgreSQL 16 migration gate, health smoke, port-isolation check, whitespace check, and guarded cleanup unchanged.
 
-- [ ] **Step 4: Verify the workflow no longer contains bypasses**
+- [x] **Step 4: Verify the workflow no longer contains bypasses**
 
   Run from the repository root:
 
@@ -512,7 +512,7 @@
 
   Expected: all six gate patterns match.
 
-- [ ] **Step 5: Commit the fail-closed CI gate**
+- [x] **Step 5: Commit the fail-closed CI gate**
 
   ```powershell
   git add .github/workflows/cloud-p1b2a-gate.yml
@@ -525,7 +525,7 @@
 
 - Verify only; do not modify unrelated files to make commands pass.
 
-- [ ] **Step 1: Run the complete backend suite**
+- [x] **Step 1: Run the complete backend suite**
 
   ```powershell
   Set-Location bowei_ai_dashboard
@@ -535,7 +535,7 @@
 
   Expected: exit 0, no failed tests. Existing deprecation and circular-FK warnings may remain visible; they must not be converted into ignored failures.
 
-- [ ] **Step 2: Run the complete frontend suite and production build**
+- [x] **Step 2: Run the complete frontend suite and production build**
 
   ```powershell
   Set-Location frontend
@@ -546,7 +546,7 @@
 
   Expected: both commands exit 0. The current ExcelJS chunk-size warning is allowed as a visible optimization warning, not as a test failure.
 
-- [ ] **Step 3: Recheck migration integrity**
+- [x] **Step 3: Recheck migration integrity**
 
   ```powershell
   Set-Location bowei_ai_dashboard
@@ -557,7 +557,7 @@
 
   Expected: one Alembic head and all migration-bootstrap tests pass.
 
-- [ ] **Step 4: Check patch hygiene and scope**
+- [x] **Step 4: Check patch hygiene and scope**
 
   ```powershell
   git diff --check

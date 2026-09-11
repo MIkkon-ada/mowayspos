@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from . import models
 from .auth import IMPERSONATE_ALLOWED, get_session_user
+from .api_errors import CodedHTTPException
+from .compatibility.project_roles import resolve_project_roles
 from .database import SessionLocal
 from .services.project_resolution import resolve_project_context
 from .settings import get_settings
@@ -520,17 +522,8 @@ def get_all_project_roles(person_id: int, project_id: int, db) -> list[str]:
     从 project_members 表查询某人在某项目的全部角色列表。
     例：["owner", "project_ceo"]（一人可持有多个角色）。
     """
-    try:
-        rows = db.execute(
-            text(
-                "SELECT role FROM project_members "
-                "WHERE person_id = :pid AND project_id = :proj_id"
-            ),
-            {"pid": person_id, "proj_id": project_id},
-        ).fetchall()
-        return [row[0] for row in rows if row[0]]
-    except Exception:
-        return []
+    resolution = resolve_project_roles(db, person_id, project_id, allow_legacy=False)
+    return sorted(resolution.roles)
 
 
 def _project_columns(db) -> set[str]:
@@ -631,7 +624,7 @@ def _normalize_current_user(current_user):
 def _load_account_identity(current_user, db) -> dict:
     user_key = _normalize_current_user(current_user)
     if user_key is None or (isinstance(user_key, str) and not user_key.strip()):
-        raise HTTPException(status_code=401, detail="unauthorized")
+        raise CodedHTTPException(401, "AUTHENTICATION_REQUIRED", "unauthorized")
     if db is None:
         raise HTTPException(status_code=500, detail="database_required")
 
@@ -640,10 +633,10 @@ def _load_account_identity(current_user, db) -> dict:
     else:
         account = db.query(models.Account).filter(models.Account.username == str(user_key).strip()).first()
     if not account:
-        raise HTTPException(status_code=401, detail="unauthorized")
+        raise CodedHTTPException(401, "AUTHENTICATION_REQUIRED", "unauthorized")
 
     if account.status != "active":
-        raise HTTPException(status_code=403, detail="account_disabled")
+        raise CodedHTTPException(403, "ACCOUNT_DISABLED", "account_disabled")
 
     person = None
     if account.person_id:

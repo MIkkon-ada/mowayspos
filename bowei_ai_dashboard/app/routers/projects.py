@@ -11,21 +11,36 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
+from ..api_errors import CodedHTTPException
 from ..database import get_db
 from ..domain import source_type as ST
 from ..domain import task_status as TS
 from ..domain import project_lifecycle as PL
+from ..domain.project_permissions import (
+    A_ARCHIVE,
+    A_CANCEL_CLOSE_REQUEST,
+    A_EDIT_SOURCE,
+    A_EDIT_CLOSE_REQUEST,
+    A_MANAGE_MEMBERS_DIRECT,
+    A_REQUEST_MEMBER_CHANGE,
+    A_REQUEST_CLOSE,
+    A_REVIEW_CLOSE_REQUEST,
+    A_REVIEW_MEMBER_CHANGE,
+    A_DELETE,
+    A_CREATE,
+    A_BATCH_IMPORT,
+    A_DISPATCH,
+    A_OWNER_SUBMIT,
+    A_REVIEW_START,
+    A_TECHNICAL_KICKOFF,
+    A_VIEW,
+)
 from ..permissions import (
     PROJECT_ROLE_COLLABORATOR,
     PROJECT_ROLE_COORDINATOR,
     PROJECT_ROLE_OWNER,
-    get_all_project_roles,
     get_current_user_name,
     get_user_context_from_db,
-    require_project_manager,
-    require_project_access,
-    require_project_owner_or_admin,
-    require_tech_admin,
 )
 from ..time_utils import utc_now
 from ..services.notify import (
@@ -49,8 +64,16 @@ from ..services.project_purge_storage import (
     stage_project_payloads,
 )
 from ..services.project_init_attachment_storage import project_init_attachment_root
+from ..services.project_access import (
+    authorize_global_project_action,
+    authorize_project_action,
+    resolve_visible_project_ids,
+)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+
+# 项目全局动作的统一拒绝提示：仅公司管理或超级管理员可执行此操作。
+# 项目归档需提交公司管理审核。
 
 _VALID_ROLES = {"project_ceo", "owner", "coordinator", "member"}
 _LIFECYCLE_STATUSES = PL.ALL_STATUSES
@@ -336,67 +359,6 @@ def _project_row_lifecycle(raw: dict) -> str:
     if is_active is False:
         return "archived"
     return "draft"
-
-
-def _require_super_admin(current_user: str, db: Session):
-    ctx = get_user_context_from_db(current_user, db)
-    if not ctx.get("is_tech_admin"):
-        raise HTTPException(403, "仅超级管理员可执行此操作")
-
-
-def _require_project_manager(current_user: str, db: Session):
-    """阶段 2B 收口：项目主数据管理仅 tech_admin。"""
-    return require_tech_admin(current_user, db)
-
-
-def _require_ceo_or_tech_admin(current_user: str, db: Session):
-    ctx = get_user_context_from_db(current_user, db)
-    if not (ctx.get("is_tech_admin") or ctx.get("is_ceo")):
-        raise HTTPException(403, "仅公司管理或超级管理员可执行此操作")
-
-
-def _require_project_coach_or_tech_admin(current_user: str, project_id: int, db: Session):
-    """审核立项权限：仅企业教练（project_ceo）或超级管理员可执行。
-
-    公司管理（system_role=company_ceo）不能仅凭系统角色审核立项。
-    企业教练必须在该项目的 project_members 中有 project_ceo 角色。
-    """
-    ctx = get_user_context_from_db(current_user, db)
-    if ctx.get("is_tech_admin"):
-        return
-    person_id = ctx.get("person_id")
-    if person_id:
-        roles = get_all_project_roles(person_id, project_id, db)
-        if "project_ceo" in roles:
-            return
-    raise HTTPException(403, "仅企业教练或超级管理员可执行此操作")
-
-
-def _require_project_source_manager(current_user: str, project_id: int, db: Session):
-    """立项源头管理权限：super_admin 全阶段兜底；company_ceo 仅 draft 阶段可直接操作。
-
-    项目下发后，编辑基础信息 / 配置成员等直接写操作需走变更申请流（本轮未实现），
-    故非 draft 阶段仅 super_admin 可技术兜底，company_ceo / project_ceo / owner 均拒绝。
-    """
-    ctx = get_user_context_from_db(current_user, db)
-    if ctx.get("is_tech_admin"):
-        return
-    if ctx.get("is_ceo"):
-        status = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
-        if status == "draft":
-            return
-    raise HTTPException(403, "项目已下发，当前仅支持查看。如需调整，请走变更申请流程。")
-
-
-def _require_archive_via_approval(current_user: str, db: Session):
-    """归档需审核流（本轮未实现），仅 super_admin 可技术兜底直接归档。
-
-    company_ceo / project_ceo / owner 均不可直接归档，需提交归档申请由公司管理审核。
-    """
-    ctx = get_user_context_from_db(current_user, db)
-    if ctx.get("is_tech_admin"):
-        return
-    raise HTTPException(403, "项目归档需提交公司管理审核。")
 
 
 def _person_name(member: models.ProjectMember, db: Session) -> str:
@@ -1002,29 +964,7 @@ def list_projects(
 
     if not context["can_view_all"]:
         q = q.filter(models.Project.status.notin_(["archived", PL.S_DRAFT]))
-        person_id = context.get("person_id")
-
-        # 从 project_members 取可见 project_id
-        pm_ids: set[int] = set()
-        if person_id:
-            rows = db.execute(
-                text("SELECT DISTINCT project_id FROM project_members WHERE person_id = :pid"),
-                {"pid": person_id},
-            ).fetchall()
-            pm_ids = {r[0] for r in rows}
-
-        # 过渡期：旧 visible_projects（从旧字符串字段推导）
-        old_names = context.get("visible_projects") or []
-        old_ids: set[int] = set()
-        if old_names:
-            old_rows = (
-                db.query(models.Project.id)
-                .filter(models.Project.name.in_(old_names))
-                .all()
-            )
-            old_ids = {r[0] for r in old_rows}
-
-        visible_ids = pm_ids | old_ids
+        visible_ids = resolve_visible_project_ids(context, db, allow_legacy=True)
         if not visible_ids:
             return []
         q = q.filter(models.Project.id.in_(visible_ids))
@@ -1047,8 +987,8 @@ def create_project(
     db: Session = Depends(get_db),
 ):
     """仅公司管理 / 技术管理员可新建项目。"""
-    _require_ceo_or_tech_admin(current_user, db)
-    context = get_user_context_from_db(current_user, db)
+    access = authorize_global_project_action(current_user, A_CREATE, db)
+    context = access.context
 
     name = (payload.name or "").strip()
     if not name:
@@ -1102,7 +1042,7 @@ def batch_import_projects(
     批量导入：从 Excel 粘贴的结构化数据创建专项+关键任务+问题。
     专项已存在则复用，关键任务逐行创建，问题有内容则写入问题库。
     """
-    _require_super_admin(current_user, db)
+    authorize_global_project_action(current_user, A_BATCH_IMPORT, db)
 
     projects_created = 0
     projects_matched = 0
@@ -1201,9 +1141,15 @@ def list_members(
     if not project:
         raise HTTPException(404, "project not found")
 
-    context = get_user_context_from_db(current_user, db)
-    if not _can_view_project(project_id, project.name, context, db):
-        raise HTTPException(403, "permission denied — 仅项目成员可查看")
+    access = authorize_project_action(
+        current_user,
+        project,
+        A_VIEW,
+        db,
+        allow_legacy_roles=True,
+        denial_detail="permission denied — 仅项目成员可查看",
+    )
+    context = access.context
 
     members = (
         db.query(models.ProjectMember)
@@ -1228,7 +1174,7 @@ def add_member(
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
-    _require_project_source_manager(current_user, project_id, db)
+    authorize_project_action(current_user, project, A_MANAGE_MEMBERS_DIRECT, db)
     person = db.get(models.Person, payload.person_id)
     if not person:
         raise HTTPException(404, f"person id={payload.person_id} not found")
@@ -1287,7 +1233,7 @@ def update_member(
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
-    _require_project_source_manager(current_user, project_id, db)
+    authorize_project_action(current_user, project, A_MANAGE_MEMBERS_DIRECT, db)
 
     before = _member_to_dict(row)
     if payload.role is not None:
@@ -1331,7 +1277,7 @@ def remove_member(
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
-    _require_project_source_manager(current_user, project_id, db)
+    authorize_project_action(current_user, project, A_MANAGE_MEMBERS_DIRECT, db)
 
     before = _member_to_dict(row)
 
@@ -1420,12 +1366,11 @@ def create_member_change_request(
     if status == "archived":
         raise HTTPException(400, "归档项目不允许发起成员变更申请。")
 
-    ctx = get_user_context_from_db(current_user, db)
+    access = authorize_project_action(current_user, project, A_REQUEST_MEMBER_CHANGE, db)
+    ctx = access.context
     person_id = ctx.get("person_id")
-    is_tech_admin = bool(ctx.get("is_tech_admin"))
-    requester_roles = get_all_project_roles(person_id, project_id, db) if person_id else []
-    if not (is_tech_admin or "owner" in requester_roles or "project_ceo" in requester_roles):
-        raise HTTPException(403, "仅项目负责人或企业教练可发起成员变更申请。")
+    is_tech_admin = access.subject.is_tech_admin
+    requester_roles = access.subject.project_roles
 
     to_role = (payload.to_role or "").strip()
     if to_role == "owner":
@@ -1520,7 +1465,14 @@ def list_member_change_requests(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    require_project_access(current_user, project_id, db)
+    authorize_project_action(
+        current_user,
+        project,
+        A_VIEW,
+        db,
+        allow_legacy_roles=True,
+        denial_detail="permission denied",
+    )
 
     q = db.query(models.MemberChangeRequest).filter_by(project_id=project_id)
     if status:
@@ -1542,7 +1494,7 @@ def approve_member_change_request(
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
-    _require_project_coach_or_tech_admin(current_user, project_id, db)
+    access = authorize_project_action(current_user, project, A_REVIEW_MEMBER_CHANGE, db)
 
     req = db.get(models.MemberChangeRequest, request_id)
     if not req or req.project_id != project_id:
@@ -1566,7 +1518,7 @@ def approve_member_change_request(
     if existing:
         raise HTTPException(409, "该成员已拥有该项目角色")
 
-    ctx = get_user_context_from_db(current_user, db)
+    ctx = access.context
     new_member = models.ProjectMember(
         project_id=project_id,
         person_id=req.target_person_id,
@@ -1604,7 +1556,7 @@ def reject_member_change_request(
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
-    _require_project_coach_or_tech_admin(current_user, project_id, db)
+    access = authorize_project_action(current_user, project, A_REVIEW_MEMBER_CHANGE, db)
 
     req = db.get(models.MemberChangeRequest, request_id)
     if not req or req.project_id != project_id:
@@ -1612,7 +1564,7 @@ def reject_member_change_request(
     if req.status != "pending":
         raise HTTPException(409, f"申请当前状态为 {req.status}，不可重复审核")
 
-    ctx = get_user_context_from_db(current_user, db)
+    ctx = access.context
     req.status = "rejected"
     req.reviewer_person_id = ctx.get("person_id")
     req.reviewed_at = utc_now()
@@ -1635,9 +1587,15 @@ def get_project(
     if not project:
         raise HTTPException(404, "project not found")
 
-    context = get_user_context_from_db(current_user, db)
-    if not _can_view_project(project_id, project.name, context, db):
-        raise HTTPException(403, "permission denied — 仅项目成员可查看")
+    access = authorize_project_action(
+        current_user,
+        project,
+        A_VIEW,
+        db,
+        allow_legacy_roles=True,
+        denial_detail="permission denied — 仅项目成员可查看",
+    )
+    context = access.context
 
     raw = _read_project_raw(project_id, db)
     user_roles = _get_user_roles(project_id, project.name, context, db)
@@ -1656,7 +1614,7 @@ def update_project(
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
-    _require_project_source_manager(current_user, project_id, db)
+    authorize_project_action(current_user, project, A_EDIT_SOURCE, db)
 
     warnings: list[str] = []
 
@@ -1762,34 +1720,6 @@ def _close_context(current_user: str, db: Session) -> dict:
     return get_user_context_from_db(current_user, db)
 
 
-def _require_close_request_owner(current_user: str, project_id: int, db: Session) -> dict:
-    context = _close_context(current_user, db)
-    if context.get("is_tech_admin"):
-        return context
-    person_id = context.get("person_id")
-    if person_id and "owner" in get_all_project_roles(person_id, project_id, db):
-        return context
-    raise HTTPException(403, "仅项目负责人或超级管理员可执行此操作")
-
-
-def _require_original_close_requester(
-    current_user: str,
-    request: models.ProjectCloseRequest,
-    db: Session,
-) -> dict:
-    context = _close_context(current_user, db)
-    if context.get("is_tech_admin"):
-        return context
-    person_id = context.get("person_id")
-    if (
-        person_id
-        and request.requester_person_id == person_id
-        and "owner" in get_all_project_roles(person_id, request.project_id, db)
-    ):
-        return context
-    raise HTTPException(403, "仅原申请人或超级管理员可执行此操作")
-
-
 def _require_close_request_view(current_user: str, project: models.Project, db: Session) -> dict:
     context = _close_context(current_user, db)
     if not _can_view_project(project.id, project.name, context, db):
@@ -1888,7 +1818,7 @@ def _ensure_pending_close_pair(
     request: models.ProjectCloseRequest,
 ) -> None:
     if request.status != "pending" or PL.normalize(project.status) != PL.S_PENDING_CLOSE:
-        raise HTTPException(409, "结束申请已不处于待审核状态")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "结束申请已不处于待审核状态")
 
 
 def _raise_close_blocked(blockers: list[dict]) -> None:
@@ -1905,14 +1835,15 @@ def create_project_close_request(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    context = _require_close_request_owner(current_user, project_id, db)
+    access = authorize_project_action(current_user, project, A_REQUEST_CLOSE, db)
+    context = access.context
     project = _lock_project_for_close(project_id, db)
     if not project:
         raise HTTPException(404, "project not found")
     if PL.normalize(project.status) != PL.S_ACTIVE:
-        raise HTTPException(409, "仅进行中的项目可申请结束")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "仅进行中的项目可申请结束")
     if db.query(models.ProjectCloseRequest).filter_by(project_id=project_id, status="pending").first():
-        raise HTTPException(409, "项目已有待审核的结束申请")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目已有待审核的结束申请")
 
     material_data = payload.model_dump()
     blockers, _warnings = evaluate_project_close(db, project_id, material_data)
@@ -2011,7 +1942,14 @@ def update_project_close_request(
     request = _lock_close_request(project_id, request_id, db)
     if not request:
         raise HTTPException(404, "project close request not found")
-    context = _require_original_close_requester(current_user, request, db)
+    access = authorize_project_action(
+        current_user,
+        project,
+        A_EDIT_CLOSE_REQUEST,
+        db,
+        requester_person_id=request.requester_person_id,
+    )
+    context = access.context
     _ensure_pending_close_pair(project, request)
 
     current, _valid = material_values(request)
@@ -2067,7 +2005,14 @@ def cancel_project_close_request(
     request = _lock_close_request(project_id, request_id, db)
     if not request:
         raise HTTPException(404, "project close request not found")
-    context = _require_original_close_requester(current_user, request, db)
+    access = authorize_project_action(
+        current_user,
+        project,
+        A_CANCEL_CLOSE_REQUEST,
+        db,
+        requester_person_id=request.requester_person_id,
+    )
+    context = access.context
     _ensure_pending_close_pair(project, request)
     before = _close_state(request, project)
     request.status = "cancelled"
@@ -2109,14 +2054,14 @@ def approve_project_close_request(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    _require_project_coach_or_tech_admin(current_user, project_id, db)
+    access = authorize_project_action(current_user, project, A_REVIEW_CLOSE_REQUEST, db)
     project = _lock_project_for_close(project_id, db)
     if not project:
         raise HTTPException(404, "project not found")
     request = _lock_close_request(project_id, request_id, db)
     if not request:
         raise HTTPException(404, "project close request not found")
-    context = _close_context(current_user, db)
+    context = access.context
     _ensure_pending_close_pair(project, request)
     blockers, _warnings = evaluate_project_close(db, project_id, request)
     if blockers:
@@ -2164,14 +2109,14 @@ def reject_project_close_request(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    _require_project_coach_or_tech_admin(current_user, project_id, db)
+    access = authorize_project_action(current_user, project, A_REVIEW_CLOSE_REQUEST, db)
     project = _lock_project_for_close(project_id, db)
     if not project:
         raise HTTPException(404, "project not found")
     request = _lock_close_request(project_id, request_id, db)
     if not request:
         raise HTTPException(404, "project close request not found")
-    context = _close_context(current_user, db)
+    context = access.context
     _ensure_pending_close_pair(project, request)
     if not payload.review_comment:
         raise HTTPException(422, "退回结束申请必须填写审核意见")
@@ -2409,7 +2354,7 @@ def delete_project(
     db: Session = Depends(get_db),
 ):
     """Permanently remove a project of any lifecycle after double confirmation."""
-    _require_super_admin(current_user, db)
+    authorize_global_project_action(current_user, A_DELETE, db)
     project = _lock_project_for_delete(project_id, db)
     if not project:
         raise HTTPException(404, "项目不存在")
@@ -2463,7 +2408,7 @@ def retry_project_purge_cleanup(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    _require_super_admin(current_user, db)
+    authorize_global_project_action(current_user, A_DELETE, db)
     try:
         cleaned = retry_project_payload_cleanup(
             cleanup_key,
@@ -2496,14 +2441,14 @@ def archive_project(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    _require_archive_via_approval(current_user, db)
+    authorize_global_project_action(current_user, A_ARCHIVE, db)
     project = _lock_project_for_close(project_id, db)
     if not project:
         raise HTTPException(404, "project not found")
 
     lifecycle = PL.normalize(project.status)
     if lifecycle != PL.S_ENDED:
-        raise HTTPException(409, "仅已结束项目可以归档")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "仅已结束项目可以归档")
 
     _set_project_lifecycle(project, "archived", db=db, project_id=project_id)
     crud.log(db, current_user, "archive_project", "project", project_id, {"is_active": True}, {"is_active": False})
@@ -2531,49 +2476,48 @@ def dispatch_project(
     db: Session = Depends(get_db),
 ):
     """公司管理下发项目给负责人。"""
-    _require_ceo_or_tech_admin(current_user, db)
-
     project = db.execute(
         select(models.Project).where(models.Project.id == project_id).with_for_update()
     ).scalar_one_or_none()
     if not project:
         raise HTTPException(404, "project not found")
+    authorize_project_action(current_user, project, A_DISPATCH, db)
     _require_project_not_close_frozen(project)
     lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
     if lifecycle == "archived":
-        raise HTTPException(409, "已归档项目不可下发")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "已归档项目不可下发")
     if lifecycle == "active":
-        raise HTTPException(409, "项目已启动，无需重新下发")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目已启动，无需重新下发")
     if lifecycle != PL.S_DRAFT:
-        raise HTTPException(409, "当前项目阶段不可下发")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "当前项目阶段不可下发")
 
     # 兜底校验：下发前必须已配置企业教练(project_ceo)和负责人(owner)
     # super_admin / company_ceo 也不能绕过此业务校验
     _role_counts = _member_summary(project_id, db)
     if _role_counts.get("project_ceo", 0) <= 0:
-        raise HTTPException(409, "请先配置企业教练后再下发项目。")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "请先配置企业教练后再下发项目。")
     if _role_counts.get("owner", 0) <= 0:
-        raise HTTPException(409, "请先配置项目负责人后再下发项目。")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "请先配置项目负责人后再下发项目。")
     objectives = (project.objectives or "").strip()
     start_date = (project.start_date or "").strip()
     end_date = (project.end_date or "").strip()
     if not objectives or not start_date:
-        raise HTTPException(409, "\u8bf7\u5148\u586b\u5199\u9879\u76ee\u76ee\u6807\u548c\u5f00\u59cb\u65e5\u671f\u540e\u518d\u4e0b\u53d1\u9879\u76ee\u3002")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "\u8bf7\u5148\u586b\u5199\u9879\u76ee\u76ee\u6807\u548c\u5f00\u59cb\u65e5\u671f\u540e\u518d\u4e0b\u53d1\u9879\u76ee\u3002")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start_date):
-        raise HTTPException(409, "\u9879\u76ee\u5f00\u59cb\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "\u9879\u76ee\u5f00\u59cb\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
     try:
         parsed_start_date = date.fromisoformat(start_date)
     except ValueError:
-        raise HTTPException(409, "\u9879\u76ee\u5f00\u59cb\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目开始日期必须使用 YYYY-MM-DD 格式。")
     if end_date:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", end_date):
-            raise HTTPException(409, "\u9879\u76ee\u7ed3\u675f\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
+            raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目结束日期必须使用 YYYY-MM-DD 格式。")
         try:
             parsed_end_date = date.fromisoformat(end_date)
         except ValueError:
-            raise HTTPException(409, "\u9879\u76ee\u7ed3\u675f\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
+            raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目结束日期必须使用 YYYY-MM-DD 格式。")
         if parsed_end_date < parsed_start_date:
-            raise HTTPException(409, "\u9879\u76ee\u7ed3\u675f\u65e5\u671f\u4e0d\u5f97\u65e9\u4e8e\u5f00\u59cb\u65e5\u671f\u3002")
+            raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目结束日期不得早于开始日期。")
 
     _set_project_lifecycle(project, PL.S_DISPATCHED, db=db, project_id=project_id)
     recipient_ids = project_strict_owner_ids(project_id, db)
@@ -2603,15 +2547,21 @@ def owner_submit_project_profile(
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
-    require_project_owner_or_admin(current_user, project_id, db)
+    authorize_project_action(
+        current_user,
+        project,
+        A_OWNER_SUBMIT,
+        db,
+        denial_detail="permission denied",
+    )
 
     lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
     if not PL.is_owner_plan_editable(lifecycle):
         if lifecycle == "archived":
-            raise HTTPException(409, "已归档项目不可提交")
+            raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "已归档项目不可提交")
         if lifecycle == "pending_review":
-            raise HTTPException(409, "项目已在审核中")
-        raise HTTPException(409, "当前项目阶段不可提交立项信息")
+            raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目已在审核中")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "当前项目阶段不可提交立项信息")
 
     try:
         resolved_people = _resolve_work_progress_people(
@@ -2651,15 +2601,14 @@ def return_project(
     db: Session = Depends(get_db),
 ):
     """企业教练 / 超级管理员将项目启动申请退回给负责人。"""
-    _require_project_coach_or_tech_admin(current_user, project_id, db)
-
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
+    authorize_project_action(current_user, project, A_REVIEW_START, db)
     _require_project_not_close_frozen(project)
     lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
     if lifecycle == "archived":
-        raise HTTPException(409, "已归档项目不可退回")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "已归档项目不可退回")
 
     payload = payload or schemas.ProjectProfilePayload()
     _set_project_lifecycle(project, "returned", db=db, project_id=project_id)
@@ -2701,15 +2650,14 @@ def approve_project(
     db: Session = Depends(get_db),
 ):
     """企业教练审核通过并确立项目。"""
-    _require_project_coach_or_tech_admin(current_user, project_id, db)
-
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
+    authorize_project_action(current_user, project, A_REVIEW_START, db)
     _require_project_not_close_frozen(project)
     lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
     if lifecycle == "archived":
-        raise HTTPException(409, "已归档项目不可启动")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "已归档项目不可启动")
 
     payload = payload or schemas.ProjectProfilePayload()
     _set_project_lifecycle(project, PL.S_ACTIVE, db=db, project_id=project_id)
@@ -2753,15 +2701,14 @@ def kickoff_project(
     db: Session = Depends(get_db),
 ):
     """技术兜底：直接将项目切换为 active。仅超级管理员可执行，正常流程不应使用。"""
-    _require_super_admin(current_user, db)
-
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
+    authorize_global_project_action(current_user, A_TECHNICAL_KICKOFF, db)
     _require_project_not_close_frozen(project)
     lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
     if lifecycle == "archived":
-        raise HTTPException(409, "已归档项目不可启动")
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "已归档项目不可启动")
 
     _set_project_lifecycle(project, "active", db=db, project_id=project_id)
     kickoff_value = (kickoff_date or utc_now().date().isoformat()).strip()
@@ -2828,7 +2775,14 @@ def project_capabilities(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    require_project_access(current_user, project_id, db)
+    authorize_project_action(
+        current_user,
+        project,
+        A_VIEW,
+        db,
+        allow_legacy_roles=True,
+        denial_detail="permission denied",
+    )
 
     roles = sorted(user_roles_in_project(context, project_id, db))
 

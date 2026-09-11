@@ -2,18 +2,26 @@
 export class ApiError extends Error {
   status: number
   body: unknown
+  readonly code: string
 
   constructor(status: number, message: string, body: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.body = body
+    this.code = extractCode(body)
   }
 
   /** 401 means unauthenticated; app layers may redirect to login. */
   get isUnauthorized(): boolean {
     return this.status === 401
   }
+}
+
+function extractCode(body: unknown): string {
+  if (!body || typeof body !== 'object') return 'API_ERROR'
+  const code = (body as { code?: unknown }).code
+  return typeof code === 'string' && code.trim() ? code.trim() : 'API_ERROR'
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {

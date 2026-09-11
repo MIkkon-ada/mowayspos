@@ -37,7 +37,7 @@ test('picker menus flip upward and stay inside the viewport when the bottom area
   assert.match(source, /spaceAbove/)
   assert.match(source, /bottom: menuPosition\.bottom/)
   assert.match(source, /maxHeight: menuPosition\.maxHeight/)
-  assert.match(source, /min-h-0 flex-1[^"]*overflow-y-auto/)
+  assert.match(source, /min-h-0 flex-1[^\"]*overflow-y-auto/)
 })
 
 test('picker triggers use a stable SVG chevron instead of a font glyph', () => {

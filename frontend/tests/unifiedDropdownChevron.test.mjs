@@ -25,7 +25,6 @@ test('unified dropdown chevron uses the reference selector geometry everywhere',
     read('../src/features/voice-update/VoiceUpdateTaskReportsSection.tsx'),
     read('../src/pages/MeetingPage.tsx'),
     read('../src/features/meeting/ProjectMeetingReviewWorkspace.tsx'),
-    read('../src/features/settings/OwnerSubmitModal.tsx'),
     read('../src/features/settings/ProjectsMgmtSection.tsx'),
   ]
 
@@ -36,6 +35,7 @@ test('unified dropdown chevron uses the reference selector geometry everywhere',
   assert.match(styles, /\.app-disclosure > summary::after/)
   assert.match(detail, /ChevronDownIcon/)
   assert.match(voiceBinding, /<ChevronDownIcon className="voice-update-binding-scope-arrow"/)
+  assert.match(read('../src/features/settings/OwnerSubmitModal.tsx'), /owner-submit-picker-chevron/)
   assert.doesNotMatch(archive, /⌄|⌃/)
   explicitChevronSources.forEach((source) => assert.match(source, /ChevronDownIcon/))
   defaultDisclosureSources.forEach((source) => assert.match(source, /app-disclosure/))

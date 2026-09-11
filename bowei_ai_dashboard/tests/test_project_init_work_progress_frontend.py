@@ -13,14 +13,16 @@ def test_owner_submit_modal_contains_work_progress_draft_controls():
 
     for expected in [
         "工作推进方案",
-        "新增重点工作",
-        "新增关键任务",
+        "+ 新增重点工作",
+        "+ 新增关键任务",
         "重点工作名称",
-        "目标成果 / 验收标准",
-        "责任人",
+        "目标",
+        "验收标准 / 关键成果",
+        "推进流程",
+        "负责人",
         "协助人",
         "时间段",
-        "备注 / 标准",
+        "评价指标",
         "work_progress_draft",
     ]:
         assert expected in source
@@ -73,7 +75,6 @@ def test_owner_submit_modal_builds_work_progress_draft_submit_payload():
         "toCurrentDraft",
         "const result = await ownerSubmitProfile(project.id, {",
         "work_progress_draft: workProgressDraft",
-        "基础信息由管理层维护",
     ]:
         assert expected in source
     assert "...fillForm" not in source

@@ -31,7 +31,7 @@ class Task(Base, TimestampMixin):
     key_task = Column(String(200), nullable=False)
     key_achievement = Column(String(200), default="")
     completion_standard = Column(Text, default="")
-    plan_process = Column(Text, default="")
+    plan_process = Column(Text, default="", server_default="")
     coordinator = Column(String(50), default="")
     owner = Column(String(50), index=True)
     owner_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)

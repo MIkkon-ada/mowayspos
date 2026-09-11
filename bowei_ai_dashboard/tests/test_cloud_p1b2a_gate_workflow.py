@@ -8,6 +8,6 @@ def test_production_runtime_gate_installs_poppler_before_backend_pytest():
     ).read_text(encoding="utf-8")
 
     install_index = workflow.index("sudo apt-get install -y poppler-utils")
-    pytest_index = workflow.index("python -m pytest tests -q --tb=no")
+    pytest_index = workflow.index("python -m pytest tests -q")
 
     assert install_index < pytest_index

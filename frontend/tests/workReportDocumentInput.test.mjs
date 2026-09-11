@@ -22,10 +22,12 @@ test('document hook replaces text only after successful parsing and exposes remo
 
 test('work-report input exposes document as fourth source and accepts approved formats', () => {
   const input = read('src/features/voice-update/VoiceUpdateInputPanel.tsx')
+  const formats = read('src/config/aiDocumentFormats.ts')
   assert.match(input, /VoiceInputMode/)
   assert.match(input, /document/)
   assert.match(input, /上传文档/)
-  assert.match(input, /\.docx,\.pdf,\.xlsx,\.pptx/)
+  assert.match(input, /acceptedDocumentTypes\('workReport'\)/)
+  assert.match(formats, /workReport:\s*\['\.docx', '\.pdf', '\.xlsx', '\.pptx'\]/)
   assert.match(input, /拖入文档，或点击选择/)
   assert.match(input, /文档解析内容/)
 })

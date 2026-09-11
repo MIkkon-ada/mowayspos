@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from . import models
 from .auth import IMPERSONATE_ALLOWED, get_session_user
+from .api_errors import CodedHTTPException
 from .compatibility.project_roles import resolve_project_roles
 from .database import SessionLocal
 from .services.project_resolution import resolve_project_context
@@ -623,7 +624,7 @@ def _normalize_current_user(current_user):
 def _load_account_identity(current_user, db) -> dict:
     user_key = _normalize_current_user(current_user)
     if user_key is None or (isinstance(user_key, str) and not user_key.strip()):
-        raise HTTPException(status_code=401, detail="unauthorized")
+        raise CodedHTTPException(401, "AUTHENTICATION_REQUIRED", "unauthorized")
     if db is None:
         raise HTTPException(status_code=500, detail="database_required")
 
@@ -632,10 +633,10 @@ def _load_account_identity(current_user, db) -> dict:
     else:
         account = db.query(models.Account).filter(models.Account.username == str(user_key).strip()).first()
     if not account:
-        raise HTTPException(status_code=401, detail="unauthorized")
+        raise CodedHTTPException(401, "AUTHENTICATION_REQUIRED", "unauthorized")
 
     if account.status != "active":
-        raise HTTPException(status_code=403, detail="account_disabled")
+        raise CodedHTTPException(403, "ACCOUNT_DISABLED", "account_disabled")
 
     person = None
     if account.person_id:

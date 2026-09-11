@@ -17,6 +17,7 @@ from .settings import get_settings, load_local_env
 load_local_env()
 
 from . import models
+from .api_errors import CodedHTTPException, coded_http_exception_handler
 from .auth import (
     _check_password,
     create_session,
@@ -199,6 +200,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Moways-SOP project collaboration platform", version="0.3", lifespan=lifespan)
+app.add_exception_handler(CodedHTTPException, coded_http_exception_handler)
 _runtime_settings = get_settings()
 app.add_middleware(
     CORSMiddleware,

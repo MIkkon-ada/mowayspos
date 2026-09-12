@@ -191,8 +191,8 @@ def ensure_default_projects(db) -> None:
             continue
         db.execute(
             text(
-                "INSERT INTO projects (name, coordinator, owners, collaborators, sort_order, is_active, created_at, updated_at) "
-                "VALUES (:name, :coordinator, :owners, :collaborators, :sort_order, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                "INSERT INTO projects (name, coordinator, owners, collaborators, sort_order, status, is_active, created_at, updated_at) "
+                "VALUES (:name, :coordinator, :owners, :collaborators, :sort_order, 'active', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             ),
             {
                 "name": area["name"],

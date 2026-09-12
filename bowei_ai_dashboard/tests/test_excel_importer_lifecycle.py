@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker
 from app import models
 from app.database import Base
 from app.excel_importer import import_projects
+from app.permissions import ensure_default_projects
 
 
 class _AssignmentsReader:
@@ -26,3 +27,15 @@ def test_excel_imported_project_keeps_active_status_and_legacy_flag_in_sync():
 
     assert project.status == "active"
     assert project.is_active is True
+
+
+def test_default_projects_keep_active_status_and_legacy_flag_in_sync():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+
+    ensure_default_projects(db)
+
+    projects = db.query(models.Project).all()
+    assert projects
+    assert {(project.status, project.is_active) for project in projects} == {("active", True)}

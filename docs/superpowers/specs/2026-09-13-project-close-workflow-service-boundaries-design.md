@@ -48,7 +48,9 @@
 
 服务内部拥有以下私有职责：行锁、请求归属、响应 DTO、材料快照、通知去重和待审核状态一致性检查。它复用 `authorize_project_action`、`evaluate_project_close`、`material_values`、`serialize_residual_items` 与既有通知服务。
 
-服务以 `LifecycleWriter` 协议接受一次回调：`(project, lifecycle_status, db, project_id) -> str`。在第一步中 Router 传入其既有的 `_set_project_lifecycle`；这明确隔离了旧物理列的同步策略，后续可单独提取，而不会让关闭服务依赖 Router 模块。
+服务以 `LifecycleWriter` 协议接受一次回调：`(project, lifecycle_status, *, db, project_id) -> str`。在第一步中 Router 传入其既有的 `_set_project_lifecycle`；这明确隔离了旧物理列的同步策略，后续可单独提取，而不会让关闭服务依赖 Router 模块。
+
+仅读取端的旧项目可见性规则仍位于 Router，因此查询服务以 `view_authorizer(current_user, project, db) -> dict` 注入该规则。服务不会反向导入 Router；命令端继续直接复用 `project_access.authorize_project_action`。
 
 ## 数据流和事务
 

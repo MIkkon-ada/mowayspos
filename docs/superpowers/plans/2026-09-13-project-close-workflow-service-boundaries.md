@@ -4,7 +4,7 @@
 
 **Goal:** Move project close-request reads and commands out of the projects router into a service-owned workflow without changing any public contract.
 
-**Architecture:** `project_close_workflow.py` owns close-request lookup, locking, authorization, material validation, audit, notifications, commit and DTO creation. `projects.py` remains the HTTP adapter and supplies its existing lifecycle compatibility writer so `status`, `lifecycle_status`, and `is_active` stay synchronized.
+**Architecture:** `project_close_workflow.py` owns close-request lookup, locking, command authorization, material validation, audit, notifications, commit and DTO creation. `projects.py` remains the HTTP adapter and supplies its existing lifecycle compatibility writer plus the legacy query-view authorizer, so `status`, `lifecycle_status`, `is_active`, and legacy visibility stay synchronized without a service-to-router import.
 
 **Tech Stack:** Python, FastAPI, SQLAlchemy, Pydantic 2, pytest.
 
@@ -51,7 +51,19 @@ Expected: failure because `project_close_workflow` does not exist.
 
 - [ ] **Step 3: Implement the helper boundary.**
 
-Move the existing lock statements/loaders, project/request read lookup, close material state snapshot, ISO datetime formatter, response DTO, notification de-duplication, pending-pair assertion, and blocked-result exception into the new service. Preserve exception texts and DTO fields. Its row lock must retain `populate_existing=True`:
+Move the existing lock statements/loaders, project/request read lookup, close material state snapshot, ISO datetime formatter, response DTO, notification de-duplication, pending-pair assertion, and blocked-result exception into the new service. Preserve exception texts and DTO fields. Define both injected dependencies with their real keyword signatures:
+
+```python
+class LifecycleWriter(Protocol):
+    def __call__(self, project: models.Project, lifecycle_status: str, *, db: Session, project_id: int) -> str:
+        raise NotImplementedError
+
+class ViewAuthorizer(Protocol):
+    def __call__(self, current_user: str, project: models.Project, db: Session) -> dict:
+        raise NotImplementedError
+```
+
+The row lock must retain `populate_existing=True`:
 
 ```python
 def lock_project_for_close(project_id: int, db: Session) -> models.Project | None:
@@ -137,7 +149,7 @@ Creation must authorize `A_REQUEST_CLOSE` before its project lock; require activ
 
 - [ ] **Step 4: Delegate the five router endpoints and verify green.**
 
-Each Router body must become a single service call, for example:
+Each Router body must become a single service call. Read endpoints pass `view_authorizer=_require_close_request_view`; command endpoints pass the lifecycle writer when they change lifecycle, for example:
 
 ```python
 return close_workflow.create_close_request(

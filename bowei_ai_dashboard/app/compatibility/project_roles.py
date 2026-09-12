@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .. import models
+from ..domain.project_permissions import A_VIEW
 
 
 PROJECT_ROLES = frozenset({"owner", "coordinator", "member", "project_ceo"})
@@ -73,3 +74,39 @@ def resolve_project_roles(
     if legacy_roles:
         return ProjectRoleResolution(legacy_roles, "legacy_fields")
     return ProjectRoleResolution(frozenset(), "none")
+
+
+def authorize_project_view(current_user: str, project: models.Project, db, *, denial_detail: str | None = None):
+    """Authorize historical project-field readers without extending write access."""
+    from ..permissions import get_user_context_from_db
+    from ..services.project_access import authorize_project_action_with_resolution
+
+    context = get_user_context_from_db(current_user, db)
+    resolution = resolve_project_roles(db, context.get("person_id"), project.id, allow_legacy=True)
+    return authorize_project_action_with_resolution(
+        current_user,
+        project,
+        A_VIEW,
+        db,
+        resolution=resolution,
+        denial_detail=denial_detail,
+    )
+
+
+def resolve_visible_project_ids(context: dict, db) -> frozenset[int] | None:
+    """Return current-member and historical-field project visibility for read lists."""
+    from ..services.project_access import resolve_member_project_ids
+
+    member_ids = resolve_member_project_ids(context, db)
+    if member_ids is None:
+        return None
+    legacy_names = [
+        str(name).strip()
+        for name in context.get("visible_projects") or []
+        if str(name).strip()
+    ]
+    legacy_ids = {
+        int(row[0])
+        for row in db.query(models.Project.id).filter(models.Project.name.in_(legacy_names)).all()
+    } if legacy_names else set()
+    return frozenset(member_ids | legacy_ids)

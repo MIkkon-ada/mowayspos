@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..api_errors import CodedHTTPException
-from ..compatibility.project_roles import resolve_project_roles
+from ..compatibility.project_roles import ProjectRoleResolution, resolve_project_roles
 from ..domain.project_lifecycle import normalize as normalize_lifecycle
 from ..domain.project_permissions import (
     ProjectPermissionResource,
@@ -43,23 +43,17 @@ def _raise_if_denied(decision, denial_detail: str | None = None) -> None:
     )
 
 
-def authorize_project_action(
+def authorize_project_action_with_resolution(
     current_user: str,
     project: models.Project,
     action: str,
     db: Session,
     *,
+    resolution: ProjectRoleResolution,
     requester_person_id: int | None = None,
-    allow_legacy_roles: bool = False,
     denial_detail: str | None = None,
 ) -> ProjectAccessContext:
     context = get_user_context_from_db(current_user, db)
-    resolution = resolve_project_roles(
-        db,
-        context.get("person_id"),
-        project.id,
-        allow_legacy=allow_legacy_roles,
-    )
     subject = _subject_from_context(context, resolution.roles)
     resource = ProjectPermissionResource(
         project_id=project.id,
@@ -69,6 +63,29 @@ def authorize_project_action(
     decision = decide_project_action(subject, resource, action)
     _raise_if_denied(decision, denial_detail)
     return ProjectAccessContext(context, subject, resource, resolution.source)
+
+
+def authorize_project_action(
+    current_user: str,
+    project: models.Project,
+    action: str,
+    db: Session,
+    *,
+    requester_person_id: int | None = None,
+    denial_detail: str | None = None,
+) -> ProjectAccessContext:
+    """Authorize current member records without historical-field fallback."""
+    context = get_user_context_from_db(current_user, db)
+    resolution = resolve_project_roles(db, context.get("person_id"), project.id)
+    return authorize_project_action_with_resolution(
+        current_user,
+        project,
+        action,
+        db,
+        resolution=resolution,
+        requester_person_id=requester_person_id,
+        denial_detail=denial_detail,
+    )
 
 
 def authorize_global_project_action(
@@ -84,13 +101,11 @@ def authorize_global_project_action(
     return ProjectAccessContext(context, subject, resource, "none")
 
 
-def resolve_visible_project_ids(
+def resolve_member_project_ids(
     context: dict,
     db: Session,
-    *,
-    allow_legacy: bool,
 ) -> frozenset[int] | None:
-    """Resolve list visibility in bounded queries without per-project role loads."""
+    """Resolve member-table list visibility without per-project role loads."""
     if context.get("can_view_all"):
         return None
 
@@ -105,20 +120,4 @@ def resolve_visible_project_ids(
         )
     } if person_id is not None else set()
 
-    if not allow_legacy:
-        return frozenset(member_ids)
-
-    legacy_names = [
-        str(name).strip()
-        for name in context.get("visible_projects") or []
-        if str(name).strip()
-    ]
-    legacy_ids = {
-        int(row[0])
-        for row in (
-            db.query(models.Project.id)
-            .filter(models.Project.name.in_(legacy_names))
-            .all()
-        )
-    } if legacy_names else set()
-    return frozenset(member_ids | legacy_ids)
+    return frozenset(member_ids)

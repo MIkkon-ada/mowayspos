@@ -6,10 +6,11 @@ from sqlalchemy.orm import sessionmaker
 
 from app import models
 from app.api_errors import CodedHTTPException
+from app.compatibility.project_roles import authorize_project_view, resolve_visible_project_ids
 from app.database import Base
 from app.domain.project_permissions import A_OWNER_SUBMIT, A_REVIEW_START, A_VIEW
 from app.permissions import get_user_context_from_db
-from app.services.project_access import authorize_project_action, resolve_visible_project_ids
+from app.services.project_access import authorize_project_action, resolve_member_project_ids
 
 
 def _seed():
@@ -59,7 +60,7 @@ def test_strict_write_action_does_not_use_legacy_owner():
 def test_explicit_legacy_view_can_use_legacy_owner():
     db, project = _seed()
 
-    access = authorize_project_action("legacy_owner", project, A_VIEW, db, allow_legacy_roles=True)
+    access = authorize_project_view("legacy_owner", project, db)
 
     assert access.role_source == "legacy_fields"
 
@@ -78,5 +79,5 @@ def test_visible_project_ids_union_member_and_explicit_legacy_sources():
     db, project = _seed()
     context = get_user_context_from_db("legacy_owner", db)
 
-    assert resolve_visible_project_ids(context, db, allow_legacy=False) == frozenset()
-    assert resolve_visible_project_ids(context, db, allow_legacy=True) == frozenset({project.id})
+    assert resolve_member_project_ids(context, db) == frozenset()
+    assert resolve_visible_project_ids(context, db) == frozenset({project.id})

@@ -11,6 +11,7 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
+from ..compatibility import project_roles as project_role_compatibility
 from ..api_errors import CodedHTTPException
 from ..database import get_db
 from ..domain import source_type as ST
@@ -80,7 +81,6 @@ from ..services.project_init_attachment_storage import project_init_attachment_r
 from ..services.project_access import (
     authorize_global_project_action,
     authorize_project_action,
-    resolve_visible_project_ids,
 )
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -977,7 +977,7 @@ def list_projects(
 
     if not context["can_view_all"]:
         q = q.filter(models.Project.status.notin_(["archived", PL.S_DRAFT]))
-        visible_ids = resolve_visible_project_ids(context, db, allow_legacy=True)
+        visible_ids = project_role_compatibility.resolve_visible_project_ids(context, db)
         if not visible_ids:
             return []
         q = q.filter(models.Project.id.in_(visible_ids))
@@ -1154,12 +1154,10 @@ def list_members(
     if not project:
         raise HTTPException(404, "project not found")
 
-    access = authorize_project_action(
+    access = project_role_compatibility.authorize_project_view(
         current_user,
         project,
-        A_VIEW,
         db,
-        allow_legacy_roles=True,
         denial_detail="permission denied — 仅项目成员可查看",
     )
     context = access.context
@@ -1478,12 +1476,10 @@ def list_member_change_requests(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    authorize_project_action(
+    project_role_compatibility.authorize_project_view(
         current_user,
         project,
-        A_VIEW,
         db,
-        allow_legacy_roles=True,
         denial_detail="permission denied",
     )
 
@@ -1600,12 +1596,10 @@ def get_project(
     if not project:
         raise HTTPException(404, "project not found")
 
-    access = authorize_project_action(
+    access = project_role_compatibility.authorize_project_view(
         current_user,
         project,
-        A_VIEW,
         db,
-        allow_legacy_roles=True,
         denial_detail="permission denied — 仅项目成员可查看",
     )
     context = access.context
@@ -2426,12 +2420,10 @@ def project_capabilities(
     project = db.get(models.Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
-    authorize_project_action(
+    project_role_compatibility.authorize_project_view(
         current_user,
         project,
-        A_VIEW,
         db,
-        allow_legacy_roles=True,
         denial_detail="permission denied",
     )
 

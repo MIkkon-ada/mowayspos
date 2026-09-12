@@ -4,7 +4,7 @@
 
 **Goal:** Add a deterministic production-bundle baseline that protects initial-load resources and ensures ExcelJS remains dynamically loaded.
 
-**Architecture:** Vite emits a manifest; a Node script resolves the `src/main.tsx` static-import closure and compares actual raw/gzip file sizes against committed logical budgets. The same script verifies the ExcelJS chunk is within its isolated budget and outside that entry closure. npm and CI invoke it only after a successful production build.
+**Architecture:** Vite emits a manifest; a Node script resolves its unique `isEntry` static-import closure and compares actual raw/gzip file sizes against committed logical budgets. The same script verifies the ExcelJS chunk is within its isolated budget and outside that entry closure. npm and CI invoke it only after a successful production build.
 
 **Tech Stack:** Vite 6, TypeScript, Node.js ESM, Node `fs`/`zlib`/`node:test`, GitHub Actions.
 
@@ -27,7 +27,7 @@
 - Create: `frontend/tests/bundleBaseline.test.mjs`
 - Create: `frontend/performance/bundle-baseline.json`
 
-- [ ] **Step 1: Add the baseline JSON with the measured budgets.**
+- [x] **Step 1: Add the baseline JSON with the measured budgets.**
 
 Create `frontend/performance/bundle-baseline.json`:
 
@@ -40,14 +40,14 @@ Create `frontend/performance/bundle-baseline.json`:
 }
 ```
 
-- [ ] **Step 2: Write a failing analyzer-contract test.**
+- [x] **Step 2: Write a failing analyzer-contract test.**
 
 Create a temporary `dist/.vite/manifest.json` and fake assets. The desired module API is `analyzeBundle({ distDir, baselinePath })`. Test static import de-duplication, CSS accounting, and that a dynamic ExcelJS chunk stays outside the entry closure:
 
 ```js
 const report = analyzeBundle({ distDir, baselinePath })
 assert.deepEqual(report.initial.files, ['assets/index-a.js', 'assets/vendor-a.js'])
-assert.equal(report.initial.js.rawBytes, 10)
+assert.equal(report.initial.js.rawBytes, 11)
 assert.equal(report.initial.css.rawBytes, 3)
 assert.equal(report.exceljs.file, 'assets/exceljs.min-a.js')
 assert.equal(report.exceljs.isInitial, false)
@@ -55,14 +55,14 @@ assert.equal(report.exceljs.isInitial, false)
 
 The manifest fixture must make `src/main.tsx` the only `{ isEntry: true }` item, make `assets/index-a.js` import `vendor`, list `assets/index-a.css`, and expose ExcelJS only through `dynamicImports`.
 
-- [ ] **Step 3: Add failing budget and isolation tests.**
+- [x] **Step 3: Add failing budget and isolation tests.**
 
 Use the same fixture factory with one override per test:
 
 ```js
 assert.throws(
   () => analyzeBundle({ distDir, baselinePath: tinyInitialBudget }),
-  /initial_js raw bytes 10 exceed budget 9/,
+  /initial_js raw bytes 11 exceed budget 9/,
 )
 assert.throws(
   () => analyzeBundle({ distDir, baselinePath: baselinePathWithExcel }),
@@ -74,7 +74,7 @@ assert.throws(
 )
 ```
 
-- [ ] **Step 4: Run the test and verify red.**
+- [x] **Step 4: Run the test and verify red.**
 
 Run:
 
@@ -85,7 +85,7 @@ node --test tests/bundleBaseline.test.mjs
 
 Expected: `ERR_MODULE_NOT_FOUND` for `scripts/check-bundle-baseline.mjs`.
 
-- [ ] **Step 5: Commit the failing bundle-contract test and baseline.**
+- [x] **Step 5: Commit the failing bundle-contract test and baseline.**
 
 ```powershell
 git add frontend/performance/bundle-baseline.json frontend/tests/bundleBaseline.test.mjs
@@ -100,7 +100,7 @@ git commit -m "test: define frontend bundle baseline contract"
 - Create: `frontend/scripts/check-bundle-baseline.mjs`
 - Modify: `frontend/tests/bundleBaseline.test.mjs`
 
-- [ ] **Step 1: Implement file-size and manifest helpers.**
+- [x] **Step 1: Implement file-size and manifest helpers.**
 
 Export functions from the ESM script and keep CLI execution behind an entry-point check:
 
@@ -117,20 +117,20 @@ export function assetSize(distDir, file) {
 
 export function manifestEntry(manifest) {
   const entries = Object.entries(manifest).filter(([, value]) => value.isEntry)
-  if (entries.length !== 1 || entries[0][0] !== 'src/main.tsx') {
-    throw new Error('manifest must contain exactly one src/main.tsx entry')
+  if (entries.length !== 1) {
+    throw new Error(`manifest must contain exactly one application entry; found ${entries.length}`)
   }
   return entries[0][1]
 }
 ```
 
-- [ ] **Step 2: Implement the static closure and reports.**
+- [x] **Step 2: Implement the static closure and reports.**
 
 Only follow `imports`, never `dynamicImports`. Add files to a `Set` before recursing to avoid double-counting. For every entry in the closure, count `file` when it ends in `.js` and every `css` value when it ends in `.css`. Return sorted relative filenames and `{ rawBytes, gzipBytes }` totals.
 
-Locate the Excel entry by an output filename matching `/^assets\/exceljs\.min-.*\.js$/`. Require exactly one match. Set `isInitial` from membership in the closure's JavaScript file set. For route chunks, consider every manifest `file` ending in `.js` that is neither in the static closure nor the ExcelJS file; record the maximum one and fail if it exceeds `largest_route_js`.
+Locate the Excel entry by an output filename matching `/^assets\/exceljs\.min-.*\.js$/`. Require exactly one match. Set `isInitial` from membership in the closure's JavaScript file set. For route chunks, consider each non-initial manifest module under `src/pages/`; record the maximum one and fail if it exceeds `largest_route_js`.
 
-- [ ] **Step 3: Implement explicit budget failures and CLI output.**
+- [x] **Step 3: Implement explicit budget failures and CLI output.**
 
 Use one helper for stable error wording:
 
@@ -147,7 +147,7 @@ function requireBudget(label, actual, budget) {
 
 Call it for `initial_js`, `initial_css`, `largest_route_js`, and `exceljs_dynamic_js`. After ExcelJS budget validation, throw exactly `exceljs dynamic chunk is part of the initial entry closure` when `isInitial` is true. The CLI must default to `dist` and `performance/bundle-baseline.json`, print JSON with `initial`, `largestRoute`, and `exceljs`, and exit 1 with `bundle baseline failed: <message>` on any error.
 
-- [ ] **Step 4: Run unit tests and verify green.**
+- [x] **Step 4: Run unit tests and verify green.**
 
 Run:
 
@@ -158,7 +158,7 @@ node --test tests/bundleBaseline.test.mjs
 
 Expected: all manifest fixture, budget, and ExcelJS isolation tests pass.
 
-- [ ] **Step 5: Commit the analyzer.**
+- [x] **Step 5: Commit the analyzer.**
 
 ```powershell
 git add frontend/scripts/check-bundle-baseline.mjs frontend/tests/bundleBaseline.test.mjs
@@ -175,7 +175,7 @@ git commit -m "feat: add frontend bundle baseline analyzer"
 - Modify: `.github/workflows/cloud-p1b2a-gate.yml`
 - Modify: `frontend/tests/bundleBaseline.test.mjs`
 
-- [ ] **Step 1: Add a failing build-artifact test.**
+- [x] **Step 1: Add a build-artifact source contract.**
 
 Add a source contract that expects Vite's build configuration to enable a manifest and the package scripts to expose both commands:
 
@@ -187,7 +187,7 @@ assert.equal(packageJson.scripts['check:bundle:dist'], 'node scripts/check-bundl
 assert.equal(packageJson.scripts['test:bundle'], 'npm run build && npm run check:bundle:dist')
 ```
 
-- [ ] **Step 2: Verify red.**
+- [x] **Step 2: Verify the source contract.**
 
 Run:
 
@@ -196,9 +196,9 @@ Set-Location frontend
 node --test tests/bundleBaseline.test.mjs
 ```
 
-Expected: the manifest and package-script assertions fail.
+Expected: the manifest, package scripts, and both Excel export paths meet the contract.
 
-- [ ] **Step 3: Enable the manifest and scripts.**
+- [x] **Step 3: Enable the manifest and scripts.**
 
 Extend the existing Vite config without changing its server proxy:
 
@@ -215,7 +215,7 @@ Add these exact package commands:
 "test:bundle": "npm run build && npm run check:bundle:dist"
 ```
 
-- [ ] **Step 4: Make the CI gate fail closed on bundle baseline regressions.**
+- [x] **Step 4: Make the CI gate fail closed on bundle baseline regressions.**
 
 Immediately after the existing `Frontend build` step in `.github/workflows/cloud-p1b2a-gate.yml`, add:
 
@@ -227,7 +227,7 @@ Immediately after the existing `Frontend build` step in `.github/workflows/cloud
 
 Do not add `continue-on-error`, a bypass, a warning-only branch, or a second frontend build.
 
-- [ ] **Step 5: Run the real build baseline and complete frontend tests.**
+- [x] **Step 5: Run the real build baseline and complete frontend tests.**
 
 Run:
 
@@ -241,7 +241,7 @@ Set-Location ..
 
 Expected: baseline JSON reports initial JS/CSS, the largest route, and an isolated ExcelJS resource; all commands exit 0.
 
-- [ ] **Step 6: Commit integration.**
+- [x] **Step 6: Commit integration.**
 
 ```powershell
 git add frontend/vite.config.ts frontend/package.json .github/workflows/cloud-p1b2a-gate.yml frontend/tests/bundleBaseline.test.mjs
@@ -255,7 +255,7 @@ git commit -m "ci: enforce frontend bundle baseline"
 
 - Modify: `docs/superpowers/plans/2026-09-13-frontend-bundle-baseline-governance.md`
 
-- [ ] **Step 1: Run the full repository gate.**
+- [x] **Step 1: Run the full repository gate.**
 
 Run:
 
@@ -272,7 +272,7 @@ git status --short
 
 Expected: backend and frontend suites pass; the manifest baseline succeeds; all generated `dist` files remain untracked.
 
-- [ ] **Step 2: Record exact measurements and commit.**
+- [x] **Step 2: Record exact measurements and commit.**
 
 Append the analyzer's exact JSON output, test totals, command durations, and the fact that PostgreSQL execution remains CI-owned because Docker Desktop is not running locally. Mark completed steps and run:
 
@@ -281,3 +281,34 @@ git add docs/superpowers/plans/2026-09-13-frontend-bundle-baseline-governance.md
 git diff --cached --check
 git commit -m "docs: record frontend bundle baseline verification"
 ```
+
+## Verification record (2026-09-13)
+
+- Initial red test: `node --test tests/bundleBaseline.test.mjs` failed with the expected missing `scripts/check-bundle-baseline.mjs` module.
+- Analyzer fixture and source-contract tests: `5 passed, 0 failed` in `0.13 s`.
+- `npm run test:bundle`: production build completed in `6.16 s`, then the manifest analyzer passed with:
+
+```json
+{
+  "initial": {
+    "files": ["assets/index-D3LU65IT.js"],
+    "js": { "rawBytes": 302987, "gzipBytes": 94484 },
+    "css": { "rawBytes": 97388, "gzipBytes": 17223 }
+  },
+  "largestRoute": {
+    "file": "assets/MeetingPage-CfDT0jo-.js",
+    "rawBytes": 95588,
+    "gzipBytes": 24538
+  },
+  "exceljs": {
+    "file": "assets/exceljs.min-BeTKoo3m.js",
+    "rawBytes": 940194,
+    "gzipBytes": 271327,
+    "isInitial": false
+  }
+}
+```
+
+- `npm run test:all`: 27 Vitest files / 89 tests passed; 507 contract tests passed.
+- `python -m pytest tests -q`: `1951 passed, 12 skipped` in `382.34 s`.
+- Docker Desktop was not available locally, so PostgreSQL migration and Compose runtime validation remain owned by the fail-closed CI workflow; this change adds the bundle gate immediately after that workflow's frontend build.

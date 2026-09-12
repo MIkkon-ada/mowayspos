@@ -48,7 +48,7 @@
 
 新增 `frontend/scripts/check-bundle-baseline.mjs`。该脚本：
 
-1. 读取 manifest，找到 `src/main.tsx` 的入口记录；
+1. 读取 manifest，定位唯一标记为 `isEntry` 的应用入口记录；
 2. 递归追踪该记录的静态 `imports`，以去重后的资源集合计算入口 JS/CSS raw 与 gzip 字节数；
 3. 将 manifest 中非入口、非 ExcelJS 的页面 JavaScript chunk 逐个与页面预算比较；
 4. 定位 ExcelJS 输出资源，验证其大小预算，并断言它不在入口静态 imports 闭包；

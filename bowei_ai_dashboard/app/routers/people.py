@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
-from ..permissions import ROLE_CEO, ROLE_NORMAL, ROLE_SUPER_ADMIN, get_current_user_name, get_user_context_from_db, normalize_system_role, system_role_label
+from ..permissions import ROLE_CEO, ROLE_NORMAL, ROLE_SUPER_ADMIN, get_current_user_name, get_user_context_from_db, normalize_system_role, require_login, system_role_label
 from . import projects as project_routes
 
 router = APIRouter(prefix="/api/people", tags=["people"])
@@ -368,7 +368,11 @@ def batch_create_people(
 
 
 @router.get("")
-def list_people(db: Session = Depends(get_db)):
+def list_people(
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    require_login(current_user, db)
     rows = db.query(models.Person).order_by(models.Person.is_active.desc(), models.Person.id.asc()).all()
     return [_person_to_dict(row) for row in rows]
 
@@ -409,7 +413,12 @@ def create_person(
 
 
 @router.get("/{row_id}")
-def get_person(row_id: int, db: Session = Depends(get_db)):
+def get_person(
+    row_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    require_login(current_user, db)
     row = db.get(models.Person, row_id)
     if not row:
         raise HTTPException(404, "person not found")

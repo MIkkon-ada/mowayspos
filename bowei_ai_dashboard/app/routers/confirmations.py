@@ -861,21 +861,12 @@ def save(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    _require_owner_style_actor(context, row, db, allow_assign=True)
-    before = crud.to_dict(row)
-    data = W.submission_result(row)
-    _require_no_pending_ceo_cards(data)
-    _require_no_pending_coordinator_cards(data)
-    merged_data = _merge_card_confirmation_payload(data, payload.human_result)
-    row.human_result_json = json.dumps(merged_data, ensure_ascii=False)
-    row.confirm_status = SS.S_NEEDS_REVISION
-    crud.log(db, current_user or "管理员", "confirmation_update", "confirmation", row.id, before, merged_data)
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
+    return review_workflow.save_submission_review(
+        submission_id=submission_id,
+        payload=payload,
+        current_user=current_user,
+        db=db,
+    )
 
 
 @router.post("/{submission_id}/confirm")
@@ -1859,33 +1850,12 @@ def reject(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """打回给提交人补充。"""
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    _require_owner_style_actor(context, row, db)
-    W.require_submission_status(row, SS.OWNER_ACTIONABLE)
-    before = crud.to_dict(row)
-    data = W.submission_result(row)
-    _require_no_pending_ceo_cards(data)
-    _require_no_pending_coordinator_cards(data)
-    project_id = _submission_project_id(db, row)
-    row.confirm_status = SS.S_RETURNED
-    row.reject_reason = payload.reason
-    crud.log(db, payload.operator, "confirmation_return", "confirmation", row.id, before, {"reason": payload.reason})
-    if row.submitter_id is not None or row.submitter:
-        recipient_id = _submission_recipient_id(row, db)
-        if recipient_id is not None:
-            from ..services.notify import send as _notify
-            _notify(db, recipient_id=recipient_id,
-                    recipient=row.submitter, ntype="submission_rejected",
-                    title=f"你的提交被打回：{row.title or '（无标题）'}",
-                    body=f"打回原因：{payload.reason or '未说明'}，请补充后重新提交",
-                    link=f"/work/submit?history=1&submissionId={row.id}",
-                    project_id=project_id)
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
+    return review_workflow.return_submission_to_submitter(
+        submission_id=submission_id,
+        payload=payload,
+        current_user=current_user,
+        db=db,
+    )
 
 
 @router.post("/{submission_id}/resubmit")
@@ -1895,42 +1865,12 @@ def resubmit(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """提交人补充后重新提交：状态回到待负责人审核。"""
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user, db)
-    _require_submission_writable(row, context, db)
-    operator = payload.operator or current_user
-    if not _is_submission_submitter(row, context, current_user, db):
-        raise HTTPException(403, "只有原提交人可以重新提交")
-    W.require_submission_status(row, SS.RETURNED_TO_SUBMITTER)
-    before = crud.to_dict(row)
-    project_id = _submission_project_id(db, row)
-    if payload.human_result:
-        new_result = dict(payload.human_result)
-        if payload.supplement_note:
-            new_result["supplement_note"] = payload.supplement_note
-        row.human_result_json = json.dumps(new_result, ensure_ascii=False)
-    elif payload.supplement_note:
-        existing = W.json_or_empty(row.human_result_json or row.ai_result_json)
-        existing["supplement_note"] = payload.supplement_note
-        row.human_result_json = json.dumps(existing, ensure_ascii=False)
-    row.confirm_status = SS.S_PENDING_OWNER
-    row.reject_reason = None
-    crud.log(db, operator, "confirmation_resubmit", "confirmation", row.id, before, {"note": payload.supplement_note or ""})
-    if project_id:
-        from ..services.notify import send as _notify, project_strict_owner_ids
-        submitter_id = context.get("person_id")
-        for owner_id in project_strict_owner_ids(project_id, db):
-            if owner_id != submitter_id:
-                _notify(db, recipient_id=owner_id, ntype="submission_resubmitted",
-                        title=f"提交人已重新提交：{row.title or '（无标题）'}",
-                        body=f"提交人：{operator}，请前往 AI 确认中心处理",
-                        link=(f"/work/confirmations?view=all"
-                              f"{'&projectId=' + str(project_id) if project_id is not None else ''}"
-                              f"&submissionId={row.id}"),
-                        project_id=project_id)
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
+    return review_workflow.resubmit_submission(
+        submission_id=submission_id,
+        payload=payload,
+        current_user=current_user,
+        db=db,
+    )
 
 
 @router.post("/{submission_id}/withdraw")
@@ -1939,22 +1879,11 @@ def withdraw(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """提交人自行撤回。tech_admin 也可以代撤。"""
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user, db)
-    _require_submission_writable(row, context, db)
-    is_tech_admin = context.get("is_tech_admin", False)
-    if not _is_submission_submitter(row, context, current_user, db) and not is_tech_admin:
-        raise HTTPException(403, "只有原提交人或管理员可以撤回")
-    W.require_submission_status(row, _WITHDRAWABLE_STATUSES)
-    before = crud.to_dict(row)
-    data = W.submission_result(row)
-    _require_no_pending_ceo_cards(data)
-    _require_no_pending_coordinator_cards(data)
-    row.confirm_status = SS.S_WITHDRAWN
-    crud.log(db, current_user, "confirmation_withdraw", "confirmation", row.id, before, {})
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
+    return review_workflow.withdraw_submission(
+        submission_id=submission_id,
+        current_user=current_user,
+        db=db,
+    )
 
 
 @router.post("/{submission_id}/reject-final")
@@ -1964,32 +1893,12 @@ def reject_final(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """永久不入库。"""
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    _require_owner_style_actor(context, row, db)
-    before = crud.to_dict(row)
-    data = W.submission_result(row)
-    _require_no_pending_ceo_cards(data)
-    _require_no_pending_coordinator_cards(data)
-    project_id = _submission_project_id(db, row)
-    row.confirm_status = SS.S_PERMANENTLY_REJECTED
-    row.reject_reason = payload.reason
-    crud.log(db, payload.operator, "confirmation_mark_not_imported", "confirmation", row.id, before, {"reason": payload.reason})
-    if row.submitter_id is not None or row.submitter:
-        recipient_id = _submission_recipient_id(row, db)
-        if recipient_id is not None:
-            from ..services.notify import send as _notify
-            _notify(db, recipient_id=recipient_id,
-                    recipient=row.submitter, ntype="submission_rejected",
-                    title=f"你的提交被标记为不入库：{row.title or '（无标题）'}",
-                    body=f"原因：{payload.reason or '未说明'}",
-                    link=f"/work/submit?history=1&submissionId={row.id}",
-                    project_id=project_id)
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
+    return review_workflow.reject_submission_finally(
+        submission_id=submission_id,
+        payload=payload,
+        current_user=current_user,
+        db=db,
+    )
 
 
 @router.post("/{submission_id}/transfer-coordinator")
@@ -2158,22 +2067,12 @@ def mark_unrecognized(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """标记需人工处理（退回修订）。"""
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    if not _can_owner_style_action(context, row, db, allow_assign=True):
-        raise HTTPException(403, "permission denied")
-    before = crud.to_dict(row)
-    data = W.submission_result(row)
-    _require_no_pending_ceo_cards(data)
-    _require_no_pending_coordinator_cards(data)
-    row.confirm_status = SS.S_NEEDS_REVISION
-    row.reject_reason = payload.reason
-    crud.log(db, payload.operator, "confirmation_mark_unrecognized", "confirmation", row.id, before, {"reason": payload.reason})
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
+    return review_workflow.mark_submission_unrecognized(
+        submission_id=submission_id,
+        payload=payload,
+        current_user=current_user,
+        db=db,
+    )
 
 
 @router.post("/{submission_id}/assign")
@@ -2183,35 +2082,12 @@ def assign(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    _require_owner_style_actor(context, row, db, allow_assign=True)
-    before = crud.to_dict(row)
-    project_id = _submission_project_id(db, row)
-    data = W.submission_result(row)
-    _require_no_pending_coordinator_cards(data)
-    data["assigned_to"] = payload.assignee
-    if "task" in data:
-        data["task"]["owner"] = payload.assignee
-    row.human_result_json = json.dumps(data, ensure_ascii=False)
-    row.confirm_status = SS.S_PENDING_OWNER
-    crud.log(db, payload.operator, "confirmation_assign_owner", "confirmation", row.id, before, data)
-    if payload.assignee:
-        from ..services.notify import send as _notify, person_name_for_account, person_id_for_name, person_id_for_account
-        caller_name = person_name_for_account(current_user or payload.operator, db)
-        caller_id = person_id_for_account(current_user or payload.operator, db)
-        assignee_id = person_id_for_name(payload.assignee, db)
-        if payload.assignee != caller_name and assignee_id != caller_id:
-            _notify(db, recipient_id=assignee_id, recipient=payload.assignee,
-                    ntype="submission_assigned",
-                    title=f"有提交指定由你负责：{row.title or '（无标题）'}",
-                    body=f"指定人：{caller_name}，请前往 AI 确认中心处理",
-                    link=f"/project/{project_id}/confirm" if project_id else "",
-                    project_id=project_id)
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
+    return review_workflow.assign_submission_owner(
+        submission_id=submission_id,
+        payload=payload,
+        current_user=current_user,
+        db=db,
+    )
 
 
 # ── 任务卡转问题中心（替代原 transfer-coordinator / escalate-ceo）──────────

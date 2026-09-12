@@ -110,7 +110,7 @@ git commit -m "refactor: extract confirmation review helpers"
 - Modify: `bowei_ai_dashboard/app/routers/confirmations.py:1039-1061, 2037-2174, 2336-2405`
 - Modify: `bowei_ai_dashboard/tests/test_confirmation_review_workflow_boundaries.py`
 
-- [ ] **Step 1: Add failing direct-service transition tests.**
+- [x] **Step 1: Add failing direct-service transition tests.**
 
 Create a SQLite fixture with an active project, owner, submitter, and one `pending_owner` submission. Test direct `save_submission_review`, `return_submission_to_submitter`, `resubmit_submission`, `withdraw_submission`, `reject_submission_finally`, `mark_submission_unrecognized`, and `assign_submission_owner` calls. Assert the same status values, rejection/note fields, and rejection/withdrawal error statuses currently asserted by the existing flow tests.
 
@@ -124,7 +124,7 @@ with pytest.raises(HTTPException, match="只有原提交人"):
     )
 ```
 
-- [ ] **Step 2: Verify red.**
+- [x] **Step 2: Verify red.**
 
 ```powershell
 python -m pytest tests/test_confirmation_review_workflow_boundaries.py -q
@@ -132,7 +132,7 @@ python -m pytest tests/test_confirmation_review_workflow_boundaries.py -q
 
 Expected: missing `save_submission_review` or another direct command function.
 
-- [ ] **Step 3: Implement the submission-level commands.**
+- [x] **Step 3: Implement the submission-level commands.**
 
 Each function has keyword-only `submission_id`, typed payload when applicable, `current_user`, and `db`. Preserve the Router ordering: load row, obtain context using `current_user or payload.operator` where the existing endpoint does, require project writability, require confirmation access/owner-style actor or original-submitter identity, validate status/cards, mutate, audit, notify, commit once, and return the existing shape:
 
@@ -154,7 +154,7 @@ Implement exact state transitions and audit names:
 
 Do not move or edit `confirm`. Keep `merge_card_confirmation_payload`, pending-card guards, and existing notification payloads byte-for-byte equivalent in meaning. Reuse `send`, `project_strict_owner_ids`, and account/person-ID lookup helpers from `services.notify`; notification target selection remains in the service.
 
-- [ ] **Step 4: Delegate exactly seven Router endpoints and verify green.**
+- [x] **Step 4: Delegate exactly seven Router endpoints and verify green.**
 
 Each body becomes a single service call. For example:
 
@@ -174,7 +174,7 @@ python -m pytest tests/test_confirmation_review_workflow_boundaries.py tests/tes
 
 Expected: pass.
 
-- [ ] **Step 5: Commit submission-level review commands.**
+- [x] **Step 5: Commit submission-level review commands.**
 
 ```powershell
 git add app/services/confirmation_review_workflow.py app/routers/confirmations.py tests/test_confirmation_review_workflow_boundaries.py

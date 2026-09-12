@@ -51,6 +51,7 @@ from ..services.confirmation_review_workflow import (
     submission_recipient_id as _submission_recipient_id,
 )
 from ..services import confirmation_review_workflow as review_workflow
+from ..services import confirmation_card_writeback_workflow as card_writeback_workflow
 
 router = APIRouter(prefix="/api/confirmations", tags=["confirmations"])
 
@@ -1467,50 +1468,13 @@ def confirm_task_card(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    _require_owner_style_actor(context, row, db)
-    W.require_submission_status(row, SS.OWNER_ACTIONABLE)
-
-    before = crud.to_dict(row)
-    effective_project_id = _submission_project_id(db, row)
-    # 1. 从数据库持久化数据中获取目标卡状态，防止 human_result 绕过
-    persisted_data = W.submission_result(row)
-    _, persisted_report = _get_task_card(persisted_data, card_index)
-    _require_card_owner_actionable(persisted_report)
-    # 2. 校验通过后才合并 payload.human_result
-    data = _merge_card_confirmation_payload(persisted_data, payload.human_result)
-    _, report = _get_task_card(data, card_index)
-    project_context = _submission_project_context(db, row, json_payload=data)
-    effective_project_id = project_context["project_id"]
-    now = utc_now()
-    task_id = _write_single_task_report(
-        db,
-        row,
-        data,
-        report,
-        payload.operator,
-        effective_project_id,
-        _submission_project_name(db, row, json_payload=data),
-        now,
+    return card_writeback_workflow.confirm_task_card(
+        submission_id=submission_id,
+        card_index=card_index,
+        payload=payload,
+        current_user=current_user,
+        db=db,
     )
-    _mark_task_card(row, data, card_index, "confirmed", payload.operator)
-    if _all_task_cards_confirmed(data):
-        row.confirm_status = SS.S_CONFIRMED
-        row.confirmed_by = payload.operator
-        row.confirmed_at = now
-    else:
-        row.confirm_status = SS.S_PENDING_OWNER
-
-    crud.log(
-        db, payload.operator, "confirmation_card_approve", "confirmation", row.id,
-        before, {"card_index": card_index, "task_id": task_id},
-        project_id=effective_project_id,
-    )
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
 
 
 @router.post("/{submission_id}/cards/{card_index}/reject")

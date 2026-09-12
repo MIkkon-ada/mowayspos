@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from app import models, schemas
 from tests.test_confirmation_card_coach_flow import _seed_card_coach_team
@@ -43,3 +44,47 @@ def test_confirm_task_card_service_writes_only_the_selected_card():
     issue = db.query(models.Issue).filter_by(source_submission_id=row.id).one()
     assert achievement.related_subtask_id == team["subtask"].id
     assert issue.related_subtask_id == team["subtask"].id
+
+
+def test_confirm_task_card_service_creates_suggested_subtask_with_lineage():
+    from app.services import confirmation_card_writeback_workflow as workflow
+
+    db = _make_session()
+    team = _seed_card_coach_team(db)
+    row = _make_card_submission(db, statuses=("",))
+    data = json.loads(row.human_result_json)
+    data["task_reports"][0].update(
+        {
+            "result_type": "suggest_new_subtask",
+            "parent_task_id": team["task"].id,
+            "title": "新增关键任务",
+            "assignee": "member",
+            "achievements": [{"name": "新增任务成果"}],
+        }
+    )
+    row.human_result_json = json.dumps(data, ensure_ascii=False)
+    db.commit()
+
+    workflow.confirm_task_card(
+        submission_id=row.id,
+        card_index=0,
+        payload=schemas.ConfirmRequest(operator="owner"),
+        current_user="owner",
+        db=db,
+    )
+
+    subtask = db.query(models.SubTask).filter_by(source_submission_id=row.id).one()
+    achievement = db.query(models.Achievement).filter_by(source_submission_id=row.id).one()
+    assert subtask.task_id == team["task"].id
+    assert achievement.related_subtask_id == subtask.id
+    assert db.get(models.UpdateSubmission, row.id).related_task_id == team["task"].id
+
+
+def test_confirm_task_card_router_delegates_to_writeback_service():
+    source = (
+        Path(__file__).resolve().parents[1] / "app" / "routers" / "confirmations.py"
+    ).read_text(encoding="utf-8")
+    start = source.index("def confirm_task_card(")
+    end = source.index("@router.post(\"/{submission_id}/cards/{card_index}/reject\")", start)
+    body = source[start:end]
+    assert "card_writeback_workflow.confirm_task_card(" in body

@@ -17,13 +17,13 @@
 - Create: `bowei_ai_dashboard/tests/test_meeting_document_source_fk_governance.py`
 - Modify: `bowei_ai_dashboard/tests/test_project_meeting_agent_processing.py`
 
-- [ ] **Step 1: Add failing metadata and lineage assertions**
+- [x] **Step 1: Add failing metadata and lineage assertions**
 
 Create a test that loads `Base.metadata.sorted_tables` under `warnings.catch_warnings(record=True)` and asserts no warning contains both `meeting_document_sources` and `meetings`. Assert the `meeting_document_sources` table has no `meeting_id` column while `meetings.document_source_id` remains a foreign key to `meeting_document_sources.id`.
 
 In `test_project_meeting_agent_processing.py`, after the existing AI-draft assertions, assert that the created meeting retains `document_source_id == run.document_source_id`; remove any assertion of a reverse source link.
 
-- [ ] **Step 2: Run the focused tests and observe the expected failure**
+- [x] **Step 2: Run the focused tests and observe the expected failure**
 
 Run from `bowei_ai_dashboard`:
 
@@ -40,11 +40,11 @@ Expected: the metadata assertion fails because `MeetingDocumentSource.meeting_id
 - Modify: `bowei_ai_dashboard/app/models.py`
 - Modify: `bowei_ai_dashboard/app/services/project_meeting_agent_processing.py`
 
-- [ ] **Step 1: Remove only the unused inverse field**
+- [x] **Step 1: Remove only the unused inverse field**
 
 Delete `MeetingDocumentSource.meeting_id` and its `ForeignKey("meetings.id", ondelete="SET NULL")` declaration. Keep `Meeting.document_source_id` unchanged.
 
-- [ ] **Step 2: Remove the sole inverse assignment**
+- [x] **Step 2: Remove the sole inverse assignment**
 
 Delete only:
 
@@ -55,7 +55,7 @@ if source is not None:
 
 Do not alter the `Meeting` creation payload, `ProjectMeetingRun`, change set, document download, export, or review-package queries.
 
-- [ ] **Step 3: Re-run focused behavior and metadata tests**
+- [x] **Step 3: Re-run focused behavior and metadata tests**
 
 ```powershell
 python -m pytest tests/test_meeting_document_source_fk_governance.py tests/test_project_meeting_agent_processing.py -q
@@ -63,7 +63,7 @@ python -m pytest tests/test_meeting_document_source_fk_governance.py tests/test_
 
 Expected: PASS with no meetings/document-sources sorting warning.
 
-- [ ] **Step 4: Commit the behavior-preserving model cleanup**
+- [x] **Step 4: Commit the behavior-preserving model cleanup**
 
 ```powershell
 git add bowei_ai_dashboard/app/models.py bowei_ai_dashboard/app/services/project_meeting_agent_processing.py bowei_ai_dashboard/tests/test_meeting_document_source_fk_governance.py bowei_ai_dashboard/tests/test_project_meeting_agent_processing.py
@@ -77,11 +77,11 @@ git commit -m "refactor: remove redundant meeting document source link"
 - Create: `bowei_ai_dashboard/migrations/versions/<revision>_remove_meeting_document_source_reverse_link.py`
 - Modify: `bowei_ai_dashboard/tests/test_meeting_document_source_fk_governance.py`
 
-- [ ] **Step 1: Add a failing SQLite migration round-trip test**
+- [x] **Step 1: Add a failing SQLite migration round-trip test**
 
 Create a temporary SQLite database at the migration preceding the new revision. Upgrade to the new revision and assert `PRAGMA table_info(meeting_document_sources)` lacks `meeting_id`, then downgrade and assert the column exists again, then re-upgrade and assert `PRAGMA integrity_check` is `ok`.
 
-- [ ] **Step 2: Run the round-trip test and verify it fails before the migration exists**
+- [x] **Step 2: Run the round-trip test and verify it fails before the migration exists**
 
 ```powershell
 python -m pytest tests/test_meeting_document_source_fk_governance.py -q
@@ -89,7 +89,7 @@ python -m pytest tests/test_meeting_document_source_fk_governance.py -q
 
 Expected: FAIL because the target revision is absent.
 
-- [ ] **Step 3: Add dialect-safe upgrade and downgrade operations**
+- [x] **Step 3: Add dialect-safe upgrade and downgrade operations**
 
 For SQLite, use `batch_alter_table("meeting_document_sources", recreate="always")` to drop `ix_meeting_document_sources_meeting_id`, the foreign key, and `meeting_id`.
 
@@ -97,7 +97,7 @@ For PostgreSQL, call `op.drop_constraint` for the foreign key, `op.drop_index("i
 
 In downgrade, re-add a nullable `meeting_id` integer, create its `ON DELETE SET NULL` foreign key and index. Run a best-effort backfill from `meetings.document_source_id`, selecting the lowest meeting ID when historical rows share a source.
 
-- [ ] **Step 4: Run migration and schema tests**
+- [x] **Step 4: Run migration and schema tests**
 
 ```powershell
 python -m pytest tests/test_meeting_document_source_fk_governance.py tests/test_migration_bootstrap.py -q
@@ -106,7 +106,7 @@ python -m alembic heads
 
 Expected: tests pass and `alembic heads` reports one head.
 
-- [ ] **Step 5: Commit the migration**
+- [x] **Step 5: Commit the migration**
 
 ```powershell
 git add bowei_ai_dashboard/migrations/versions bowei_ai_dashboard/tests/test_meeting_document_source_fk_governance.py
@@ -115,7 +115,7 @@ git commit -m "fix: remove meeting document source foreign key cycle"
 
 ## Task 4: Run the full delivery gate
 
-- [ ] **Step 1: Run backend and migration verification**
+- [x] **Step 1: Run backend and migration verification**
 
 ```powershell
 Set-Location bowei_ai_dashboard
@@ -126,7 +126,7 @@ Set-Location ..
 
 Expected: full pytest exits 0 without the prior meetings/document-sources circular warning.
 
-- [ ] **Step 2: Run frontend verification and patch hygiene**
+- [x] **Step 2: Run frontend verification and patch hygiene**
 
 ```powershell
 Set-Location frontend
@@ -139,3 +139,13 @@ git status --short
 
 Expected: all commands exit 0; the existing ExcelJS chunk-size warning may remain.
 
+## Verification record (2026-09-13)
+
+- Focused SQLite migration round-trip and lineage regression: `3 passed`.
+- Project-meeting AI processing regression: `10 passed`.
+- Migration bootstrap suite, including PostgreSQL dialect static DDL compilation: `14 passed`.
+- Full backend suite: `1912 passed, 12 skipped`; the prior `meetings` / `meeting_document_sources` circular-FK warning did not recur.
+- Frontend delivery gate: `89` unit tests and `502` contract tests passed; production build completed. The existing ExcelJS large-chunk warning remains visible.
+- `python -m alembic heads` reports the sole head `m4n5o6p7q8r`; `git diff --check` is clean.
+
+Local Docker Desktop was unavailable, so a live PostgreSQL 16 migration run was not performed here. The committed CI workflow retains its PostgreSQL 16 migration gate; that remote execution remains the production-environment evidence to collect when CI runs.

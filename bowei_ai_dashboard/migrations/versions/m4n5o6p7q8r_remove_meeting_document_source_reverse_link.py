@@ -42,15 +42,30 @@ def downgrade() -> None:
                 ondelete="SET NULL",
             )
             batch.create_index("ix_meeting_document_sources_meeting_id", ["meeting_id"])
-        return
+    else:
+        op.add_column("meeting_document_sources", sa.Column("meeting_id", sa.Integer(), nullable=True))
+        op.create_foreign_key(
+            "meeting_document_sources_meeting_id_fkey",
+            "meeting_document_sources",
+            "meetings",
+            ["meeting_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+        op.create_index("ix_meeting_document_sources_meeting_id", "meeting_document_sources", ["meeting_id"])
 
-    op.add_column("meeting_document_sources", sa.Column("meeting_id", sa.Integer(), nullable=True))
-    op.create_foreign_key(
-        "meeting_document_sources_meeting_id_fkey",
-        "meeting_document_sources",
-        "meetings",
-        ["meeting_id"],
-        ["id"],
-        ondelete="SET NULL",
+    op.execute(
+        """
+        UPDATE meeting_document_sources
+        SET meeting_id = (
+            SELECT MIN(meetings.id)
+            FROM meetings
+            WHERE meetings.document_source_id = meeting_document_sources.id
+        )
+        WHERE EXISTS (
+            SELECT 1
+            FROM meetings
+            WHERE meetings.document_source_id = meeting_document_sources.id
+        )
+        """
     )
-    op.create_index("ix_meeting_document_sources_meeting_id", "meeting_document_sources", ["meeting_id"])

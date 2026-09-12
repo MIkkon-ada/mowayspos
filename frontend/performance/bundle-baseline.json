@@ -1,0 +1,6 @@
+{
+  "initial_js": { "raw_bytes": 340000, "gzip_bytes": 110000 },
+  "initial_css": { "raw_bytes": 110000, "gzip_bytes": 24000 },
+  "largest_route_js": { "raw_bytes": 110000, "gzip_bytes": 32000 },
+  "exceljs_dynamic_js": { "raw_bytes": 1000000, "gzip_bytes": 300000 }
+}

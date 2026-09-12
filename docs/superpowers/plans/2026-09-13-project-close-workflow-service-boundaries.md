@@ -224,7 +224,7 @@ Expected: tests pass and staged diff is whitespace-clean.
 
 - Modify: `docs/superpowers/plans/2026-09-13-project-close-workflow-service-boundaries.md`
 
-- [ ] **Step 1: Run focused governance tests.**
+- [x] **Step 1: Run focused governance tests.**
 
 ```powershell
 Set-Location bowei_ai_dashboard
@@ -233,7 +233,7 @@ python -m pytest tests/test_project_close_workflow_boundaries.py tests/test_proj
 
 Expected: exit code 0.
 
-- [ ] **Step 2: Run complete delivery verification.**
+- [x] **Step 2: Run complete delivery verification.**
 
 ```powershell
 python -m pytest tests -q
@@ -247,9 +247,9 @@ git status --short
 
 Expected: all commands pass. The independent dynamic `exceljs.min` chunk may retain its size warning.
 
-- [ ] **Step 3: Record actual totals and commit.**
+- [x] **Step 3: Record actual totals and commit.**
 
-Check every completed step, replace this instruction with the actual focused/backend/frontend/build totals, then run:
+Actual verification: focused project-close governance suite: 156 passed; complete backend suite: 1936 passed, 12 skipped in 364.58s; frontend: 89 unit tests and 502 contract tests passed; `npm run build` passed. The build retains the known warning for the independently loaded `exceljs.min` chunk (940.19 kB, gzip 271.33 kB); the initial index chunk is 302.99 kB (gzip 94.48 kB).
 
 ```powershell
 git add docs/superpowers/plans/2026-09-13-project-close-workflow-service-boundaries.md

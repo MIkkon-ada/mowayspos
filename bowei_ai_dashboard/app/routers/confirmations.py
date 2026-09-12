@@ -36,6 +36,22 @@ from ..services.key_task_execution import normalize_text_list, record_execution_
 from ..services import policy as P
 from ..services import workflow as W
 from ..services import escalation as ESC
+from ..services.confirmation_review_workflow import (
+    can_owner_style_action as _can_owner_style_action,
+    is_submission_submitter as _is_submission_submitter,
+    load_submission as _load_submission,
+    require_confirmation_center as _require_confirmation_center,
+    require_owner_style_actor as _require_owner_style_actor,
+    require_submission_owner_or_admin as _require_submission_owner_or_admin,
+    require_submission_project_access as _require_submission_project_access,
+    require_submission_writable as _require_submission_writable,
+    resolve_pending_project_id as _resolve_pending_project_id,
+    submission_project_context as _submission_project_context,
+    submission_project_id as _submission_project_id,
+    submission_project_name as _submission_project_name,
+    submission_recipient_id as _submission_recipient_id,
+)
+from ..services import confirmation_review_workflow as review_workflow
 
 router = APIRouter(prefix="/api/confirmations", tags=["confirmations"])
 
@@ -341,204 +357,6 @@ TAB_STATUS_MAP: dict[str, frozenset[str]] = {
 
 _WITHDRAWABLE_STATUSES = SS.WITHDRAWABLE
 _ACTIVE_STATUSES       = list(SS.ALL_ACTIVE)
-
-
-def _load_submission(db: Session, submission_id: int) -> models.UpdateSubmission:
-    row = db.get(models.UpdateSubmission, submission_id)
-    if not row:
-        raise HTTPException(404, "confirmation not found")
-    return row
-
-
-def _is_submission_submitter(
-    row: models.UpdateSubmission,
-    context: dict,
-    current_user: str,
-    db: Session,
-) -> bool:
-    """Use submitter_id for new rows; only legacy rows may match stored strings."""
-    if row.submitter_id is not None:
-        person_id = context.get("person_id")
-        return person_id is not None and row.submitter_id == person_id
-
-    submitter = (row.submitter or "").strip()
-    current_user = (current_user or "").strip()
-    if submitter and submitter == current_user:
-        return True
-
-    person_id = context.get("person_id")
-    context_name = (context.get("name") or "").strip()
-    return bool(
-        submitter
-        and person_id is not None
-        and context_name
-        and submitter == context_name
-        and _unique_active_person_id_for_name(db, context_name) == person_id
-    )
-
-
-def _unique_active_person_id_for_name(db: Session, name: str) -> int | None:
-    rows = (
-        db.query(models.Person.id)
-        .filter(models.Person.name == name, models.Person.is_active.is_(True))
-        .limit(2)
-        .all()
-    )
-    return rows[0][0] if len(rows) == 1 else None
-
-
-def _submission_recipient_id(
-    row: models.UpdateSubmission,
-    db: Session,
-) -> int | None:
-    """Resolve a submitter notification recipient without re-resolving new rows."""
-    if row.submitter_id is not None:
-        return row.submitter_id
-    if not row.submitter:
-        return None
-    from ..services.notify import person_id_for_account
-
-    return (
-        person_id_for_account(row.submitter, db)
-        or _unique_active_person_id_for_name(db, row.submitter.strip())
-    )
-
-
-
-
-def _submission_project_context(
-    db: Session,
-    row: models.UpdateSubmission,
-    *,
-    json_payload: dict | None = None,
-    allow_parent_task_lookup: bool = True,
-) -> dict:
-    payload = json_payload if json_payload is not None else W.submission_result(row)
-    return resolve_project_context(
-        db,
-        project_id=row.project_id,
-        json_payload=payload,
-        parent_task_id=row.related_task_id,
-        allow_parent_task_lookup=allow_parent_task_lookup,
-    )
-
-
-def _submission_project_id(
-    db: Session,
-    row: models.UpdateSubmission,
-    *,
-    json_payload: dict | None = None,
-    allow_parent_task_lookup: bool = True,
-) -> int | None:
-    return _submission_project_context(
-        db,
-        row,
-        json_payload=json_payload,
-        allow_parent_task_lookup=allow_parent_task_lookup,
-    )["project_id"]
-
-
-def _submission_project_name(
-    db: Session,
-    row: models.UpdateSubmission,
-    *,
-    json_payload: dict | None = None,
-    allow_parent_task_lookup: bool = True,
-) -> str:
-    context = _submission_project_context(
-        db,
-        row,
-        json_payload=json_payload,
-        allow_parent_task_lookup=allow_parent_task_lookup,
-    )
-    if context.get("project_name"):
-        return context["project_name"]
-    payload = json_payload if json_payload is not None else W.submission_result(row)
-    task = payload.get("task") if isinstance(payload, dict) and isinstance(payload.get("task"), dict) else {}
-    return (
-        task.get("special_project")
-        or payload.get("special_project")
-        or task.get("project_name")
-        or payload.get("project_name")
-        or task.get("projectName")
-        or payload.get("projectName")
-        or ""
-    )
-
-
-def _resolve_pending_project_id(
-    db: Session,
-    project_id: int | None,
-    special_project: str | None,
-) -> int | None:
-    if project_id is not None:
-        return project_id
-    if not special_project:
-        return None
-    return resolve_project_context(db, special_project=special_project)["project_id"]
-
-
-def _require_submission_project_access(
-    row: models.UpdateSubmission,
-    context: dict,
-    db: Session | None = None,
-) -> int | None:
-    project_id = _submission_project_id(db, row) if db is not None else P.project_id_of(row)
-    if project_id is None and not context.get("is_tech_admin"):
-        raise HTTPException(422, "submission missing project_id")
-    return project_id
-
-
-def _require_submission_writable(
-    row: models.UpdateSubmission,
-    context: dict,
-    db: Session,
-) -> int | None:
-    """AI 确认中心写操作专用：先做项目访问校验，再拦截归档项目写入。"""
-    project_id = _require_submission_project_access(row, context, db)
-    require_project_business_writable(project_id, db)
-    return project_id
-
-
-def _require_submission_owner_or_admin(
-    row: models.UpdateSubmission,
-    context: dict,
-    current_user: str,
-    db: Session,
-) -> int | None:
-    project_id = _require_submission_project_access(row, context, db)
-    if project_id is None:
-        return None
-    require_project_owner_or_admin(current_user, project_id, db)
-    return project_id
-def _require_confirmation_center(context: dict) -> None:
-    if context.get("is_tech_admin"):
-        return
-    if not can_access_confirmation_center(context):
-        raise HTTPException(403, "permission denied")
-
-
-def _require_owner_style_actor(context: dict, row: models.UpdateSubmission, db: Session, *, allow_assign: bool = False) -> None:
-    if context.get("is_tech_admin"):
-        return
-    if _can_owner_style_action(context, row, db, allow_assign=allow_assign):
-        return
-    raise HTTPException(403, "permission denied")
-
-
-def _can_owner_style_action(context: dict, row: models.UpdateSubmission, db: Session, *, allow_assign: bool = False) -> bool:
-    if context.get("is_tech_admin"):
-        return True
-    if P.decide_workflow_for_project(
-        context,
-        row.project_id,
-        A_CONFIRMATION_REVIEW,
-        db,
-    ).allowed:
-        return True
-    if allow_assign and can_assign_submission(context):
-        return True
-    return False
 
 
 def _task_reports(data: dict) -> list[dict]:

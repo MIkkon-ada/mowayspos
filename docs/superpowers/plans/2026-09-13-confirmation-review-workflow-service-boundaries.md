@@ -29,7 +29,7 @@
 - Create: `bowei_ai_dashboard/tests/test_confirmation_review_workflow_boundaries.py`
 - Modify: `bowei_ai_dashboard/app/routers/confirmations.py:346-529`
 
-- [ ] **Step 1: Write the failing helper-boundary test.**
+- [x] **Step 1: Write the failing helper-boundary test.**
 
 ```python
 from app.routers import confirmations
@@ -43,7 +43,7 @@ def test_router_reexports_confirmation_review_helpers():
     assert confirmations._submission_project_id is workflow.submission_project_id
 ```
 
-- [ ] **Step 2: Verify the new test is red.**
+- [x] **Step 2: Verify the new test is red.**
 
 Run from `bowei_ai_dashboard`:
 
@@ -53,7 +53,7 @@ python -m pytest tests/test_confirmation_review_workflow_boundaries.py -q
 
 Expected: failure because `confirmation_review_workflow` does not exist.
 
-- [ ] **Step 3: Move exact shared helpers into the service.**
+- [x] **Step 3: Move exact shared helpers into the service.**
 
 Move, without changing their observable behavior, the following Router helpers into the new service and export them with public names: `_load_submission`, `_is_submission_submitter`, `_submission_recipient_id`, `_submission_project_context`, `_submission_project_id`, `_submission_project_name`, `_resolve_pending_project_id`, `_require_submission_project_access`, `_require_submission_writable`, `_require_submission_owner_or_admin`, `_require_confirmation_center`, `_require_owner_style_actor`, and `_can_owner_style_action`.
 
@@ -73,7 +73,7 @@ def require_submission_writable(
 
 `require_submission_project_access` must preserve the current missing-project `404`, explicit project-ID mismatch `403`, and `resolve_project_context` fallback behavior. The service may import domain/policy/permission services, but must not import `app.routers.confirmations`.
 
-- [ ] **Step 4: Re-export exact aliases and verify green.**
+- [x] **Step 4: Re-export exact aliases and verify green.**
 
 Replace the moved Router definitions with aliases, for example:
 
@@ -94,7 +94,7 @@ python -m pytest tests/test_confirmation_review_workflow_boundaries.py tests/tes
 
 Expected: pass.
 
-- [ ] **Step 5: Commit the helper boundary.**
+- [x] **Step 5: Commit the helper boundary.**
 
 ```powershell
 git add app/services/confirmation_review_workflow.py app/routers/confirmations.py tests/test_confirmation_review_workflow_boundaries.py

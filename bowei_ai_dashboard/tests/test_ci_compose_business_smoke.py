@@ -59,7 +59,7 @@ class _SmokeHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         payload = self._body()
         if path == "/api/setup/init":
-            self.initialized = True
+            type(self).initialized = True
             return self._json(200, {"ok": True})
         if path == "/api/auth/login":
             session = "admin-session" if payload["username"] == "ci_smoke_admin" else "member-session"

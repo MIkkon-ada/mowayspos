@@ -404,7 +404,8 @@ async def create_update(
     require_project_not_archived(project_id, db)
     _require_project_active(project_id, db)
 
-    # 收集所有卡片涉及的项目 ID，用于跨项目通知和归档检查
+    # 收集所有卡片涉及的项目 ID，并对兼容单提交入口复用批量提交的
+    # 项目访问与生命周期边界，避免附带任务卡绕过主项目校验。
     card_project_ids: set[int] = {project_id}
     if human_result:
         for report in ((human_result or {}).get("task_reports") or []):
@@ -414,9 +415,12 @@ async def create_update(
                     parent_task = db.get(models.Task, int(ptid))
                     if parent_task and parent_task.project_id:
                         card_project_ids.add(parent_task.project_id)
-    # 对每个卡片项目检查归档
+    # 每个附带任务卡都必须属于当前用户可提交且处于 active 的项目。
     for pid in card_project_ids:
+        if not _can_submit_to_project(context, pid, db):
+            raise HTTPException(403, "permission denied")
         require_project_not_archived(pid, db)
+        _require_project_active(pid, db)
 
     cutoff = utc_now() - timedelta(seconds=60)
     dup = db.query(models.UpdateSubmission).filter(

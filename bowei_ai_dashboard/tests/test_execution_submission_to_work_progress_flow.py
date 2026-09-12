@@ -194,6 +194,76 @@ def test_flow1_non_active_project_rejects_submission():
     assert "暂不能提交" in str(exc.value.detail)
 
 
+@pytest.mark.parametrize(
+    ("secondary_status", "grant_member_access", "expected_status"),
+    [
+        ("active", False, 403),
+        ("pending_review", True, 409),
+    ],
+)
+def test_flow1_legacy_submission_validates_every_attached_task_card_project(
+    secondary_status: str,
+    grant_member_access: bool,
+    expected_status: int,
+):
+    db = _make_session()
+    team = _seed_execution_team(db)
+    secondary_project = models.Project(
+        id=2,
+        name="附带项目",
+        status=secondary_status,
+        is_active=secondary_status == "active",
+    )
+    secondary_task = models.Task(
+        id=2,
+        project_id=2,
+        key_task="附带重点工作",
+        special_project="附带项目",
+    )
+    secondary_subtask = models.SubTask(
+        id=2,
+        task_id=2,
+        title="附带关键任务",
+        assignee=team["member"].name,
+    )
+    db.add_all([secondary_project, secondary_task, secondary_subtask])
+    if grant_member_access:
+        db.add(
+            models.ProjectMember(
+                project_id=2,
+                person_id=team["member"].id,
+                person_name_snapshot=team["member"].name,
+                role="member",
+            )
+        )
+    db.commit()
+
+    payload = schemas.ExtractRequest(
+        project_id=team["project"].id,
+        source_type="任务进展",
+        title="带附属任务卡的旧提交",
+        transcript_text="测试文本",
+        submitter=team["member"].name,
+        human_result={
+            "task_reports": [
+                {
+                    "type": "progress",
+                    "parent_task_id": secondary_task.id,
+                    "matched_subtask_id": secondary_subtask.id,
+                    "completed": "不应绕过附带项目校验",
+                }
+            ]
+        },
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(create_update(payload, current_user="member", db=db))
+
+    assert exc_info.value.status_code == expected_status
+    assert db.query(models.UpdateSubmission).count() == 0
+    assert db.query(models.Notification).filter_by(project_id=2).count() == 0
+
+
 # ── 流程二：PM 确认入库 ─────────────────────────────────────────
 
 def test_flow2_owner_confirm_writes_to_tables_and_sets_related_task_id():

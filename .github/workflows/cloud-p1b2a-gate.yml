@@ -184,6 +184,10 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Frontend bundle baseline
+        working-directory: frontend
+        run: npm run check:bundle:dist
+
       - name: Compose configuration
         run: >-
           docker compose

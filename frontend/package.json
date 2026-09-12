@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "test:unit": "vitest run",
     "test:contracts": "node scripts/run-contract-tests.mjs",
-    "test:all": "npm run test:unit && npm run test:contracts"
+    "test:all": "npm run test:unit && npm run test:contracts",
+    "check:bundle:dist": "node scripts/check-bundle-baseline.mjs",
+    "test:bundle": "npm run build && npm run check:bundle:dist"
   },
   "dependencies": {
     "chart.js": "^4.5.1",

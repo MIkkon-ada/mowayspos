@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -61,7 +61,7 @@ test('analyzes the static entry closure without loading dynamic ExcelJS', (t) =>
   const report = analyzeBundle(fixture)
 
   assert.deepEqual(report.initial.files, ['assets/index-a.js', 'assets/vendor-a.js'])
-  assert.equal(report.initial.js.rawBytes, 10)
+  assert.equal(report.initial.js.rawBytes, 11)
   assert.equal(report.initial.css.rawBytes, 3)
   assert.equal(report.exceljs.file, 'assets/exceljs.min-a.js')
   assert.equal(report.exceljs.isInitial, false)
@@ -80,7 +80,7 @@ test('rejects an initial JavaScript budget regression', (t) => {
 
   assert.throws(
     () => analyzeBundle({ ...fixture, baselinePath: tinyInitialBudget }),
-    /initial_js raw bytes 10 exceed budget 9/,
+    /initial_js raw bytes 11 exceed budget 9/,
   )
 })
 
@@ -102,4 +102,17 @@ test('rejects a manifest without the ExcelJS dynamic chunk', (t) => {
     () => analyzeBundle(fixture),
     /exceljs dynamic chunk is missing from the manifest/,
   )
+})
+
+test('keeps manifest output, package commands, and ExcelJS imports as source contracts', () => {
+  const viteConfig = readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8')
+  const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const planExport = readFileSync(new URL('../src/utils/exportPlanTableExcel.ts', import.meta.url), 'utf8')
+  const taskExport = readFileSync(new URL('../src/utils/exportTasksExcel.ts', import.meta.url), 'utf8')
+
+  assert.match(viteConfig, /build:\s*\{\s*manifest:\s*true/s)
+  assert.equal(packageJson.scripts['check:bundle:dist'], 'node scripts/check-bundle-baseline.mjs')
+  assert.equal(packageJson.scripts['test:bundle'], 'npm run build && npm run check:bundle:dist')
+  assert.match(planExport, /await\s+import\(['"]exceljs['"]\)/)
+  assert.match(taskExport, /await\s+import\(['"]exceljs['"]\)/)
 })

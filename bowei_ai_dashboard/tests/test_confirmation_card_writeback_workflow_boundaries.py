@@ -88,3 +88,33 @@ def test_confirm_task_card_router_delegates_to_writeback_service():
     end = source.index("@router.post(\"/{submission_id}/cards/{card_index}/reject\")", start)
     body = source[start:end]
     assert "card_writeback_workflow.confirm_task_card(" in body
+
+
+def test_confirm_task_card_service_parses_string_subtask_issues():
+    from app.services import confirmation_card_writeback_workflow as workflow
+
+    db = _make_session()
+    team = _seed_card_coach_team(db)
+    row = _make_card_submission(db, statuses=("",))
+    data = json.loads(row.human_result_json)
+    data["task_reports"][0].update(
+        {
+            "result_type": "subtask_progress",
+            "matched_subtask_id": team["subtask"].id,
+            "subtask_issues": ["需决策：请确认测试方案"],
+        }
+    )
+    row.human_result_json = json.dumps(data, ensure_ascii=False)
+    db.commit()
+
+    workflow.confirm_task_card(
+        submission_id=row.id,
+        card_index=0,
+        payload=schemas.ConfirmRequest(operator="owner"),
+        current_user="owner",
+        db=db,
+    )
+
+    issue = db.query(models.Issue).filter_by(source_submission_id=row.id).one()
+    assert issue.description == "请确认测试方案"
+    assert issue.status == "待决策"

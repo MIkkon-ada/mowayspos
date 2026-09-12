@@ -36,6 +36,12 @@ _CARD_WORKFLOW_FIELDS = frozenset({
     "coordinator_note", "coordinator_operator", "coordinator_feedback_at",
     "ceo_note", "ceo_operator", "ceo_decided_at",
 })
+_ISSUE_PREFIX_TABLE: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("风险：", "风险:"), IF.TYPE_RISK),
+    (("需决策：", "需决策:", "决策：", "决策:"), IF.TYPE_DECISION),
+    (("待协调：", "待协调:", "协调：", "协调:"), IF.TYPE_COORDINATE),
+    (("问题：", "问题:"), IF.TYPE_ISSUE),
+)
 
 
 def _task_reports(data: dict) -> list[dict]:
@@ -115,6 +121,15 @@ def _parse_subtask_issue(item: object) -> dict | None:
         description = (item.get("description") or "").strip()
         if description:
             return {"issue_type": IT.normalize(item.get("issue_type")), "description": description, "priority": str(item.get("priority") or "中")}
+    if isinstance(item, str):
+        text = item.strip()
+        if not text:
+            return None
+        for prefixes, issue_type in _ISSUE_PREFIX_TABLE:
+            for prefix in prefixes:
+                if text.startswith(prefix):
+                    return {"issue_type": IT.normalize(issue_type), "description": text[len(prefix):].strip(), "priority": "中"}
+        return {"issue_type": IT.TYPE_ISSUE, "description": text, "priority": "中"}
     return None
 
 

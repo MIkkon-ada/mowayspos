@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Do not dispatch subagents for this repository. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Status (2026-09-13): Completed and re-audited.** Tasks 1–10 were delivered in commits `b366cab` through `8c22c1d`; the remaining `projectCloseUi.ts` duplicate policy was removed in `cda9bfa`. Fresh verification: 69 project-permission tests, 1909 backend tests (12 skipped), 89 frontend unit tests, 502 frontend contract tests, and production build all passed. CI configuration statically confirms required backend/frontend/build/PostgreSQL gates with no failure bypass patterns.
+
 **Goal:** 在保持现有项目角色权限和 API 兼容的前提下，将项目域授权收口为后端纯策略、显式旧数据兼容层和统一前端展示策略。
 
 **Architecture:** 新增无数据库依赖的项目权限 Policy，由访问 Service 加载身份、项目状态、角色和资源归属后调用；`project_members` 保持主数据地位，旧项目字符串字段仅在调用方显式允许且当前人员没有有效成员角色时回退。项目 Router 分组迁移，前端使用同名动作函数控制入口和按钮，后端始终执行最终授权。

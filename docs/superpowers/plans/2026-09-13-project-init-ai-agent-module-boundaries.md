@@ -18,7 +18,7 @@
 - Create: `bowei_ai_dashboard/app/services/project_init_ai_contracts.py`
 - Modify: `bowei_ai_dashboard/app/services/project_init_ai_agent.py`
 
-- [ ] **Step 1: Write a failing import-identity test.**
+- [x] **Step 1: Write a failing import-identity test.**
 
 ```python
 from app.services import project_init_ai_agent as facade
@@ -35,13 +35,13 @@ def test_facade_reexports_contract_types():
     assert facade.SourceChunk.__module__ == "app.services.project_init_file_parser"
 ```
 
-- [ ] **Step 2: Verify the test is red.**
+- [x] **Step 2: Verify the test is red.**
 
 Run `python -m pytest tests/test_project_init_ai_module_boundaries.py -q` from `bowei_ai_dashboard`.
 
 Expected: import failure because `project_init_ai_contracts` does not exist.
 
-- [ ] **Step 3: Move only protocol definitions.**
+- [x] **Step 3: Move only protocol definitions.**
 
 Move without changing bodies: constants; the three `ProjectInitAi*` error classes; `_safe_validation_errors`; `AgentWarning`, `Evidence`, `PersonCandidate`, `AgentSubTask`, `AgentTask`, `ProjectProfileDraft`, `ProjectInitAiResult`, and `_RawEnvelope`. The new module owns the existing Pydantic imports and only imports `SourceChunk` from `project_init_file_parser` when required for types.
 
@@ -54,7 +54,7 @@ from .project_init_ai_contracts import ProjectInitAiInvalidDraft, ProjectInitAiR
 from .project_init_file_parser import SourceChunk
 ```
 
-- [ ] **Step 4: Verify and commit.**
+- [x] **Step 4: Verify and commit.**
 
 Run `python -m pytest tests/test_project_init_ai_module_boundaries.py tests/test_project_init_ai_agent.py -q`; expected: pass.
 
@@ -71,7 +71,7 @@ git commit -m "refactor: extract project init AI contracts"
 - Modify: `bowei_ai_dashboard/app/services/project_init_ai_agent.py`
 - Modify: `bowei_ai_dashboard/tests/test_project_init_ai_module_boundaries.py`
 
-- [ ] **Step 1: Write the next failing compatibility test.**
+- [x] **Step 1: Write the next failing compatibility test.**
 
 ```python
 def test_facade_reexports_normalization_helpers():
@@ -82,19 +82,19 @@ def test_facade_reexports_normalization_helpers():
     assert facade.has_cross_batch_task_conflict is normalization.has_cross_batch_task_conflict
 ```
 
-- [ ] **Step 2: Verify it is red.**
+- [x] **Step 2: Verify it is red.**
 
 Run `python -m pytest tests/test_project_init_ai_module_boundaries.py -q`.
 
 Expected: import failure because `project_init_ai_normalization` does not exist.
 
-- [ ] **Step 3: Move the full pure reconciliation group.**
+- [x] **Step 3: Move the full pure reconciliation group.**
 
 Move unchanged from the current agent file: `_normalise_name`, `_normalise_title`, `has_cross_batch_task_conflict`, `_is_calendar_date`, `_normalise_start_only_dates`, `_source_label`, `_person_candidates`, `_warning`, `_match_person`, every `_dedupe_*`, `_merge_non_empty`, `_merge_subtask_values`, `_merge_task_values`, `_merge_tasks`, `_source_parts`, `_source_index`, `_safe_evidence`, `_safe_evidence_list`, `_reconcile_project_profile`, `_merge_project_profiles`, `_existing_task_index`, `_classify_duplicate`, `_reconcile_task`, and `normalize_agent_result`.
 
 The new module imports types from `project_init_ai_contracts` and `SourceChunk` directly; it must not import the facade or AIService. The facade re-exports the moved functions.
 
-- [ ] **Step 4: Verify and commit.**
+- [x] **Step 4: Verify and commit.**
 
 Run `python -m pytest tests/test_project_init_ai_module_boundaries.py tests/test_project_init_ai_agent.py -q`; expected: pass for people matching, evidence, dates and duplicate behavior.
 
@@ -111,7 +111,7 @@ git commit -m "refactor: isolate project init AI normalization"
 - Modify: `bowei_ai_dashboard/app/services/project_init_ai_agent.py`
 - Modify: `bowei_ai_dashboard/tests/test_project_init_ai_module_boundaries.py`
 
-- [ ] **Step 1: Write the failing structured-generator test.**
+- [x] **Step 1: Write the failing structured-generator test.**
 
 ```python
 def test_facade_reexports_structured_spreadsheet_generator():
@@ -120,19 +120,19 @@ def test_facade_reexports_structured_spreadsheet_generator():
     assert facade.generate_structured_project_init_draft is spreadsheet.generate_structured_project_init_draft
 ```
 
-- [ ] **Step 2: Verify it is red.**
+- [x] **Step 2: Verify it is red.**
 
 Run `python -m pytest tests/test_project_init_ai_module_boundaries.py -q`.
 
 Expected: import failure because `project_init_ai_spreadsheet` does not exist.
 
-- [ ] **Step 3: Move all worksheet-only behavior.**
+- [x] **Step 3: Move all worksheet-only behavior.**
 
 Move unchanged: `_column_number`, `_worksheet_range`, `_enclosed_worksheet_sources`, `_repair_coarse_worksheet_evidence`, `_repair_batch_evidence`, `_spreadsheet_plan_dates`, `_explicit_spreadsheet_date`, `_bounded_spreadsheet_text`, `_split_numbered_spreadsheet_items`, `_split_helper_names`, `_normalise_spreadsheet_header`, `_normalise_work_plan_row`, `_structured_spreadsheet_rows`, `_structured_spreadsheet_fallback`, and `generate_structured_project_init_draft`.
 
 The module imports contracts and normalization helpers directly. It retains the current rule that every meaningful structured source must be recognized before returning a fast-path result. The facade re-exports the public generator and any currently imported worksheet helper.
 
-- [ ] **Step 4: Verify and commit.**
+- [x] **Step 4: Verify and commit.**
 
 Run `python -m pytest tests/test_project_init_ai_module_boundaries.py tests/test_project_init_ai_agent.py tests/test_project_init_analysis.py -q`; expected: pass for rejected sheets, column coverage, fast path, and vision route.
 
@@ -149,7 +149,7 @@ git commit -m "refactor: isolate project init spreadsheet drafting"
 - Modify: `bowei_ai_dashboard/app/services/project_init_ai_agent.py`
 - Modify: `bowei_ai_dashboard/tests/test_project_init_ai_module_boundaries.py`
 
-- [ ] **Step 1: Write the failing pipeline-identity test.**
+- [x] **Step 1: Write the failing pipeline-identity test.**
 
 ```python
 def test_facade_reexports_pipeline_entry_points():
@@ -160,19 +160,19 @@ def test_facade_reexports_pipeline_entry_points():
     assert facade._classify_raw_draft_envelope is pipeline._classify_raw_draft_envelope
 ```
 
-- [ ] **Step 2: Verify it is red.**
+- [x] **Step 2: Verify it is red.**
 
 Run `python -m pytest tests/test_project_init_ai_module_boundaries.py -q`.
 
 Expected: import failure because `project_init_ai_pipeline` does not exist.
 
-- [ ] **Step 3: Move orchestration without altering calls.**
+- [x] **Step 3: Move orchestration without altering calls.**
 
 Move unchanged: `_split_batches`, `_context_prompt`, `_semantic_workbook_batch`, `_requires_semantic_ai_route`, `_missing_semantic_fields`, `_semantic_repair_prompt`, `_final_merge_prompt`, LLM payload constants and normalizers, `_JsonResponseError`, `_parse_json_response`, `_classify_raw_draft_envelope`, `_evidence_traceability_error`, `_validate_evidence_group`, `_validate_batch_sources`, `_invoke_llm`, and `generate_project_init_draft`.
 
 The pipeline imports contracts, normalization, and spreadsheet modules directly. It only constructs `AIService` through existing `service_factory` / `llm_call` seams. The facade contains imports and re-exports only; neither generator signature, prompt, timeout, model-selection, fallback nor safe diagnostic behavior may change.
 
-- [ ] **Step 4: Verify and commit.**
+- [x] **Step 4: Verify and commit.**
 
 Run `python -m pytest tests/test_project_init_ai_module_boundaries.py tests/test_project_init_ai_agent.py tests/test_project_init_analysis.py tests/test_ai_capability_integration.py -q`; expected: pass with identical capability, fallback, JSON-diagnostic and persisted-worker behavior.
 
@@ -183,7 +183,7 @@ git commit -m "refactor: isolate project init AI pipeline"
 
 ## Task 5: Full delivery gate
 
-- [ ] **Step 1: Run all affected backend suites.**
+- [x] **Step 1: Run all affected backend suites.**
 
 ```powershell
 Set-Location bowei_ai_dashboard
@@ -192,7 +192,7 @@ python -m pytest tests/test_project_init_ai_module_boundaries.py tests/test_proj
 
 Expected: exit code 0 with no changed draft or fallback behavior.
 
-- [ ] **Step 2: Run complete delivery verification.**
+- [x] **Step 2: Run complete delivery verification.**
 
 ```powershell
 python -m pytest tests -q
@@ -206,7 +206,12 @@ git status --short
 
 Expected: all commands exit 0; the existing ExcelJS chunk-size warning may remain.
 
-- [ ] **Step 3: Record results and commit.**
+**Recorded 2026-09-13:** affected backend suites: **184 passed**; complete backend suite:
+**1916 passed, 12 skipped** in 497.45 seconds; frontend: **89 unit tests passed**,
+**502 contract tests passed**, and the production build passed. `git diff --check`
+passed; the frontend build retained only the expected ExcelJS bundle-size warning.
+
+- [x] **Step 3: Record results and commit.**
 
 Update this plan with actual totals, then run:
 

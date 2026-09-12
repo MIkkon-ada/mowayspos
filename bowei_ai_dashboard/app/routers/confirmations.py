@@ -1908,35 +1908,12 @@ def transfer_coordinator(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """转交统筹人给意见。"""
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    _require_owner_style_actor(context, row, db)
-    W.require_submission_status(row, SS.TRANSFERABLE_TO_COORDINATOR)
-    before = crud.to_dict(row)
-    data = W.submission_result(row)
-    _require_no_pending_ceo_cards(data)
-    _require_no_pending_coordinator_cards(data)
-    project_id = _submission_project_id(db, row)
-    row.confirm_status = SS.S_WAITING_COORDINATOR
-    if payload.note:
-        row.reject_reason = payload.note
-    crud.log(db, payload.operator, "confirmation_forward_to_coordinator", "confirmation", row.id, before, {"note": payload.note})
-    # 通知项目 coordinator
-    from ..services.notify import send as _notify, project_coordinator_ids, person_name_for_account, person_id_for_account
-    caller_name = person_name_for_account(current_user or payload.operator, db)
-    caller_id = person_id_for_account(current_user or payload.operator, db)
-    for coord_id in project_coordinator_ids(project_id, db):
-        if coord_id != caller_id:
-            _notify(db, recipient_id=coord_id, ntype="submission_transferred_to_coordinator",
-                    title=f"有提交需要你提供统筹意见：{row.title or '（无标题）'}",
-                    body=f"提交标题：{row.title or '（无标题）'}\n转交人：{caller_name}\n转交说明：{payload.note or '无'}",
-                    link=f"/work/confirmations?view=coordinator&projectId={project_id}&submissionId={row.id}",
-                    project_id=project_id)
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
+    return review_workflow.transfer_submission_to_coordinator(
+        submission_id=submission_id,
+        payload=payload,
+        current_user=current_user,
+        db=db,
+    )
 
 
 @router.post("/{submission_id}/coordinator-feedback")
@@ -1946,35 +1923,12 @@ def coordinator_feedback(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """统筹人反馈意见。"""
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    if not P.decide_workflow_for_project(
-        context,
-        row.project_id,
-        A_CONFIRMATION_COORDINATOR_FEEDBACK,
-        db,
-    ).allowed:
-        raise HTTPException(403, "permission denied — 仅该专项统筹人（coordinator）可反馈")
-    W.require_submission_status(row, SS.WAITING_COORDINATOR_FEEDBACK)
-    before = crud.to_dict(row)
-    project_id = _submission_project_id(db, row)
-    row.confirm_status = SS.S_COORDINATOR_GIVEN
-    row.coordinator_note = payload.note or ""
-    crud.log(db, payload.operator, "confirmation_coordinator_feedback", "confirmation", row.id, before, {"note": payload.note})
-    from ..services.notify import send as _notify, project_strict_owner_ids, person_id_for_account
-    caller_id = person_id_for_account(current_user or payload.operator, db)
-    for owner_id in project_strict_owner_ids(project_id, db):
-        if owner_id != caller_id:
-            _notify(db, recipient_id=owner_id, ntype="coordinator_feedback",
-                    title=f"统筹人已反馈意见：{row.title or '（无标题）'}",
-                    body=f"意见：{payload.note or '无'}，请前往 AI 确认中心处理",
-                    link=f"/work/confirmations?view=all&projectId={project_id}&submissionId={row.id}",
-                    project_id=project_id)
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
+    return review_workflow.coordinator_feedback(
+        submission_id=submission_id,
+        payload=payload,
+        current_user=current_user,
+        db=db,
+    )
 
 
 @router.post("/{submission_id}/escalate-ceo")
@@ -1984,41 +1938,12 @@ def escalate_ceo(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """上报企业教练决策。"""
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    if not P.decide_workflow_for_project(
-        context,
-        row.project_id,
-        A_CONFIRMATION_ESCALATE,
-        db,
-    ).allowed:
-        raise HTTPException(403, "permission denied — 仅项目负责人（owner）或超级管理员可上报企业教练")
-    W.require_submission_status(row, SS.ESCALATABLE_TO_CEO)
-    before = crud.to_dict(row)
-    data = W.submission_result(row)
-    _require_no_pending_ceo_cards(data)
-    _require_no_pending_coordinator_cards(data)
-    project_id = _submission_project_id(db, row)
-    row.confirm_status = SS.S_WAITING_CEO
-    if payload.note:
-        row.reject_reason = payload.note
-    crud.log(db, payload.operator, "confirmation_escalate_to_coach", "confirmation", row.id, before, {"note": payload.note})
-    from ..services.notify import send as _notify, project_coach_person_ids, person_name_for_account, person_id_for_account
-    caller_name = person_name_for_account(current_user or payload.operator, db)
-    caller_id = person_id_for_account(current_user or payload.operator, db)
-    for coach_id in project_coach_person_ids(project_id, db):
-        if coach_id != caller_id:
-            _notify(db, recipient_id=coach_id, ntype="escalate_ceo",
-                    title=f"有提交需要您决策：{row.title or '（无标题）'}",
-                    body=f"上报人：{caller_name}，备注：{payload.note or '无'}",
-                    link=(f"/work/confirmations?view=ceo"
-                          f"&projectId={project_id}&submissionId={row.id}"),
-                    project_id=project_id)
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
+    return review_workflow.escalate_submission_to_coach(
+        submission_id=submission_id,
+        payload=payload,
+        current_user=current_user,
+        db=db,
+    )
 
 
 @router.post("/{submission_id}/ceo-decide")
@@ -2028,36 +1953,12 @@ def ceo_decide(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """企业教练批示：批示后回到项目负责人执行确认写入。"""
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    if not P.decide_workflow_for_project(
-        context,
-        row.project_id,
-        A_CONFIRMATION_CEO_DECIDE,
-        db,
-    ).allowed:
-        raise HTTPException(403, "permission denied — 仅该项目企业教练或管理员可批示")
-    W.require_submission_status(row, SS.WAITING_CEO_DECISION)
-    before = crud.to_dict(row)
-    project_id = _submission_project_id(db, row)
-    row.confirm_status = SS.S_CEO_DECIDED
-    row.ceo_note = payload.note or ""
-    crud.log(db, payload.operator, "confirmation_coach_decision", "confirmation", row.id, before, {"note": payload.note})
-    from ..services.notify import send as _notify, project_strict_owner_ids, person_id_for_account
-    caller_id = person_id_for_account(current_user or payload.operator, db)
-    for owner_id in project_strict_owner_ids(project_id, db):
-        if owner_id != caller_id:
-            _notify(db, recipient_id=owner_id, ntype="ceo_decided",
-                    title=f"企业教练已批示，请跟进处理：{row.title or '（无标题）'}",
-                    body=f"批示：{payload.note or '无'}",
-                    link=(f"/work/confirmations?view=all"
-                          f"&projectId={project_id}&submissionId={row.id}"),
-                    project_id=project_id)
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
+    return review_workflow.coach_decide_submission(
+        submission_id=submission_id,
+        payload=payload,
+        current_user=current_user,
+        db=db,
+    )
 
 
 @router.post("/{submission_id}/mark-unrecognized")

@@ -190,7 +190,7 @@ git commit -m "refactor: move confirmation submission reviews to service"
 - Modify: `bowei_ai_dashboard/app/routers/confirmations.py:2177-2333`
 - Modify: `bowei_ai_dashboard/tests/test_confirmation_review_workflow_boundaries.py`
 
-- [ ] **Step 1: Add failing direct-service workflow tests.**
+- [x] **Step 1: Add failing direct-service workflow tests.**
 
 Test the direct sequence owner transfer → coordinator feedback → owner escalation → project-coach decision. Assert status progression `waiting_coordinator → coordinator_given → waiting_ceo → ceo_decided`, project-scoped denial for another project's coordinator/coach, and unchanged status when an invalid actor calls a command.
 
@@ -203,7 +203,7 @@ with pytest.raises(HTTPException) as denied:
 assert denied.value.status_code == 403
 ```
 
-- [ ] **Step 2: Verify red.**
+- [x] **Step 2: Verify red.**
 
 ```powershell
 python -m pytest tests/test_confirmation_review_workflow_boundaries.py -q
@@ -211,7 +211,7 @@ python -m pytest tests/test_confirmation_review_workflow_boundaries.py -q
 
 Expected: missing `transfer_submission_to_coordinator` or the first direct workflow command.
 
-- [ ] **Step 3: Implement four decision commands.**
+- [x] **Step 3: Implement four decision commands.**
 
 Implement `transfer_submission_to_coordinator`, `coordinator_feedback`, `escalate_submission_to_coach`, and `coach_decide_submission`. Each must call `P.decide_workflow_for_project` with the existing action constant where the Router currently does, preserve the exact `W.require_submission_status` set, write the existing note column, emit the same audit action, notify the same project role IDs excluding the caller, commit once, and return the existing response dict.
 
@@ -224,7 +224,7 @@ if not P.decide_workflow_for_project(
     raise HTTPException(403, "permission denied — 仅该项目企业教练或管理员可批示")
 ```
 
-- [ ] **Step 4: Delegate four Router endpoints and verify green.**
+- [x] **Step 4: Delegate four Router endpoints and verify green.**
 
 ```powershell
 python -m pytest tests/test_confirmation_review_workflow_boundaries.py tests/test_confirmation_coordinator_flow.py tests/test_confirmation_card_coach_flow.py tests/test_confirmation_log_actions.py -q
@@ -232,7 +232,7 @@ python -m pytest tests/test_confirmation_review_workflow_boundaries.py tests/tes
 
 Expected: pass.
 
-- [ ] **Step 5: Commit coordinator and coach decisions.**
+- [x] **Step 5: Commit coordinator and coach decisions.**
 
 ```powershell
 git add app/services/confirmation_review_workflow.py app/routers/confirmations.py tests/test_confirmation_review_workflow_boundaries.py

@@ -126,3 +126,64 @@ def test_submission_review_commands_own_state_transitions_and_submitter_identity
             db=db,
         )
     assert exc_info.value.status_code == 403
+
+
+def test_submission_escalation_commands_keep_project_scoped_review_flow():
+    from app.services import confirmation_review_workflow as workflow
+
+    db = _make_session()
+    team = _seed_team(db)
+    row = _submission(
+        db,
+        submitter=team["submitter"].name,
+        submitter_id=team["submitter"].id,
+        status=SS.S_PENDING_OWNER,
+    )
+
+    transferred = workflow.transfer_submission_to_coordinator(
+        submission_id=row.id,
+        payload=schemas.WorkflowNoteRequest(note="请反馈", operator="owner"),
+        current_user="owner",
+        db=db,
+    )
+    assert transferred["submission"]["confirm_status"] == SS.S_WAITING_COORDINATOR
+
+    feedback = workflow.coordinator_feedback(
+        submission_id=row.id,
+        payload=schemas.WorkflowNoteRequest(note="统筹意见", operator="coordinator"),
+        current_user="coordinator",
+        db=db,
+    )
+    assert feedback["submission"]["confirm_status"] == SS.S_COORDINATOR_GIVEN
+
+    escalated = workflow.escalate_submission_to_coach(
+        submission_id=row.id,
+        payload=schemas.WorkflowNoteRequest(note="请批示", operator="owner"),
+        current_user="owner",
+        db=db,
+    )
+    assert escalated["submission"]["confirm_status"] == SS.S_WAITING_CEO
+
+    decided = workflow.coach_decide_submission(
+        submission_id=row.id,
+        payload=schemas.WorkflowNoteRequest(note="同意", operator="coach"),
+        current_user="coach",
+        db=db,
+    )
+    assert decided["submission"]["confirm_status"] == SS.S_CEO_DECIDED
+
+    denied = _submission(
+        db,
+        submitter=team["submitter"].name,
+        submitter_id=team["submitter"].id,
+        status=SS.S_WAITING_COORDINATOR,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        workflow.coordinator_feedback(
+            submission_id=denied.id,
+            payload=schemas.WorkflowNoteRequest(note="越权", operator="coach"),
+            current_user="coach",
+            db=db,
+        )
+    assert exc_info.value.status_code == 403
+    assert db.get(models.UpdateSubmission, denied.id).confirm_status == SS.S_WAITING_COORDINATOR

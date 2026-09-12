@@ -132,7 +132,6 @@ class MeetingDocumentSource(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
-    meeting_id = Column(Integer, ForeignKey("meetings.id", ondelete="SET NULL"), nullable=True, index=True)
     original_name = Column(String(255), nullable=False)
     storage_key = Column(String(255), nullable=False, unique=True)
     mime_type = Column(String(120), nullable=False)

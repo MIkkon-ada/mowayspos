@@ -7,8 +7,11 @@ import json
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from .. import models, schemas
-from ..domain.workflow_permissions import A_MEETING_REVIEW_CHANGES
+from .. import crud, models, schemas
+from ..domain.workflow_permissions import (
+    A_MEETING_APPLY_CHANGES,
+    A_MEETING_REVIEW_CHANGES,
+)
 from ..permissions import (
     PROJECT_ROLE_OWNER_KEY,
     get_user_context_from_db,
@@ -19,6 +22,7 @@ from ..services import policy as P
 from ..services.meeting_change_set import (
     edit_meeting_change_proposal,
     edit_project_meeting_lineage_proposal,
+    execute_meeting_change_set as execute_change_set_domain,
 )
 from ..services.project_resolution import resolve_project_context
 
@@ -233,3 +237,53 @@ def patch_meeting_change_proposal(
     db.commit()
     db.refresh(proposal)
     return meeting_change_proposal_payload(proposal, change_set.project_id)
+
+
+def execute_meeting_change_set(
+    *,
+    row_id: int,
+    payload: schemas.MeetingChangeSetExecutePayload,
+    current_user: str,
+    db: Session,
+) -> dict:
+    current_user = require_login(current_user, db)
+    meeting = _meeting_for_read(row_id, current_user, db)
+    context = get_user_context_from_db(current_user, db)
+    _require_workflow_action(
+        context,
+        meeting.project_id,
+        A_MEETING_APPLY_CHANGES,
+        db,
+    )
+    proposals = execute_change_set_domain(
+        meeting=meeting,
+        proposal_ids=payload.proposal_ids,
+        actor=current_user,
+        db=db,
+    )
+    for proposal in proposals:
+        proposed = _json_value(proposal.proposed_json, {})
+        evidence = _json_value(proposal.evidence_json, [])
+        crud.log(
+            db,
+            current_user,
+            "meeting_change_execute",
+            "meeting_change_proposal",
+            proposal.id,
+            {
+                "proposal_id": proposal.id,
+                "before": _json_value(proposal.before_json, {}),
+                "proposed": proposed,
+                "evidence": evidence,
+            },
+            {
+                "proposal_id": proposal.id,
+                "proposed": proposed,
+                "evidence": evidence,
+                "result_target_id": proposal.result_target_id,
+                "execution_status": proposal.execution_status,
+            },
+            project_id=meeting.project_id,
+        )
+    db.commit()
+    return meeting_change_set_payload(_change_set_for_meeting(meeting.id, db), db)

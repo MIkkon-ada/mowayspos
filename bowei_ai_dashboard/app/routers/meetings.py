@@ -49,11 +49,9 @@ from ..services.kickoff_agent import build_kickoff_snapshot, run_kickoff_agent
 from ..services.kickoff_writeback import confirm_kickoff_start
 from ..services.meeting_change_set import (
     build_meeting_plan_snapshot,
-    edit_meeting_change_proposal,
-    edit_project_meeting_lineage_proposal,
-    execute_meeting_change_set,
     validate_meeting_change_proposal,
 )
+from ..services import meeting_change_set_review_workflow as change_set_review_workflow
 from ..services.project_meeting_minutes import (
     build_project_meeting_snapshot,
     validate_execution_schedule_proposal as validate_project_schedule_proposal,
@@ -523,61 +521,6 @@ def _json_value(value, fallback):
         return fallback
 
 
-def _meeting_change_proposal_payload(
-    row: models.MeetingChangeProposal,
-    project_id: int,
-) -> dict:
-    validation = _json_value(row.validation_json, {"state": "blocked", "errors": []})
-    lineage = _json_value(row.lineage_json, {})
-    target = {"project_id": project_id}
-    if row.target_type == "workstream" and row.target_id is not None:
-        target["workstream_id"] = row.target_id
-    if row.target_type == "subtask" and row.target_id is not None:
-        target["subtask_id"] = row.target_id
-    if row.target_type == "execution_schedule" and row.target_id is not None:
-        target["execution_schedule_id"] = row.target_id
-    if row.parent_workstream_id is not None:
-        target["parent_workstream_id"] = row.parent_workstream_id
-    return {
-        "id": row.id,
-        "action": row.action,
-        "target_type": row.target_type,
-        "target_id": row.target_id,
-        "parent_workstream_id": row.parent_workstream_id,
-        "target": target,
-        "before": _json_value(row.before_json, {}),
-        "proposed": _json_value(row.proposed_json, {}),
-        "evidence": _json_value(row.evidence_json, []),
-        "reason": row.reason,
-        "confidence": row.confidence,
-        "validation": validation,
-        "execution_status": row.execution_status,
-        "executed_by_person_id": row.executed_by_person_id,
-        "executed_at": row.executed_at,
-        "result_target_id": row.result_target_id,
-        "lineage": lineage,
-        "conflict_reason": validation.get("errors", []) if row.execution_status == "conflict" else [],
-    }
-
-
-def _meeting_change_set_payload(row: models.MeetingChangeSet, db: Session) -> dict:
-    proposals = (
-        db.query(models.MeetingChangeProposal)
-        .filter_by(change_set_id=row.id)
-        .order_by(models.MeetingChangeProposal.id.asc())
-        .all()
-    )
-    return {
-        "id": row.id,
-        "project_id": row.project_id,
-        "status": row.status,
-        "proposals": [
-            _meeting_change_proposal_payload(proposal, row.project_id)
-            for proposal in proposals
-        ],
-    }
-
-
 def _proposal_target_columns(proposal: dict) -> tuple[str, int | None, int | None]:
     action = proposal.get("action")
     target = proposal.get("target") or {}
@@ -822,7 +765,7 @@ def _project_meeting_payload(run: models.ProjectMeetingRun, db: Session) -> dict
         "meeting": crud.to_dict(meeting) if meeting else None,
         "snapshot": _json_value(run.snapshot_json, {}),
         "result": result,
-        "review_package": _meeting_change_set_payload(change_set, db) if change_set else None,
+        "review_package": change_set_review_workflow.meeting_change_set_payload(change_set, db) if change_set else None,
     }
 
 
@@ -1310,7 +1253,7 @@ HARD TRACEABILITY RULES:
         raise HTTPException(500, f"meeting change-set persistence failed: {exc}") from exc
 
     response["analysis_id"] = change_set.id
-    response["change_set"] = _meeting_change_set_payload(change_set, db)
+    response["change_set"] = change_set_review_workflow.meeting_change_set_payload(change_set, db)
     return response
 
 
@@ -1655,16 +1598,11 @@ def get_meeting_change_set(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    current_user = require_login(current_user, db)
-    row = _meeting_for_read(row_id, current_user, db)
-    change_set = (
-        db.query(models.MeetingChangeSet)
-        .filter_by(meeting_id=row.id)
-        .first()
+    return change_set_review_workflow.get_meeting_change_set(
+        row_id=row_id,
+        current_user=current_user,
+        db=db,
     )
-    if not change_set:
-        raise HTTPException(404, "meeting change set not found")
-    return _meeting_change_set_payload(change_set, db)
 
 
 @router.patch("/{row_id}/change-set/proposals/{proposal_id}")
@@ -1675,46 +1613,13 @@ def patch_meeting_change_proposal(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    current_user = require_login(current_user, db)
-    meeting = _meeting_for_read(row_id, current_user, db)
-    change_set = (
-        db.query(models.MeetingChangeSet)
-        .filter_by(meeting_id=meeting.id)
-        .first()
+    return change_set_review_workflow.patch_meeting_change_proposal(
+        row_id=row_id,
+        proposal_id=proposal_id,
+        payload=payload,
+        current_user=current_user,
+        db=db,
     )
-    if not change_set:
-        raise HTTPException(404, "meeting change set not found")
-    proposal = (
-        db.query(models.MeetingChangeProposal)
-        .filter_by(id=proposal_id, change_set_id=change_set.id)
-        .first()
-    )
-    if not proposal:
-        raise HTTPException(404, "meeting change proposal not found")
-    if _json_value(proposal.lineage_json, {}):
-        context = get_user_context_from_db(current_user, db)
-        _require_workflow_action(context, change_set.project_id, A_MEETING_REVIEW_CHANGES, db)
-        edit_project_meeting_lineage_proposal(
-            proposal=proposal,
-            change_set=change_set,
-            meeting=meeting,
-            actor=current_user,
-            proposed_updates=payload.proposed,
-            db=db,
-        )
-    else:
-        edit_meeting_change_proposal(
-            proposal=proposal,
-            change_set=change_set,
-            transcript_text=meeting.transcript_text or "",
-            proposed=payload.proposed,
-            evidence=payload.evidence,
-            reason=payload.reason,
-            db=db,
-        )
-    db.commit()
-    db.refresh(proposal)
-    return _meeting_change_proposal_payload(proposal, change_set.project_id)
 
 
 @router.post("/{row_id}/change-set/execute")
@@ -1724,49 +1629,12 @@ def execute_reviewed_meeting_change_set(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    current_user = require_login(current_user, db)
-    meeting = _meeting_for_read(row_id, current_user, db)
-    context = get_user_context_from_db(current_user, db)
-    _require_workflow_action(context, meeting.project_id, A_MEETING_APPLY_CHANGES, db)
-    proposals = execute_meeting_change_set(
-        meeting=meeting,
-        proposal_ids=payload.proposal_ids,
-        actor=current_user,
+    return change_set_review_workflow.execute_meeting_change_set(
+        row_id=row_id,
+        payload=payload,
+        current_user=current_user,
         db=db,
     )
-    for proposal in proposals:
-        evidence = _json_value(proposal.evidence_json, [])
-        proposed = _json_value(proposal.proposed_json, {})
-        audit_before = {
-            "proposal_id": proposal.id,
-            "before": _json_value(proposal.before_json, {}),
-            "proposed": proposed,
-            "evidence": evidence,
-        }
-        audit_after = {
-            "proposal_id": proposal.id,
-            "proposed": proposed,
-            "evidence": evidence,
-            "result_target_id": proposal.result_target_id,
-            "execution_status": proposal.execution_status,
-        }
-        crud.log(
-            db,
-            current_user,
-            "meeting_change_execute",
-            "meeting_change_proposal",
-            proposal.id,
-            audit_before,
-            audit_after,
-            project_id=meeting.project_id,
-        )
-    db.commit()
-    change_set = (
-        db.query(models.MeetingChangeSet)
-        .filter_by(meeting_id=meeting.id)
-        .first()
-    )
-    return _meeting_change_set_payload(change_set, db)
 
 
 @router.get("/{row_id}")

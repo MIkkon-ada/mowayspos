@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine
@@ -102,7 +103,14 @@ def _seed_ordinary_change_set(
         target_type="subtask",
         target_id=20,
         parent_workstream_id=10,
-        before_json=json.dumps({"notes": "Before meeting"}),
+        before_json=json.dumps({
+            "title": "Customer list",
+            "assignee": "Owner",
+            "plan_time": "",
+            "completion_criteria": "",
+            "status": "in_progress",
+            "notes": "Before meeting",
+        }),
         proposed_json=json.dumps({"notes": "Before meeting"}),
         evidence_json=json.dumps(["Meeting evidence."]),
         reason="The meeting explicitly reviewed the note.",
@@ -146,3 +154,58 @@ def test_review_workflow_reads_and_revalidates_an_ordinary_proposal(db: Session)
 
     assert patched["proposed"] == {"notes": "Human reviewed notes"}
     assert patched["validation"]["state"] == "ready"
+
+
+def test_review_workflow_executes_selected_proposal_with_audit(db: Session):
+    meeting, _, proposal = _seed_ordinary_change_set(db)
+
+    result = workflow.execute_meeting_change_set(
+        row_id=meeting.id,
+        payload=schemas.MeetingChangeSetExecutePayload(proposal_ids=[proposal.id]),
+        current_user="owner",
+        db=db,
+    )
+
+    executed = result["proposals"][0]
+    assert executed["execution_status"] == "executed"
+    assert executed["result_target_id"] == 20
+    log = db.query(models.OperationLog).filter_by(
+        action="meeting_change_execute",
+        target_id=proposal.id,
+    ).one()
+    assert json.loads(log.after_json) == {
+        "proposal_id": proposal.id,
+        "proposed": {"notes": "Before meeting"},
+        "evidence": ["Meeting evidence."],
+        "result_target_id": 20,
+        "execution_status": "executed",
+    }
+
+
+def test_change_set_routes_delegate_to_the_review_workflow_service():
+    source = (
+        Path(__file__).resolve().parents[1] / "app" / "routers" / "meetings.py"
+    ).read_text(encoding="utf-8")
+
+    for function_name, service_call, next_decorator in (
+        (
+            "get_meeting_change_set",
+            "change_set_review_workflow.get_meeting_change_set(",
+            '@router.patch("/{row_id}/change-set/proposals/{proposal_id}")',
+        ),
+        (
+            "patch_meeting_change_proposal",
+            "change_set_review_workflow.patch_meeting_change_proposal(",
+            '@router.post("/{row_id}/change-set/execute")',
+        ),
+        (
+            "execute_reviewed_meeting_change_set",
+            "change_set_review_workflow.execute_meeting_change_set(",
+            '@router.get("/{row_id}")',
+        ),
+    ):
+        start = source.index(f"def {function_name}")
+        end = source.index(next_decorator, start)
+        route_body = source[start:end]
+        assert service_call in route_body
+        assert "db.query(models.MeetingChangeSet)" not in route_body

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import urlparse
 
 from scripts.ci_compose_business_smoke import run_smoke
@@ -100,3 +101,15 @@ def test_compose_smoke_uses_proxy_authenticates_and_checks_member_denial():
     assert ("GET", "/api/achievements") in paths
     assert any(method == "POST" and path == "/api/projects" and cookie == "moways_ci_session=member-session" for method, path, cookie in _SmokeHandler.requests)
     assert all("session" not in event and "password" not in event for event in events)
+
+
+def test_ci_runs_the_authenticated_smoke_after_frontend_health_check():
+    workflow = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "cloud-p1b2a-gate.yml").read_text(encoding="utf-8")
+    command = '"${dc[@]}" exec -T backend python scripts/ci_compose_business_smoke.py --base-url http://frontend'
+
+    assert workflow.count(command) == 1
+    command_index = workflow.index(command)
+    port_assertion_index = workflow.index('docker inspect --format', command_index)
+    assert workflow.index('wait_for_health mowayspos-frontend') < command_index < port_assertion_index
+    command_block = workflow[command_index:port_assertion_index]
+    assert "continue-on-error" not in command_block

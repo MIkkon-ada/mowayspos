@@ -301,6 +301,8 @@ jobs:
           "${dc[@]}" up -d frontend
           wait_for_health mowayspos-frontend
 
+          "${dc[@]}" exec -T backend python scripts/ci_compose_business_smoke.py --base-url http://frontend
+
           curl --fail --silent --show-error http://127.0.0.1:18100/ >/dev/null
           curl --fail --silent --show-error http://127.0.0.1:18100/api/health > "$RUNNER_TEMP/moways-health.json"
           python - "$RUNNER_TEMP/moways-health.json" <<'PY'

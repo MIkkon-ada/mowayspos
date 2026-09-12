@@ -49,7 +49,7 @@
 - 安全 JSON 反序列化和稳定的 proposal/change-set 响应载荷组装；
 - 按会议读取权限加载会议，保持草稿、项目访问、全局技术管理员/CEO 的现有规则；
 - 按变更集归属加载提案，避免跨会议编辑；
-- 用 `A_MEETING_REVIEW_CHANGES` 保护编辑，用 `A_MEETING_APPLY_CHANGES` 保护执行；
+- 对含 `lineage_json` 的项目会议提案使用 `A_MEETING_REVIEW_CHANGES`；普通提案保留既有的会议可读/项目访问编辑语义；执行使用 `A_MEETING_APPLY_CHANGES`；
 - 对谱系提案调用 `edit_project_meeting_lineage_proposal`，对普通提案调用 `edit_meeting_change_proposal`；
 - 调用既有 `execute_meeting_change_set` 后，逐条写入 `meeting_change_execute` 审计，并在同一事务中提交。
 
@@ -81,14 +81,14 @@
 
 - 不增加端点、迁移、数据库列或前端协议字段。
 - 保留当前 `403`、`404`、`409`、`422` 的具体判定与错误文本。
-- 无变更集、跨会议 proposal、不可见草稿、没有评审权限、没有应用权限、冻结项目、被阻塞/已领取/冲突提案均必须拒绝且不写入业务实体。
+- 无变更集、跨会议 proposal、不可见草稿、没有项目会议谱系评审权限、没有应用权限、冻结项目、被阻塞/已领取/冲突提案均必须拒绝且不写入业务实体。
 - 空 `proposal_ids` 仍返回当前变更集载荷，不生成审计记录，不改变状态。
 
 ## 验证策略
 
 先用直接服务测试固定应用边界，再复用端点集成测试固定 HTTP 契约。
 
-- 服务测试覆盖：正常编辑、谱系编辑分流、跨会议提案 `404`、编辑与执行权限、冻结项目、空选择、逐条审计和单次提交后的响应载荷。
+- 服务测试覆盖：正常编辑、谱系编辑分流及其权限、跨会议提案 `404`、执行权限、冻结项目、空选择、逐条审计和单次提交后的响应载荷。
 - 既有 `test_meeting_change_set_writeback.py` 覆盖四种变更执行、重验证、批量原子性、父任务同步与审计。
 - 既有 `test_project_meeting_review_writeback.py` 覆盖项目会议谱系和项目文档会议独立复核流未被影响。
 - 完成后运行会议相关聚焦测试、完整后端 pytest、前端完整测试和生产构建。

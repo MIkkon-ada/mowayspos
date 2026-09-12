@@ -25,7 +25,7 @@
 
 - Create: `bowei_ai_dashboard/tests/test_meeting_change_set_review_workflow_boundaries.py`
 
-- [ ] **Step 1: Write a failing direct service test for reads and ordinary edits.**
+- [x] **Step 1: Write a failing direct service test for reads and ordinary edits.**
 
 Use an in-memory SQLite `Session` (`StaticPool`) and seed one owner account, active project, member role, draft meeting, change set, and `update_subtask` proposal. Import the proposed workflow module, then check that it returns the existing payload contract and uses the ordinary editor for proposals without lineage:
 
@@ -57,9 +57,9 @@ assert patched["validation"]["state"] == "ready"
 
 The seed must set `meeting.transcript_text = "Meeting evidence."`, proposal `execution_status = "pending"`, and a valid frozen `snapshot_json` so ordinary revalidation can succeed.
 
-- [ ] **Step 2: Write failing direct service tests for path ownership, workflow authorization, and execution audit.**
+- [x] **Step 2: Write direct service tests for path ownership, execution authorization, and execution audit.**
 
-Add one proposal belonging to a second change set and a member account. Assert a cross-meeting proposal produces `404`; a member cannot patch or execute (`403`); owner execution creates exactly one audit record with the established action and result target:
+Add one proposal belonging to a second change set and a project member account. Assert a cross-meeting proposal produces `404`; a non-owner cannot execute (`403`); preserve the existing ordinary-proposal edit behavior (the stricter `A_MEETING_REVIEW_CHANGES` check applies only when `lineage_json` is present); owner execution creates exactly one audit record with the established action and result target:
 
 ```python
 with pytest.raises(HTTPException) as missing:
@@ -89,7 +89,7 @@ assert result["proposals"][0]["execution_status"] == "executed"
 assert json.loads(log.after_json)["result_target_id"] == proposal.result_target_id
 ```
 
-- [ ] **Step 3: Run the new direct boundary tests and verify red.**
+- [x] **Step 3: Run the new direct boundary tests and verify red.**
 
 Run:
 
@@ -100,7 +100,7 @@ python -m pytest tests/test_meeting_change_set_review_workflow_boundaries.py -q
 
 Expected: collection fails because `app.services.meeting_change_set_review_workflow` is not importable.
 
-- [ ] **Step 4: Commit the failing boundary tests.**
+- [x] **Step 4: Commit the failing boundary tests.**
 
 ```powershell
 git add bowei_ai_dashboard/tests/test_meeting_change_set_review_workflow_boundaries.py
@@ -115,7 +115,7 @@ git commit -m "test: define meeting change-set review workflow boundary"
 - Create: `bowei_ai_dashboard/app/services/meeting_change_set_review_workflow.py`
 - Modify: `bowei_ai_dashboard/tests/test_meeting_change_set_review_workflow_boundaries.py`
 
-- [ ] **Step 1: Add the new module's imports and stable payload functions.**
+- [x] **Step 1: Add the new module's imports and stable payload functions.**
 
 Use these exact service dependencies; do not import `app.routers.meetings`:
 
@@ -147,7 +147,7 @@ from ..services.project_resolution import resolve_project_context
 
 Implement `_json_value`, `meeting_change_proposal_payload`, and `meeting_change_set_payload` by moving the current router behavior verbatim: proposal target includes `project_id`, optional `workstream_id`, `subtask_id`, `execution_schedule_id`, and `parent_workstream_id`; conflict reasons are exposed only when `execution_status == "conflict"`; proposals are ordered by ascending ID.
 
-- [ ] **Step 2: Implement self-contained lookup and permission helpers.**
+- [x] **Step 2: Implement self-contained lookup and permission helpers.**
 
 Implement `_require_workflow_action`, `_row_project_id`, `_can_view_meeting_draft`, `_meeting_for_read`, `_change_set_for_meeting`, and `_proposal_for_change_set` using the same messages as the Router. The access helper must not loosen draft visibility:
 
@@ -171,7 +171,7 @@ def _meeting_for_read(row_id: int, current_user: str, db: Session) -> models.Mee
 
 `_proposal_for_change_set` must query by both `id` and `change_set_id` and raise `HTTPException(404, "meeting change proposal not found")` when absent.
 
-- [ ] **Step 3: Implement read and patch as one-commit commands.**
+- [x] **Step 3: Implement read and patch as one-commit commands.**
 
 Use the following command shapes. `patch_meeting_change_proposal` must use workflow-review permission only for proposals with lineage, preserve the current ordinary proposal behavior, commit once, refresh, and return the stable proposal payload:
 
@@ -207,7 +207,7 @@ def patch_meeting_change_proposal(*, row_id: int, proposal_id: int,
     return meeting_change_proposal_payload(proposal, change_set.project_id)
 ```
 
-- [ ] **Step 4: Run direct tests and existing change-set regression tests.**
+- [x] **Step 4: Run direct tests and existing change-set regression tests.**
 
 Run:
 
@@ -218,7 +218,7 @@ python -m pytest tests/test_meeting_change_set_review_workflow_boundaries.py tes
 
 Expected: pass, including ordinary revalidation, existing endpoint behavior, and no schema change.
 
-- [ ] **Step 5: Commit the application service.**
+- [x] **Step 5: Commit the application service.**
 
 ```powershell
 git add bowei_ai_dashboard/app/services/meeting_change_set_review_workflow.py bowei_ai_dashboard/tests/test_meeting_change_set_review_workflow_boundaries.py
@@ -234,7 +234,7 @@ git commit -m "refactor: extract meeting change-set review workflow"
 - Modify: `bowei_ai_dashboard/app/routers/meetings.py:49-56, 519-580, 825, 1313, 1653-1769`
 - Modify: `bowei_ai_dashboard/tests/test_meeting_change_set_review_workflow_boundaries.py`
 
-- [ ] **Step 1: Add failing tests for execution transaction behavior and Router delegation.**
+- [x] **Step 1: Add execution transaction, preservation, and Router-delegation tests.**
 
 Add a frozen project test using `project.status = "pending_close"`; it must return `409`, preserve proposal `pending`, and add no `meeting_change_execute` log. Add a router source assertion that each of the three route bodies delegates to `change_set_review_workflow` and the route block does not contain `db.query(models.MeetingChangeSet)`:
 
@@ -255,7 +255,7 @@ assert "change_set_review_workflow.execute_meeting_change_set(" in execute_block
 assert "db.query(models.MeetingChangeSet)" not in execute_block
 ```
 
-- [ ] **Step 2: Run the new test and verify red.**
+- [x] **Step 2: Run the new test and verify red.**
 
 Run:
 
@@ -266,7 +266,7 @@ python -m pytest tests/test_meeting_change_set_review_workflow_boundaries.py -q
 
 Expected: the service lacks its public execution command and the router is not yet delegating.
 
-- [ ] **Step 3: Implement the service-owned execute command and its audit payload.**
+- [x] **Step 3: Implement the service-owned execute command and its audit payload.**
 
 Use `A_MEETING_APPLY_CHANGES`, then delegate all state checks and entity writes to the existing domain service. The service alone adds audit records and commits:
 
@@ -299,7 +299,7 @@ def execute_meeting_change_set(*, row_id: int,
     return meeting_change_set_payload(_change_set_for_meeting(meeting.id, db), db)
 ```
 
-- [ ] **Step 4: Redirect all existing payload and endpoint call sites.**
+- [x] **Step 4: Redirect all existing payload and endpoint call sites.**
 
 In `meetings.py`, import the module once:
 
@@ -326,7 +326,7 @@ return change_set_review_workflow.execute_meeting_change_set(
 
 Remove now-unused imports from `meeting_change_set` only after `rg` confirms the Router no longer needs them. Do not modify `review_project_meeting` or `_execute_project_meeting_schedule_changes`.
 
-- [ ] **Step 5: Run focused behavior and project-meeting regressions.**
+- [x] **Step 5: Run focused behavior and project-meeting regressions.**
 
 Run:
 
@@ -337,7 +337,7 @@ python -m pytest tests/test_meeting_change_set_review_workflow_boundaries.py tes
 
 Expected: pass, preserving four-action execution, stale batch atomicity, audit records, frozen project rejection, lineage review behavior, and the independent project-document review flow.
 
-- [ ] **Step 6: Commit the route delegation.**
+- [x] **Step 6: Commit the route delegation.**
 
 ```powershell
 git add bowei_ai_dashboard/app/services/meeting_change_set_review_workflow.py bowei_ai_dashboard/app/routers/meetings.py bowei_ai_dashboard/tests/test_meeting_change_set_review_workflow_boundaries.py
@@ -351,7 +351,7 @@ git commit -m "refactor: move meeting change-set commands to service"
 
 - Modify: `docs/superpowers/plans/2026-09-13-meeting-change-set-review-workflow-boundaries.md`
 
-- [ ] **Step 1: Run the complete meeting-focused gate.**
+- [x] **Step 1: Run the complete meeting-focused gate.**
 
 Run:
 
@@ -362,7 +362,7 @@ python -m pytest tests/test_meeting_change_set_review_workflow_boundaries.py tes
 
 Expected: exit code 0, covering service boundaries, endpoint contracts, project-meeting lineage, draft contracts, and agent persistence.
 
-- [ ] **Step 2: Run the full delivery gate.**
+- [x] **Step 2: Run the full delivery gate.**
 
 Run:
 
@@ -379,7 +379,7 @@ git status --short
 
 Expected: backend, frontend test suites, and production build all succeed; the existing `exceljs.min` size warning remains non-blocking unless its wording changes to an error.
 
-- [ ] **Step 3: Record actual totals and commit the verification evidence.**
+- [x] **Step 3: Record actual totals and commit the verification evidence.**
 
 Replace the unchecked Task 4 items with checked entries and append the exact command outcomes and durations to this plan. Then run:
 
@@ -388,3 +388,15 @@ git add docs/superpowers/plans/2026-09-13-meeting-change-set-review-workflow-bou
 git diff --cached --check
 git commit -m "docs: record meeting change-set workflow verification"
 ```
+
+## Verification record
+
+- 2026-09-13: the initial direct boundary test failed during collection as expected because `meeting_change_set_review_workflow` was not importable (`ImportError`).
+- 2026-09-13: the initial execute-command test failed as expected because the new service had no `execute_meeting_change_set` attribute; the route-boundary test then failed as expected because the Router still queried `MeetingChangeSet` directly.
+- 2026-09-13: `python -m pytest tests/test_meeting_change_set_review_workflow_boundaries.py tests/test_meeting_change_set_writeback.py -q` — `13 passed in 50.06s`.
+- 2026-09-13: `python -m pytest tests/test_meeting_change_set_review_workflow_boundaries.py tests/test_meeting_change_set_writeback.py tests/test_project_meeting_review_writeback.py -q` — `33 passed in 51.38s` before the final direct preservation-test additions; rerun after those additions — `35 passed in 56.70s`.
+- 2026-09-13: direct boundary tests after adding cross-meeting, non-owner execution, and frozen-project guards — `6 passed in 1.65s`. The frozen-project case was added during migration audit and passed because the reused domain service already enforced `pending_close`; it proves that the service boundary did not bypass that protection.
+- 2026-09-13: complete meeting-focused gate — `50 passed in 52.22s` for boundary, writeback, project-review, draft-review, and agent-processing tests.
+- 2026-09-13: complete backend gate — `1948 passed, 12 skipped in 397.67s (0:06:37)`.
+- 2026-09-13: `npm run test:all` — Vitest `27` files / `89` tests passed; frontend contracts `502` passed / `0` failed.
+- 2026-09-13: `npm run build` completed in `7.18s`; the known non-blocking `exceljs.min` chunk-size warning remains (940.19 kB minified, 271.33 kB gzip).

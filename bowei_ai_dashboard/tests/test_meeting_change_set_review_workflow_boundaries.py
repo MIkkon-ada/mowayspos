@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -49,11 +50,19 @@ def _seed_ordinary_change_set(
     }
     db.add_all([
         models.Person(id=1, name="Owner", is_active=True),
+        models.Person(id=2, name="Member", is_active=True),
         models.Account(
             id=1,
             username="owner",
             password_hash="x",
             person_id=1,
+            status="active",
+        ),
+        models.Account(
+            id=2,
+            username="member",
+            password_hash="x",
+            person_id=2,
             status="active",
         ),
         models.Project(id=1, name="Project A", status="active", is_active=True),
@@ -62,6 +71,12 @@ def _seed_ordinary_change_set(
             person_id=1,
             person_name_snapshot="Owner",
             role="owner",
+        ),
+        models.ProjectMember(
+            project_id=1,
+            person_id=2,
+            person_name_snapshot="Member",
+            role="member",
         ),
         models.Task(
             id=10,
@@ -180,6 +195,77 @@ def test_review_workflow_executes_selected_proposal_with_audit(db: Session):
         "result_target_id": 20,
         "execution_status": "executed",
     }
+
+
+def test_review_workflow_hides_proposals_belonging_to_another_meeting(db: Session):
+    meeting, _, _ = _seed_ordinary_change_set(db)
+    db.add_all([
+        models.Meeting(id=2, project_id=1, title="Other meeting", publish_status="published"),
+        models.MeetingChangeSet(
+            id=2,
+            project_id=1,
+            meeting_id=2,
+            snapshot_json="{}",
+            result_json="{}",
+            status="draft",
+        ),
+        models.MeetingChangeProposal(
+            id=2,
+            change_set_id=2,
+            action="update_subtask",
+            target_type="subtask",
+            target_id=20,
+            parent_workstream_id=10,
+        ),
+    ])
+    db.commit()
+
+    with pytest.raises(HTTPException) as missing:
+        workflow.patch_meeting_change_proposal(
+            row_id=meeting.id,
+            proposal_id=2,
+            payload=schemas.MeetingChangeProposalPatch(proposed={"notes": "Ignored"}),
+            current_user="owner",
+            db=db,
+        )
+
+    assert missing.value.status_code == 404
+    assert missing.value.detail == "meeting change proposal not found"
+
+
+def test_review_workflow_requires_an_owner_to_execute(db: Session):
+    meeting, _, proposal = _seed_ordinary_change_set(db)
+
+    with pytest.raises(HTTPException) as denied:
+        workflow.execute_meeting_change_set(
+            row_id=meeting.id,
+            payload=schemas.MeetingChangeSetExecutePayload(proposal_ids=[proposal.id]),
+            current_user="member",
+            db=db,
+        )
+
+    assert denied.value.status_code == 403
+    assert db.get(models.MeetingChangeProposal, proposal.id).execution_status == "pending"
+
+
+def test_review_workflow_rejects_execution_for_a_frozen_project_without_audit(db: Session):
+    meeting, _, proposal = _seed_ordinary_change_set(db)
+    db.get(models.Project, 1).status = "pending_close"
+    db.commit()
+
+    with pytest.raises(HTTPException) as frozen:
+        workflow.execute_meeting_change_set(
+            row_id=meeting.id,
+            payload=schemas.MeetingChangeSetExecutePayload(proposal_ids=[proposal.id]),
+            current_user="owner",
+            db=db,
+        )
+
+    assert frozen.value.status_code == 409
+    assert db.get(models.MeetingChangeProposal, proposal.id).execution_status == "pending"
+    assert db.query(models.OperationLog).filter_by(
+        action="meeting_change_execute",
+    ).count() == 0
 
 
 def test_change_set_routes_delegate_to_the_review_workflow_service():

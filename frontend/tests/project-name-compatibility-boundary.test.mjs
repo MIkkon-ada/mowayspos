@@ -10,15 +10,8 @@ assert.ok(existsSync(identityPath), 'project identity requires a strict domain m
 
 const compatibility = source('../src/compatibility/projectNames.ts')
 const identity = source('../src/domain/projectIdentity.ts')
-const taskPage = source('../src/pages/TaskManagementPage.tsx')
-const taskExport = source('../src/utils/exportTasksExcel.ts')
 
 assert.match(compatibility, /special_project/)
 assert.doesNotMatch(identity, /special_project|related_special_project/)
-
-for (const [name, value] of [['task page', taskPage], ['task export', taskExport]]) {
-  assert.doesNotMatch(value, /legacy:/, `${name} must not construct its own historical group key`)
-  assert.doesNotMatch(value, /task\.special_project/, `${name} must not read a historical name directly`)
-}
 
 console.log('project name compatibility boundary passed')

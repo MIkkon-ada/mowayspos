@@ -52,7 +52,7 @@ describe('project name compatibility', () => {
 
 - [ ] **Step 2: Add the source-boundary contract.**
 
-Create `frontend/tests/project-name-compatibility-boundary.test.mjs`. Read the three source files with `fs.readFileSync`. Assert `frontend/src/compatibility/projectNames.ts` contains `special_project`; assert `frontend/src/domain/projectIdentity.ts`, `frontend/src/pages/TaskManagementPage.tsx`, and `frontend/src/utils/exportTasksExcel.ts` do not contain `legacy:`; assert the page/export source do not contain `task.special_project`.
+Create `frontend/tests/project-name-compatibility-boundary.test.mjs`. Assert the compatibility and strict-identity source files exist. Read both with `fs.readFileSync`; assert `frontend/src/compatibility/projectNames.ts` contains `special_project` and `frontend/src/domain/projectIdentity.ts` contains neither `special_project` nor `related_special_project`. The task-consumer assertions belong to Task 3, after those callers are migrated.
 
 - [ ] **Step 3: Run the new tests and confirm red.**
 

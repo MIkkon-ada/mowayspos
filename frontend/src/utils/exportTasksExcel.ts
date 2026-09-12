@@ -1,5 +1,6 @@
 import type { Alignment, Worksheet } from 'exceljs'
 import type { Project, TaskItem } from '../types'
+import { getProjectDisplayName, getProjectGroupKey } from '../compatibility/projectNames'
 
 const HEADER_BG  = 'FF1F3A6E'  // 深蓝
 const STATUS_BG  = 'FFB0B8C4'  // 灰色（事项状态列）
@@ -22,15 +23,11 @@ function cell(
 }
 
 function resolveTaskProjectLabel(task: TaskItem, projects: Project[]) {
-  const matched = projects.find((p) => p.id === task.project_id)
-  if (matched) return matched.name
-  return task.special_project?.trim() || '（未分类）'
+  return getProjectDisplayName(projects, task, '（未分类）')
 }
 
-function resolveTaskProjectKey(task: TaskItem) {
-  const projectId = task.project_id
-  if (typeof projectId === 'number') return `project:${projectId}`
-  return `legacy:${task.special_project?.trim() || '（未分类）'}`
+function resolveTaskProjectKey(task: TaskItem, projects: Project[]) {
+  return getProjectGroupKey(projects, task, '（未分类）')
 }
 
 export async function exportTasksToExcel(tasks: TaskItem[], title: string, projects: Project[]) {
@@ -80,7 +77,7 @@ export async function exportTasksToExcel(tasks: TaskItem[], title: string, proje
   const groups: [string, TaskItem[]][] = []
   const seen = new Map<string, TaskItem[]>()
   for (const t of tasks) {
-    const key = resolveTaskProjectKey(t)
+    const key = resolveTaskProjectKey(t, projects)
     if (!seen.has(key)) { seen.set(key, []); groups.push([key, seen.get(key)!]) }
     seen.get(key)!.push(t)
   }

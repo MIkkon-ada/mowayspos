@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import * as projectDisplay from '../domain/projectDisplay'
+import * as projectNames from './projectNames'
 
 const projects = [{ id: 7, name: '当前项目' }] as any
 const getProjectGroupKey = (projectDisplay as Record<string, unknown>).getProjectGroupKey as
   | ((projects: typeof projects, record: Record<string, unknown>, fallback?: string) => string)
+  | undefined
+const getProjectNameFromGroupKey = (projectNames as Record<string, unknown>).getProjectNameFromGroupKey as
+  | ((projects: typeof projects, key: string, records: Record<string, unknown>[], fallback?: string) => string)
   | undefined
 
 describe('project name compatibility', () => {
@@ -19,5 +23,10 @@ describe('project name compatibility', () => {
 
   it('uses the supplied fallback for records with no project data', () => {
     expect(projectDisplay.getProjectDisplayName(projects, {}, '（未分类）')).toBe('（未分类）')
+  })
+
+  it('derives a group label without exposing its key convention to callers', () => {
+    expect(getProjectNameFromGroupKey?.(projects, 'project:7', [])).toBe('当前项目')
+    expect(getProjectNameFromGroupKey?.(projects, 'compat-name:历史任务项目', [])).toBe('历史任务项目')
   })
 })

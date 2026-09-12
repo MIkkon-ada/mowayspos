@@ -49,3 +49,20 @@ export function getProjectGroupKey(
   if (projectId != null) return currentProjectKey(projectId)
   return historicalProjectKey(getProjectDisplayName(projects, record, fallback))
 }
+
+export function getProjectNameFromGroupKey(
+  projects: ReadonlyArray<ProjectSummary>,
+  key: string,
+  records: ReadonlyArray<ProjectRecord>,
+  fallback = '',
+): string {
+  if (key.startsWith('project:')) {
+    const projectId = Number(key.slice('project:'.length))
+    if (Number.isFinite(projectId)) {
+      const matched = getProjectById(projects, projectId)
+      if (matched) return matched.name
+    }
+  }
+  if (key.startsWith('compat-name:')) return key.slice('compat-name:'.length) || fallback
+  return getProjectDisplayName(projects, records[0], fallback)
+}

@@ -12,7 +12,8 @@ import { getProject, getProjectMembers } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } from '../domain/taskPermission'
 import type { TaskItem, SubTaskItem, Project, ProjectMember } from '../types'
-import { getProjectById, getProjectDisplayName, getProjectIdFromRecord } from '../domain/projectDisplay'
+import { getProjectDisplayName, getProjectGroupKey, getProjectNameFromGroupKey } from '../compatibility/projectNames'
+import { getProjectById, getProjectIdFromRecord } from '../domain/projectIdentity'
 import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
 import { getKeyTaskAssigneeNames, taskHasKeyTaskAssignee } from '../domain/keyTaskAssigneeFilter'
 import { PlanTableViewV2 } from '../components/task-management/PlanTableViewV2'
@@ -88,19 +89,11 @@ function subTaskProgress(subs?: SubTaskItem[] | null) {
 }
 
 function taskProjectKey(projects: Project[], task: TaskItem) {
-  const project = projectForTask(projects, task)
-  if (project) return `project:${project.id}`
-  return `legacy:${getProjectDisplayName(projects, task) || '（未分类）'}`
+  return getProjectGroupKey(projects, task, '（未分类）')
 }
 
 function groupProjectName(projects: Project[], key: string, tasks: TaskItem[]) {
-  const projectId = key.startsWith('project:') ? Number(key.slice('project:'.length)) : null
-  if (projectId != null && Number.isFinite(projectId)) {
-    const matched = projects.find((p) => p.id === projectId)
-    if (matched) return matched.name
-  }
-  const firstTask = tasks[0]
-  return getProjectDisplayName(projects, firstTask) || '（未分类）'
+  return getProjectNameFromGroupKey(projects, key, tasks, '（未分类）')
 }
 
 function initials(name?: string) { return (name ?? '?').slice(0, 1) }

@@ -111,3 +111,58 @@ def test_close_workflow_reads_use_the_injected_view_authorizer():
         )
 
     assert exc_info.value.status_code == 403
+
+
+def test_close_workflow_review_commands_keep_lifecycle_and_validation_atomic():
+    from app.services import project_close_workflow as workflow
+
+    approval_db = _db()
+    approval = workflow.create_close_request(
+        project_id=1,
+        payload=_payload(),
+        current_user="owner",
+        db=approval_db,
+        lifecycle_writer=_lifecycle_writer,
+    )
+    approved = workflow.approve_close_request(
+        project_id=1,
+        request_id=approval["id"],
+        payload=schemas.ProjectCloseReviewPayload(review_comment="Approved"),
+        current_user="coach",
+        db=approval_db,
+        lifecycle_writer=_lifecycle_writer,
+    )
+    assert approved["status"] == "approved"
+    assert approval_db.get(models.Project, 1).status == "ended"
+
+    rejection_db = _db()
+    rejection = workflow.create_close_request(
+        project_id=1,
+        payload=_payload(),
+        current_user="owner",
+        db=rejection_db,
+        lifecycle_writer=_lifecycle_writer,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        workflow.reject_close_request(
+            project_id=1,
+            request_id=rejection["id"],
+            payload=schemas.ProjectCloseReviewPayload(),
+            current_user="coach",
+            db=rejection_db,
+            lifecycle_writer=_lifecycle_writer,
+        )
+    assert exc_info.value.status_code == 422
+    assert rejection_db.get(models.ProjectCloseRequest, rejection["id"]).status == "pending"
+    assert rejection_db.get(models.Project, 1).status == "pending_close"
+
+    rejected = workflow.reject_close_request(
+        project_id=1,
+        request_id=rejection["id"],
+        payload=schemas.ProjectCloseReviewPayload(review_comment="Needs revision"),
+        current_user="coach",
+        db=rejection_db,
+        lifecycle_writer=_lifecycle_writer,
+    )
+    assert rejected["status"] == "rejected"
+    assert rejection_db.get(models.Project, 1).status == "active"

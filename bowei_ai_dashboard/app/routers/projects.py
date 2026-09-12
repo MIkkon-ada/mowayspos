@@ -1776,51 +1776,14 @@ def approve_project_close_request(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    project = db.get(models.Project, project_id)
-    if not project:
-        raise HTTPException(404, "project not found")
-    access = authorize_project_action(current_user, project, A_REVIEW_CLOSE_REQUEST, db)
-    project = _lock_project_for_close(project_id, db)
-    if not project:
-        raise HTTPException(404, "project not found")
-    request = _lock_close_request(project_id, request_id, db)
-    if not request:
-        raise HTTPException(404, "project close request not found")
-    context = access.context
-    _ensure_pending_close_pair(project, request)
-    blockers, _warnings = evaluate_project_close(db, project_id, request)
-    if blockers:
-        _raise_close_blocked(blockers)
-
-    before = _close_state(request, project)
-    request.status = "approved"
-    request.reviewer_person_id = context.get("person_id")
-    request.review_comment = payload.review_comment
-    request.reviewed_at = utc_now()
-    _set_project_lifecycle(project, PL.S_ENDED, db=db, project_id=project_id)
-    after = _close_state(request, project)
-    crud.log(
-        db,
-        current_user,
-        "project_close_request_approve",
-        "project_close_request",
-        request.id,
-        before,
-        after,
+    return close_workflow.approve_close_request(
         project_id=project_id,
+        request_id=request_id,
+        payload=payload,
+        current_user=current_user,
+        db=db,
+        lifecycle_writer=_set_project_lifecycle,
     )
-    _notify_close_people(
-        db,
-        _all_project_member_ids(project_id, db),
-        operator_person_id=context.get("person_id"),
-        ntype="project_close_approved",
-        title="项目结束申请已批准",
-        project=project,
-        request=request,
-    )
-    db.commit()
-    db.refresh(request)
-    return _close_request_response(request, project, db)
 
 
 @router.post("/{project_id}/close-requests/{request_id}/reject")
@@ -1831,51 +1794,14 @@ def reject_project_close_request(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    project = db.get(models.Project, project_id)
-    if not project:
-        raise HTTPException(404, "project not found")
-    access = authorize_project_action(current_user, project, A_REVIEW_CLOSE_REQUEST, db)
-    project = _lock_project_for_close(project_id, db)
-    if not project:
-        raise HTTPException(404, "project not found")
-    request = _lock_close_request(project_id, request_id, db)
-    if not request:
-        raise HTTPException(404, "project close request not found")
-    context = access.context
-    _ensure_pending_close_pair(project, request)
-    if not payload.review_comment:
-        raise HTTPException(422, "退回结束申请必须填写审核意见")
-
-    before = _close_state(request, project)
-    request.status = "rejected"
-    request.reviewer_person_id = context.get("person_id")
-    request.review_comment = payload.review_comment
-    request.reviewed_at = utc_now()
-    _set_project_lifecycle(project, PL.S_ACTIVE, db=db, project_id=project_id)
-    after = _close_state(request, project)
-    crud.log(
-        db,
-        current_user,
-        "project_close_request_reject",
-        "project_close_request",
-        request.id,
-        before,
-        after,
+    return close_workflow.reject_close_request(
         project_id=project_id,
+        request_id=request_id,
+        payload=payload,
+        current_user=current_user,
+        db=db,
+        lifecycle_writer=_set_project_lifecycle,
     )
-    recipients = [request.requester_person_id, *project_strict_owner_ids(project_id, db)]
-    _notify_close_people(
-        db,
-        [person_id for person_id in recipients if person_id],
-        operator_person_id=context.get("person_id"),
-        ntype="project_close_rejected",
-        title="项目结束申请已退回",
-        project=project,
-        request=request,
-    )
-    db.commit()
-    db.refresh(request)
-    return _close_request_response(request, project, db)
 
 
 def _delete_project_data(project: models.Project, db: Session) -> None:

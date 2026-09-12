@@ -16,8 +16,13 @@ from ..domain.project_permissions import (
     A_CANCEL_CLOSE_REQUEST,
     A_EDIT_CLOSE_REQUEST,
     A_REQUEST_CLOSE,
+    A_REVIEW_CLOSE_REQUEST,
 )
-from ..services.notify import project_coach_person_ids, send as _notify
+from ..services.notify import (
+    project_coach_person_ids,
+    project_strict_owner_ids,
+    send as _notify,
+)
 from ..services.project_access import authorize_project_action
 from ..services.project_close import (
     evaluate_project_close,
@@ -195,6 +200,18 @@ def ensure_pending_close_pair(
 
 def raise_close_blocked(blockers: list[dict]) -> None:
     raise HTTPException(409, {"code": "PROJECT_CLOSE_BLOCKED", "blockers": blockers})
+
+
+def _all_project_member_ids(project_id: int, db: Session) -> list[int]:
+    rows = db.execute(
+        select(models.ProjectMember.person_id)
+        .where(
+            models.ProjectMember.project_id == project_id,
+            models.ProjectMember.person_id.is_not(None),
+        )
+        .distinct()
+    ).all()
+    return [int(row[0]) for row in rows if row[0] is not None]
 
 
 def list_close_requests(
@@ -410,6 +427,118 @@ def cancel_close_request(
         operator_person_id=context.get("person_id"),
         ntype="project_close_cancelled",
         title="项目结束申请已取消",
+        project=project,
+        request=request,
+    )
+    db.commit()
+    db.refresh(request)
+    return close_request_response(request, project, db)
+
+
+def approve_close_request(
+    *,
+    project_id: int,
+    request_id: int,
+    payload: schemas.ProjectCloseReviewPayload,
+    current_user: str,
+    db: Session,
+    lifecycle_writer: LifecycleWriter,
+) -> dict:
+    project = db.get(models.Project, project_id)
+    if not project:
+        raise HTTPException(404, "project not found")
+    access = authorize_project_action(current_user, project, A_REVIEW_CLOSE_REQUEST, db)
+    project = lock_project_for_close(project_id, db)
+    if not project:
+        raise HTTPException(404, "project not found")
+    request = lock_close_request(project_id, request_id, db)
+    if not request:
+        raise HTTPException(404, "project close request not found")
+    context = access.context
+    ensure_pending_close_pair(project, request)
+    blockers, _warnings = evaluate_project_close(db, project_id, request)
+    if blockers:
+        raise_close_blocked(blockers)
+
+    before = close_state(request, project)
+    request.status = "approved"
+    request.reviewer_person_id = context.get("person_id")
+    request.review_comment = payload.review_comment
+    request.reviewed_at = utc_now()
+    lifecycle_writer(project, PL.S_ENDED, db=db, project_id=project_id)
+    after = close_state(request, project)
+    crud.log(
+        db,
+        current_user,
+        "project_close_request_approve",
+        "project_close_request",
+        request.id,
+        before,
+        after,
+        project_id=project_id,
+    )
+    notify_close_people(
+        db,
+        _all_project_member_ids(project_id, db),
+        operator_person_id=context.get("person_id"),
+        ntype="project_close_approved",
+        title="项目结束申请已批准",
+        project=project,
+        request=request,
+    )
+    db.commit()
+    db.refresh(request)
+    return close_request_response(request, project, db)
+
+
+def reject_close_request(
+    *,
+    project_id: int,
+    request_id: int,
+    payload: schemas.ProjectCloseReviewPayload,
+    current_user: str,
+    db: Session,
+    lifecycle_writer: LifecycleWriter,
+) -> dict:
+    project = db.get(models.Project, project_id)
+    if not project:
+        raise HTTPException(404, "project not found")
+    access = authorize_project_action(current_user, project, A_REVIEW_CLOSE_REQUEST, db)
+    project = lock_project_for_close(project_id, db)
+    if not project:
+        raise HTTPException(404, "project not found")
+    request = lock_close_request(project_id, request_id, db)
+    if not request:
+        raise HTTPException(404, "project close request not found")
+    context = access.context
+    ensure_pending_close_pair(project, request)
+    if not payload.review_comment:
+        raise HTTPException(422, "退回结束申请必须填写审核意见")
+
+    before = close_state(request, project)
+    request.status = "rejected"
+    request.reviewer_person_id = context.get("person_id")
+    request.review_comment = payload.review_comment
+    request.reviewed_at = utc_now()
+    lifecycle_writer(project, PL.S_ACTIVE, db=db, project_id=project_id)
+    after = close_state(request, project)
+    crud.log(
+        db,
+        current_user,
+        "project_close_request_reject",
+        "project_close_request",
+        request.id,
+        before,
+        after,
+        project_id=project_id,
+    )
+    recipients = [request.requester_person_id, *project_strict_owner_ids(project_id, db)]
+    notify_close_people(
+        db,
+        [person_id for person_id in recipients if person_id],
+        operator_person_id=context.get("person_id"),
+        ntype="project_close_rejected",
+        title="项目结束申请已退回",
         project=project,
         request=request,
     )

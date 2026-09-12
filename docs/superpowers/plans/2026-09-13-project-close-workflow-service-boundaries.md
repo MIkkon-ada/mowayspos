@@ -182,7 +182,7 @@ git commit -m "refactor: move project close commands to workflow service"
 - Modify: `bowei_ai_dashboard/app/routers/projects.py:2047-2153`
 - Modify: `bowei_ai_dashboard/tests/test_project_close_workflow_boundaries.py`
 
-- [ ] **Step 1: Write failing review-transition tests.**
+- [x] **Step 1: Write failing review-transition tests.**
 
 ```python
 assert approved["status"] == "approved"
@@ -193,7 +193,7 @@ assert db.get(models.Project, project_id).status == "active"
 
 Also assert an empty rejection comment raises 422 without changing request or project rows.
 
-- [ ] **Step 2: Verify red.**
+- [x] **Step 2: Verify red.**
 
 ```powershell
 python -m pytest tests/test_project_close_workflow_boundaries.py -q
@@ -201,13 +201,13 @@ python -m pytest tests/test_project_close_workflow_boundaries.py -q
 
 Expected: review command functions absent.
 
-- [ ] **Step 3: Implement and delegate review commands.**
+- [x] **Step 3: Implement and delegate review commands.**
 
 Add `approve_close_request` and `reject_close_request` with keyword-only project/request IDs, the typed review payload, current user, DB session, and lifecycle writer.
 
 Both commands authorize `A_REVIEW_CLOSE_REQUEST` before locking, then lock project/request and require the pending pair. Approval recomputes blockers, sets reviewer fields, logs `project_close_request_approve`, notifies all members, and moves to `PL.S_ENDED`. Rejection requires a nonempty comment, logs `project_close_request_reject`, notifies requester plus strict owners, and moves to `PL.S_ACTIVE`. Both commit exactly once and return the existing DTO. Router endpoints delegate with `_set_project_lifecycle`.
 
-- [ ] **Step 4: Verify green and commit.**
+- [x] **Step 4: Verify green and commit.**
 
 ```powershell
 python -m pytest tests/test_project_close_workflow_boundaries.py tests/test_project_close_lifecycle_guards.py tests/test_project_close_request_blockers.py tests/test_project_close_request_permissions.py tests/test_full_role_lifecycle_audit.py -q

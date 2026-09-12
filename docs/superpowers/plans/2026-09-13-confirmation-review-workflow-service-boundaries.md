@@ -288,7 +288,7 @@ git commit -m "refactor: move confirmation card reviews to service"
 
 - Modify: `docs/superpowers/plans/2026-09-13-confirmation-review-workflow-service-boundaries.md`
 
-- [ ] **Step 1: Run focused confirmation governance tests.**
+- [x] **Step 1: Run focused confirmation governance tests.**
 
 ```powershell
 Set-Location bowei_ai_dashboard
@@ -297,7 +297,7 @@ python -m pytest tests/test_confirmation_review_workflow_boundaries.py tests/tes
 
 Expected: exit code 0.
 
-- [ ] **Step 2: Run complete delivery verification.**
+- [x] **Step 2: Run complete delivery verification.**
 
 ```powershell
 python -m pytest tests -q
@@ -311,9 +311,18 @@ git status --short
 
 Expected: all commands pass. The independently loaded `exceljs.min` chunk may retain its known size warning.
 
-- [ ] **Step 3: Record actual totals and commit.**
+- [x] **Step 3: Record actual totals and commit.**
 
-Replace this instruction with the actual focused/backend/frontend/build totals, check every completed step, then run:
+Verification recorded on 2026-09-13:
+
+- Focused confirmation governance tests: 184 passed in 13.97s.
+- Full backend suite: 1940 passed, 12 skipped in 390.62s.
+- Frontend test suite: 27 Vitest files / 89 tests passed; 19 contract suites / 502 tests passed.
+- Production build: passed in 6.32s. The known independently loaded `exceljs.min` bundle size warning remains non-blocking (940.19 kB; gzip 271.33 kB).
+
+The completion evidence above was captured from isolated validation logs after the normal terminal stream failed to return its final summary.
+
+Commit the verification record:
 
 ```powershell
 git add docs/superpowers/plans/2026-09-13-confirmation-review-workflow-service-boundaries.md

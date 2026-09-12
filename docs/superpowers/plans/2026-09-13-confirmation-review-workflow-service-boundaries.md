@@ -245,12 +245,12 @@ git commit -m "refactor: move confirmation escalation decisions to service"
 **Files:**
 
 - Modify: `bowei_ai_dashboard/app/services/confirmation_review_workflow.py`
-- Modify: `bowei_ai_dashboard/app/routers/confirmations.py:1654-2034, 2409-2476`
+- Modify: `bowei_ai_dashboard/app/routers/confirmations.py:1708-2034, 2409-2476`
 - Modify: `bowei_ai_dashboard/tests/test_confirmation_review_workflow_boundaries.py`
 
 - [ ] **Step 1: Add failing card-level service tests.**
 
-Use one submission with multiple task reports. Cover direct card confirm/reject, transfer/coordinator feedback, coach escalation/decision, and `escalate_card_to_issue`. Assert that only the selected card changes, other cards retain their workflow history, an already pending card returns 409, and issue escalation returns its Issue ID while retaining the existing confirmation audit action.
+Use one submission with multiple task reports. Cover direct card reject, transfer/coordinator feedback, coach escalation/decision, and `escalate_card_to_issue`. Assert that only the selected card changes, other cards retain their workflow history, an already pending card returns 409, and issue escalation returns its Issue ID while retaining the existing confirmation audit action.
 
 - [ ] **Step 2: Verify red.**
 
@@ -258,15 +258,15 @@ Use one submission with multiple task reports. Cover direct card confirm/reject,
 python -m pytest tests/test_confirmation_review_workflow_boundaries.py -q
 ```
 
-Expected: missing `confirm_task_card_review` or another task-card service command.
+Expected: missing `reject_task_card_review` or another task-card service command.
 
 - [ ] **Step 3: Implement card-level command functions.**
 
-Move the Router's `_get_task_card`, `_mark_task_card`, `_card_confirmation_status`, and pending-card guards into the service before the commands that consume them. Implement `confirm_task_card_review`, `reject_task_card_review`, `transfer_task_card_to_coordinator`, `coordinator_feedback_task_card`, `escalate_task_card_to_coach`, `coach_decide_task_card`, and `escalate_task_card_to_issue` by retaining their current Pydantic payloads, policy actions, mutation keys, notification title/body/link fields, audit action codes, and one-commit transaction boundary.
+Move the Router's `_get_task_card`, `_mark_task_card`, `_card_confirmation_status`, and pending-card guards into the service before the commands that consume them. Implement `reject_task_card_review`, `transfer_task_card_to_coordinator`, `coordinator_feedback_task_card`, `escalate_task_card_to_coach`, `coach_decide_task_card`, and `escalate_task_card_to_issue` by retaining their current Pydantic payloads, policy actions, mutation keys, notification title/body/link fields, audit action codes, and one-commit transaction boundary. Keep `confirm_task_card` in the Router because it writes Task/SubTask entities; it requires its own writeback-boundary design.
 
 `escalate_task_card_to_issue` must validate `target in {"ceo", "coordinator"}` and nonempty `note` before mutation, then call the existing `ESC.escalate_card_to_issue` service; it must not reimplement Issue creation.
 
-- [ ] **Step 4: Delegate seven task-card routes and verify green.**
+- [ ] **Step 4: Delegate six task-card routes and verify green.**
 
 ```powershell
 python -m pytest tests/test_confirmation_review_workflow_boundaries.py tests/test_confirmation_card_coordinator_flow.py tests/test_confirmation_card_coach_flow.py tests/test_confirmation_log_actions.py -q

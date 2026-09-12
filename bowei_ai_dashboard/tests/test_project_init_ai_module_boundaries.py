@@ -18,3 +18,9 @@ def test_facade_reexports_normalization_helpers():
     assert facade.normalize_agent_result is normalization.normalize_agent_result
     assert facade._merge_tasks is normalization._merge_tasks
     assert facade.has_cross_batch_task_conflict is normalization.has_cross_batch_task_conflict
+
+
+def test_facade_reexports_structured_spreadsheet_generator():
+    from app.services import project_init_ai_spreadsheet as spreadsheet
+
+    assert facade.generate_structured_project_init_draft is spreadsheet.generate_structured_project_init_draft

@@ -22,7 +22,7 @@ export type ConfirmationContext = {
   subtaskNames: string[]
 }
 
-import { getProjectDisplayName } from './projectDisplay'
+import { getProjectDisplayName } from '../compatibility/projectNames'
 
 type AnyRecord = Record<string, unknown>
 

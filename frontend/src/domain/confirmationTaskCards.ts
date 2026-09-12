@@ -1,5 +1,5 @@
 type AnyRecord = Record<string, unknown>
-import { getProjectDisplayName } from './projectDisplay'
+import { getProjectDisplayName } from '../compatibility/projectNames'
 
 export type ConfirmationTaskCard = {
   id: string

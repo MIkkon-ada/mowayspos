@@ -11,7 +11,7 @@ import { KickoffAgentWorkspace } from '../features/meeting/KickoffAgentWorkspace
 import { MeetingProgressReviewSection } from '../features/meeting/MeetingProgressReviewSection'
 import { MeetingDetailWorkspace } from '../features/meeting/MeetingDetailWorkspace'
 import { STATUS_CONFIG, fmtTime, getStatus, type PublishStatus } from '../features/meeting/meetingUtils'
-import { getProjectDisplayName } from '../domain/projectDisplay'
+import { getProjectDisplayName } from '../compatibility/projectNames'
 import { isProjectArchived, isProjectExecutionAvailable } from '../domain/projectLifecycleStatus'
 import { ProjectMeetingReviewWorkspace } from '../features/meeting/ProjectMeetingReviewWorkspace'
 import { MobileMeetingTimeline } from '../features/mobile-core-pages/MobileMeetingTimeline'

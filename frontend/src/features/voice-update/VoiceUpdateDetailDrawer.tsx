@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { UpdateDetail } from '../../api/updates'
 import { resubmitSubmission } from '../../api/confirmations'
-import { getProjectDisplayName } from '../../domain/projectDisplay'
+import { getProjectDisplayName } from '../../compatibility/projectNames'
 import * as SS from '../../domain/submissionStatus'
 import { fmtFull } from '../../utils/time'
 

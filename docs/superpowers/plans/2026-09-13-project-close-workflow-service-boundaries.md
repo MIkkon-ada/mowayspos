@@ -25,7 +25,7 @@
 - Create: `bowei_ai_dashboard/tests/test_project_close_workflow_boundaries.py`
 - Modify: `bowei_ai_dashboard/app/routers/projects.py:1670-1825`
 
-- [ ] **Step 1: Write the failing boundary test.**
+- [x] **Step 1: Write the failing boundary test.**
 
 ```python
 from app.routers import projects
@@ -39,7 +39,7 @@ def test_projects_router_reexports_close_workflow_helpers():
     assert projects._close_request_response is workflow.close_request_response
 ```
 
-- [ ] **Step 2: Verify the test is red.**
+- [x] **Step 2: Verify the test is red.**
 
 Run from `bowei_ai_dashboard`:
 
@@ -49,7 +49,7 @@ python -m pytest tests/test_project_close_workflow_boundaries.py -q
 
 Expected: failure because `project_close_workflow` does not exist.
 
-- [ ] **Step 3: Implement the helper boundary.**
+- [x] **Step 3: Implement the helper boundary.**
 
 Move the existing lock statements/loaders, project/request read lookup, close material state snapshot, ISO datetime formatter, response DTO, notification de-duplication, pending-pair assertion, and blocked-result exception into the new service. Preserve exception texts and DTO fields. Define both injected dependencies with their real keyword signatures:
 
@@ -76,7 +76,7 @@ def lock_project_for_close(project_id: int, db: Session) -> models.Project | Non
     return db.execute(statement).scalar_one_or_none()
 ```
 
-- [ ] **Step 4: Re-export helper aliases from the router and verify green.**
+- [x] **Step 4: Re-export helper aliases from the router and verify green.**
 
 ```python
 from ..services.project_close_workflow import (
@@ -94,7 +94,7 @@ python -m pytest tests/test_project_close_workflow_boundaries.py tests/test_proj
 
 Expected: pass.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```powershell
 git add app/services/project_close_workflow.py app/routers/projects.py tests/test_project_close_workflow_boundaries.py

@@ -56,6 +56,18 @@ from ..services.project_close import (
     material_values,
     serialize_residual_items,
 )
+from ..services.project_close_workflow import (
+    close_request_for_project as _close_request_for_project,
+    close_request_response as _close_request_response,
+    close_state as _close_state,
+    ensure_pending_close_pair as _ensure_pending_close_pair,
+    lock_close_request as _lock_close_request,
+    lock_project_for_close as _lock_project_for_close,
+    notify_close_people as _notify_close_people,
+    project_close_project_lock_statement as _project_close_project_lock_statement,
+    project_close_request_lock_statement as _project_close_request_lock_statement,
+    raise_close_blocked as _raise_close_blocked,
+)
 from ..services.project_purge_storage import (
     ProjectPurgeStorageError,
     destroy_staged_project_payloads,
@@ -1667,162 +1679,11 @@ def update_project(
 _CLOSE_REQUEST_STATUSES = {"pending", "approved", "rejected", "cancelled"}
 
 
-def _project_close_project_lock_statement(project_id: int):
-    return (
-        select(models.Project)
-        .where(models.Project.id == project_id)
-        .with_for_update()
-    )
-
-
-def _project_close_request_lock_statement(project_id: int, request_id: int):
-    return (
-        select(models.ProjectCloseRequest)
-        .where(
-            models.ProjectCloseRequest.id == request_id,
-            models.ProjectCloseRequest.project_id == project_id,
-        )
-        .with_for_update()
-    )
-
-
-def _lock_project_for_close(project_id: int, db: Session) -> models.Project | None:
-    statement = _project_close_project_lock_statement(project_id).execution_options(
-        populate_existing=True
-    )
-    return db.execute(statement).scalar_one_or_none()
-
-
-def _lock_close_request(
-    project_id: int,
-    request_id: int,
-    db: Session,
-) -> models.ProjectCloseRequest | None:
-    statement = _project_close_request_lock_statement(
-        project_id,
-        request_id,
-    ).execution_options(populate_existing=True)
-    return db.execute(statement).scalar_one_or_none()
-
-
-def _close_request_for_project(
-    project_id: int,
-    request_id: int,
-    db: Session,
-) -> models.ProjectCloseRequest:
-    request = db.get(models.ProjectCloseRequest, request_id)
-    if not request or request.project_id != project_id:
-        raise HTTPException(404, "project close request not found")
-    return request
-
-
-def _close_context(current_user: str, db: Session) -> dict:
-    return get_user_context_from_db(current_user, db)
-
-
 def _require_close_request_view(current_user: str, project: models.Project, db: Session) -> dict:
-    context = _close_context(current_user, db)
+    context = get_user_context_from_db(current_user, db)
     if not _can_view_project(project.id, project.name, context, db):
         raise HTTPException(403, "permission denied — 仅项目成员可查看")
     return context
-
-
-def _close_state(request: models.ProjectCloseRequest, project: models.Project) -> dict:
-    values, materials_valid = material_values(request)
-    return {
-        "request_status": request.status,
-        "project_status": project.status,
-        "reviewer_person_id": request.reviewer_person_id,
-        "review_comment": request.review_comment or "",
-        "summary": values["summary"],
-        "objective_result": values["objective_result"],
-        "unfinished_items": values["unfinished_items"],
-        "remaining_risks": values["remaining_risks"],
-        "handover_plan": values["handover_plan"],
-        "retrospective": values["retrospective"],
-        "materials_valid": materials_valid,
-    }
-
-
-def _close_datetime(value) -> str | None:
-    return value.isoformat(timespec="seconds") + "Z" if value else None
-
-
-def _close_request_response(
-    request: models.ProjectCloseRequest,
-    project: models.Project,
-    db: Session,
-) -> dict:
-    values, _storage_valid = material_values(request)
-    requester = db.get(models.Person, request.requester_person_id) if request.requester_person_id else None
-    reviewer = db.get(models.Person, request.reviewer_person_id) if request.reviewer_person_id else None
-    blockers, warnings = evaluate_project_close(db, project.id, request)
-    return {
-        "id": request.id,
-        "project_id": project.id,
-        "project_name": project.name,
-        "project_status": project.status,
-        "requester_person_id": request.requester_person_id,
-        "requester_name": requester.name if requester else "",
-        "summary": request.summary,
-        "objective_result": request.objective_result,
-        "unfinished_items": values["unfinished_items"],
-        "remaining_risks": values["remaining_risks"],
-        "handover_plan": request.handover_plan,
-        "retrospective": request.retrospective,
-        "status": request.status,
-        "reviewer_person_id": request.reviewer_person_id,
-        "reviewer_name": reviewer.name if reviewer else "",
-        "review_comment": request.review_comment or "",
-        "created_at": _close_datetime(request.created_at),
-        "updated_at": _close_datetime(request.updated_at),
-        "reviewed_at": _close_datetime(request.reviewed_at),
-        "cancelled_at": _close_datetime(request.cancelled_at),
-        "blockers": blockers,
-        "warnings": warnings,
-    }
-
-
-def _close_link(project_id: int, request_id: int) -> str:
-    return f"/home/projects?projectId={project_id}&closeRequestId={request_id}"
-
-
-def _notify_close_people(
-    db: Session,
-    recipient_ids: list[int],
-    *,
-    operator_person_id: int | None,
-    ntype: str,
-    title: str,
-    project: models.Project,
-    request: models.ProjectCloseRequest,
-) -> None:
-    seen: set[int] = set()
-    for recipient_id in recipient_ids:
-        if not recipient_id or recipient_id == operator_person_id or recipient_id in seen:
-            continue
-        seen.add(recipient_id)
-        _notify(
-            db,
-            recipient_id=recipient_id,
-            ntype=ntype,
-            title=title,
-            body=f"项目《{project.name}》结束申请状态已更新。",
-            link=_close_link(project.id, request.id),
-            project_id=project.id,
-        )
-
-
-def _ensure_pending_close_pair(
-    project: models.Project,
-    request: models.ProjectCloseRequest,
-) -> None:
-    if request.status != "pending" or PL.normalize(project.status) != PL.S_PENDING_CLOSE:
-        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "结束申请已不处于待审核状态")
-
-
-def _raise_close_blocked(blockers: list[dict]) -> None:
-    raise HTTPException(409, {"code": "PROJECT_CLOSE_BLOCKED", "blockers": blockers})
 
 
 @router.post("/{project_id}/close-requests", status_code=201)

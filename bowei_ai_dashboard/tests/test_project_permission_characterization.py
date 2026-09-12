@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app import models, schemas
+from app.services import project_close_workflow
 from app.database import Base
 from app.domain.project_permissions import (
     A_ARCHIVE,
@@ -308,6 +309,7 @@ def test_terminal_endpoints_use_access_services(monkeypatch):
 
     monkeypatch.setattr(projects, "authorize_global_project_action", global_spy, raising=False)
     monkeypatch.setattr(projects, "authorize_project_action", project_spy, raising=False)
+    monkeypatch.setattr(project_close_workflow, "authorize_project_action", project_spy)
 
     close_db = _seed()
     request = create_project_close_request(1, _close_payload(), current_user="owner", db=close_db)

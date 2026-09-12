@@ -15,7 +15,7 @@
 - Create: `bowei_ai_dashboard/app/services/project_close_workflow.py`
 - Modify: `bowei_ai_dashboard/app/routers/projects.py:1670-2153`
 - Create: `bowei_ai_dashboard/tests/test_project_close_workflow_boundaries.py`
-- Reuse: `tests/test_project_close_lifecycle_guards.py`, `tests/test_project_close_request_blockers.py`, `tests/test_project_permission_actions.py`, and `tests/test_full_role_lifecycle_audit.py`.
+- Reuse: `tests/test_project_close_lifecycle_guards.py`, `tests/test_project_close_request_blockers.py`, `tests/test_project_close_request_permissions.py`, and `tests/test_full_role_lifecycle_audit.py`.
 
 ### Task 1: Extract immutable close-query helpers
 
@@ -110,7 +110,7 @@ git commit -m "refactor: extract project close workflow helpers"
 - Modify: `bowei_ai_dashboard/app/routers/projects.py:1829-2043`
 - Modify: `bowei_ai_dashboard/tests/test_project_close_workflow_boundaries.py`
 
-- [ ] **Step 1: Write failing direct service tests.**
+- [x] **Step 1: Write failing direct service tests.**
 
 ```python
 def test_create_close_request_uses_the_lifecycle_writer(db, active_project, valid_payload):
@@ -133,7 +133,7 @@ def test_create_close_request_uses_the_lifecycle_writer(db, active_project, vali
 
 Add edit and cancellation assertions that preserve `pending`, then write `cancelled` and restore the project to `active`; a repeated cancel must raise `PROJECT_STATE_CONFLICT`.
 
-- [ ] **Step 2: Verify red.**
+- [x] **Step 2: Verify red.**
 
 ```powershell
 python -m pytest tests/test_project_close_workflow_boundaries.py -q
@@ -141,13 +141,13 @@ python -m pytest tests/test_project_close_workflow_boundaries.py -q
 
 Expected: missing command functions.
 
-- [ ] **Step 3: Implement service commands.**
+- [x] **Step 3: Implement service commands.**
 
 Add `create_close_request`, `update_close_request`, and `cancel_close_request` with keyword-only `project_id`, `request_id` where applicable, typed Pydantic payload, `current_user`, `db`, and a lifecycle writer on state-changing commands.
 
 Creation must authorize `A_REQUEST_CLOSE` before its project lock; require active/no pending request; call `evaluate_project_close`; write the request; call `lifecycle_writer(project, PL.S_PENDING_CLOSE, db=db, project_id=project_id)`; log `project_close_request_create`; notify coaches; commit once. Edit and cancel must lock project then request, authorize with `requester_person_id`, require the pending pair, preserve merged Pydantic material validation, audit action names, notification targets, one commit, and response shape. Cancellation writes `cancelled_at` and uses `PL.S_ACTIVE`.
 
-- [ ] **Step 4: Delegate the five router endpoints and verify green.**
+- [x] **Step 4: Delegate the five router endpoints and verify green.**
 
 Each Router body must become a single service call. Read endpoints pass `view_authorizer=_require_close_request_view`; command endpoints pass the lifecycle writer when they change lifecycle, for example:
 
@@ -161,12 +161,12 @@ return close_workflow.create_close_request(
 Run:
 
 ```powershell
-python -m pytest tests/test_project_close_workflow_boundaries.py tests/test_project_close_lifecycle_guards.py tests/test_project_close_request_blockers.py tests/test_project_permission_actions.py -q
+python -m pytest tests/test_project_close_workflow_boundaries.py tests/test_project_close_lifecycle_guards.py tests/test_project_close_request_blockers.py tests/test_project_close_request_permissions.py -q
 ```
 
 Expected: pass.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```powershell
 git add app/services/project_close_workflow.py app/routers/projects.py tests/test_project_close_workflow_boundaries.py
@@ -210,7 +210,7 @@ Both commands authorize `A_REVIEW_CLOSE_REQUEST` before locking, then lock proje
 - [ ] **Step 4: Verify green and commit.**
 
 ```powershell
-python -m pytest tests/test_project_close_workflow_boundaries.py tests/test_project_close_lifecycle_guards.py tests/test_project_close_request_blockers.py tests/test_project_permission_actions.py tests/test_full_role_lifecycle_audit.py -q
+python -m pytest tests/test_project_close_workflow_boundaries.py tests/test_project_close_lifecycle_guards.py tests/test_project_close_request_blockers.py tests/test_project_close_request_permissions.py tests/test_full_role_lifecycle_audit.py -q
 git add app/services/project_close_workflow.py app/routers/projects.py tests/test_project_close_workflow_boundaries.py
 git diff --cached --check
 git commit -m "refactor: move project close reviews to workflow service"
@@ -228,7 +228,7 @@ Expected: tests pass and staged diff is whitespace-clean.
 
 ```powershell
 Set-Location bowei_ai_dashboard
-python -m pytest tests/test_project_close_workflow_boundaries.py tests/test_project_close_lifecycle_guards.py tests/test_project_close_request_blockers.py tests/test_project_permission_actions.py tests/test_full_role_lifecycle_audit.py -q
+python -m pytest tests/test_project_close_workflow_boundaries.py tests/test_project_close_lifecycle_guards.py tests/test_project_close_request_blockers.py tests/test_project_close_request_permissions.py tests/test_full_role_lifecycle_audit.py -q
 ```
 
 Expected: exit code 0.

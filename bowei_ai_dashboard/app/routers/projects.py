@@ -68,6 +68,7 @@ from ..services.project_close_workflow import (
     project_close_request_lock_statement as _project_close_request_lock_statement,
     raise_close_blocked as _raise_close_blocked,
 )
+from ..services import project_close_workflow as close_workflow
 from ..services.project_purge_storage import (
     ProjectPurgeStorageError,
     destroy_staged_project_payloads,
@@ -1693,62 +1694,13 @@ def create_project_close_request(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    project = db.get(models.Project, project_id)
-    if not project:
-        raise HTTPException(404, "project not found")
-    access = authorize_project_action(current_user, project, A_REQUEST_CLOSE, db)
-    context = access.context
-    project = _lock_project_for_close(project_id, db)
-    if not project:
-        raise HTTPException(404, "project not found")
-    if PL.normalize(project.status) != PL.S_ACTIVE:
-        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "仅进行中的项目可申请结束")
-    if db.query(models.ProjectCloseRequest).filter_by(project_id=project_id, status="pending").first():
-        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目已有待审核的结束申请")
-
-    material_data = payload.model_dump()
-    blockers, _warnings = evaluate_project_close(db, project_id, material_data)
-    if blockers:
-        _raise_close_blocked(blockers)
-
-    request = models.ProjectCloseRequest(
+    return close_workflow.create_close_request(
         project_id=project_id,
-        requester_person_id=context.get("person_id"),
-        summary=payload.summary,
-        objective_result=payload.objective_result,
-        unfinished_items_json=serialize_residual_items(payload.unfinished_items),
-        remaining_risks_json=serialize_residual_items(payload.remaining_risks),
-        handover_plan=payload.handover_plan,
-        retrospective=payload.retrospective,
-        status="pending",
+        payload=payload,
+        current_user=current_user,
+        db=db,
+        lifecycle_writer=_set_project_lifecycle,
     )
-    db.add(request)
-    db.flush()
-    before = _close_state(request, project)
-    _set_project_lifecycle(project, PL.S_PENDING_CLOSE, db=db, project_id=project_id)
-    after = _close_state(request, project)
-    crud.log(
-        db,
-        current_user,
-        "project_close_request_create",
-        "project_close_request",
-        request.id,
-        before,
-        after,
-        project_id=project_id,
-    )
-    _notify_close_people(
-        db,
-        project_coach_person_ids(project_id, db),
-        operator_person_id=context.get("person_id"),
-        ntype="project_close_requested",
-        title="项目结束申请待审核",
-        project=project,
-        request=request,
-    )
-    db.commit()
-    db.refresh(request)
-    return _close_request_response(request, project, db)
 
 
 @router.get("/{project_id}/close-requests")
@@ -1758,20 +1710,13 @@ def list_project_close_requests(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    project = db.get(models.Project, project_id)
-    if not project:
-        raise HTTPException(404, "project not found")
-    _require_close_request_view(current_user, project, db)
-    if status is not None and status not in _CLOSE_REQUEST_STATUSES:
-        raise HTTPException(422, "invalid close request status")
-    query = db.query(models.ProjectCloseRequest).filter_by(project_id=project_id)
-    if status is not None:
-        query = query.filter(models.ProjectCloseRequest.status == status)
-    requests = query.order_by(
-        models.ProjectCloseRequest.created_at.desc(),
-        models.ProjectCloseRequest.id.desc(),
-    ).all()
-    return [_close_request_response(request, project, db) for request in requests]
+    return close_workflow.list_close_requests(
+        project_id=project_id,
+        status=status,
+        current_user=current_user,
+        db=db,
+        view_authorizer=_require_close_request_view,
+    )
 
 
 @router.get("/{project_id}/close-requests/{request_id}")
@@ -1781,12 +1726,13 @@ def get_project_close_request(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    project = db.get(models.Project, project_id)
-    if not project:
-        raise HTTPException(404, "project not found")
-    request = _close_request_for_project(project_id, request_id, db)
-    _require_close_request_view(current_user, project, db)
-    return _close_request_response(request, project, db)
+    return close_workflow.get_close_request(
+        project_id=project_id,
+        request_id=request_id,
+        current_user=current_user,
+        db=db,
+        view_authorizer=_require_close_request_view,
+    )
 
 
 @router.patch("/{project_id}/close-requests/{request_id}")
@@ -1797,60 +1743,13 @@ def update_project_close_request(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    project = _lock_project_for_close(project_id, db)
-    if not project:
-        raise HTTPException(404, "project not found")
-    request = _lock_close_request(project_id, request_id, db)
-    if not request:
-        raise HTTPException(404, "project close request not found")
-    access = authorize_project_action(
-        current_user,
-        project,
-        A_EDIT_CLOSE_REQUEST,
-        db,
-        requester_person_id=request.requester_person_id,
-    )
-    context = access.context
-    _ensure_pending_close_pair(project, request)
-
-    current, _valid = material_values(request)
-    updates = payload.model_dump(exclude_unset=True)
-    current.update(updates)
-    try:
-        merged = schemas.ProjectCloseRequestCreatePayload.model_validate(current)
-    except ValidationError as exc:
-        raise HTTPException(422, exc.errors()) from exc
-
-    before = _close_state(request, project)
-    request.summary = merged.summary
-    request.objective_result = merged.objective_result
-    request.unfinished_items_json = serialize_residual_items(merged.unfinished_items)
-    request.remaining_risks_json = serialize_residual_items(merged.remaining_risks)
-    request.handover_plan = merged.handover_plan
-    request.retrospective = merged.retrospective
-    after = _close_state(request, project)
-    crud.log(
-        db,
-        current_user,
-        "project_close_request_update",
-        "project_close_request",
-        request.id,
-        before,
-        after,
+    return close_workflow.update_close_request(
         project_id=project_id,
+        request_id=request_id,
+        payload=payload,
+        current_user=current_user,
+        db=db,
     )
-    _notify_close_people(
-        db,
-        project_coach_person_ids(project_id, db),
-        operator_person_id=context.get("person_id"),
-        ntype="project_close_request_updated",
-        title="项目结束材料已更新",
-        project=project,
-        request=request,
-    )
-    db.commit()
-    db.refresh(request)
-    return _close_request_response(request, project, db)
 
 
 @router.post("/{project_id}/close-requests/{request_id}/cancel")
@@ -1860,48 +1759,13 @@ def cancel_project_close_request(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    project = _lock_project_for_close(project_id, db)
-    if not project:
-        raise HTTPException(404, "project not found")
-    request = _lock_close_request(project_id, request_id, db)
-    if not request:
-        raise HTTPException(404, "project close request not found")
-    access = authorize_project_action(
-        current_user,
-        project,
-        A_CANCEL_CLOSE_REQUEST,
-        db,
-        requester_person_id=request.requester_person_id,
-    )
-    context = access.context
-    _ensure_pending_close_pair(project, request)
-    before = _close_state(request, project)
-    request.status = "cancelled"
-    request.cancelled_at = utc_now()
-    _set_project_lifecycle(project, PL.S_ACTIVE, db=db, project_id=project_id)
-    after = _close_state(request, project)
-    crud.log(
-        db,
-        current_user,
-        "project_close_request_cancel",
-        "project_close_request",
-        request.id,
-        before,
-        after,
+    return close_workflow.cancel_close_request(
         project_id=project_id,
+        request_id=request_id,
+        current_user=current_user,
+        db=db,
+        lifecycle_writer=_set_project_lifecycle,
     )
-    _notify_close_people(
-        db,
-        project_coach_person_ids(project_id, db),
-        operator_person_id=context.get("person_id"),
-        ntype="project_close_cancelled",
-        title="项目结束申请已取消",
-        project=project,
-        request=request,
-    )
-    db.commit()
-    db.refresh(request)
-    return _close_request_response(request, project, db)
 
 
 @router.post("/{project_id}/close-requests/{request_id}/approve")

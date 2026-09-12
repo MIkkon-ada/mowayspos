@@ -2,15 +2,52 @@
 
 from __future__ import annotations
 
+from typing import Protocol
+
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import crud, models, schemas
 from ..api_errors import CodedHTTPException
 from ..domain import project_lifecycle as PL
-from ..services.notify import send as _notify
-from ..services.project_close import evaluate_project_close, material_values
+from ..domain.project_permissions import (
+    A_CANCEL_CLOSE_REQUEST,
+    A_EDIT_CLOSE_REQUEST,
+    A_REQUEST_CLOSE,
+)
+from ..services.notify import project_coach_person_ids, send as _notify
+from ..services.project_access import authorize_project_action
+from ..services.project_close import (
+    evaluate_project_close,
+    material_values,
+    serialize_residual_items,
+)
+from ..time_utils import utc_now
+
+
+class LifecycleWriter(Protocol):
+    def __call__(
+        self,
+        project: models.Project,
+        lifecycle_status: str,
+        *,
+        db: Session,
+        project_id: int,
+    ) -> str: ...
+
+
+class ViewAuthorizer(Protocol):
+    def __call__(
+        self,
+        current_user: str,
+        project: models.Project,
+        db: Session,
+    ) -> dict: ...
+
+
+CLOSE_REQUEST_STATUSES = {"pending", "approved", "rejected", "cancelled"}
 
 
 def project_close_project_lock_statement(project_id: int):
@@ -158,3 +195,224 @@ def ensure_pending_close_pair(
 
 def raise_close_blocked(blockers: list[dict]) -> None:
     raise HTTPException(409, {"code": "PROJECT_CLOSE_BLOCKED", "blockers": blockers})
+
+
+def list_close_requests(
+    *,
+    project_id: int,
+    status: str | None,
+    current_user: str,
+    db: Session,
+    view_authorizer: ViewAuthorizer,
+) -> list[dict]:
+    project = db.get(models.Project, project_id)
+    if not project:
+        raise HTTPException(404, "project not found")
+    view_authorizer(current_user, project, db)
+    if status is not None and status not in CLOSE_REQUEST_STATUSES:
+        raise HTTPException(422, "invalid close request status")
+    query = db.query(models.ProjectCloseRequest).filter_by(project_id=project_id)
+    if status is not None:
+        query = query.filter(models.ProjectCloseRequest.status == status)
+    requests = query.order_by(
+        models.ProjectCloseRequest.created_at.desc(),
+        models.ProjectCloseRequest.id.desc(),
+    ).all()
+    return [close_request_response(request, project, db) for request in requests]
+
+
+def get_close_request(
+    *,
+    project_id: int,
+    request_id: int,
+    current_user: str,
+    db: Session,
+    view_authorizer: ViewAuthorizer,
+) -> dict:
+    project = db.get(models.Project, project_id)
+    if not project:
+        raise HTTPException(404, "project not found")
+    request = close_request_for_project(project_id, request_id, db)
+    view_authorizer(current_user, project, db)
+    return close_request_response(request, project, db)
+
+
+def create_close_request(
+    *,
+    project_id: int,
+    payload: schemas.ProjectCloseRequestCreatePayload,
+    current_user: str,
+    db: Session,
+    lifecycle_writer: LifecycleWriter,
+) -> dict:
+    project = db.get(models.Project, project_id)
+    if not project:
+        raise HTTPException(404, "project not found")
+    access = authorize_project_action(current_user, project, A_REQUEST_CLOSE, db)
+    context = access.context
+    project = lock_project_for_close(project_id, db)
+    if not project:
+        raise HTTPException(404, "project not found")
+    if PL.normalize(project.status) != PL.S_ACTIVE:
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "仅进行中的项目可申请结束")
+    if db.query(models.ProjectCloseRequest).filter_by(project_id=project_id, status="pending").first():
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "项目已有待审核的结束申请")
+
+    material_data = payload.model_dump()
+    blockers, _warnings = evaluate_project_close(db, project_id, material_data)
+    if blockers:
+        raise_close_blocked(blockers)
+
+    request = models.ProjectCloseRequest(
+        project_id=project_id,
+        requester_person_id=context.get("person_id"),
+        summary=payload.summary,
+        objective_result=payload.objective_result,
+        unfinished_items_json=serialize_residual_items(payload.unfinished_items),
+        remaining_risks_json=serialize_residual_items(payload.remaining_risks),
+        handover_plan=payload.handover_plan,
+        retrospective=payload.retrospective,
+        status="pending",
+    )
+    db.add(request)
+    db.flush()
+    before = close_state(request, project)
+    lifecycle_writer(project, PL.S_PENDING_CLOSE, db=db, project_id=project_id)
+    after = close_state(request, project)
+    crud.log(
+        db,
+        current_user,
+        "project_close_request_create",
+        "project_close_request",
+        request.id,
+        before,
+        after,
+        project_id=project_id,
+    )
+    notify_close_people(
+        db,
+        project_coach_person_ids(project_id, db),
+        operator_person_id=context.get("person_id"),
+        ntype="project_close_requested",
+        title="项目结束申请待审核",
+        project=project,
+        request=request,
+    )
+    db.commit()
+    db.refresh(request)
+    return close_request_response(request, project, db)
+
+
+def update_close_request(
+    *,
+    project_id: int,
+    request_id: int,
+    payload: schemas.ProjectCloseRequestUpdatePayload,
+    current_user: str,
+    db: Session,
+) -> dict:
+    project = lock_project_for_close(project_id, db)
+    if not project:
+        raise HTTPException(404, "project not found")
+    request = lock_close_request(project_id, request_id, db)
+    if not request:
+        raise HTTPException(404, "project close request not found")
+    access = authorize_project_action(
+        current_user,
+        project,
+        A_EDIT_CLOSE_REQUEST,
+        db,
+        requester_person_id=request.requester_person_id,
+    )
+    context = access.context
+    ensure_pending_close_pair(project, request)
+
+    current, _valid = material_values(request)
+    current.update(payload.model_dump(exclude_unset=True))
+    try:
+        merged = schemas.ProjectCloseRequestCreatePayload.model_validate(current)
+    except ValidationError as exc:
+        raise HTTPException(422, exc.errors()) from exc
+
+    before = close_state(request, project)
+    request.summary = merged.summary
+    request.objective_result = merged.objective_result
+    request.unfinished_items_json = serialize_residual_items(merged.unfinished_items)
+    request.remaining_risks_json = serialize_residual_items(merged.remaining_risks)
+    request.handover_plan = merged.handover_plan
+    request.retrospective = merged.retrospective
+    after = close_state(request, project)
+    crud.log(
+        db,
+        current_user,
+        "project_close_request_update",
+        "project_close_request",
+        request.id,
+        before,
+        after,
+        project_id=project_id,
+    )
+    notify_close_people(
+        db,
+        project_coach_person_ids(project_id, db),
+        operator_person_id=context.get("person_id"),
+        ntype="project_close_request_updated",
+        title="项目结束材料已更新",
+        project=project,
+        request=request,
+    )
+    db.commit()
+    db.refresh(request)
+    return close_request_response(request, project, db)
+
+
+def cancel_close_request(
+    *,
+    project_id: int,
+    request_id: int,
+    current_user: str,
+    db: Session,
+    lifecycle_writer: LifecycleWriter,
+) -> dict:
+    project = lock_project_for_close(project_id, db)
+    if not project:
+        raise HTTPException(404, "project not found")
+    request = lock_close_request(project_id, request_id, db)
+    if not request:
+        raise HTTPException(404, "project close request not found")
+    access = authorize_project_action(
+        current_user,
+        project,
+        A_CANCEL_CLOSE_REQUEST,
+        db,
+        requester_person_id=request.requester_person_id,
+    )
+    context = access.context
+    ensure_pending_close_pair(project, request)
+    before = close_state(request, project)
+    request.status = "cancelled"
+    request.cancelled_at = utc_now()
+    lifecycle_writer(project, PL.S_ACTIVE, db=db, project_id=project_id)
+    after = close_state(request, project)
+    crud.log(
+        db,
+        current_user,
+        "project_close_request_cancel",
+        "project_close_request",
+        request.id,
+        before,
+        after,
+        project_id=project_id,
+    )
+    notify_close_people(
+        db,
+        project_coach_person_ids(project_id, db),
+        operator_person_id=context.get("person_id"),
+        ntype="project_close_cancelled",
+        title="项目结束申请已取消",
+        project=project,
+        request=request,
+    )
+    db.commit()
+    db.refresh(request)
+    return close_request_response(request, project, db)

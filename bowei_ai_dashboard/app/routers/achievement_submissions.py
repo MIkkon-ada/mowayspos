@@ -11,6 +11,7 @@ from ..permissions import (
     get_current_user_name,
     get_user_context_from_db,
     is_project_member,
+    require_login,
 )
 from ..time_utils import utc_now
 from ..services.notify import project_owner_ids, send as _notify, person_name_for_account
@@ -136,6 +137,7 @@ def list_submissions(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
+    current_user = require_login(current_user, db)
     context = get_user_context_from_db(current_user, db)
     q = db.query(models.AchievementSubmission)
 

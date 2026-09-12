@@ -1,6 +1,6 @@
 # Historical Naming Inventory
 
-**Audited:** 2026-09-13  
+**Audited:** 2026-09-13
 **Scope:** `bowei_ai_dashboard/app` and `frontend/src` runtime source. This is an inventory, not a claim that the global historical-naming criterion is complete.
 
 ## Classification rule

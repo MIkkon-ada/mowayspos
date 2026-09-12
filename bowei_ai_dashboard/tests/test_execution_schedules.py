@@ -2,6 +2,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
@@ -57,3 +58,32 @@ def test_schedule_projection_marks_overdue_and_due_soon():
 def test_subtask_detail_includes_execution_schedule_summary():
     source = Path(__file__).resolve().parents[1] / "app" / "routers" / "subtasks.py"
     assert 'result["execution_schedules"]' in source.read_text(encoding="utf-8")
+
+
+def test_pending_close_project_rejects_execution_schedule_create_without_writing():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    db.add_all(
+        [
+            models.Person(id=1, name="Owner", is_active=True),
+            models.Account(username="owner", password_hash="x", person_id=1, status="active"),
+            models.Project(id=1, name="项目", status="pending_close", is_active=False),
+            models.ProjectMember(project_id=1, person_id=1, person_name_snapshot="Owner", role="owner"),
+            models.Task(id=1, project_id=1, key_task="重点工作"),
+            models.SubTask(id=1, task_id=1, title="关键任务", assignee="Owner"),
+        ]
+    )
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        execution_schedules.create_execution_schedule(
+            1,
+            schemas.ExecutionSchedulePayload(plan_type="week", title="不得写入"),
+            current_user="owner",
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "项目正在结束审核或已经结束，不允许执行该操作。"
+    assert db.query(models.ExecutionSchedule).count() == 0

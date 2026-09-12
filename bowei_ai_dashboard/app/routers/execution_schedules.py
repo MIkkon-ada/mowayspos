@@ -57,6 +57,9 @@ def _can_write(current_user: str, context: dict, subtask: models.SubTask, task: 
 def _require_write(current_user: str, context: dict, subtask: models.SubTask, task: models.Task, db: Session) -> None:
     if not task.project_id:
         raise HTTPException(403, "permission denied")
+    require_project_business_writable(task.project_id, db)
+    if not _can_write(current_user, context, subtask, task, db):
+        raise HTTPException(403, "permission denied")
 
 
 def _validate_people(task: models.Task, payload: schemas.ExecutionSchedulePayload, db: Session) -> dict[int, models.Person]:
@@ -79,9 +82,6 @@ def _validate_people(task: models.Task, payload: schemas.ExecutionSchedulePayloa
     if requested_ids - set(people):
         raise HTTPException(422, "负责人或协同人不存在")
     return people
-    require_project_business_writable(task.project_id, db)
-    if not _can_write(current_user, context, subtask, task, db):
-        raise HTTPException(403, "permission denied")
 
 
 @router.get("/api/subtasks/{subtask_id}/execution-schedules")

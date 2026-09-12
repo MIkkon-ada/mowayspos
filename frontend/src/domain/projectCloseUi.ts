@@ -1,3 +1,5 @@
+import { canProjectAction } from './permissions'
+
 export type ProjectCloseRoles = {
   isSuperAdmin: boolean
   isCompanyCeo: boolean
@@ -42,28 +44,4 @@ export function canEditProjectCloseRequest(status: string, requesterPersonId: nu
     lifecycle: status,
     requesterPersonId,
   })
-}
-type CloseProjectAction = 'project.request_close' | 'project.edit_close_request' | 'project.review_close_request'
-
-type ClosePermissionInput = {
-  isTechAdmin?: boolean
-  isCompanyCeo?: boolean
-  personId?: number | null
-  projectRoles?: readonly string[] | null
-  lifecycle?: string | null
-  requesterPersonId?: number | null
-}
-
-// Kept dependency-free because this pure UI adapter is also loaded standalone by the contract suite.
-function canProjectAction(action: CloseProjectAction, input: ClosePermissionInput): boolean {
-  const roles = input.projectRoles ?? []
-  const hasOwner = roles.includes('owner')
-  const hasProjectCeo = roles.includes('project_ceo')
-  const tech = Boolean(input.isTechAdmin)
-  const lifecycle = input.lifecycle ?? ''
-
-  if (action === 'project.request_close') return lifecycle === 'active' && (tech || hasOwner)
-  if (action === 'project.review_close_request') return lifecycle === 'pending_close' && (tech || hasProjectCeo)
-  const owned = hasOwner && input.personId != null && input.personId === input.requesterPersonId
-  return lifecycle === 'pending_close' && (tech || owned)
 }

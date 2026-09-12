@@ -3,15 +3,18 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
-import { pathToFileURL } from 'node:url'
 
 const root = path.resolve(import.meta.dirname, '..')
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 
 async function loadPureUi() {
+  const permissions = read('src/domain/permissions.ts')
+  const permissionsJs = ts.transpileModule(permissions, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText
+  const permissionsUrl = `data:text/javascript;base64,${Buffer.from(permissionsJs).toString('base64')}`
   const source = read('src/domain/projectCloseUi.ts')
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText
-  return import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)
+  const rewritten = js.replace(/from ['"]\.\/permissions['"]/g, `from ${JSON.stringify(permissionsUrl)}`)
+  return import(`data:text/javascript;base64,${Buffer.from(rewritten).toString('base64')}`)
 }
 
 async function loadPermissions() {

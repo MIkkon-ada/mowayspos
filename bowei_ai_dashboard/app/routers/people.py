@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
-from ..permissions import ROLE_CEO, ROLE_NORMAL, ROLE_SUPER_ADMIN, ensure_default_projects, get_current_user_name, get_user_context_from_db, normalize_system_role, system_role_label
+from ..permissions import ROLE_CEO, ROLE_NORMAL, ROLE_SUPER_ADMIN, get_current_user_name, get_user_context_from_db, normalize_system_role, system_role_label
+from . import projects as project_routes
 
 router = APIRouter(prefix="/api/people", tags=["people"])
 
@@ -235,21 +236,12 @@ def me(current_user: str = Depends(get_current_user_name), db: Session = Depends
 
 
 @router.get("/projects")
-def list_projects(db: Session = Depends(get_db)):
-    ensure_default_projects(db)
-    projects = db.query(models.Project).filter(models.Project.status != "archived").order_by(models.Project.sort_order, models.Project.id).all()
-    return [
-        {
-            "id": row.id,
-            "name": row.name,
-            "coordinator": row.coordinator or "",
-            "owners": _split_names(row.owners),
-            "collaborators": _split_names(row.collaborators),
-            "sort_order": row.sort_order or 0,
-            "is_active": row.is_active,
-        }
-        for row in projects
-    ]
+def list_projects(
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """Legacy alias for the current-user project list without implicit writes."""
+    return project_routes.list_projects(current_user=current_user, db=db)
 
 
 @router.post("/projects")

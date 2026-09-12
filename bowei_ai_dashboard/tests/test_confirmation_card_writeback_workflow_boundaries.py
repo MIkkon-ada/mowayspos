@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
 from app import models, schemas
 from tests.test_confirmation_card_coach_flow import _seed_card_coach_team
 from tests.test_confirmation_card_coordinator_flow import _make_card_submission
@@ -118,3 +120,31 @@ def test_confirm_task_card_service_parses_string_subtask_issues():
     issue = db.query(models.Issue).filter_by(source_submission_id=row.id).one()
     assert issue.description == "请确认测试方案"
     assert issue.status == "待决策"
+
+
+def test_confirm_task_card_service_rejects_non_owner_and_frozen_project():
+    from app.services import confirmation_card_writeback_workflow as workflow
+
+    db = _make_session()
+    team = _seed_card_coach_team(db)
+    row = _make_card_submission(db, statuses=("",))
+    db.commit()
+
+    with pytest.raises(HTTPException) as denied:
+        workflow.confirm_task_card(
+            submission_id=row.id, card_index=0,
+            payload=schemas.ConfirmRequest(operator="coach"),
+            current_user="coach", db=db,
+        )
+    assert denied.value.status_code == 403
+
+    team["project"].status = "pending_close"
+    db.commit()
+    with pytest.raises(HTTPException) as frozen:
+        workflow.confirm_task_card(
+            submission_id=row.id, card_index=0,
+            payload=schemas.ConfirmRequest(operator="owner"),
+            current_user="owner", db=db,
+        )
+    assert frozen.value.status_code == 409
+    assert not json.loads(db.get(models.UpdateSubmission, row.id).human_result_json)["task_reports"][0].get("confirmation_status")

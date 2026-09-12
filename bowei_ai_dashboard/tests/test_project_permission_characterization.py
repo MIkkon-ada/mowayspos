@@ -224,12 +224,12 @@ def test_source_edit_is_restricted_after_dispatch():
     )
 
 
-def test_get_project_uses_access_service(monkeypatch):
+def test_get_project_uses_compatibility_view_boundary(monkeypatch):
     db = _seed()
-    calls: list[str] = []
+    calls: list[str | None] = []
 
-    def access_spy(current_user, project, action, db, **kwargs):
-        calls.append(action)
+    def access_spy(current_user, project, db, *, denial_detail=None):
+        calls.append(denial_detail)
         return SimpleNamespace(
             context=projects.get_user_context_from_db(current_user, db),
             subject=SimpleNamespace(project_roles=frozenset()),
@@ -237,11 +237,11 @@ def test_get_project_uses_access_service(monkeypatch):
             role_source="project_members",
         )
 
-    monkeypatch.setattr(projects, "authorize_project_action", access_spy, raising=False)
+    monkeypatch.setattr(projects.project_role_compatibility, "authorize_project_view", access_spy)
 
     projects.get_project(1, current_user="member", db=db)
 
-    assert calls == [A_VIEW]
+    assert calls == ["permission denied — 仅项目成员可查看"]
 
 
 def test_global_and_lifecycle_endpoints_use_access_services(monkeypatch):

@@ -24,3 +24,11 @@ def test_facade_reexports_structured_spreadsheet_generator():
     from app.services import project_init_ai_spreadsheet as spreadsheet
 
     assert facade.generate_structured_project_init_draft is spreadsheet.generate_structured_project_init_draft
+
+
+def test_facade_reexports_pipeline_entry_points():
+    from app.services import project_init_ai_pipeline as pipeline
+
+    assert facade.generate_project_init_draft is pipeline.generate_project_init_draft
+    assert facade._parse_json_response is pipeline._parse_json_response
+    assert facade._classify_raw_draft_envelope is pipeline._classify_raw_draft_envelope

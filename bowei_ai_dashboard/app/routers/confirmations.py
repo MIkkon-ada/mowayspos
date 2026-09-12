@@ -35,7 +35,6 @@ from ..services.project_close import require_project_business_writable
 from ..services.key_task_execution import normalize_text_list, record_execution_event
 from ..services import policy as P
 from ..services import workflow as W
-from ..services import escalation as ESC
 from ..services.confirmation_review_workflow import (
     can_owner_style_action as _can_owner_style_action,
     is_submission_submitter as _is_submission_submitter,
@@ -1522,28 +1521,13 @@ def reject_task_card(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    _require_owner_style_actor(context, row, db)
-    W.require_submission_status(row, SS.OWNER_ACTIONABLE)
-
-    before = crud.to_dict(row)
-    effective_project_id = _submission_project_id(db, row)
-    data = W.submission_result(row)
-    _, report = _get_task_card(data, card_index)
-    _require_card_owner_actionable(report)
-    _mark_task_card(row, data, card_index, "returned", payload.operator, payload.reason)
-    row.confirm_status = SS.S_PENDING_OWNER
-    row.reject_reason = payload.reason
-    crud.log(
-        db, payload.operator, "confirmation_card_return", "confirmation", row.id,
-        before, {"card_index": card_index, "reason": payload.reason},
-        project_id=effective_project_id,
+    return review_workflow.reject_task_card_review(
+        submission_id=submission_id,
+        card_index=card_index,
+        payload=payload,
+        current_user=current_user,
+        db=db,
     )
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
 
 
 @router.post("/{submission_id}/cards/{card_index}/transfer-coordinator")
@@ -1554,69 +1538,13 @@ def transfer_task_card_to_coordinator(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    _require_owner_style_actor(context, row, db)
-    W.require_submission_status(row, SS.OWNER_ACTIONABLE)
-
-    before = crud.to_dict(row)
-    data = W.submission_result(row)
-    reports, report = _get_task_card(data, card_index)
-    if _card_confirmation_status(report) not in {"", "pending"}:
-        raise HTTPException(409, "task card cannot be transferred in its current state")
-
-    effective_project_id = _submission_project_id(db, row)
-    card_title = _get_card_title(report)
-    now = utc_now().isoformat()
-    note = payload.note or ""
-    report["confirmation_status"] = "transferred_to_coordinator"
-    report["confirmation_note"] = note
-    report["confirmation_operator"] = payload.operator
-    report["confirmation_at"] = now
-    report["coordinator_request_note"] = note
-    report["coordinator_request_operator"] = payload.operator
-    report["coordinator_requested_at"] = now
-    reports[card_index] = report
-    data["task_reports"] = reports
-    row.human_result_json = json.dumps(data, ensure_ascii=False)
-    row.confirm_status = SS.S_PENDING_OWNER
-    crud.log(
-        db, payload.operator, "confirmation_card_forward_to_coordinator", "confirmation", row.id,
-        before, {
-            "card_index": card_index,
-            "card_title": card_title,
-            "note": note,
-            "project_id": effective_project_id,
-        },
-        project_id=effective_project_id,
+    return review_workflow.transfer_task_card_to_coordinator(
+        submission_id=submission_id,
+        card_index=card_index,
+        payload=payload,
+        current_user=current_user,
+        db=db,
     )
-    from ..services.notify import send as _notify, project_coordinator_ids, person_name_for_account, person_id_for_account
-    caller_name = person_name_for_account(current_user or payload.operator, db)
-    caller_id = person_id_for_account(current_user or payload.operator, db)
-    for coordinator_id in project_coordinator_ids(effective_project_id, db):
-        if coordinator_id != caller_id:
-            _notify(
-                db,
-                recipient_id=coordinator_id,
-                ntype="confirmation_card_transferred_to_coordinator",
-                title=f"有任务卡需要你提供统筹意见：{card_title}",
-                body=(
-                    f"提交标题：{row.title or '（无标题）'}\n"
-                    f"任务卡：第 {card_index + 1} 张\n"
-                    f"任务卡标题：{card_title}\n"
-                    f"转交人：{caller_name}\n"
-                    f"转交说明：{note or '无'}"
-                ),
-                link=(
-                    f"/work/confirmations?view=coordinator&projectId={effective_project_id}"
-                    f"&submissionId={row.id}&cardIndex={card_index}"
-                ),
-                project_id=effective_project_id,
-            )
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
 
 
 def coordinator_feedback_task_card(
@@ -1627,86 +1555,13 @@ def coordinator_feedback_task_card(
     db: Session = Depends(get_db),
 ):
     """项目统筹对单张任务卡反馈，完成后返回 owner 继续处理。"""
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    if not P.decide_workflow_for_project(
-        context,
-        row.project_id,
-        A_CONFIRMATION_COORDINATOR_FEEDBACK,
-        db,
-    ).allowed:
-        raise HTTPException(403, "permission denied — 仅该项目统筹人或管理员可反馈")
-    if W.submission_status(row) != SS.S_PENDING_OWNER:
-        raise HTTPException(409, "submission is no longer waiting for owner processing")
-
-    data = W.submission_result(row)
-    reports, report = _get_task_card(data, card_index)
-    if _card_confirmation_status(report) != "transferred_to_coordinator":
-        raise HTTPException(409, "task card is not waiting for coordinator feedback")
-    note = (payload.note or "").strip()
-    if not note:
-        raise HTTPException(422, "coordinator feedback note is required")
-
-    before = crud.to_dict(row)
-    effective_project_id = _submission_project_id(db, row)
-    card_title = _get_card_title(report)
-    report["confirmation_status"] = "coordinator_given"
-    report["coordinator_note"] = note
-    report["coordinator_operator"] = payload.operator
-    report["coordinator_feedback_at"] = utc_now().isoformat()
-    reports[card_index] = report
-    data["task_reports"] = reports
-    row.human_result_json = json.dumps(data, ensure_ascii=False)
-    row.confirm_status = SS.S_PENDING_OWNER
-
-    crud.log(
-        db,
-        payload.operator,
-        "confirmation_card_coordinator_feedback",
-        "confirmation",
-        row.id,
-        before,
-        {
-            "card_index": card_index,
-            "card_title": card_title,
-            "note": note,
-            "project_id": effective_project_id,
-        },
-        project_id=effective_project_id,
+    return review_workflow.coordinator_feedback_task_card(
+        submission_id=submission_id,
+        card_index=card_index,
+        payload=payload,
+        current_user=current_user,
+        db=db,
     )
-    from ..services.notify import send as _notify, project_owner_ids, person_id_for_account
-    caller_id = person_id_for_account(current_user or payload.operator, db)
-    strict_owner_ids = {
-        member.person_id
-        for member in db.query(models.ProjectMember).filter(
-            models.ProjectMember.project_id == effective_project_id,
-            models.ProjectMember.role == "owner",
-        ).all()
-        if member.person_id
-    }
-    for owner_id in set(project_owner_ids(effective_project_id, db)):
-        if owner_id in strict_owner_ids and owner_id != caller_id:
-            _notify(
-                db,
-                recipient_id=owner_id,
-                ntype="confirmation_card_coordinator_feedback",
-                title=f"统筹人已反馈任务卡：{card_title}",
-                body=(
-                    f"提交标题：{row.title or '（无标题）'}\n"
-                    f"任务卡：第 {card_index + 1} 张\n"
-                    f"任务卡标题：{card_title}\n"
-                    f"统筹意见：{note}"
-                ),
-                link=(
-                    f"/work/confirmations?view=all&projectId={effective_project_id}"
-                    f"&submissionId={row.id}&cardIndex={card_index}"
-                ),
-                project_id=effective_project_id,
-            )
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
 
 
 router.add_api_route(
@@ -1724,58 +1579,13 @@ def escalate_task_card_to_ceo(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    if not P.decide_workflow_for_project(
-        context,
-        row.project_id,
-        A_CONFIRMATION_ESCALATE,
-        db,
-    ).allowed:
-        raise HTTPException(403, "permission denied")
-    W.require_submission_status(row, SS.OWNER_ACTIONABLE)
-
-    data = W.submission_result(row)
-    _, report = _get_task_card(data, card_index)
-    current_status = _card_confirmation_status(report)
-    # 卡片状态校验：已进入教练流程或已完成的状态不可重复上报
-    _BLOCKED_CARD_STATUSES = frozenset({
-        "pending_ceo_decision", "ceo_decided", "confirmed",
-        "returned", "transferred_to_coordinator",
-    })
-    if current_status in _BLOCKED_CARD_STATUSES:
-        raise HTTPException(409, "task card is already waiting for coach decision"
-                            if current_status == "pending_ceo_decision"
-                            else "task card cannot be escalated in its current state")
-
-    before = crud.to_dict(row)
-    effective_project_id = _submission_project_id(db, row)
-    card_title = _get_card_title(report)
-    _mark_task_card(
-        row, data, card_index, "pending_ceo_decision",
-        payload.operator, payload.note or "",
+    return review_workflow.escalate_task_card_to_coach(
+        submission_id=submission_id,
+        card_index=card_index,
+        payload=payload,
+        current_user=current_user,
+        db=db,
     )
-    row.confirm_status = SS.S_PENDING_OWNER
-    crud.log(
-        db, payload.operator, "confirmation_card_escalate_to_coach", "confirmation", row.id,
-        before, {"card_index": card_index, "note": payload.note or "", "card_title": card_title},
-        project_id=effective_project_id,
-    )
-    # 通知项目企业教练
-    from ..services.notify import send as _notify, project_coach_person_ids, person_name_for_account, person_id_for_account
-    caller_name = person_name_for_account(current_user or payload.operator, db)
-    caller_id = person_id_for_account(current_user or payload.operator, db)
-    for coach_id in project_coach_person_ids(effective_project_id, db):
-        if coach_id != caller_id:
-            _notify(db, recipient_id=coach_id, ntype="confirmation_card_escalate_ceo",
-                    title=f"有任务卡需要您决策：{card_title}",
-                    body=f"提交标题：{row.title or '（无标题）'}\n任务卡：第 {card_index + 1} 张\n上报人：{caller_name}\n上报说明：{payload.note or '无'}",
-                    link=f"/work/confirmations?view=ceo&projectId={effective_project_id}&submissionId={row.id}&cardIndex={card_index}",
-                    project_id=effective_project_id)
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
 
 
 @router.post("/{submission_id}/cards/{card_index}/ceo-decide")
@@ -1787,60 +1597,13 @@ def ceo_decide_task_card(
     db: Session = Depends(get_db),
 ):
     """企业教练对单张任务卡批示：批示后回到项目负责人继续确认写入。"""
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    if not P.decide_workflow_for_project(
-        context,
-        row.project_id,
-        A_CONFIRMATION_CEO_DECIDE,
-        db,
-    ).allowed:
-        raise HTTPException(403, "permission denied — 仅该项目企业教练或管理员可批示")
-
-    # 主状态校验：仅 S_PENDING_OWNER 时允许单卡批示
-    if W.submission_status(row) != SS.S_PENDING_OWNER:
-        raise HTTPException(409, "submission is no longer waiting for owner processing")
-
-    data = W.submission_result(row)
-    reports, report = _get_task_card(data, card_index)
-    current_status = _card_confirmation_status(report)
-    if current_status != "pending_ceo_decision":
-        raise HTTPException(409, "task card is not waiting for coach decision")
-
-    before = crud.to_dict(row)
-    effective_project_id = _submission_project_id(db, row)
-    card_title = _get_card_title(report)
-    now = utc_now()
-
-    # 写入企业教练批示字段，不覆盖 owner 原有的上报说明
-    report["confirmation_status"] = "ceo_decided"
-    report["ceo_note"] = payload.note or ""
-    report["ceo_operator"] = payload.operator
-    report["ceo_decided_at"] = now.isoformat()
-    reports[card_index] = report
-    data["task_reports"] = reports
-    row.human_result_json = json.dumps(data, ensure_ascii=False)
-    row.confirm_status = SS.S_PENDING_OWNER
-
-    crud.log(
-        db, payload.operator, "confirmation_card_coach_decision", "confirmation", row.id,
-        before, {"card_index": card_index, "card_title": card_title, "note": payload.note or ""},
-        project_id=effective_project_id,
+    return review_workflow.coach_decide_task_card(
+        submission_id=submission_id,
+        card_index=card_index,
+        payload=payload,
+        current_user=current_user,
+        db=db,
     )
-    # 通知项目负责人
-    from ..services.notify import send as _notify, project_owner_ids, person_id_for_account
-    caller_id = person_id_for_account(current_user or payload.operator, db)
-    for owner_id in project_owner_ids(effective_project_id, db):
-        if owner_id != caller_id:
-            _notify(db, recipient_id=owner_id, ntype="confirmation_card_ceo_decided",
-                    title=f"企业教练已批示任务卡：{card_title}",
-                    body=f"提交标题：{row.title or '（无标题）'}\n任务卡：第 {card_index + 1} 张\n企业教练批示：{payload.note or '无'}",
-                    link=f"/work/confirmations?view=all&projectId={effective_project_id}&submissionId={row.id}&cardIndex={card_index}",
-                    project_id=effective_project_id)
-    db.commit()
-    return {"ok": True, "submission": crud.to_dict(row)}
 
 
 @router.post("/{submission_id}/reject")
@@ -2015,99 +1778,13 @@ def escalate_card_to_issue(
     - target=ceo → 新建 Issue(issue_type=需决策)
     - 任务卡进入锁定状态，直到 Issue 解决后自动回写
     """
-    target = (payload.target or "").strip().lower()
-    if target not in {"ceo", "coordinator"}:
-        raise HTTPException(400, "target must be 'ceo' or 'coordinator'")
-    note = (payload.note or "").strip()
-    if not note:
-        raise HTTPException(400, "请填写转交说明")
-
-    row = _load_submission(db, submission_id)
-    context = get_user_context_from_db(current_user or payload.operator, db)
-    _require_submission_writable(row, context, db)
-    _require_confirmation_center(context)
-    _require_owner_style_actor(context, row, db)
-    W.require_submission_status(row, SS.OWNER_ACTIONABLE)
-
-    effective_project_id = _submission_project_id(db, row)
-    caller_name = _person_name_for_account(current_user or payload.operator, db)
-
-    decision_by = "企业教练" if target == "ceo" else "统筹人"
-
-    before = crud.to_dict(row)
-    issue = ESC.escalate_card_to_issue(
-        db=db,
-        submission=row,
+    return review_workflow.escalate_task_card_to_issue(
+        submission_id=submission_id,
         card_index=card_index,
-        target=target,  # type: ignore[arg-type]
-        note=note,
-        caller_username=current_user or payload.operator,
-        caller_name=caller_name,
-        project_id=effective_project_id,
-        decision_by_username=decision_by,
-    )
-    crud.log(
-        db, current_user or payload.operator,
-        "confirmation_card_escalate_to_issue", "confirmation", row.id,
-        before, {"card_index": card_index, "target": target, "note": note, "issue_id": issue.id},
-        project_id=effective_project_id,
-    )
-
-    _notify_escalation_targets(
+        target=payload.target,
+        note=payload.note,
+        operator=payload.operator,
+        current_user=current_user,
         db=db,
-        target=target,
-        project_id=effective_project_id,
-        caller_name=caller_name,
-        caller_username=current_user or payload.operator,
-        card_index=card_index,
-        issue_id=issue.id,
-        note=note,
-        submission_title=row.title or "（无标题）",
     )
-
-    db.commit()
-    return {"ok": True, "issue_id": issue.id, "submission": crud.to_dict(row)}
-
-
-def _person_name_for_account(username: str, db: Session) -> str:
-    from ..services.notify import person_name_for_account
-    return person_name_for_account(username, db)
-
-
-def _notify_escalation_targets(
-    db: Session,
-    target: str,
-    project_id: int,
-    caller_name: str,
-    caller_username: str,
-    card_index: int,
-    issue_id: int,
-    note: str,
-    submission_title: str,
-):
-    """通知统筹/教练有新 Issue 待处理。"""
-    from ..services.notify import send as _notify, person_id_for_account
-    from ..services.notify import project_coach_person_ids, project_coordinator_ids
-    caller_id = person_id_for_account(caller_username, db)
-    if target == "ceo":
-        recipient_ids = project_coach_person_ids(project_id, db)
-        ntype = "issue_escalated_to_coach"
-        title = f"有任务卡需要您决策（问题中心）：{submission_title}"
-    else:
-        recipient_ids = project_coordinator_ids(project_id, db)
-        ntype = "issue_escalated_to_coordinator"
-        title = f"有任务卡需要您统筹（问题中心）：{submission_title}"
-    for rid in recipient_ids:
-        if rid != caller_id:
-            _notify(
-                db, recipient_id=rid, ntype=ntype,
-                title=title,
-                body=(f"提交标题：{submission_title}\n"
-                      f"任务卡：第 {card_index + 1} 张\n"
-                      f"转交人：{caller_name}\n"
-                      f"转交说明：{note or '无'}\n"
-                      f"请前往问题中心处理（Issue #{issue_id}）"),
-                link=f"/work/issues?projectId={project_id}&issueId={issue_id}",
-                project_id=project_id,
-            )
 

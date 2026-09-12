@@ -6,6 +6,8 @@ from fastapi import HTTPException
 from app import models, schemas
 from app.domain import submission_status as SS
 from app.routers import confirmations
+from tests.test_confirmation_card_coordinator_flow import _make_card_submission
+from tests.test_confirmation_card_coach_flow import _seed_card_coach_team
 from tests.test_submission_submitter_identity_flow import _make_session, _seed_team, _submission
 
 
@@ -187,3 +189,84 @@ def test_submission_escalation_commands_keep_project_scoped_review_flow():
         )
     assert exc_info.value.status_code == 403
     assert db.get(models.UpdateSubmission, denied.id).confirm_status == SS.S_WAITING_COORDINATOR
+
+
+def test_card_review_commands_change_only_the_target_card():
+    from app.services import confirmation_review_workflow as workflow
+
+    db = _make_session()
+    _seed_card_coach_team(db)
+    row = _make_card_submission(db, statuses=("", ""))
+    db.commit()
+
+    transferred = workflow.transfer_task_card_to_coordinator(
+        submission_id=row.id,
+        card_index=0,
+        payload=schemas.WorkflowNoteRequest(note="请统筹", operator="owner"),
+        current_user="owner",
+        db=db,
+    )
+    assert json.loads(transferred["submission"]["human_result_json"])["task_reports"][0]["confirmation_status"] == "transferred_to_coordinator"
+
+    feedback = workflow.coordinator_feedback_task_card(
+        submission_id=row.id,
+        card_index=0,
+        payload=schemas.WorkflowNoteRequest(note="可执行", operator="coordinator"),
+        current_user="coordinator",
+        db=db,
+    )
+    assert json.loads(feedback["submission"]["human_result_json"])["task_reports"][0]["confirmation_status"] == "coordinator_given"
+
+    escalated = workflow.escalate_task_card_to_coach(
+        submission_id=row.id,
+        card_index=0,
+        payload=schemas.WorkflowNoteRequest(note="请批示", operator="owner"),
+        current_user="owner",
+        db=db,
+    )
+    assert json.loads(escalated["submission"]["human_result_json"])["task_reports"][0]["confirmation_status"] == "pending_ceo_decision"
+
+    decided = workflow.coach_decide_task_card(
+        submission_id=row.id,
+        card_index=0,
+        payload=schemas.WorkflowNoteRequest(note="同意", operator="coach"),
+        current_user="coach",
+        db=db,
+    )
+    reports = json.loads(decided["submission"]["human_result_json"])["task_reports"]
+    assert reports[0]["confirmation_status"] == "ceo_decided"
+    assert not reports[1].get("confirmation_status")
+
+    returned = workflow.reject_task_card_review(
+        submission_id=row.id,
+        card_index=0,
+        payload=schemas.RejectRequest(reason="请补充依据", operator="owner"),
+        current_user="owner",
+        db=db,
+    )
+    assert json.loads(returned["submission"]["human_result_json"])["task_reports"][0]["confirmation_status"] == "returned"
+
+    escalated_issue = workflow.escalate_task_card_to_issue(
+        submission_id=row.id,
+        card_index=1,
+        target="coordinator",
+        note="请统筹协调",
+        operator="owner",
+        current_user="owner",
+        db=db,
+    )
+    issue = db.get(models.Issue, escalated_issue["issue_id"])
+    assert issue is not None
+    assert issue.source_submission_id == row.id
+    assert issue.source_card_index == 1
+    assert json.loads(escalated_issue["submission"]["human_result_json"])["task_reports"][1]["confirmation_status"] == "transferred_to_coordinator"
+
+    with pytest.raises(HTTPException) as exc_info:
+        workflow.escalate_task_card_to_coach(
+            submission_id=row.id,
+            card_index=0,
+            payload=schemas.WorkflowNoteRequest(note="重复", operator="owner"),
+            current_user="owner",
+            db=db,
+        )
+    assert exc_info.value.status_code == 409

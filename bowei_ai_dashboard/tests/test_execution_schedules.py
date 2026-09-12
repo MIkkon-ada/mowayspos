@@ -87,3 +87,28 @@ def test_pending_close_project_rejects_execution_schedule_create_without_writing
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail == "项目正在结束审核或已经结束，不允许执行该操作。"
     assert db.query(models.ExecutionSchedule).count() == 0
+
+
+def test_execution_schedule_list_requires_project_access():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    db.add_all(
+        [
+            models.Person(id=1, name="Owner", is_active=True),
+            models.Person(id=2, name="Outsider", is_active=True),
+            models.Account(username="owner", password_hash="x", person_id=1, status="active"),
+            models.Account(username="outsider", password_hash="x", person_id=2, status="active"),
+            models.Project(id=1, name="受保护项目", status="active", is_active=True),
+            models.ProjectMember(project_id=1, person_id=1, person_name_snapshot="Owner", role="owner"),
+            models.Task(id=1, project_id=1, key_task="重点工作"),
+            models.SubTask(id=1, task_id=1, title="关键任务", assignee="Owner"),
+            models.ExecutionSchedule(id=1, subtask_id=1, plan_type="week", title="敏感执行计划"),
+        ]
+    )
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        execution_schedules.list_execution_schedules(1, current_user="outsider", db=db)
+
+    assert exc_info.value.status_code == 403

@@ -7,7 +7,12 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
-from ..permissions import get_current_user_name, get_user_context_from_db, get_all_project_roles
+from ..permissions import (
+    get_current_user_name,
+    get_user_context_from_db,
+    get_all_project_roles,
+    require_project_access,
+)
 from ..services.project_close import require_project_business_writable
 from ..services.key_task_execution import record_execution_event
 from ..services.notify import person_id_for_name
@@ -90,6 +95,9 @@ def list_execution_schedules(subtask_id: int, current_user: str = Depends(get_cu
     task = db.get(models.Task, subtask.task_id) if subtask else None
     if not subtask or not task:
         raise HTTPException(404, "关键任务不存在")
+    if not task.project_id:
+        raise HTTPException(403, "permission denied")
+    require_project_access(current_user, task.project_id, db)
     rows = db.query(models.ExecutionSchedule).filter_by(subtask_id=subtask_id, is_deleted=False).order_by(models.ExecutionSchedule.start_date, models.ExecutionSchedule.due_date, models.ExecutionSchedule.id).all()
     return [to_schedule_dict(row) for row in rows]
 

@@ -4,7 +4,7 @@
 
 **Goal:** Make the Project Management batch importer accept the complete exported work plan table and persist the full Project → Workstream → Key Task hierarchy.
 
-**Architecture:** Extract tabular parsing into a tested frontend module that normalizes both legacy and complete headers, carries forward merged-cell blanks, and returns normalized rows. Extend the backend import payload and transaction so each workstream becomes a `Task` and each key task becomes a `SubTask`, with validation and duplicate skipping before commit.
+**Architecture:** Extract tabular parsing into a tested frontend module that locates the header row after an optional merged title row, normalizes both legacy and complete headers, carries forward merged-cell blanks, and returns normalized rows. Extend the backend import payload and transaction so each workstream becomes a `Task` and each key task becomes a `SubTask`, with validation and duplicate skipping before commit.
 
 **Tech Stack:** React/TypeScript, Vitest, Node contract tests, FastAPI/Pydantic, SQLAlchemy, pytest, SQLite test sessions.
 
@@ -18,7 +18,7 @@
 
 - [ ] **Step 1: Define the expected normalized row contract in the test.**
 
-The test input must use the exact exported headers from `PLAN_TABLE_BUSINESS_HEADERS`, with the second data row omitting the project and workstream cells to model merged Excel cells. Assert that both rows contain the inherited project/workstream and that start/end dates are combined into `plan_time`.
+The test input must use the exact exported shape: a merged title line such as `模拟项目目标与重点工作计划表`, followed by the headers from `PLAN_TABLE_BUSINESS_HEADERS`. The second data row must omit the project and workstream cells to model merged Excel cells. Assert that both rows contain the title-derived project/workstream and that start/end dates are combined into `plan_time`.
 
 - [ ] **Step 2: Add the legacy-format compatibility test.**
 
@@ -46,7 +46,7 @@ Export `ProjectPlanImportRow`, `ProjectPlanImportError`, `ProjectPlanImportResul
 
 - [ ] **Step 2: Implement row parsing with carry-forward values.**
 
-Trim tab-separated cells, remember the latest non-empty project and workstream values, combine start/end into `plan_time` when no explicit plan time exists, and classify missing required fields as errors instead of silently dropping them.
+Trim tab-separated cells, locate the first row containing `关键任务` or `重点工作`, extract a project name from a preceding title ending in `目标与重点工作计划表`, remember the latest non-empty project and workstream values, combine start/end into `plan_time` when no explicit plan time exists, and classify missing required fields as errors instead of silently dropping them.
 
 - [ ] **Step 3: Run the parser tests and verify they pass.**
 

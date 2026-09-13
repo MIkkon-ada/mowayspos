@@ -26,7 +26,7 @@ from ..permissions import (
     require_login,
     require_project_access,
 )
-from ..services.project_resolution import resolve_project_context
+from ..compatibility.project_names import resolve_project_context
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 

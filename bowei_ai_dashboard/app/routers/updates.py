@@ -34,7 +34,7 @@ from ..ai.contracts import AIInvocationContext, Capability
 from ..ai.service import AIService
 from ..services.cross_project_submission import create_submission_batch, serialize_batch_result
 from ..services.notify import person_id_for_account as _pid_for_account, send as _notify
-from ..services.project_resolution import resolve_project_context
+from ..compatibility.project_names import resolve_project_context
 from ..services.work_report_document_text import (
     WorkReportDocumentTextError,
     extract_work_report_document_text,

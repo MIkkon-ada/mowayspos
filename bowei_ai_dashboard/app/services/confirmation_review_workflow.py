@@ -25,7 +25,7 @@ from ..services import policy as P
 from ..services import escalation as ESC
 from ..services import workflow as W
 from ..services.project_close import require_project_business_writable
-from ..services.project_resolution import resolve_project_context
+from ..compatibility.project_names import resolve_project_context
 from ..time_utils import utc_now
 
 

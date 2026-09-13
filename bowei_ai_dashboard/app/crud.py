@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from . import models
-from .services.project_resolution import resolve_project_context
+from .compatibility.project_names import resolve_project_context
 
 
 def validate_subtask_link(

@@ -43,7 +43,7 @@ from ..permissions import (
     require_project_access,
     require_project_role,
 )
-from ..services.project_resolution import resolve_project_context
+from ..compatibility.project_names import resolve_project_context
 from ..services.project_close import require_project_business_writable
 from ..services.kickoff_agent import build_kickoff_snapshot, run_kickoff_agent
 from ..services.kickoff_writeback import confirm_kickoff_start

@@ -24,7 +24,7 @@ from ..services.meeting_change_set import (
     edit_project_meeting_lineage_proposal,
     execute_meeting_change_set as execute_change_set_domain,
 )
-from ..services.project_resolution import resolve_project_context
+from ..compatibility.project_names import resolve_project_context
 
 
 def _json_value(value, fallback):

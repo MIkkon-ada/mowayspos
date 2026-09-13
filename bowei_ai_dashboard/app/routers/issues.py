@@ -28,7 +28,7 @@ from ..permissions import (
 from ..time_utils import utc_now
 
 from ..services.notify import person_id_for_name as _pid_for_name
-from ..services.project_resolution import resolve_project_context
+from ..compatibility.project_names import resolve_project_context
 from ..services.project_close import require_project_business_writable
 from ..services.key_task_execution import record_execution_event
 

@@ -10,7 +10,7 @@ from .auth import IMPERSONATE_ALLOWED, get_session_user
 from .api_errors import CodedHTTPException
 from .compatibility.project_roles import resolve_project_roles
 from .database import SessionLocal
-from .services.project_resolution import resolve_project_context
+from .compatibility.project_names import resolve_project_context
 from .settings import get_settings
 
 # ── 全局系统角色常量（仅3个，不含项目级身份）────────────────────

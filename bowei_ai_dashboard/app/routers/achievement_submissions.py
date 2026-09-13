@@ -15,7 +15,7 @@ from ..permissions import (
 )
 from ..time_utils import utc_now
 from ..services.notify import project_owner_ids, send as _notify, person_name_for_account
-from ..services.project_resolution import resolve_project_context
+from ..compatibility.project_names import resolve_project_context
 from ..services.project_close import require_project_business_writable
 
 router = APIRouter(prefix="/api/achievement-submissions", tags=["achievement-submissions"])

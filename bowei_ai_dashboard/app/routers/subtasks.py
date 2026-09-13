@@ -21,7 +21,7 @@ from ..permissions import (
     require_project_access,
 )
 from ..time_utils import utc_now
-from ..services.project_resolution import resolve_project_context
+from ..compatibility.project_names import resolve_project_context
 from ..services.project_close import require_project_business_writable
 from ..services.key_task_execution import record_execution_event
 

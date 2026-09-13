@@ -30,7 +30,7 @@ from ..permissions import (
     require_project_owner_or_admin,
 )
 from ..time_utils import utc_now
-from ..services.project_resolution import resolve_project_context
+from ..compatibility.project_names import resolve_project_context
 from ..services.project_close import require_project_business_writable
 from ..services.key_task_execution import normalize_text_list, record_execution_event
 from ..services import policy as P

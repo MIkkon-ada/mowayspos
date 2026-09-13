@@ -135,3 +135,4 @@ git commit -m "docs: verify project name compatibility containment"
 - Backend release gate after caller migration: `python -m pytest tests -q` → `1962 passed, 12 skipped` in 366.27s.
 - Frontend release gate: `npm run test:all` → `28` Vitest files / `93` tests and `508` contract tests; `npm run test:bundle` passed with initial JS `302985` B, initial CSS `97388` B, largest route `95588` B, and ExcelJS `940194` B non-initial.
 - Production import search: no `services.project_resolution` reference remains under `bowei_ai_dashboard/app`; `app/services/project_resolution.py` was deleted.
+- Hosted release gate: GitHub Actions run `34739636224` on current HEAD `f69a1eb` passed backend/frontend tests, Node 24 build, bundle baseline, PostgreSQL 16 migration, Compose smoke and port-isolation checks.

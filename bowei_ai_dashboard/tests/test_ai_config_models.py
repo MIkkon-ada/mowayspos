@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import models
 from app.database import Base
+from app.schemas import AIPolicyWrite
 
 
 @pytest.fixture()
@@ -69,3 +70,20 @@ def test_ai_policy_is_unique_per_capability_and_log_has_no_payload_columns(db):
     assert inspect(db.bind).has_table("ai_invocation_logs")
     fields = {column.name for column in models.AIInvocationLog.__table__.columns}
     assert {"prompt", "raw_response", "audio", "api_key"}.isdisjoint(fields)
+
+
+def test_ai_policy_fallback_timeout_defaults_to_25_in_model_and_schema(db):
+    policy = models.AICapabilityPolicy(capability_key="meeting.analysis")
+    db.add(policy)
+    db.flush()
+
+    payload = AIPolicyWrite(
+        primary_model_id=None,
+        fallback_model_ids=[],
+        timeout_seconds=30,
+        max_attempts=1,
+        enabled=False,
+    )
+
+    assert policy.fallback_timeout_seconds == 25
+    assert payload.fallback_timeout_seconds == 25

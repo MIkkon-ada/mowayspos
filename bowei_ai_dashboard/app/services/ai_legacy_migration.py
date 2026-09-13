@@ -241,12 +241,13 @@ def _save_missing_migration_policy(
         return
     enabled = primary_model is not None
     fallback_ids = [model.id for model in (fallback_models or [])]
+    timeout_seconds = 200 if capability_key == Capability.PROJECT_INIT_ANALYSIS else 60
     try:
         policy = repo.save_policy(
             capability_key,
             primary_model_id=primary_model.id if primary_model is not None else None,
             fallback_model_ids=fallback_ids,
-            timeout_seconds=60,
+            timeout_seconds=timeout_seconds,
             max_attempts=1 + len(fallback_ids),
             enabled=enabled,
         )
@@ -255,7 +256,7 @@ def _save_missing_migration_policy(
             capability_key,
             primary_model_id=None,
             fallback_model_ids=[],
-            timeout_seconds=60,
+            timeout_seconds=timeout_seconds,
             max_attempts=1,
             enabled=False,
         )

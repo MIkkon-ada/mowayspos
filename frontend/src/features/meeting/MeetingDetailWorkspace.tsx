@@ -99,6 +99,8 @@ export function MeetingDetailWorkspace({
   meeting,
   projectName,
   projectArchived,
+  canEdit,
+  canPublish,
   actionLoading,
   onBack,
   onEdit,
@@ -107,6 +109,8 @@ export function MeetingDetailWorkspace({
   meeting: MeetingItem
   projectName: string
   projectArchived: boolean
+  canEdit: boolean
+  canPublish: boolean
   actionLoading: boolean
   onBack: () => void
   onEdit: () => void
@@ -152,13 +156,13 @@ export function MeetingDetailWorkspace({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={onEdit} disabled={projectArchived} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:border-sky-300 hover:text-sky-600 disabled:cursor-not-allowed disabled:opacity-50">编辑</button>
+            <button type="button" onClick={onEdit} disabled={projectArchived || !canEdit} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:border-sky-300 hover:text-sky-600 disabled:cursor-not-allowed disabled:opacity-50">编辑</button>
             <button type="button" onClick={() => window.print()} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:border-sky-300 hover:text-sky-600">导出</button>
             <details className="relative">
               <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:border-sky-300 hover:text-sky-600"><span>更多</span><ChevronDownIcon /></summary>
               <div className="absolute right-0 z-10 mt-2 w-28 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
-                {status !== 'published' && <button type="button" disabled={projectArchived || actionLoading} onClick={() => onStatusChange('published')} className="w-full rounded px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50">发布</button>}
-                {status !== 'returned' && <button type="button" disabled={projectArchived || actionLoading} onClick={() => onStatusChange('returned')} className="w-full rounded px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50">退回</button>}
+                {status !== 'published' && <button type="button" disabled={projectArchived || !canPublish || actionLoading} onClick={() => onStatusChange('published')} className="w-full rounded px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50">发布</button>}
+                {status !== 'returned' && <button type="button" disabled={projectArchived || !canPublish || actionLoading} onClick={() => onStatusChange('returned')} className="w-full rounded px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50">退回</button>}
               </div>
             </details>
           </div>

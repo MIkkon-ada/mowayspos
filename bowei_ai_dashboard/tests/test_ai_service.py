@@ -20,18 +20,22 @@ class FakeAdapters:
         self.chat_results = {}
         self.chat_calls = []
         self.chat_timeouts = []
+        self.chat_response_formats = []
         self.vision_results = {}
         self.vision_calls = []
+        self.vision_timeouts = []
 
-    def complete_chat(self, model, api_key, prompt, *, timeout_seconds):
+    def complete_chat(self, model, api_key, prompt, *, timeout_seconds, response_format=None):
         self.chat_calls.append(model.id)
         self.chat_timeouts.append(timeout_seconds)
+        self.chat_response_formats.append(response_format)
         if model.id in self.chat_errors:
             raise self.chat_errors[model.id]
         return self.chat_results[model.id]
 
     def complete_project_init_vision(self, model, api_key, images, prompt, *, timeout_seconds):
         self.vision_calls.append((model.id, list(images)))
+        self.vision_timeouts.append(timeout_seconds)
         return self.vision_results[model.id]
 
 
@@ -161,6 +165,60 @@ def test_task_plan_drafting_has_no_client_request_timeout(db, configured_chat_po
     )
 
     assert fake_adapters.chat_timeouts == [None]
+    assert fake_adapters.chat_response_formats == [None]
+
+
+def test_project_init_analysis_uses_primary_and_fallback_timeouts_after_retryable_failure(
+    db, configured_chat_policy, fake_adapters
+):
+    primary, fallback = configured_chat_policy
+    AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY).save_policy(
+        Capability.PROJECT_INIT_ANALYSIS,
+        primary_model_id=primary.id,
+        fallback_model_ids=[fallback.id],
+        timeout_seconds=200,
+        fallback_timeout_seconds=25,
+        max_attempts=2,
+        enabled=True,
+    )
+    fake_adapters.chat_errors[primary.id] = AIUpstreamError(
+        "AI_UPSTREAM_TIMEOUT", retryable=True
+    )
+    fake_adapters.chat_results[fallback.id] = '{"tasks":[]}'
+
+    AIService(db, adapters=fake_adapters, cipher_key=TEST_FERNET_KEY).invoke_chat(
+        Capability.PROJECT_INIT_ANALYSIS, "extract"
+    )
+
+    assert fake_adapters.chat_timeouts == [200, 25]
+    assert fake_adapters.chat_response_formats == [{"type": "json_object"}] * 2
+
+
+@pytest.mark.parametrize("validation, expected", [
+    (False, "AI_RESPONSE_INVALID"),
+    ("json_missing_or_multiple", "json_missing_or_multiple"),
+    ("json_malformed", "json_malformed"),
+    ("schema_invalid", "schema_invalid"),
+    ("PRIVATE_MODEL_SOURCE", "AI_RESPONSE_INVALID"),
+])
+def test_response_validation_failures_retry_with_only_safe_log_codes(
+    db, configured_chat_policy, fake_adapters, validation, expected, caplog
+):
+    primary, fallback = configured_chat_policy
+    fake_adapters.chat_results[primary.id] = "PRIVATE_MODEL_SOURCE"
+    fake_adapters.chat_results[fallback.id] = "valid"
+    result = AIService(db, adapters=fake_adapters, cipher_key=TEST_FERNET_KEY).invoke_chat(
+        Capability.MEETING_ANALYSIS, "prompt",
+        response_validator=lambda text: validation if text == "PRIVATE_MODEL_SOURCE" else True,
+    )
+    assert result.model_code == "fallback"
+    logs = db.query(models.AIInvocationLog).order_by(models.AIInvocationLog.id).all()
+    assert [(log.status, log.error_code) for log in logs] == [("failed", expected), ("succeeded", "")]
+    assert "PRIVATE_MODEL_SOURCE" not in repr([
+        {column.name: getattr(log, column.name) for column in models.AIInvocationLog.__table__.columns}
+        for log in logs
+    ])
+    assert "PRIVATE_MODEL_SOURCE" not in caplog.text
 
 
 def test_project_init_vision_uses_only_explicitly_opted_in_model(
@@ -191,6 +249,34 @@ def test_project_init_vision_uses_only_explicitly_opted_in_model(
     assert result.model_code == "primary"
     assert fake_adapters.vision_calls == [(primary.id, [image_path])]
     assert fallback.id not in [model_id for model_id, _ in fake_adapters.vision_calls]
+
+
+def test_project_init_vision_uses_fallback_timeout_when_primary_is_not_vision_eligible(
+    db, configured_chat_policy, fake_adapters, tmp_path
+):
+    primary, fallback = configured_chat_policy
+    fallback.provider = "deepseek"
+    fallback.config_json = '{"vision_project_init_analysis":true}'
+    AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY).save_policy(
+        Capability.PROJECT_INIT_ANALYSIS,
+        primary_model_id=primary.id,
+        fallback_model_ids=[fallback.id],
+        timeout_seconds=200,
+        fallback_timeout_seconds=25,
+        max_attempts=2,
+        enabled=True,
+    )
+    db.commit()
+    image_path = tmp_path / "sheet.png"
+    image_path.write_bytes(b"png")
+    fake_adapters.vision_results[fallback.id] = '{"tasks":[]}'
+
+    result = AIService(
+        db, adapters=fake_adapters, cipher_key=TEST_FERNET_KEY
+    ).invoke_project_init_vision([image_path], "extract")
+
+    assert result.model_code == "fallback"
+    assert fake_adapters.vision_timeouts == [25]
 
 
 def test_project_init_vision_accepts_the_generic_project_init_opt_in(

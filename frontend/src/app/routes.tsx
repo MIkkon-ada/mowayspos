@@ -13,6 +13,7 @@ import {
 import { ProjectLayout } from '../layouts/ProjectLayout'
 import { AdminLayout } from '../layouts/AdminLayout'
 import { getPostLoginDestination } from '../domain/authFlow'
+import { canWorkflowAction } from '../domain/permissions'
 
 const DashboardPage = lazy(() => import('../pages/DashboardPage').then((m) => ({ default: m.DashboardPage })))
 const ConfirmPage = lazy(() => import('../pages/ConfirmPage').then((m) => ({ default: m.ConfirmPage })))
@@ -74,12 +75,13 @@ function ConfirmationCenterRoute() {
   const { currentUser, globalUserRoles } = useProject()
   const location = useLocation()
   const searchParams = new URLSearchParams(location.search)
-  const canReview = Boolean(
-    currentUser?.is_tech_admin ||
-    currentUser?.is_ceo ||
-    currentUser?.system_role === 'super_admin' ||
-    globalUserRoles.some((role) => ['owner', 'coordinator', 'project_ceo'].includes(role))
-  )
+  const confirmationReviewRoles = ['owner', 'coordinator', 'project_ceo'] as const
+  const canReview = canWorkflowAction('confirmation.view', {
+    isTechAdmin: currentUser?.is_tech_admin,
+    isCompanyCeo: currentUser?.is_ceo,
+    personId: currentUser?.person_id,
+    projectRoles: globalUserRoles.filter((role) => confirmationReviewRoles.includes(role as typeof confirmationReviewRoles[number])),
+  })
 
   if (searchParams.get('view') === 'mine' || !canReview) {
     const params = new URLSearchParams({ history: '1' })

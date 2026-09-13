@@ -151,6 +151,7 @@ def import_projects(db: Session, reader: XlsxReader) -> int:
                 owners=a["owner"],
                 collaborators=a["collaborators"],
                 sort_order=idx,
+                status="active",
                 is_active=True,
             ))
             count += 1

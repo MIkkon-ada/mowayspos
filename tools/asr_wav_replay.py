@@ -298,7 +298,7 @@ def write_debug_transcripts(results: Iterable[Mapping[str, object]], output: str
 def main() -> None:
     parser = argparse.ArgumentParser(description="Replay local work-report ASR WAV corpus")
     parser.add_argument("--corpus", required=True)
-    parser.add_argument("--url", default="ws://127.0.0.1:8008/api/transcribe/stream")
+    parser.add_argument("--url", default="ws://127.0.0.1:8011/api/transcribe/stream")
     parser.add_argument("--project-id", type=int, required=True)
     parser.add_argument("--task-id", type=int, required=True)
     parser.add_argument("--cookie", default=os.environ.get("MOWAYS_ASR_SESSION_COOKIE"))

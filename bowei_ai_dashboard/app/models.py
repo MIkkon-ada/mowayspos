@@ -31,7 +31,7 @@ class Task(Base, TimestampMixin):
     key_task = Column(String(200), nullable=False)
     key_achievement = Column(String(200), default="")
     completion_standard = Column(Text, default="")
-    plan_process = Column(Text, default="")
+    plan_process = Column(Text, default="", server_default="")
     coordinator = Column(String(50), default="")
     owner = Column(String(50), index=True)
     owner_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
@@ -132,7 +132,6 @@ class MeetingDocumentSource(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
-    meeting_id = Column(Integer, ForeignKey("meetings.id", ondelete="SET NULL"), nullable=True, index=True)
     original_name = Column(String(255), nullable=False)
     storage_key = Column(String(255), nullable=False, unique=True)
     mime_type = Column(String(120), nullable=False)
@@ -482,6 +481,7 @@ class AICapabilityPolicy(Base, TimestampMixin):
         Text, nullable=False, default="[]", server_default="[]"
     )
     timeout_seconds = Column(Integer, nullable=False, default=60, server_default="60")
+    fallback_timeout_seconds = Column(Integer, nullable=False, default=25, server_default="25")
     max_attempts = Column(Integer, nullable=False, default=1, server_default="1")
     policy_version = Column(Integer, nullable=False, default=1, server_default="1")
     enabled = Column(Boolean, nullable=False, default=False, server_default=false(), index=True)

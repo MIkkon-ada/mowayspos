@@ -21,7 +21,7 @@ from ..time_utils import utc_now
 from ..services.extractor import extract_tasks as _extract_tasks
 from ..ai.service import AIService
 from ..services.notify import person_id_for_name as _pid_for_name, send as _notify, person_name_for_account
-from ..services.project_resolution import resolve_project_context
+from ..compatibility.project_names import resolve_project_context
 from ..services.project_close import require_project_business_writable
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])  # endpoint 不变；业务语义：Workstream/重点工作 CRUD

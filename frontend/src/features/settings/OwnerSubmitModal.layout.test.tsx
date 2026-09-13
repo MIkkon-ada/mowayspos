@@ -1,5 +1,5 @@
 /* @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
@@ -54,7 +54,7 @@ describe('owner submit approved B layout', () => {
     expect(screen.getByText('P-TEST1')).toBeTruthy()
     expect(screen.getByText('工作推进方案')).toBeTruthy()
     expect(screen.getAllByText('未命名重点工作').length).toBe(2)
-    expect(screen.getByText('目标成果')).toBeTruthy()
+    expect(screen.getByText('目标')).toBeTruthy()
     expect(screen.getByText('验收标准 / 关键成果')).toBeTruthy()
     expect(screen.getByText('推进流程')).toBeTruthy()
     expect(screen.getByTestId('owner-submit-goal-result').getAttribute('data-layout')).toBe('stacked')
@@ -92,6 +92,20 @@ describe('owner submit approved B layout', () => {
 
     expect(screen.getByText('02')).toBeTruthy()
     expect(screen.getAllByRole('heading', { name: '关键任务' }).length).toBe(1)
+  })
+
+  it('selects a newly added workstream and returns to a valid selection after deletion', async () => {
+    render(<OwnerSubmitWorkbench project={project} onClose={vi.fn()} />)
+    await screen.findByText('项目概览')
+
+    fireEvent.click(screen.getByRole('button', { name: '+ 新增重点工作' }))
+    expect(screen.getByText('02')).toBeTruthy()
+
+    fireEvent.click(screen.getByLabelText('重点工作 2 更多操作'))
+    fireEvent.click(screen.getByRole('button', { name: '删除重点工作' }))
+
+    await waitFor(() => expect(screen.queryByText('02')).toBeNull())
+    expect(screen.getByText('01')).toBeTruthy()
   })
 
   it('uses compact project rows, natural-height work content, and footer safe space', async () => {

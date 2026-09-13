@@ -182,6 +182,20 @@ function fileResults(run: ProjectInitAnalysisRun): FileResult[] {
 }
 
 type ModelUsage = { display_name?: string; model_name?: string; code?: string }
+type ModelAttempt = ModelUsage & { status?: string; duration_ms?: number; error_code?: string; fallback_used?: boolean }
+
+const ATTEMPT_ERROR_LABELS: Record<string, string> = {
+  AI_UPSTREAM_TIMEOUT: '请求超时',
+  AI_UPSTREAM_RATE_LIMIT: '请求过于频繁',
+  AI_UPSTREAM_CONNECTION: '连接失败',
+  AI_UPSTREAM_5XX: '模型服务暂时不可用',
+  AI_UPSTREAM_BAD_REQUEST: '模型请求配置不受支持',
+  AI_UPSTREAM_AUTH: '模型身份验证失败',
+  AI_RESPONSE_INVALID: '模型返回格式不符合要求',
+  json_missing_or_multiple: '未返回唯一的 JSON 对象',
+  json_malformed: 'JSON 格式错误',
+  schema_invalid: '草稿字段结构不符合要求',
+}
 
 function modelUsages(run: ProjectInitAnalysisRun, key: 'model_strategy' | 'attempted_models'): ModelUsage[] {
   const value = run.result_metadata[key]
@@ -196,6 +210,9 @@ function modelLabel(model: ModelUsage): string {
 function ModelUsageSummary({ run }: { run: ProjectInitAnalysisRun }) {
   const strategy = modelUsages(run, 'model_strategy')
   const attempted = modelUsages(run, 'attempted_models')
+  const attempts: ModelAttempt[] = Array.isArray(run.result_metadata.model_attempts)
+    ? run.result_metadata.model_attempts.filter((item): item is ModelAttempt => item !== null && typeof item === 'object')
+    : []
   const strategyStatus = run.result_metadata.model_strategy_status
   const strategyLabel = strategy.length
     ? strategy.map(modelLabel).join(' → ')
@@ -212,6 +229,15 @@ function ModelUsageSummary({ run }: { run: ProjectInitAnalysisRun }) {
   return <div className="space-y-1 text-xs text-slate-500">
     <p>模型策略：{strategyLabel}</p>
     {attempted.length > 0 && <p>本次尝试：{attempted.map(modelLabel).join(' → ')}</p>}
+    {attempts.filter(attempt => attempt.status === 'failed').map((attempt, index) => {
+      const label = Object.hasOwn(ATTEMPT_ERROR_LABELS, attempt.error_code || '')
+        ? ATTEMPT_ERROR_LABELS[attempt.error_code!]
+        : '模型调用失败'
+      const duration = typeof attempt.duration_ms === 'number' && Number.isFinite(attempt.duration_ms) && attempt.duration_ms >= 0
+        ? `（${(attempt.duration_ms / 1000).toFixed(1)} 秒）`
+        : ''
+      return <p key={index}>{modelLabel(attempt)}：{label}{duration}{attempt.fallback_used === true ? ' · 备用模型' : ''}</p>
+    })}
     {finalLabel && <p>实际模型：{finalLabel}</p>}
     {!finalLabel && deterministicProcessor && <p>实际处理器：{deterministicProcessor}</p>}
   </div>

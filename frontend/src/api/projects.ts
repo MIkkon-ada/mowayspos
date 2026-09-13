@@ -174,6 +174,8 @@ export function approveProject(
 
 export type BatchImportRow = {
   project_name: string
+  project_objective?: string
+  workstream?: string
   key_task: string
   key_achievement?: string
   completion_standard?: string
@@ -181,8 +183,14 @@ export type BatchImportRow = {
   owner?: string
   collaborators?: string
   plan_time?: string
+  plan_start?: string
+  plan_end?: string
+  workstream_plan_start?: string
+  workstream_plan_end?: string
   status?: string
   issue?: string
+  notes?: string
+  sequence?: string
 }
 
 export type BatchImportResult = {
@@ -190,7 +198,9 @@ export type BatchImportResult = {
   projects_created: number
   projects_matched: number
   tasks_created: number
+  subtasks_created: number
   issues_created: number
+  duplicates_skipped: number
   skipped_rows: number
 }
 

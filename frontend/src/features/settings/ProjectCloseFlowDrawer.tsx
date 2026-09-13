@@ -7,6 +7,7 @@ import {
 } from '../../api/projects'
 import { getProjectPrimaryStatus, getProjectStatusLabel } from '../../domain/projectLifecycleStatus'
 import { canCreateProjectCloseRequest, canEditProjectCloseRequest, canReviewProjectCloseRequest, type ProjectCloseRoles } from '../../domain/projectCloseUi'
+import { canProjectAction } from '../../domain/permissions'
 import { toast } from '../../utils/toast'
 
 type Props = {
@@ -214,7 +215,7 @@ export function ProjectCloseFlowDrawer({ open, project, currentPersonId, roles, 
           {canCreate && !loadFailed && <button type="button" onClick={() => save(true)} disabled={writesDisabled} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busyAction === 'create' ? '提交中…' : roles.isSuperAdmin ? '提交结束申请（技术兜底）' : '提交结束申请'}</button>}
           {canEdit && request?.status === 'pending' && <><button type="button" onClick={() => save(false)} disabled={writesDisabled} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">保存修改</button><button type="button" onClick={() => { if (window.confirm('确认取消本次结束申请？')) void runAction('cancel', () => cancelProjectCloseRequest(project.id, request.id), '结束申请已取消') }} disabled={writesDisabled} className="rounded-lg border border-orange-300 px-4 py-2 text-sm text-orange-700 disabled:opacity-50">取消申请</button></>}
           {canReview && request?.status === 'pending' && <><button type="button" onClick={() => { if (!reviewComment.trim()) { setErrorText('退回修改必须填写审核意见。'); return } if (window.confirm('确认退回本次结束申请？')) void runAction('reject', () => rejectProjectCloseRequest(project.id, request.id, { review_comment: reviewComment.trim() }), '结束申请已退回') }} disabled={writesDisabled} className="rounded-lg border border-orange-300 px-4 py-2 text-sm text-orange-700 disabled:opacity-50">退回修改</button><button type="button" onClick={() => { if (window.confirm('确认批准项目结束？')) void runAction('approve', () => approveProjectCloseRequest(project.id, request.id, { review_comment: reviewComment.trim() }), '项目已批准结束') }} disabled={writesDisabled} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">批准结束</button></>}
-          {status === 'ended' && roles.isSuperAdmin && <button type="button" onClick={() => { if (window.confirm('确认归档该项目？')) void runAction('archive', () => archiveProject(project.id), '项目已归档') }} disabled={writesDisabled} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">归档项目</button>}
+          {status === 'ended' && roles.isSuperAdmin && canProjectAction('project.archive', { isTechAdmin: roles.isSuperAdmin, lifecycle: status }) && <button type="button" onClick={() => { if (window.confirm('确认归档该项目？')) void runAction('archive', () => archiveProject(project.id), '项目已归档') }} disabled={writesDisabled} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">归档项目</button>}
         </footer>
       </aside>
     </div>

@@ -70,6 +70,7 @@ class AIPolicyWrite(BaseModel):
     primary_model_id: int | None = Field(default=None, gt=0)
     fallback_model_ids: list[int] = Field(default_factory=list)
     timeout_seconds: int = Field(gt=0, le=600)
+    fallback_timeout_seconds: int = Field(default=25, gt=0, le=600)
     max_attempts: int = Field(ge=1, le=10)
     enabled: bool
 
@@ -330,6 +331,8 @@ class ProjectCreatePayload(BaseModel):
 
 class BatchImportRow(BaseModel):
     project_name: str
+    project_objective: str = ""
+    workstream: str = ""
     key_task: str = ""
     key_achievement: str = ""
     completion_standard: str = ""
@@ -337,12 +340,29 @@ class BatchImportRow(BaseModel):
     owner: str = ""
     collaborators: str = ""
     plan_time: str = ""
+    plan_start: str = ""
+    plan_end: str = ""
+    workstream_plan_start: str = ""
+    workstream_plan_end: str = ""
     status: str = "未开始"
     issue: str = ""
+    notes: str = ""
 
 
 class ProjectBatchImportPayload(BaseModel):
     rows: list[BatchImportRow]
+
+
+class ProjectPlanAiImportPreviewResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_profile: dict[str, Any] = Field(default_factory=dict)
+    tasks: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    warnings: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    source_files: list[str] = Field(default_factory=list, max_length=20)
+    provider: str = ""
+    model_name: str = ""
+    fallback_mode: Literal["ai", "deterministic"]
 
 
 class ProjectPatchPayload(BaseModel):

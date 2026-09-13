@@ -44,10 +44,9 @@ def test_project_core_info_is_current_left_sidebar():
 
     for expected in [
         "owner-submit-left-pane",
-        "lg:w-[280px]",
-        "xl:w-[300px]",
+        "lg:w-[360px]",
         "owner-submit-right-pane",
-        "flex-1 min-w-0",
+        "min-w-0 flex-1",
         "sticky",
     ]:
         assert expected in source
@@ -57,14 +56,17 @@ def test_project_info_area_uses_current_compact_card_style():
     source = _frontend_source("features/settings/OwnerSubmitModal.tsx")
 
     for expected in [
-        "owner-submit-core-card",
+        "owner-submit-project-summary owner-submit-project-summary-display owner-submit-core-card",
         "rounded-2xl border border-slate-200 bg-white",
-        "shadow-[0_8px_24px_rgba(15,23,42,0.05)]",
-        "space-y-5",
-        "基础信息由管理层维护",
-        "owner-submit-project-summary-display",
-        "owner-submit-project-period-display",
-        "项目完成准则 / 验收标准",
+        "项目概览",
+        "项目编号",
+        "项目状态",
+        "项目周期",
+        "项目目标",
+        "项目背景",
+        "补充说明",
+        "项目说明",
+        "项目角色",
     ]:
         assert expected in source
 
@@ -82,11 +84,13 @@ def test_task_group_uses_current_compact_card_style():
 
     for expected in [
         "owner-submit-workplan-heading",
-        "owner-submit-task-group",
-        "overflow-hidden rounded-2xl border border-slate-200 bg-white",
-        "owner-submit-task-group-header",
-        "bg-slate-50",
-        "md:grid-cols-2",
+        "owner-submit-b-split",
+        "owner-submit-title-display",
+        "owner-submit-goal-result",
+        "验收标准 / 关键成果",
+        "推进流程",
+        "owner-submit-subtask-table",
+        "lg:min-w-0",
     ]:
         assert expected in source
 
@@ -100,9 +104,11 @@ def test_subtask_uses_current_table_like_layout():
         "border-separate border-spacing-0",
         "thead",
         "tbody",
-        "border-none bg-transparent p-0",
         "时间段",
-        "备注 / 标准",
+        "评价指标",
+        "owner-submit-subtask-drag-handle",
+        "owner-submit-date-icon",
+        "owner-submit-subtask-delete-icon",
     ]:
         assert expected in source
 

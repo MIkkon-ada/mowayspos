@@ -116,6 +116,7 @@ def test_inner_nginx_has_api_websocket_upload_and_forwarded_proto_contract():
 def test_frontend_dockerfile_uses_tracked_lockfile_with_npm_ci():
     dockerfile = _read("Dockerfile.frontend")
 
+    assert "FROM node:24-alpine AS builder" in dockerfile
     assert "COPY frontend/package.json frontend/package-lock.json ./" in dockerfile
     assert "RUN npm ci" in dockerfile
     assert "npm install" not in dockerfile
@@ -135,6 +136,8 @@ def test_github_actions_gate_runs_the_complete_isolated_runtime_contract():
     assert ci_key_match, "CI must define an ephemeral Fernet key for production startup"
     Fernet(ci_key_match.group(1).encode("utf-8"))
     assert "AI_CONFIG_ENCRYPTION_KEY=$CI_FERNET_KEY" in workflow
+
+    assert 'echo "AI_CONFIG_ENCRYPTION_KEY=$CI_FERNET_KEY" >> "$GITHUB_ENV"' in workflow
 
     assert "MOWAYS_DATA_ROOT: ${{ runner.temp }}" not in workflow
     assert "MOWAYS_ENV_FILE: ${{ runner.temp }}" not in workflow
@@ -157,7 +160,7 @@ def test_github_actions_gate_runs_the_complete_isolated_runtime_contract():
         "contents: read",
         "runs-on: ubuntu-latest",
         "python-version: '3.12'",
-        "node-version: '20'",
+        "node-version: '24'",
         "python -m pip install pytest==9.0.3",
         "npm ci",
         "python -m compileall bowei_ai_dashboard/app",

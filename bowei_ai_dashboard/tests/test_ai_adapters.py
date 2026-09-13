@@ -13,6 +13,27 @@ from app.ai.contracts import AIUpstreamError
 from app.ai.adapters import OpenAICompatibleChatAdapter
 
 
+def test_anthropic_json_mode_works_without_unsupported_assistant_prefill(monkeypatch):
+    import anthropic
+    from app.ai.adapters import DefaultAIAdapters
+
+    captured = {}
+    def create(**kwargs):
+        captured.update(kwargs)
+        assert kwargs["messages"][-1]["role"] == "user"
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text='{"tasks": []}')])
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **_kwargs: SimpleNamespace(messages=SimpleNamespace(create=create)))
+    model = models.AIModel(provider="anthropic", model_name="claude-sonnet-4-6", base_url="https://example.test")
+
+    text = DefaultAIAdapters().complete_chat(model, "secret", "extract JSON", timeout_seconds=30,
+                                            response_format={"type": "json_object"})
+    assert json.loads(text) == {"tasks": []}
+    assert captured["model"] == "claude-sonnet-4-6"
+    assert all(message["role"] == "user" for message in captured["messages"])
+    assert "Return exactly one JSON object" in captured["messages"][0]["content"]
+    assert "response_format" not in captured
+
+
 def test_openai_compatible_chat_uses_model_max_output_tokens(monkeypatch):
     captured: dict = {}
 
@@ -44,7 +65,8 @@ def test_openai_compatible_chat_uses_model_max_output_tokens(monkeypatch):
     assert captured["max_tokens"] == 8192
 
 
-def test_openai_compatible_chat_forwards_explicit_json_output(monkeypatch):
+@pytest.mark.parametrize("configured", [True, False])
+def test_openai_compatible_chat_forwards_explicit_json_output(monkeypatch, configured):
     captured: dict = {}
 
     class FakeCompletions:
@@ -63,11 +85,14 @@ def test_openai_compatible_chat_forwards_explicit_json_output(monkeypatch):
         model_name="deepseek-chat",
         model_type="chat",
         base_url="https://example.test/v1",
-        config_json=json.dumps({"response_format": {"type": "json_object"}}),
+        config_json=json.dumps({"response_format": {"type": "json_object"}} if configured else {}),
         enabled=True,
     )
 
-    OpenAICompatibleChatAdapter().complete(model, "secret", "return JSON", timeout_seconds=30)
+    OpenAICompatibleChatAdapter().complete(
+        model, "secret", "return JSON", timeout_seconds=30,
+        **({} if configured else {"response_format": {"type": "json_object"}}),
+    )
 
     assert captured["response_format"] == {"type": "json_object"}
 

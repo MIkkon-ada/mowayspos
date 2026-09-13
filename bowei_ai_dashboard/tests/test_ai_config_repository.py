@@ -123,3 +123,57 @@ def test_enabled_policy_requires_a_credentialed_primary_model(db):
     )
     assert policy.enabled is False
     assert policy.primary_model_id is None
+
+
+def test_policy_persists_fallback_timeout_seconds(db):
+    repo = AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY)
+    chat = _chat_model(repo)
+    repo.replace_credential(chat.id, api_key="key", app_secret=None)
+
+    policy = repo.save_policy(
+        "project.init.analysis",
+        primary_model_id=chat.id,
+        fallback_model_ids=[],
+        timeout_seconds=200,
+        fallback_timeout_seconds=25,
+        max_attempts=1,
+        enabled=True,
+    )
+    db.commit()
+    db.expire_all()
+
+    assert db.get(type(policy), policy.id).fallback_timeout_seconds == 25
+
+    updated = repo.save_policy(
+        "project.init.analysis",
+        primary_model_id=chat.id,
+        fallback_model_ids=[],
+        timeout_seconds=200,
+        fallback_timeout_seconds=26,
+        max_attempts=1,
+        enabled=True,
+    )
+
+    assert updated.policy_version == 2
+
+
+def test_new_project_init_policy_defaults_to_longer_primary_timeout(db):
+    repo = AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY)
+    chat = _chat_model(repo)
+    repo.replace_credential(chat.id, api_key="key", app_secret=None)
+
+    project_init = repo.save_policy(
+        "project.init.analysis",
+        primary_model_id=chat.id,
+        fallback_model_ids=[],
+        enabled=True,
+    )
+    meeting = repo.save_policy(
+        "meeting.analysis",
+        primary_model_id=chat.id,
+        fallback_model_ids=[],
+        enabled=True,
+    )
+
+    assert (project_init.timeout_seconds, project_init.fallback_timeout_seconds) == (200, 25)
+    assert meeting.timeout_seconds == 60

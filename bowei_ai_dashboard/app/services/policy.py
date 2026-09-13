@@ -7,6 +7,12 @@ Routers import from here instead of duplicating logic.
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain.project_permissions import ProjectPermissionSubject
+from ..domain.workflow_permissions import (
+    WorkflowAction,
+    WorkflowPermissionResource,
+    decide_workflow_action,
+)
 from ..permissions import (
     can_ceo_decide_by_project,
     can_confirm_submission_by_project,
@@ -45,6 +51,30 @@ def user_roles_in_project(
             return set(db_roles)
 
     return set()
+
+
+def decide_workflow_for_project(
+    context: dict,
+    project_id: int | None,
+    action: WorkflowAction | str,
+    db: Session,
+    *,
+    submitter_person_id: int | None = None,
+    creator_person_id: int | None = None,
+):
+    """Adapt the database-backed user context to the pure workflow policy."""
+    subject = ProjectPermissionSubject(
+        is_tech_admin=bool(context.get("is_tech_admin")),
+        is_company_ceo=bool(context.get("is_ceo")),
+        person_id=context.get("person_id"),
+        project_roles=frozenset(user_roles_in_project(context, project_id, db)),
+    )
+    resource = WorkflowPermissionResource(
+        project_id=project_id,
+        submitter_person_id=submitter_person_id,
+        creator_person_id=creator_person_id,
+    )
+    return decide_workflow_action(subject, resource, action)
 
 
 # ── Per-submission checks (handle project_id=NULL guard) ───────

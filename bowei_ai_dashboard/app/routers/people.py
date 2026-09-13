@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
-from ..permissions import ROLE_CEO, ROLE_NORMAL, ROLE_SUPER_ADMIN, ensure_default_projects, get_current_user_name, get_user_context_from_db, normalize_system_role, system_role_label
+from ..permissions import ROLE_CEO, ROLE_NORMAL, ROLE_SUPER_ADMIN, get_current_user_name, get_user_context_from_db, normalize_system_role, require_login, system_role_label
+from . import projects as project_routes
 
 router = APIRouter(prefix="/api/people", tags=["people"])
 
@@ -235,21 +236,12 @@ def me(current_user: str = Depends(get_current_user_name), db: Session = Depends
 
 
 @router.get("/projects")
-def list_projects(db: Session = Depends(get_db)):
-    ensure_default_projects(db)
-    projects = db.query(models.Project).filter(models.Project.status != "archived").order_by(models.Project.sort_order, models.Project.id).all()
-    return [
-        {
-            "id": row.id,
-            "name": row.name,
-            "coordinator": row.coordinator or "",
-            "owners": _split_names(row.owners),
-            "collaborators": _split_names(row.collaborators),
-            "sort_order": row.sort_order or 0,
-            "is_active": row.is_active,
-        }
-        for row in projects
-    ]
+def list_projects(
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """Legacy alias for the current-user project list without implicit writes."""
+    return project_routes.list_projects(current_user=current_user, db=db)
 
 
 @router.post("/projects")
@@ -259,31 +251,7 @@ def create_project(
     db: Session = Depends(get_db),
 ):
     _require_admin(current_user, db)
-    if db.query(models.Project).filter_by(name=payload.name.strip()).first():
-        raise HTTPException(400, "涓撻」鍚嶇О宸插瓨鍦?")
-    row = models.Project(
-        name=payload.name.strip(),
-        coordinator=payload.coordinator.strip(),
-        owners=_join_names(payload.owners),
-        collaborators=_join_names(payload.collaborators),
-        sort_order=payload.sort_order,
-        is_active=payload.is_active,
-    )
-    db.add(row)
-    db.flush()
-    _rebuild_person_duties(db)
-    crud.log(db, current_user, "create", "project", row.id, after=crud.to_dict(row))
-    db.commit()
-    db.refresh(row)
-    return {
-        "id": row.id,
-        "name": row.name,
-        "coordinator": row.coordinator,
-        "owners": _split_names(row.owners),
-        "collaborators": _split_names(row.collaborators),
-        "sort_order": row.sort_order,
-        "is_active": row.is_active,
-    }
+    raise HTTPException(410, "项目旧写接口已停用，请使用 /api/projects")
 
 
 @router.put("/projects/{project_id}")
@@ -294,31 +262,7 @@ def update_project(
     db: Session = Depends(get_db),
 ):
     _require_admin(current_user, db)
-    row = db.get(models.Project, project_id)
-    if not row:
-        raise HTTPException(404, "project not found")
-    duplicate = db.query(models.Project).filter(models.Project.name == payload.name.strip(), models.Project.id != project_id).first()
-    if duplicate:
-        raise HTTPException(400, "涓撻」鍚嶇О宸插瓨鍦?")
-    before = crud.to_dict(row)
-    row.name = payload.name.strip()
-    row.coordinator = payload.coordinator.strip()
-    row.owners = _join_names(payload.owners)
-    row.collaborators = _join_names(payload.collaborators)
-    row.sort_order = payload.sort_order
-    row.is_active = payload.is_active
-    _rebuild_person_duties(db)
-    crud.log(db, current_user, "update", "project", row.id, before=before, after=crud.to_dict(row))
-    db.commit()
-    return {
-        "id": row.id,
-        "name": row.name,
-        "coordinator": row.coordinator,
-        "owners": _split_names(row.owners),
-        "collaborators": _split_names(row.collaborators),
-        "sort_order": row.sort_order,
-        "is_active": row.is_active,
-    }
+    raise HTTPException(410, "项目旧写接口已停用，请使用 /api/projects")
 
 
 @router.delete("/projects/{project_id}")
@@ -328,15 +272,7 @@ def delete_project(
     db: Session = Depends(get_db),
 ):
     _require_admin(current_user, db)
-    row = db.get(models.Project, project_id)
-    if not row:
-        raise HTTPException(404, "project not found")
-    before = crud.to_dict(row)
-    db.delete(row)
-    _rebuild_person_duties(db)
-    crud.log(db, current_user, "delete", "project", project_id, before=before)
-    db.commit()
-    return {"ok": True}
+    raise HTTPException(410, "项目旧写接口已停用，请使用 /api/projects")
 
 
 @router.post("/batch")
@@ -376,7 +312,11 @@ def batch_create_people(
 
 
 @router.get("")
-def list_people(db: Session = Depends(get_db)):
+def list_people(
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    require_login(current_user, db)
     rows = db.query(models.Person).order_by(models.Person.is_active.desc(), models.Person.id.asc()).all()
     return [_person_to_dict(row) for row in rows]
 
@@ -417,7 +357,12 @@ def create_person(
 
 
 @router.get("/{row_id}")
-def get_person(row_id: int, db: Session = Depends(get_db)):
+def get_person(
+    row_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    require_login(current_user, db)
     row = db.get(models.Person, row_id)
     if not row:
         raise HTTPException(404, "person not found")

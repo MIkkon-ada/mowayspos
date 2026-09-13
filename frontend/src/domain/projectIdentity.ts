@@ -3,10 +3,6 @@ import type { Project } from '../types'
 type ProjectRecord = Record<string, unknown>
 type ProjectSummary = Pick<Project, 'id' | 'name'>
 
-function text(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : ''
-}
-
 function toNumber(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string' && value.trim()) {
@@ -18,14 +14,6 @@ function toNumber(value: unknown): number | null {
 
 function asRecord(value: unknown): ProjectRecord {
   return typeof value === 'object' && value !== null ? (value as ProjectRecord) : {}
-}
-
-function firstText(source: ProjectRecord, keys: string[]): string {
-  for (const key of keys) {
-    const value = text(source[key])
-    if (value) return value
-  }
-  return ''
 }
 
 export function getProjectById<T extends ProjectSummary>(projects: ReadonlyArray<T>, projectId: number | null | undefined): T | null {
@@ -47,28 +35,6 @@ export function getProjectIdFromRecord(record: ProjectRecord | null | undefined)
   if (nested != null) return nested
 
   return null
-}
-
-export function getProjectDisplayName(
-  projects: ReadonlyArray<ProjectSummary>,
-  record?: ProjectRecord | null,
-  fallback = '',
-): string {
-  // Resolve by project_id first; legacy name fields are display-only fallbacks.
-  const data = record ?? {}
-  const projectId = getProjectIdFromRecord(data)
-  if (projectId != null) {
-    const matched = getProjectById(projects, projectId)
-    if (matched) return matched.name
-  }
-
-  return firstText(data, [
-    'special_project',
-    'related_special_project',
-    'project_name',
-    'projectName',
-    'parent_special_project',
-  ]) || fallback
 }
 
 export function isSameProjectById(record: ProjectRecord | null | undefined, projectId: number | null | undefined): boolean {

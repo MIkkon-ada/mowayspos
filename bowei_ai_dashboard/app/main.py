@@ -17,6 +17,7 @@ from .settings import get_settings, load_local_env
 load_local_env()
 
 from . import models
+from .api_errors import CodedHTTPException, coded_http_exception_handler
 from .auth import (
     _check_password,
     create_session,
@@ -56,6 +57,7 @@ from .routers import (
     monthly_plans,
     key_tasks,
     project_init_ai,
+    project_plan_ai_import,
     task_plan_proposals,
     people,
     platform_settings,
@@ -199,6 +201,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Moways-SOP project collaboration platform", version="0.3", lifespan=lifespan)
+app.add_exception_handler(CodedHTTPException, coded_http_exception_handler)
 _runtime_settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
@@ -401,7 +404,7 @@ def health_check():
 @app.get("/login")
 def login_page():
     return PlainTextResponse(
-        "Legacy UI removed. Open the new frontend at http://127.0.0.1:6001",
+        "Legacy UI removed. Open the new frontend at http://127.0.0.1:6004",
         status_code=200,
     )
 
@@ -546,7 +549,7 @@ async def auth_change_password(request: Request):
 @app.get("/")
 def index():
     return PlainTextResponse(
-        "Legacy UI removed. Open the new frontend at http://127.0.0.1:6001",
+        "Legacy UI removed. Open the new frontend at http://127.0.0.1:6004",
         status_code=200,
     )
 
@@ -583,6 +586,7 @@ app.include_router(monthly_plans.router)
 app.include_router(key_tasks.router)
 app.include_router(project_init_ai.router)
 app.include_router(project_init_ai.analysis_router)
+app.include_router(project_plan_ai_import.router)
 app.include_router(task_plan_proposals.router)
 app.include_router(admin.router)
 app.include_router(wecom_auth.router)

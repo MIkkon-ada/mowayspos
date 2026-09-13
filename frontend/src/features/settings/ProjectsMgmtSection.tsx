@@ -12,10 +12,9 @@ import {
   returnProject,
   addProjectMember,
   removeProjectMember,
-  batchImportProjects,
   deleteProject,
 } from '../../api/projects'
-import type { BatchImportRow, ProjectProfilePayload } from '../../api/projects'
+import type { ProjectProfilePayload } from '../../api/projects'
 import type { CurrentUser, Person, Project, ProjectMember, TaskItem } from '../../types'
 import type { SubTaskWithParent } from '../../api/subtasks'
 import { fetchPeople } from '../../api/people'
@@ -23,7 +22,7 @@ import { fetchTasks } from '../../api/tasks'
 import { fetchSubtasksByProject } from '../../api/subtasks'
 import { fmtPlanTime, fmtDate } from '../../utils/time'
 import { toast } from '../../utils/toast'
-import { canManageProjects } from '../../domain/permissions'
+import { canManageProjects, canProjectAction } from '../../domain/permissions'
 import { projectOwnerSubmitPath } from '../../domain/projectEntryRoutes'
 import {
   getProjectPrimaryStatus,
@@ -44,6 +43,7 @@ import {
 import { ProjectOverviewStats } from './ProjectOverviewStats'
 import { ProjectTodoSection, type ProjectTodoViewModel } from './ProjectTodoSection'
 import { buildDraftRows, type ProjectReviewDraftRow } from './projectReviewDraftRows'
+import { ProjectPlanAiImportDialog } from './ProjectPlanAiImportDialog'
 
 // ── 常量 ──────────────────────────────────────────────────────
 
@@ -112,23 +112,6 @@ function getReminderToneClass(status: string): string {
   if (status === 'ended') return 'border-indigo-200 bg-indigo-50 text-indigo-900'
   if (status === 'archived') return 'border-slate-200 bg-slate-50 text-slate-700'
   return 'border-sky-200 bg-sky-50 text-sky-900'
-}
-
-const IMPORT_COL_MAP: Record<string, keyof BatchImportRow> = {
-  项目: 'project_name',
-  阶段: 'project_name',
-  关键任务: 'key_task',
-  关键成果: 'key_achievement',
-  完成标准: 'completion_standard',
-  统筹人: 'coordinator',
-  负责人: 'owner',
-  协同: 'collaborators',
-  成员: 'collaborators',
-  计划时间: 'plan_time',
-  当前状态: 'status',
-  状态: 'status',
-  问题与需协调事项: 'issue',
-  问题: 'issue',
 }
 
 // ── 辅助函数 ──────────────────────────────────────────────────
@@ -244,19 +227,31 @@ function getMainAction(
   if (closeAction && status !== 'active') return closeAction
   switch (status) {
     case 'draft':
-      return isSuperAdmin || isCompanyCeo
+      return canProjectAction('project.dispatch', {
+        isTechAdmin: isSuperAdmin,
+        isCompanyCeo,
+        lifecycle: status,
+      })
         ? isProjectDispatchReady(project)
           ? { label: '下发给负责人', type: 'dispatch' }
           : { label: '完善基础信息', type: 'edit' }
         : { label: '查看详情', type: 'viewDetail' }
     case 'dispatched':
-      return isRealOwner
+      return canProjectAction('project.owner_submit', {
+        isTechAdmin: isSuperAdmin,
+        projectRoles: isRealOwner ? ['owner'] : [],
+        lifecycle: status,
+      })
         ? { label: '完善项目计划', type: 'ownerSubmit' }
         : { label: '查看详情', type: 'viewDetail' }
     case 'pending_review':
       return { label: '审核项目', type: 'approvalMaterials' }
     case 'returned':
-      return isRealOwner
+      return canProjectAction('project.owner_submit', {
+        isTechAdmin: isSuperAdmin,
+        projectRoles: isRealOwner ? ['owner'] : [],
+        lifecycle: status,
+      })
         ? { label: '修改项目计划', type: 'ownerSubmit' }
         : { label: '查看详情', type: 'viewDetail' }
     case 'active':
@@ -327,9 +322,6 @@ export function ProjectsMgmtSection() {
 
   // 批量导入
   const [importOpen, setImportOpen] = useState(false)
-  const [importText, setImportText] = useState('')
-  const [importRows, setImportRows] = useState<BatchImportRow[]>([])
-  const [importing, setImporting] = useState(false)
 
   // 更多菜单
   const [menuState, setMenuState] = useState<{ pid: number; anchorEl: HTMLButtonElement } | null>(null)
@@ -398,7 +390,13 @@ export function ProjectsMgmtSection() {
     !currentUser?.is_tech_admin && !currentUser?.is_ceo
     && globalUserRoles.includes('project_ceo')
 
-  const isFullAdmin = Boolean(currentUser?.is_tech_admin || currentUser?.is_ceo)
+  const canCreateProject = canProjectAction('project.create', {
+    isTechAdmin: currentUser?.is_tech_admin,
+    isCompanyCeo: currentUser?.is_ceo,
+  })
+  const canBatchImport = canProjectAction('project.batch_import', {
+    isTechAdmin: currentUser?.is_tech_admin,
+  })
   const canManage = canManageProjects(currentUser, globalUserRoles)
   const myPersonId = currentUser?.person_id
 
@@ -634,51 +632,6 @@ export function ProjectsMgmtSection() {
     reloadProjects()
   }
 
-  function parseImportText(text: string): BatchImportRow[] {
-    const lines = text.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim())
-    if (lines.length < 2) return []
-    const headers = lines[0].split('\t')
-    const mapped = headers.map((h) => IMPORT_COL_MAP[h.trim()] ?? null)
-    if (!mapped.some((f) => f === 'project_name')) return []
-    const rows: BatchImportRow[] = []
-    for (let i = 1; i < lines.length; i++) {
-      const cells = lines[i].split('\t')
-      const row: Partial<BatchImportRow> = {}
-      mapped.forEach((field, index) => {
-        if (!field) return
-        const value = cells[index]?.trim()
-        if (!value) return
-        row[field] = value
-      })
-      if (row.project_name && row.key_task) rows.push(row as BatchImportRow)
-    }
-    return rows
-  }
-
-  function handleImportTextChange(text: string) {
-    setImportText(text)
-    setImportRows(parseImportText(text))
-  }
-
-  async function handleImportConfirm() {
-    if (!importRows.length) return
-    setImporting(true)
-    try {
-      const result = await batchImportProjects(importRows)
-      toast.success(`导入完成：新建 ${result.projects_created} 个项目，创建 ${result.tasks_created} 条任务`)
-      const rows = await getProjects(true)
-      setProjects(rows)
-      reloadProjects()
-      setImportOpen(false)
-      setImportText('')
-      setImportRows([])
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '导入失败')
-    } finally {
-      setImporting(false)
-    }
-  }
-
   // ── 项目级角色判定 ──
   function getProjectRoles(pid: number) {
     const isSuperAdmin = Boolean(currentUser?.is_tech_admin)
@@ -784,16 +737,16 @@ export function ProjectsMgmtSection() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">项目管理</h1>
           <p className="mt-1 text-sm text-slate-500">管理项目从立项、启动到执行与归档</p>
         </div>
-        {isFullAdmin && (
+        {(canCreateProject || canBatchImport) && (
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setImportOpen(true)}
+            {canBatchImport && <button type="button" onClick={() => setImportOpen(true)}
               className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50">
               批量导入
-            </button>
-            <button type="button" onClick={() => setShowNew(true)}
+            </button>}
+            {canCreateProject && <button type="button" onClick={() => setShowNew(true)}
               className="h-10 cursor-pointer rounded-lg bg-[#2170e4] px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#1b5fc7]">
               ＋ 新建项目
-            </button>
+            </button>}
           </div>
         )}
       </header>
@@ -853,7 +806,11 @@ export function ProjectsMgmtSection() {
                         mainBusy={false}
                         showReturn={mainAction.type === 'approvalMaterials'}
                         isSelected={false}
-                        hasMore={roles.isSuperAdmin || (roles.isCompanyCeo && status === 'draft')}
+                        hasMore={canProjectAction('project.edit_source', {
+                          isTechAdmin: roles.isSuperAdmin,
+                          isCompanyCeo: roles.isCompanyCeo,
+                          lifecycle: status,
+                        })}
                         onSelect={() => navigate(`/home/projects/${project.id}`)}
                         onMainAction={() => handleProjectMainAction(project)}
                         onReturn={() => void handleReturn(project.id, project.name)}
@@ -1017,16 +974,17 @@ export function ProjectsMgmtSection() {
         />
       )}
 
-      {/* 批量导入弹窗 */}
+      {/* AI 批量导入弹窗 */}
       {importOpen && (
-        <ProjectBatchImportModal
+        <ProjectPlanAiImportDialog
           open={importOpen}
-          importing={importing}
-          text={importText}
-          rows={importRows}
-          onTextChange={handleImportTextChange}
-          onClose={() => { if (!importing) { setImportOpen(false); setImportText(''); setImportRows([]) } }}
-          onConfirm={handleImportConfirm}
+          projects={projects}
+          onClose={() => setImportOpen(false)}
+          onImported={(result) => {
+            toast.success(`导入完成：项目 ${result.projects_created} 个，重点工作 ${result.tasks_created} 条，关键任务 ${result.subtasks_created} 条，跳过重复 ${result.duplicates_skipped} 条`)
+            setImportOpen(false)
+            void getProjects(true).then((nextProjects) => { setProjects(nextProjects); reloadProjects() })
+          }}
         />
       )}
 
@@ -1039,7 +997,11 @@ export function ProjectsMgmtSection() {
           subtasks={projectSubtasksMap[approvalMaterialsProject.id] ?? []}
           canReview={(() => {
             const roles = getProjectRoles(approvalMaterialsProject.id)
-            return roles.isRealProjectCeo || roles.isSuperAdmin
+            return canProjectAction('project.review_start', {
+              isTechAdmin: roles.isSuperAdmin,
+              projectRoles: roles.isRealProjectCeo ? ['project_ceo'] : [],
+              lifecycle: getProjectPrimaryStatus(approvalMaterialsProject),
+            })
           })()}
           loading={approveLoading}
           onClose={() => !approveLoading && setApprovalMaterialsProject(null)}
@@ -1068,10 +1030,17 @@ export function ProjectsMgmtSection() {
               const status = getProjectPrimaryStatus(menuProject)
               const roles = getProjectRoles(menuProject.id)
               const items: { label: string; tone?: 'danger'; onClick: () => void }[] = []
-              if (roles.isSuperAdmin || (roles.isCompanyCeo && status === 'draft')) {
+              if (canProjectAction('project.edit_source', {
+                isTechAdmin: roles.isSuperAdmin,
+                isCompanyCeo: roles.isCompanyCeo,
+                lifecycle: status,
+              })) {
                 items.push({ label: '编辑项目', onClick: () => { setMenuState(null); void openProjectEditor(menuProject) } })
               }
-              if (canPermanentlyDeleteProject(status, roles.isSuperAdmin)) {
+              if (canPermanentlyDeleteProject(status, canProjectAction('project.delete', {
+                isTechAdmin: roles.isSuperAdmin,
+                lifecycle: status,
+              }))) {
                 items.push({
                   label: '永久删除项目',
                   tone: 'danger',
@@ -1391,8 +1360,21 @@ export function DetailPanel({
   const summary = getDraftSummary(tasks, subtasks, project)
   const stageDesc = STAGE_DESCRIPTIONS[status] ?? ''
   const actionReminder = ACTION_REMINDERS[status] ?? stageDesc
-  const showReturn = status === 'pending_review' && (roles.isRealProjectCeo || roles.isSuperAdmin)
-  const canEditDraft = roles.isSuperAdmin || roles.isCompanyCeo
+  const showReturn = status === 'pending_review' && canProjectAction('project.review_start', {
+    isTechAdmin: roles.isSuperAdmin,
+    projectRoles: roles.isRealProjectCeo ? ['project_ceo'] : [],
+    lifecycle: status,
+  })
+  const canEditDraft = canProjectAction('project.edit_source', {
+    isTechAdmin: roles.isSuperAdmin,
+    isCompanyCeo: roles.isCompanyCeo,
+    lifecycle: status,
+  })
+  const canOwnerSubmit = canProjectAction('project.owner_submit', {
+    isTechAdmin: roles.isSuperAdmin,
+    projectRoles: roles.isRealOwner ? ['owner'] : [],
+    lifecycle: status,
+  })
   const coreReady = Boolean(project.name?.trim() && project.objectives?.trim())
   const draftReady = summary.taskCount > 0 && summary.subtaskCount > 0
   const projectType = project.project_type?.trim() || '未填写'
@@ -1410,7 +1392,7 @@ export function DetailPanel({
   if (status === 'draft' && canEditDraft) {
     actionButtons.push({ label: '编辑项目', primary: true, onClick: onEdit })
   }
-  if (status === 'dispatched' && roles.isRealOwner) {
+  if (status === 'dispatched' && roles.isRealOwner && canOwnerSubmit) {
     actionButtons.push({ label: '完善立项信息', primary: true, onClick: onOwnerSubmit })
   }
   if (status === 'pending_review') {
@@ -1419,15 +1401,25 @@ export function DetailPanel({
   if (showReturn) {
     actionButtons.push({ label: '退回修改', danger: true, onClick: onReturn })
   }
-  if (status === 'returned' && roles.isRealOwner) {
+  if (status === 'returned' && roles.isRealOwner && canOwnerSubmit) {
     actionButtons.push({ label: '修改立项信息', primary: true, onClick: onOwnerSubmit })
   }
   if (status === 'active') {
     actionButtons.push({ label: '进入工作推进表', primary: true, onClick: onWorkProgress })
-    if (roles.isRealOwner || roles.isSuperAdmin) actionButtons.push({ label: '申请项目结束', onClick: onOpenCloseFlow })
+    if (roles.isRealOwner || roles.isSuperAdmin) {
+      if (canProjectAction('project.request_close', {
+        isTechAdmin: roles.isSuperAdmin,
+        projectRoles: roles.isRealOwner ? ['owner'] : [],
+        lifecycle: status,
+      })) actionButtons.push({ label: '申请项目结束', onClick: onOpenCloseFlow })
+    }
   }
   if (status === 'pending_close') {
-    actionButtons.push({ label: roles.isRealProjectCeo || roles.isSuperAdmin ? '审核结束申请' : '查看结束申请', primary: true, onClick: onOpenCloseFlow })
+    actionButtons.push({ label: canProjectAction('project.review_close_request', {
+      isTechAdmin: roles.isSuperAdmin,
+      projectRoles: roles.isRealProjectCeo ? ['project_ceo'] : [],
+      lifecycle: status,
+    }) ? '审核结束申请' : '查看结束申请', primary: true, onClick: onOpenCloseFlow })
   }
   if (status === 'ended') {
     actionButtons.push({ label: '查看结束档案', onClick: onOpenCloseFlow })
@@ -1735,91 +1727,6 @@ function ProjectApproveModal({
             style={{ background: 'linear-gradient(135deg,#7E22CE,#A855F7)' }}>
             {loading ? '处理中…' : '审核并确立'}
           </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── 批量导入弹窗 ──────────────────────────────────────────────
-
-function ProjectBatchImportModal({
-  open, importing, text, rows, onTextChange, onClose, onConfirm,
-}: {
-  open: boolean
-  importing: boolean
-  text: string
-  rows: BatchImportRow[]
-  onTextChange: (value: string) => void
-  onClose: () => void
-  onConfirm: () => void
-}) {
-  if (!open) return null
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-3" onClick={() => { if (!importing) onClose() }}>
-      <div className="flex max-h-[88vh] w-[760px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b px-6 py-4" style={{ borderColor: '#E9EFF6' }}>
-          <div>
-            <div className="text-sm font-bold text-slate-800">批量导入项目</div>
-            <div className="mt-0.5 text-xs text-slate-400">从 Excel 复制制表符分隔数据，粘贴到下面的文本框中</div>
-          </div>
-          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100">
-            <svg style={{ width: 15, height: 15 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
-        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-4">
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
-            <div className="font-semibold text-slate-600">支持的列名</div>
-            <div className="mt-1 flex flex-wrap gap-2">
-              {['项目/阶段', '关键任务', '关键成果', '完成标准', '统筹人', '负责人', '协同/成员', '计划时间', '当前状态', '问题与需协调事项'].map((label) => (
-                <span key={label} className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-slate-600">{label}</span>
-              ))}
-            </div>
-          </div>
-          <textarea value={text} onChange={(e) => onTextChange(e.target.value)}
-            placeholder={`从 Excel 粘贴数据（含表头），示例：\n项目\t关键任务\t负责人\t统筹人\t计划时间\t当前状态\n知识平台\t制定方案\t张三\t李四\t4-5月\t未启动`}
-            className="h-40 w-full resize-none rounded-xl border border-slate-200 p-3 font-mono text-xs outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20" />
-          {text && rows.length === 0 && <div className="px-1 text-xs text-red-500">未识别到有效数据，请检查表头是否包含"项目"和"关键任务"。</div>}
-          {rows.length > 0 && (
-            <div>
-              <div className="mb-2 text-xs font-semibold text-slate-500">解析预览，共 {rows.length} 行</div>
-              <div className="overflow-x-auto rounded-xl border" style={{ borderColor: '#E9EFF6' }}>
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr style={{ background: '#F8FAFC' }}>
-                      {['项目', '关键任务', '负责人', '统筹人', '计划时间', '状态', '问题'].map((label) => (
-                        <th key={label} className="whitespace-nowrap px-3 py-2 text-left font-semibold text-slate-500">{label}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row, index) => (
-                      <tr key={index} className="border-t" style={{ borderColor: '#F1F5F9' }}>
-                        <td className="whitespace-nowrap px-3 py-2 font-semibold text-indigo-700">{row.project_name}</td>
-                        <td className="max-w-xs truncate px-3 py-2 text-slate-700">{row.key_task}</td>
-                        <td className="whitespace-nowrap px-3 py-2 text-slate-600">{row.owner || '-'}</td>
-                        <td className="whitespace-nowrap px-3 py-2 text-slate-600">{row.coordinator || '-'}</td>
-                        <td className="whitespace-nowrap px-3 py-2 text-slate-600">{fmtPlanTime(row.plan_time)}</td>
-                        <td className="whitespace-nowrap px-3 py-2"><span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-600">{row.status || '未填写'}</span></td>
-                        <td className="max-w-xs truncate px-3 py-2 text-amber-600">{row.issue || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="flex items-center justify-between border-t px-6 py-4" style={{ borderColor: '#E9EFF6' }}>
-          <div className="text-xs text-slate-400">{rows.length > 0 ? `将创建或匹配 ${rows.length} 个项目` : '粘贴后会自动解析预览'}</div>
-          <div className="flex gap-2">
-            <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100">取消</button>
-            <button type="button" onClick={onConfirm} disabled={importing || rows.length === 0}
-              className="rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-              style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}>
-              {importing ? '导入中…' : `确认导入 ${rows.length} 行`}
-            </button>
-          </div>
         </div>
       </div>
     </div>

@@ -21,6 +21,79 @@ def make_session():
     return sessionmaker(bind=engine)()
 
 
+def test_model_attempt_metadata_is_log_derived_and_sanitized():
+    from app.services import project_init_analysis as service
+
+    db = make_session()
+    try:
+        model = models.AIModel(code="primary", display_name="Primary", provider="deepseek",
+                               model_name="chat", model_type="chat", base_url="https://example.test")
+        db.add(model)
+        db.flush()
+        for code in ("json_malformed", "PRIVATE_MODEL_SOURCE"):
+            db.add(models.AIInvocationLog(capability_key="project_init_analysis", policy_version=1,
+                model_id=model.id, model_revision=1, attempt_no=1, status="failed", duration_ms=1200,
+                error_code=code, fallback_used=False, resource_type="project_init", resource_id=99))
+        db.flush()
+
+        attempts = service._model_attempts(db, 99)
+        metadata = service._result_metadata({"tasks": []}, model_attempts=attempts,
+                                            attempted_models=service._attempted_models(db, 99))
+        assert metadata["model_attempts"][0] == {
+            "id": model.id, "code": "primary", "display_name": "Primary", "provider": "deepseek",
+            "model_name": "chat", "status": "failed", "duration_ms": 1200,
+            "error_code": "json_malformed", "fallback_used": False,
+        }
+        assert metadata["model_attempts"][1]["error_code"] == "AI_UPSTREAM_UNKNOWN"
+        assert metadata["final_model"] == metadata["attempted_models"][-1]
+        assert "PRIVATE_MODEL_SOURCE" not in json.dumps(metadata)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_worker_persists_sanitized_model_attempts_for_each_outcome(monkeypatch, tmp_path, failed, caplog):
+    from app.ai.contracts import AIUpstreamError
+    from app.services import project_init_analysis as service
+
+    db = make_session()
+    project, _owner = add_project_graph(db)
+    add_attachment(db, project_id=project.id, attachment_id=1)
+    run = models.ProjectInitAnalysisRun(project_id=project.id, attachment_ids_json="[1]",
+        snapshot_json=json.dumps({"project": {}, "tasks": [], "people": []}), created_by="owner")
+    model = models.AIModel(code="primary", display_name="Primary", provider="deepseek",
+                           model_name="chat", model_type="chat", base_url="https://example.test")
+    db.add_all([run, model])
+    db.commit()
+    run_id = run.id
+    model_id = model.id
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(service, "AIService", lambda _db: object())
+    monkeypatch.setattr(service, "_attachment_path", lambda _key: tmp_path / "source.txt")
+    monkeypatch.setattr(service, "parse_project_init_file", lambda *_args: [
+        {"file_name": "source.txt", "location": "lines 1", "text": "source"}])
+
+    def generate(*_args, **_kwargs):
+        db.add(models.AIInvocationLog(capability_key="project_init_analysis", policy_version=1,
+            model_id=model_id, model_revision=1, attempt_no=1, status="failed" if failed else "succeeded",
+            duration_ms=1200, error_code="json_malformed" if failed else "", fallback_used=False,
+            resource_type="project_init", resource_id=run_id))
+        db.commit()
+        if failed:
+            raise AIUpstreamError("json_malformed", retryable=True)
+        return {"tasks": [], "warnings": []}
+
+    monkeypatch.setattr(service, "generate_project_init_draft", generate)
+    service.process_analysis_run(run_id)
+    stored = db.get(models.ProjectInitAnalysisRun, run_id)
+    metadata = json.loads(stored.result_json)
+    assert stored.status == ("failed" if failed else "completed")
+    assert metadata["model_attempts"][0]["error_code"] == ("json_malformed" if failed else "")
+    assert metadata["model_attempts"][0]["duration_ms"] == 1200
+    assert "response_text" not in stored.result_json
+    assert "AI upstream request failed" not in caplog.text
+
+
 def add_project_graph(db, *, project_id: int = 1, status: str = "dispatched"):
     project = models.Project(id=project_id, name=f"Project {project_id}", status=status)
     owner = models.Person(id=project_id, name=f"Owner {project_id}", is_active=True)
@@ -66,6 +139,91 @@ def add_attachment(db, *, project_id: int, attachment_id: int, size: int = 10, d
     db.add(row)
     db.flush()
     return row
+
+
+@pytest.mark.parametrize("workbook_kind", ["regular", "complex", "with_overview", "inline_overview"])
+def test_worker_uses_structured_workbook_draft_only_without_vision_sources(monkeypatch, tmp_path, workbook_kind):
+    from unittest.mock import Mock
+
+    from openpyxl import Workbook
+
+    from app.services import project_init_analysis as service
+
+    source_path = tmp_path / "work-plan.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "工作计划"
+    sheet.append(["专项", "关键任务", "关键成果", "完成标准", "统筹人", "负责人", "协同成员", "计划时间"])
+    sheet.append(["知识资产AI化", "完成标签体系修订", "知识资产标签框架", "负责人确认", "张三", "李四", "王五", "2026-06-01"])
+    if workbook_kind == "complex":
+        workbook.create_sheet("hidden-context").sheet_state = "hidden"
+    if workbook_kind == "with_overview":
+        overview = workbook.create_sheet("项目概况")
+        overview.append(["项目名称", "知识升级"])
+        overview.append(["建设背景", "提升知识复用能力"])
+    if workbook_kind == "inline_overview":
+        sheet.cell(1, 9, "项目名称")
+        sheet.cell(1, 10, "建设背景")
+        sheet.cell(2, 9, "知识升级")
+        sheet.cell(2, 10, "提升知识复用能力")
+    workbook.save(source_path)
+    workbook.close()
+
+    db = make_session()
+    project, _owner = add_project_graph(db)
+    run = models.ProjectInitAnalysisRun(
+        project_id=project.id,
+        attachment_ids_json="[1]",
+        snapshot_json=json.dumps({
+            "project": {}, "tasks": [], "people": [],
+            "attachments": [{"id": 1, "storage_key": "1/1", "original_name": source_path.name}],
+        }),
+        created_by="owner",
+    )
+    db.add(run)
+    db.commit()
+    run_id = run.id
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(service, "_attachment_path", lambda _key: source_path)
+    chat = Mock(side_effect=AssertionError("regular Excel must bypass the chat draft generator"))
+    if workbook_kind in ("with_overview", "inline_overview"):
+        chat = Mock(return_value={
+            "tasks": [{"title": "知识资产AI化"}], "warnings": [],
+            "project_profile": {"name": "知识升级", "background": "提升知识复用能力"},
+        })
+    vision = Mock(return_value={"tasks": [{"title": "视觉任务"}], "warnings": []})
+    monkeypatch.setattr(service, "generate_project_init_draft", chat)
+    monkeypatch.setattr(service, "generate_project_init_vision_draft", vision)
+    monkeypatch.setattr(service, "render_workbook_images", lambda *_args: [tmp_path / "sheet.png"])
+
+    service.process_analysis_run(run_id)
+
+    db.expire_all()
+    stored = db.get(models.ProjectInitAnalysisRun, run_id)
+    assert stored.status == "completed"
+    result = json.loads(stored.result_json)
+    draft = json.loads(stored.current_draft_json)
+    if workbook_kind in ("with_overview", "inline_overview"):
+        chat.assert_called_once()
+        vision.assert_not_called()
+        assert any("建设背景" in chunk["text"] for chunk in chat.call_args.args[0])
+        assert draft["project_profile"]["name"] == "知识升级"
+        assert draft["project_profile"]["background"] == "提升知识复用能力"
+    elif workbook_kind == "complex":
+        chat.assert_not_called()
+        vision.assert_called_once()
+        assert draft["tasks"][0]["title"] == "视觉任务"
+        assert result["analysis_route"]["mode"] == "vision_with_review"
+    else:
+        chat.assert_not_called()
+        vision.assert_not_called()
+        assert result["model_name"] == "structured-spreadsheet-fallback"
+        assert result["model_attempts"] == []
+        task = draft["tasks"][0]
+        assert task["title"] == "知识资产AI化"
+        assert task["subtasks"][0]["title"] == "完成标签体系修订"
+        assert task["subtasks"][0]["assignee_name"] == "李四"
+        assert task["evidence"][0]["attachment_id"] == 1
 
 
 def test_run_model_has_frozen_snapshot_and_worker_timestamps():

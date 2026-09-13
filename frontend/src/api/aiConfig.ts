@@ -34,6 +34,7 @@ export type AICapabilityPolicy = {
   primary_model_id: number | null
   fallback_model_ids: number[]
   timeout_seconds: number
+  fallback_timeout_seconds: number
   max_attempts: number
   policy_version: number
   enabled: boolean
@@ -41,7 +42,7 @@ export type AICapabilityPolicy = {
 
 export type AIPolicyWrite = Pick<
   AICapabilityPolicy,
-  'primary_model_id' | 'fallback_model_ids' | 'timeout_seconds' | 'max_attempts' | 'enabled'
+  'primary_model_id' | 'fallback_model_ids' | 'timeout_seconds' | 'fallback_timeout_seconds' | 'max_attempts' | 'enabled'
 >
 
 export function listAIModels(): Promise<AIModel[]> {

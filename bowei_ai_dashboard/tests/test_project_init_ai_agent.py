@@ -29,13 +29,55 @@ from app.services.project_init_file_parser import SourceChunk, parse_project_ini
 TEST_FERNET_KEY = "m6F5dBXMRy1ZOQ4Dv_rwuPhtchxZzTCBuRUg-hxeF6U="
 
 
+@pytest.mark.parametrize(("raw", "expected"), [
+    ('{"tasks": []}', None),
+    ('```json\n{"tasks": []}\n```', None),
+    ('PRIVATE_MODEL_SOURCE', "json_missing_or_multiple"),
+    ('{"tasks": []} {"tasks": []}', "json_missing_or_multiple"),
+    ('{"tasks": [}', "json_malformed"),
+    ('{"tasks": []', "json_malformed"),
+    ('{"tasks": [],}', "json_malformed"),
+    ('{"tasks": "PRIVATE_MODEL_SOURCE"}', "schema_invalid"),
+    ('[]', "schema_invalid"),
+])
+def test_raw_draft_classifier_returns_only_safe_categories(raw, expected):
+    from app.services.project_init_ai_agent import _classify_raw_draft_envelope
+
+    assert _classify_raw_draft_envelope(raw) == expected
+
+
 class SequencedChatAdapters:
     def __init__(self, responses: dict[str, str]) -> None:
         self.responses = responses
 
-    def complete_chat(self, model, _api_key, _prompt, *, timeout_seconds):
-        assert timeout_seconds == 30
+    def complete_chat(self, model, _api_key, _prompt, *, timeout_seconds, response_format=None):
+        assert timeout_seconds == (30 if model.code == "primary" else 25)
+        assert response_format == {"type": "json_object"}
         return self.responses[model.code]
+
+
+@pytest.fixture
+def project_init_service():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    repo = AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY)
+    model = repo.create_model(code="primary", display_name="Primary", provider="deepseek",
+        model_name="chat", model_type="chat", base_url="https://example.test", config={}, enabled=True, source="custom")
+    repo.replace_credential(model.id, api_key="test-key", app_secret=None)
+    repo.save_policy(Capability.PROJECT_INIT_ANALYSIS, primary_model_id=model.id,
+        fallback_model_ids=[], timeout_seconds=30, max_attempts=1, enabled=True)
+
+    def factory(llm):
+        class Adapter:
+            def complete_chat(self, _model, _key, prompt, *, timeout_seconds, response_format=None):
+                assert response_format == {"type": "json_object"}
+                return llm(prompt, "injected")
+        return AIService(db, adapters=Adapter(), cipher_key=TEST_FERNET_KEY)
+
+    yield factory
+    db.close()
+    engine.dispose()
 
 
 def chunk(text: str, *, name: str = "plan.txt", location: str = "lines 1-2") -> dict:
@@ -111,7 +153,18 @@ def test_ai_draft_accepts_an_evidence_bound_project_profile_without_work_tasks()
     assert result.project_profile.evidence[0].file_name == "plan.txt"
 
 
-def test_schema_invalid_primary_response_uses_project_init_fallback_model():
+def test_raw_draft_classifier_sanitizes_integer_digit_limit_failure():
+    from app.services.project_init_ai_agent import _classify_raw_draft_envelope
+
+    raw = '{"tasks": [], "private_value": ' + "9" * 5_000 + "}"
+    assert _classify_raw_draft_envelope(raw) == "json_malformed"
+
+
+@pytest.mark.parametrize("invalid_kind, expected_code", [
+    ("schema", "schema_invalid"),
+    ("integer_digit_limit", "json_malformed"),
+])
+def test_invalid_primary_response_uses_project_init_fallback_model(invalid_kind, expected_code, caplog):
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     db = sessionmaker(bind=engine)()
@@ -152,9 +205,14 @@ def test_schema_invalid_primary_response_uses_project_init_fallback_model():
         invalid = raw_task()
         invalid["evidence"] = invalid["evidence"][0]
         invalid["subtasks"][0]["evidence"] = invalid["subtasks"][0]["evidence"][0]
+        primary_response = (
+            '{"tasks": [], "private_value": ' + "9" * 5_000 + "}"
+            if invalid_kind == "integer_digit_limit"
+            else json.dumps({"tasks": [invalid]}, ensure_ascii=False)
+        )
         adapters = SequencedChatAdapters(
             {
-                "primary": json.dumps({"tasks": [invalid]}, ensure_ascii=False),
+                "primary": primary_response,
                 "fallback": json.dumps({"tasks": [raw_task()]}, ensure_ascii=False),
             }
         )
@@ -170,9 +228,11 @@ def test_schema_invalid_primary_response_uses_project_init_fallback_model():
         assert result.tasks[0].title == "实施交付"
         logs = db.query(models.AIInvocationLog).order_by(models.AIInvocationLog.id).all()
         assert [(log.status, log.fallback_used, log.error_code) for log in logs] == [
-            ("failed", False, "AI_RESPONSE_INVALID"),
+            ("failed", False, expected_code),
             ("succeeded", True, ""),
         ]
+        assert "9999999999" not in caplog.text
+        assert "private_value" not in caplog.text
     finally:
         db.close()
         Base.metadata.drop_all(engine)
@@ -206,7 +266,7 @@ def test_semantic_workbook_uses_deterministic_projection_when_all_models_fail():
         )
 
         class FailingAdapter:
-            def complete_chat(self, _model, _api_key, _prompt, *, timeout_seconds):
+            def complete_chat(self, _model, _api_key, _prompt, *, timeout_seconds, response_format=None):
                 raise AIUpstreamError("AI_UPSTREAM_TIMEOUT", retryable=True)
 
         result = generate_project_init_draft(
@@ -458,7 +518,8 @@ def test_semantic_workbook_shape_preserves_goal_acceptance_process_and_numbered_
     assert task.evidence[0].location == source.location
 
 
-def test_semantic_workbook_missing_fields_get_one_bounded_ai_repair():
+@pytest.mark.parametrize("use_service", [False, True])
+def test_semantic_workbook_missing_fields_get_one_bounded_ai_repair(use_service, project_init_service):
     source = chunk(
         "主要工作\t目标\t验收标准与关键成果\t关键任务\t推进流程\n"
         "试点优化\t岗位真实运行\t完成验收\t1.建立记录表 2.完成复盘\t试用 → 复盘",
@@ -481,7 +542,8 @@ def test_semantic_workbook_missing_fields_get_one_bounded_ai_repair():
         calls.append(prompt)
         return json.dumps({"tasks": [first if len(calls) == 1 else repaired]}, ensure_ascii=False)
 
-    result = generate_project_init_draft([source], [], [], llm_call=llm)
+    invocation = {"ai_service": project_init_service(llm)} if use_service else {"llm_call": llm}
+    result = generate_project_init_draft([source], [], [], **invocation)
 
     assert len(calls) == 2
     assert result.tasks[0].goal == "岗位真实运行"
@@ -1114,6 +1176,130 @@ def test_out_of_bounds_coarse_worksheet_evidence_is_not_repaired(location):
         )
 
 
+@pytest.mark.parametrize("extension", ["xls", "xlsx", "XLSX"])
+def test_public_structured_draft_helper_preserves_tasks_and_source_evidence(extension):
+    from app.services.project_init_ai_agent import generate_structured_project_init_draft
+
+    source = {
+        "attachment_id": 7,
+        "file_name": f"work-plan.{extension}",
+        "location": "'推进表'!A2:D2",
+        "text": "专项\t关键任务\t负责人\t计划时间\n知识资产AI化\t修订标签\t李四\t2026-06-01",
+    }
+    result = generate_structured_project_init_draft(
+        [source], [{"id": 2, "name": "李四", "is_active": True}], [],
+    )
+
+    assert result is not None
+    assert result.model_name == "structured-spreadsheet-fallback"
+    assert result.provider == "local-rule"
+    assert result.tasks[0].title == "知识资产AI化"
+    subtask = result.tasks[0].subtasks[0]
+    assert subtask.title == "修订标签"
+    assert subtask.assignee_id == 2
+    assert subtask.plan_start == "2026-06-01"
+    assert subtask.evidence[0].attachment_id == 7
+    assert subtask.evidence[0].location == source["location"]
+
+
+@pytest.mark.parametrize("source_change", [
+    {"file_name": "work-plan.txt"},
+    {"location": "第 1 行"},
+    {"text": "无明确任务"},
+])
+def test_public_structured_draft_helper_returns_none_for_ineligible_sources(source_change):
+    from app.services.project_init_ai_agent import generate_structured_project_init_draft
+
+    source = {
+        "file_name": "work-plan.xlsx",
+        "location": "'推进表'!A2:C2",
+        "text": "专项\t关键任务\t负责人\n知识资产AI化\t修订标签\t李四",
+    }
+
+    assert generate_structured_project_init_draft([{**source, **source_change}], [], []) is None
+    assert generate_structured_project_init_draft([], [], []) is None
+    assert generate_structured_project_init_draft(
+        [source, {**source, "file_name": "notes.txt"}], [], [],
+    ) is None
+    assert generate_structured_project_init_draft(
+        [source, {**source, "file_name": "notes.txt", "text": ""}], [], [],
+    ) is None
+
+
+@pytest.mark.parametrize("extra_text", [
+    "项目名称\t知识升级\n建设背景\t提升知识复用能力",
+    "项目名称\t知识升级\n\t",
+    "专项\t关键任务\t负责人\n\t\t李四",
+    "专项\t关键任务\t负责人\n补充项目介绍",
+    "项目名称：知识升级",
+])
+def test_structured_fast_path_requires_every_meaningful_chunk_to_be_recognized(extra_text):
+    from app.services.project_init_ai_agent import generate_structured_project_init_draft
+
+    plan = {
+        "attachment_id": 7, "file_name": "plan.xlsx", "location": "'工作计划'!A2:C2",
+        "text": "专项\t关键任务\t负责人\n知识资产AI化\t修订标签\t李四",
+    }
+    extra = {**plan, "location": "'项目概况'!A1:B2", "text": extra_text}
+
+    assert generate_structured_project_init_draft([plan, extra], [], []) is None
+
+
+@pytest.mark.parametrize("same_sheet", [False, True])
+def test_workbook_with_overview_reaches_chat_and_preserves_project_profile(same_sheet):
+    from unittest.mock import Mock
+
+    plan = {
+        "attachment_id": 7, "file_name": "plan.xlsx", "location": "'工作计划'!A2:C2",
+        "text": "专项\t关键任务\t负责人\n知识资产AI化\t修订标签\t李四",
+    }
+    overview = {
+        **plan, "location": "'项目概况'!A1:B2",
+        "text": "项目名称\t知识升级\n建设背景\t提升知识复用能力",
+    }
+    if same_sheet:
+        plan = {
+            **plan, "location": "'工作计划'!A2:D2",
+            "text": "专项\t关键任务\t项目名称\t建设背景\n知识资产AI化\t修订标签\t知识升级\t提升知识复用能力",
+        }
+        overview = plan
+    task_evidence = [{key: plan[key] for key in ("attachment_id", "file_name", "location")}]
+    profile_evidence = [{key: overview[key] for key in ("attachment_id", "file_name", "location")}]
+    chat = Mock(return_value=json.dumps({
+        "tasks": [raw_task(title="知识资产AI化", evidence=task_evidence)],
+        "project_profile": {
+            "name": "知识升级", "background": "提升知识复用能力", "evidence": profile_evidence,
+        },
+    }, ensure_ascii=False))
+
+    sources = [plan] if same_sheet else [plan, overview]
+    result = generate_project_init_draft(sources, [], [], llm_call=chat)
+
+    assert chat.called
+    assert result.project_profile.name == "知识升级"
+    assert result.project_profile.background == "提升知识复用能力"
+    assert result.tasks[0].title == "知识资产AI化"
+
+
+@pytest.mark.parametrize("headers,values,eligible", [
+    ("专项\t关键任务\t项目名称\t建设背景", "知识资产AI化\t修订标签\t知识升级\t提升知识复用能力", False),
+    ("专项\t关键任务\t项目名称\t建设背景", "知识资产AI化\t修订标签\t\t", True),
+    ("专项\t关键任务\t负责人\t执行人", "知识资产AI化\t修订标签\t张三\t李四", False),
+    ("专项\t关键任务", "知识资产AI化\t修订标签\t附加信息", False),
+])
+def test_structured_fast_path_requires_every_populated_column_to_be_projected(headers, values, eligible):
+    from app.services.project_init_ai_agent import generate_structured_project_init_draft
+
+    source = {
+        "file_name": "plan.xlsx", "location": "'工作计划'!A2:D2",
+        "text": f"{headers}\n{values}",
+    }
+
+    result = generate_structured_project_init_draft([source], [], [])
+
+    assert (result is not None) is eligible
+
+
 def test_structured_spreadsheet_fallback_uses_traceable_row_data_after_invalid_ai_evidence():
     spreadsheet_row = {
         "attachment_id": 7,
@@ -1313,7 +1499,7 @@ def test_merged_alias_header_workbook_is_extracted_end_to_end_without_ai(tmp_pat
     assert result.tasks[0].subtasks[1].helper_names == ["赵六"]
 
 
-def test_multiline_merged_workplan_uses_structured_import(tmp_path):
+def test_multiline_merged_workplan_retains_structured_fallback_after_model_failure(tmp_path):
     path = tmp_path / "工作推进表.xlsx"
     workbook = Workbook()
     sheet = workbook.active
@@ -1334,11 +1520,11 @@ def test_multiline_merged_workplan_uses_structured_import(tmp_path):
         parse_project_init_file(path, path.name),
         people,
         [],
-        llm_call=lambda _prompt: (_ for _ in ()).throw(AssertionError("chat analysis must not run")),
+        llm_call=lambda _prompt: (_ for _ in ()).throw(ProjectInitAiError("model unavailable")),
     )
 
     first = result.tasks[0].subtasks[0]
-    assert result.model_name == "structured-spreadsheet"
+    assert result.model_name == "structured-spreadsheet-fallback"
     assert result.tasks[0].description == "目标一 目标二"
     assert (first.assignee_name, first.assignee_id) == ("吴肖", 5)
     assert first.helper_names == ["郭熠彬", "温会林"]
@@ -1347,7 +1533,7 @@ def test_multiline_merged_workplan_uses_structured_import(tmp_path):
     assert {warning.code for warning in first.warnings} == {"will_join_project"}
 
 
-def test_real_workplan_aliases_keep_target_roles_dates_and_evaluation_per_row(tmp_path):
+def test_real_workplan_fallback_aliases_keep_target_roles_dates_and_evaluation_per_row(tmp_path):
     path = tmp_path / "工作推进表.xlsx"
     workbook = Workbook()
     sheet = workbook.active
@@ -1411,12 +1597,12 @@ def test_real_workplan_aliases_keep_target_roles_dates_and_evaluation_per_row(tm
         parse_project_init_file(path, path.name),
         people,
         [],
-        llm_call=lambda _prompt: (_ for _ in ()).throw(AssertionError("chat analysis must not run")),
+        llm_call=lambda _prompt: (_ for _ in ()).throw(ProjectInitAiError("model unavailable")),
     )
 
     task = result.tasks[0]
     first, second = task.subtasks
-    assert result.model_name == "structured-spreadsheet"
+    assert result.model_name == "structured-spreadsheet-fallback"
     assert (task.title, task.description, task.owner_name) == (
         "一、建立客户成功体系",
         "完成客户成功体系建设",
@@ -1552,7 +1738,47 @@ def test_source_chunk_cannot_be_used_to_forge_an_attachment_id():
         )
 
 
-def test_same_title_tasks_across_batches_merge_all_evidence_and_subtasks():
+@pytest.mark.parametrize("use_service", [False, True])
+def test_distinct_tasks_across_batches_skip_final_merge(use_service, project_init_service):
+    calls: list[str] = []
+    sources = [
+        chunk("调研" * 20_000, name="research.txt"),
+        chunk("培训" * 20_000, name="training.txt"),
+    ]
+    tasks = [
+        raw_task(
+            title=title,
+            owner_name="",
+            assignee_name="",
+            evidence=[{
+                "attachment_id": source["attachment_id"],
+                "file_name": source["file_name"],
+                "location": source["location"],
+                "excerpt": title,
+            }],
+        )
+        for title, source in zip(("调研", "培训"), sources)
+    ]
+
+    def llm(prompt: str, provider: str) -> str:
+        calls.append(prompt)
+        if "最终合并 Agent" in prompt:
+            return json.dumps({"tasks": tasks}, ensure_ascii=False)
+        index = 0 if "research.txt · lines 1-2" in prompt else 1
+        return json.dumps({"tasks": [tasks[index]]}, ensure_ascii=False)
+
+    invocation = {"ai_service": project_init_service(llm)} if use_service else {"llm_call": llm}
+    result = generate_project_init_draft(sources, [], [], **invocation)
+
+    assert len(calls) == 2
+    assert all("最终合并 Agent" not in prompt for prompt in calls)
+    assert [task.title for task in result.tasks] == ["调研", "培训"]
+    assert [task.evidence[0].file_name for task in result.tasks] == ["research.txt", "training.txt"]
+    assert all(task.subtasks[0].evidence == task.evidence for task in result.tasks)
+
+
+@pytest.mark.parametrize("use_service", [False, True])
+def test_same_title_tasks_across_batches_merge_all_evidence_and_subtasks(use_service, project_init_service):
     calls: list[str] = []
 
     def llm(prompt: str, provider: str) -> str:
@@ -1572,6 +1798,7 @@ def test_same_title_tasks_across_batches_merge_all_evidence_and_subtasks():
             "evidence": evidence,
         }]}]}, ensure_ascii=False)
 
+    invocation = {"ai_service": project_init_service(llm)} if use_service else {"llm_call": llm}
     result = generate_project_init_draft(
         [
             {"attachment_id": 7, "file_name": "a.txt", "location": "lines 1", "text": "A" * 21_000},
@@ -1579,7 +1806,7 @@ def test_same_title_tasks_across_batches_merge_all_evidence_and_subtasks():
         ],
         [],
         [],
-        llm_call=llm,
+        **invocation,
     )
 
     assert len(calls) >= 2
@@ -1587,6 +1814,50 @@ def test_same_title_tasks_across_batches_merge_all_evidence_and_subtasks():
     assert len(result.tasks) == 1
     assert {item.file_name for item in result.tasks[0].evidence} == {"a.txt", "b.txt"}
     assert {item.title for item in result.tasks[0].subtasks} == {"方案确认", "上线确认"}
+
+
+@pytest.mark.parametrize(("batch_titles", "expected_calls"), [
+    ((("调研", "调研"), ("培训",)), 2),
+    ((("开展客户需求调研第一阶段", "开展客户需求调研第二阶段"), ("培训",)), 2),
+    (((" Research - PLAN! ",), ("research_plan",)), 3),
+    ((("需求调研第一阶段",), ("需求调研第二阶段",)), 2),
+    ((("开展客户需求调研第一阶段",), ("开展客户需求调研第二阶段",)), 3),
+    ((("a" * 22 + "bcd",), ("a" * 22 + "efg",)), 3),
+    ((("a" * 21 + "bcde",), ("a" * 21 + "fghi",)), 2),
+    ((("需求调研",), ()), 2),
+])
+def test_final_merge_only_considers_conflicting_titles_from_distinct_batches(batch_titles, expected_calls):
+    calls: list[str] = []
+    sources = [chunk("A" * 40_000, name="a.txt"), chunk("B" * 40_000, name="b.txt")]
+    batch_tasks = [
+        [raw_task(
+            title=title,
+            owner_name="",
+            assignee_name="",
+            evidence=[{
+                "attachment_id": source["attachment_id"],
+                "file_name": source["file_name"],
+                "location": source["location"],
+                "excerpt": source["text"][0],
+            }],
+        ) for title in titles]
+        for source, titles in zip(sources, batch_titles)
+    ]
+
+    def llm(prompt: str, provider: str) -> str:
+        calls.append(prompt)
+        if "最终合并 Agent" in prompt:
+            return json.dumps({"tasks": [task for batch in batch_tasks for task in batch]}, ensure_ascii=False)
+        index = 0 if "a.txt · lines 1-2" in prompt else 1
+        return json.dumps({"tasks": batch_tasks[index]}, ensure_ascii=False)
+
+    result = generate_project_init_draft(sources, [], [], llm_call=llm)
+
+    assert len(calls) == expected_calls
+    assert ("最终合并 Agent" in calls[-1]) is (expected_calls == 3)
+    assert {item.file_name for task in result.tasks for item in task.evidence} == {
+        source["file_name"] for source, titles in zip(sources, batch_titles) if titles
+    }
 
 
 def test_all_task_and_subtask_ids_are_positive_strict_ints_or_none():

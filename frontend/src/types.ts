@@ -367,6 +367,7 @@ export type IssueItem = {
 export type MeetingItem = {
   id: number
   project_id: number | null
+  creator_person_id?: number | null
   related_special_project?: string
   meeting_type?: string
   title?: string

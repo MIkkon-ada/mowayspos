@@ -5,6 +5,7 @@ import json
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app import models
 from app.ai.contracts import Capability, ModelType
 from app.ai.service import AIService
 from app.database import Base
@@ -45,6 +46,14 @@ def test_legacy_json_migrates_to_database_and_all_capabilities_are_resolvable(tm
             Capability.PROJECT_INIT_ANALYSIS: "enabled",
             Capability.SPEECH_REALTIME: "enabled",
         }
+        project_init_policy = db.query(models.AICapabilityPolicy).filter_by(
+            capability_key=Capability.PROJECT_INIT_ANALYSIS
+        ).one()
+        meeting_policy = db.query(models.AICapabilityPolicy).filter_by(
+            capability_key=Capability.MEETING_ANALYSIS
+        ).one()
+        assert (project_init_policy.timeout_seconds, project_init_policy.fallback_timeout_seconds) == (200, 25)
+        assert meeting_policy.timeout_seconds == 60
         service = AIService(db, cipher_key=TEST_FERNET_KEY)
         for capability_key, model_type in (
             (Capability.MEETING_ANALYSIS, ModelType.CHAT),

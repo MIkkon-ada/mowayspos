@@ -1,3 +1,5 @@
+"""Compatibility adapter for historical project-name resolution."""
+
 from __future__ import annotations
 
 import json

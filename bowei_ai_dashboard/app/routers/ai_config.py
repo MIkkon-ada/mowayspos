@@ -77,6 +77,7 @@ def _policy_payload(policy: models.AICapabilityPolicy) -> dict:
         "primary_model_id": policy.primary_model_id,
         "fallback_model_ids": json.loads(policy.fallback_model_ids_json or "[]"),
         "timeout_seconds": policy.timeout_seconds,
+        "fallback_timeout_seconds": policy.fallback_timeout_seconds,
         "max_attempts": policy.max_attempts,
         "policy_version": policy.policy_version,
         "enabled": policy.enabled,

@@ -52,6 +52,26 @@ describe('project-init analysis single-use upload flow', () => {
   beforeEach(() => { vi.clearAllMocks() })
   afterEach(cleanup)
 
+  it.each([
+    ['AI_UPSTREAM_TIMEOUT', '请求超时'],
+    ['json_missing_or_multiple', '未返回唯一的 JSON 对象'],
+    ['json_malformed', 'JSON 格式错误'],
+    ['schema_invalid', '草稿字段结构不符合要求'],
+    ['PRIVATE_MODEL_SOURCE', '模型调用失败'],
+  ])('shows sanitized attempt diagnostics for %s', async (errorCode, label) => {
+    api.uploadInitAttachments.mockResolvedValueOnce([{ id: 2, original_name: '资料.txt' }])
+    api.createInitAnalysisRun.mockResolvedValueOnce({ ...failedRun, result_metadata: {
+      model_attempts: [{ code: 'primary', display_name: '主模型', status: 'failed', duration_ms: 1500,
+        error_code: errorCode, fallback_used: false, response_text: 'PRIVATE_MODEL_SOURCE' }],
+    } })
+    renderPanel()
+    fireEvent.change(await screen.findByLabelText(/选择资料文件/), { target: { files: [new File(['source'], '资料.txt')] } })
+    fireEvent.click(screen.getByRole('button', { name: '开始分析' }))
+
+    expect(await screen.findByText(`主模型：${label}（1.5 秒）`)).toBeTruthy()
+    expect(screen.queryByText(/PRIVATE_MODEL_SOURCE/)).toBeNull()
+  })
+
   it('starts as a fresh upload session instead of restoring a failed historical run', async () => {
     api.getLatestInitAnalysisRun.mockResolvedValue(failedRun)
     api.listInitAttachments.mockResolvedValue([{ id: 1, original_name: '历史资料.xlsx' }])

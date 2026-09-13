@@ -48,6 +48,36 @@ describe('AI capability policy configuration', () => {
       primary_model_id: 7,
       fallback_model_ids: [],
       timeout_seconds: 30,
+      fallback_timeout_seconds: 25,
+      max_attempts: 1,
+      enabled: true,
+    }))
+  })
+
+  it('preserves the configured fallback timeout when saving a policy', async () => {
+    api.saveAICapabilityPolicy.mockResolvedValue({})
+    api.listAICapabilityPolicies.mockResolvedValue([{
+      id: 1,
+      capability_key: 'project.init.analysis',
+      primary_model_id: 7,
+      fallback_model_ids: [],
+      timeout_seconds: 200,
+      fallback_timeout_seconds: 40,
+      max_attempts: 1,
+      policy_version: 1,
+      enabled: true,
+    }])
+    render(<AIConfigurationSection />)
+
+    const row = (await screen.findByText('项目立项方案 AI 分析')).closest('.rounded-lg')
+    expect(row).not.toBeNull()
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: '保存顺序' }))
+
+    await waitFor(() => expect(api.saveAICapabilityPolicy).toHaveBeenCalledWith('project.init.analysis', {
+      primary_model_id: 7,
+      fallback_model_ids: [],
+      timeout_seconds: 200,
+      fallback_timeout_seconds: 40,
       max_attempts: 1,
       enabled: true,
     }))

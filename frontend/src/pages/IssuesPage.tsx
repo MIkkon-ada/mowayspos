@@ -8,7 +8,7 @@ import { toast } from '../utils/toast'
 import { fmtDate } from '../utils/time'
 import { MobileIssueList } from '../features/mobile-core-pages/MobileIssueList'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
-import { getProjectDisplayName } from '../domain/projectDisplay'
+import { getProjectDisplayName } from '../compatibility/projectNames'
 import type { IssueItem, Project, SubTaskItem, TaskItem } from '../types'
 
 const PRIORITY_STYLE: Record<string, string> = {

@@ -1097,11 +1097,11 @@ def test_corrupt_third_party_file_error_is_normalized_with_original_filename(tmp
 
 
 def test_unsupported_extension_raises_domain_error(tmp_path):
-    path = tmp_path / "archive.csv"
-    path.write_text("a,b", encoding="utf-8")
+    path = tmp_path / "archive.json"
+    path.write_text('{"a": "b"}', encoding="utf-8")
 
-    with pytest.raises(UnsupportedProjectInitFile, match="archive\\.csv"):
-        parse_project_init_file(path, "archive.csv")
+    with pytest.raises(UnsupportedProjectInitFile, match="archive\\.json"):
+        parse_project_init_file(path, "archive.json")
 
 
 def test_doc_reports_missing_antiword_dependency(tmp_path, monkeypatch):

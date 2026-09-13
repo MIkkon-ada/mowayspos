@@ -226,9 +226,6 @@ def _create_review_draft(
     )
     db.add(meeting)
     db.flush()
-    if source is not None:
-        source.meeting_id = meeting.id
-
     change_set = models.MeetingChangeSet(
         project_id=run.project_id,
         meeting_id=meeting.id,

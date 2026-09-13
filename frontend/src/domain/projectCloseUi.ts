@@ -1,3 +1,5 @@
+import { canProjectAction } from './permissions'
+
 export type ProjectCloseRoles = {
   isSuperAdmin: boolean
   isCompanyCeo: boolean
@@ -16,13 +18,30 @@ export function getProjectCloseMainAction(status: string, roles: ProjectCloseRol
 }
 
 export function canCreateProjectCloseRequest(status: string, roles: ProjectCloseRoles): boolean {
-  return status === 'active' && (roles.isRealOwner || roles.isSuperAdmin)
+  return canProjectAction('project.request_close', {
+    isTechAdmin: roles.isSuperAdmin,
+    isCompanyCeo: roles.isCompanyCeo,
+    projectRoles: roles.isRealOwner ? ['owner'] : [],
+    lifecycle: status,
+  })
 }
 
 export function canReviewProjectCloseRequest(status: string, roles: ProjectCloseRoles): boolean {
-  return status === 'pending_close' && (roles.isRealProjectCeo || roles.isSuperAdmin)
+  return canProjectAction('project.review_close_request', {
+    isTechAdmin: roles.isSuperAdmin,
+    isCompanyCeo: roles.isCompanyCeo,
+    projectRoles: roles.isRealProjectCeo ? ['project_ceo'] : [],
+    lifecycle: status,
+  })
 }
 
 export function canEditProjectCloseRequest(status: string, requesterPersonId: number | null, currentPersonId: number | null, roles: ProjectCloseRoles): boolean {
-  return status === 'pending_close' && (roles.isSuperAdmin || (requesterPersonId !== null && requesterPersonId === currentPersonId && roles.isRealOwner))
+  return canProjectAction('project.edit_close_request', {
+    isTechAdmin: roles.isSuperAdmin,
+    isCompanyCeo: roles.isCompanyCeo,
+    personId: currentPersonId,
+    projectRoles: roles.isRealOwner ? ['owner'] : [],
+    lifecycle: status,
+    requesterPersonId,
+  })
 }

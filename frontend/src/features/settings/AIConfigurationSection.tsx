@@ -22,6 +22,8 @@ type CapabilityDefinition = Pick<CapabilityPolicyView, 'capability_key' | 'requi
   description: string
 }
 
+type PolicyTimeouts = Pick<AICapabilityPolicy, 'timeout_seconds' | 'fallback_timeout_seconds'>
+
 const CAPABILITY_DEFAULTS: CapabilityDefinition[] = [
   { capability_key: 'meeting.analysis', requiredModelType: 'chat', title: '会议纪要 AI 分析', description: '用于会议资料分析、会议纪要和行动项生成。' },
   { capability_key: 'task.extraction', requiredModelType: 'chat', title: '工作汇报 / 文本任务提取', description: '用于从工作汇报或输入文本中提取任务。' },
@@ -41,6 +43,7 @@ export function AIConfigurationSection() {
   const [models, setModels] = useState<AIModel[]>([])
   const [policies, setPolicies] = useState<AICapabilityPolicy[]>([])
   const [policyOrders, setPolicyOrders] = useState<Record<string, number[]>>({})
+  const [policyTimeouts, setPolicyTimeouts] = useState<Record<string, PolicyTimeouts>>({})
   const [filter, setFilter] = useState<ModelFilter>('all')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
@@ -58,6 +61,13 @@ export function AIConfigurationSection() {
       setPolicyOrders(Object.fromEntries(nextPolicies.map((policy) => [
         policy.capability_key,
         [policy.primary_model_id, ...policy.fallback_model_ids].filter((id): id is number => id !== null),
+      ])))
+      setPolicyTimeouts(Object.fromEntries(nextPolicies.map((policy) => [
+        policy.capability_key,
+        {
+          timeout_seconds: policy.timeout_seconds,
+          fallback_timeout_seconds: policy.fallback_timeout_seconds,
+        },
       ])))
       setLoadError('')
     } catch (error) {
@@ -91,7 +101,8 @@ export function AIConfigurationSection() {
             capability_key: definition.capability_key,
             primary_model_id: null,
             fallback_model_ids: [],
-            timeout_seconds: 30,
+            timeout_seconds: definition.capability_key === 'project.init.analysis' ? 200 : 30,
+            fallback_timeout_seconds: 25,
             max_attempts: 1,
             policy_version: 0,
             enabled: true,
@@ -170,10 +181,12 @@ export function AIConfigurationSection() {
 
     setMessage('')
     try {
+      const timeouts = policyTimeouts[policy.capability_key] ?? policy
       await saveAICapabilityPolicy(policy.capability_key, {
         primary_model_id: ids[0],
         fallback_model_ids: ids.slice(1),
-        timeout_seconds: policy.timeout_seconds,
+        timeout_seconds: timeouts.timeout_seconds,
+        fallback_timeout_seconds: timeouts.fallback_timeout_seconds,
         max_attempts: ids.length,
         enabled: policy.enabled,
       })
@@ -212,6 +225,7 @@ export function AIConfigurationSection() {
             const available = eligibleModels(policy)
             const definition = CAPABILITY_DEFAULTS.find((item) => item.capability_key === policy.capability_key)
             const primaryModel = models.find((item) => item.id === order[0])
+            const timeouts = policyTimeouts[policy.capability_key] ?? policy
             return <div key={policy.capability_key} className="rounded-lg bg-slate-50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -227,6 +241,44 @@ export function AIConfigurationSection() {
               {primaryModel
                 ? <p className="mt-2 rounded bg-sky-50 px-2 py-1 text-xs text-sky-800">当前优先调用（下一次请求会先使用）：{primaryModel.display_name || primaryModel.model_name}</p>
                 : <p className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">当前未配置模型：此模块暂不能进行 AI 调用。</p>}
+              <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-600">
+                <label>
+                  主模型超时（秒）
+                  <input
+                    aria-label={`${policy.capability_key} 主模型超时`}
+                    className="ml-1 w-16 rounded border border-slate-200 px-1 py-0.5"
+                    type="number"
+                    min="1"
+                    max="600"
+                    value={timeouts.timeout_seconds}
+                    onChange={(event) => setPolicyTimeouts((current) => ({
+                      ...current,
+                      [policy.capability_key]: {
+                        ...timeouts,
+                        timeout_seconds: Math.max(1, Math.min(600, Number(event.target.value) || 1)),
+                      },
+                    }))}
+                  />
+                </label>
+                <label>
+                  备用模型超时（秒）
+                  <input
+                    aria-label={`${policy.capability_key} 备用模型超时`}
+                    className="ml-1 w-16 rounded border border-slate-200 px-1 py-0.5"
+                    type="number"
+                    min="1"
+                    max="600"
+                    value={timeouts.fallback_timeout_seconds}
+                    onChange={(event) => setPolicyTimeouts((current) => ({
+                      ...current,
+                      [policy.capability_key]: {
+                        ...timeouts,
+                        fallback_timeout_seconds: Math.max(1, Math.min(600, Number(event.target.value) || 1)),
+                      },
+                    }))}
+                  />
+                </label>
+              </div>
               <ol className="mt-2 space-y-1">
                 {order.map((id, index) => {
                   const model = models.find((item) => item.id === id)

@@ -6,10 +6,10 @@ const modal = readFileSync(new URL('../src/features/meeting/NewMeetingModal.tsx'
 const api = readFileSync(new URL('../src/api/meetings.ts', import.meta.url), 'utf8')
 const formats = readFileSync(new URL('../src/config/aiDocumentFormats.ts', import.meta.url), 'utf8')
 
-test('new project meeting uses the shared meeting document format contract', () => {
+test('new project meeting uses the shared Word, text, and spreadsheet format policy', () => {
   assert.match(modal, /acceptedDocumentTypes\('meeting'\)/)
   assert.match(formats, /meeting:\s*\['\.docx', '\.txt', '\.xlsx'\]/)
-  assert.doesNotMatch(formats, /meeting:[^\r\n]*\.pdf/)
+  assert.doesNotMatch(formats, /meeting:\s*\[[^\]]*'\.pdf'/)
 })
 
 test('new project meeting creates and polls an Agent document run', () => {

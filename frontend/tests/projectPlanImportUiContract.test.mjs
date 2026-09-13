@@ -4,6 +4,7 @@ import test from 'node:test'
 
 const source = readFileSync(new URL('../src/features/settings/ProjectsMgmtSection.tsx', import.meta.url), 'utf8')
 const dialog = readFileSync(new URL('../src/features/settings/ProjectPlanAiImportDialog.tsx', import.meta.url), 'utf8')
+const view = readFileSync(new URL('../src/features/settings/projectPlanAiImportView.ts', import.meta.url), 'utf8')
 const api = readFileSync(new URL('../src/api/projectPlanAiImport.ts', import.meta.url), 'utf8')
 const converter = readFileSync(new URL('../src/features/settings/projectPlanAiImportDraft.ts', import.meta.url), 'utf8')
 
@@ -13,7 +14,14 @@ test('project management uses the AI work plan import review flow', () => {
   assert.match(dialog, /previewAiProjectPlan/)
   assert.match(dialog, /draftToBatchImportRows/)
   assert.match(dialog, /applyAiProjectPlan/)
-  assert.match(dialog, /确认并修正导入内容/)
+  assert.match(dialog, /提供工作计划/)
+  assert.match(dialog, /上传文件/)
+  assert.match(dialog, /粘贴表格/)
+  assert.match(dialog, /复核导入内容/)
+  assert.match(dialog, /编辑任务/)
+  assert.match(dialog, /aria-label="工作计划文件"/)
+  assert.doesNotMatch(dialog, /min-w-\[980px\]/)
+  assert.match(view, /groupImportRows/)
   assert.match(dialog, /fallback_mode/)
   assert.match(dialog, /targetProjectId/)
   assert.match(api, /\/api\/projects\/ai-plan-import\/preview/)

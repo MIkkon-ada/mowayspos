@@ -331,6 +331,8 @@ class ProjectCreatePayload(BaseModel):
 
 class BatchImportRow(BaseModel):
     project_name: str
+    project_objective: str = ""
+    workstream: str = ""
     key_task: str = ""
     key_achievement: str = ""
     completion_standard: str = ""
@@ -338,8 +340,13 @@ class BatchImportRow(BaseModel):
     owner: str = ""
     collaborators: str = ""
     plan_time: str = ""
+    plan_start: str = ""
+    plan_end: str = ""
+    workstream_plan_start: str = ""
+    workstream_plan_end: str = ""
     status: str = "未开始"
     issue: str = ""
+    notes: str = ""
 
 
 class ProjectBatchImportPayload(BaseModel):

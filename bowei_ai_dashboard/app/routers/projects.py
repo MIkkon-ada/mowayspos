@@ -77,6 +77,10 @@ from ..services.project_purge_storage import (
     retry_project_payload_cleanup,
     stage_project_payloads,
 )
+from ..services.project_plan_import import (
+    ProjectPlanImportValidationError,
+    import_project_plan_rows,
+)
 from ..services.project_init_attachment_storage import project_init_attachment_root
 from ..services.project_access import (
     authorize_global_project_action,
@@ -1051,96 +1055,15 @@ def batch_import_projects(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    """
-    批量导入：从 Excel 粘贴的结构化数据创建专项+关键任务+问题。
-    专项已存在则复用，关键任务逐行创建，问题有内容则写入问题库。
-    """
+    """从 Excel 粘贴的工作计划表创建项目、重点工作和关键任务。"""
     authorize_global_project_action(current_user, A_BATCH_IMPORT, db)
-
-    projects_created = 0
-    projects_matched = 0
-    tasks_created = 0
-    issues_created = 0
-    skipped_rows = 0
-
-    # 缓存本次已处理的项目，避免重复查库
-    project_cache: dict[str, models.Project] = {}
-
-    for row in payload.rows:
-        proj_name = (row.project_name or "").strip()
-        task_name = (row.key_task or "").strip()
-        if not proj_name or not task_name:
-            skipped_rows += 1
-            continue
-
-        # 找或建专项
-        if proj_name not in project_cache:
-            existing = db.query(models.Project).filter_by(name=proj_name).first()
-            if existing:
-                project_cache[proj_name] = existing
-                projects_matched += 1
-            else:
-                proj = models.Project(name=proj_name, sort_order=0)
-                if row.coordinator:
-                    proj.coordinator = row.coordinator.strip()
-                if row.owner:
-                    proj.owners = row.owner.strip()
-                if row.collaborators:
-                    proj.collaborators = row.collaborators.strip()
-                db.add(proj)
-                db.flush()
-                _set_project_lifecycle(proj, "active", db=db, project_id=proj.id)
-                project_cache[proj_name] = proj
-                projects_created += 1
-                crud.log(db, current_user, "批量导入建项", "project", proj.id, {}, {"name": proj_name})
-
-        proj = project_cache[proj_name]
-
-        # 创建关键任务
-        task = models.Task(
-            project_id=proj.id,
-            special_project=proj_name,
-            key_task=task_name[:200],
-            key_achievement=(row.key_achievement or "")[:200],
-            completion_standard=row.completion_standard or "",
-            coordinator=row.coordinator or "",
-            owner=row.owner or "",
-            collaborators=row.collaborators or "",
-            plan_time=row.plan_time or "",
-            status=row.status or "未开始",
-            source_type=ST.normalize("批量导入"),
-            submitter=current_user,
-        )
-        db.add(task)
-        db.flush()
-        tasks_created += 1
-        crud.log(db, current_user, "批量导入建任务", "task", task.id, {}, {"key_task": task_name})
-
-        # 创建问题（如有）
-        issue_text = (row.issue or "").strip()
-        if issue_text:
-            issue = models.Issue(
-                project_id=proj.id,
-                special_project=proj_name,
-                related_task_id=task.id,
-                description=issue_text,
-                owner=row.owner or "",
-                source_type=ST.normalize("批量导入"),
-                status="待处理",
-                priority="中",
-            )
-            db.add(issue)
-            issues_created += 1
-
-    db.commit()
-    return {
-        "ok": True,
-        "projects_created": projects_created,
-        "projects_matched": projects_matched,
-        "tasks_created": tasks_created,
-        "issues_created": issues_created,
-        "skipped_rows": skipped_rows,
-    }
+    try:
+        return import_project_plan_rows(db, payload.rows, current_user)
+    except ProjectPlanImportValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": str(exc), "errors": exc.errors},
+        ) from exc
 
 
 @router.get("/{project_id}/members")

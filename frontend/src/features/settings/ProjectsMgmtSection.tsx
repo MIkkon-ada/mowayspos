@@ -15,7 +15,7 @@ import {
   batchImportProjects,
   deleteProject,
 } from '../../api/projects'
-import type { BatchImportRow, ProjectProfilePayload } from '../../api/projects'
+import type { ProjectProfilePayload } from '../../api/projects'
 import type { CurrentUser, Person, Project, ProjectMember, TaskItem } from '../../types'
 import type { SubTaskWithParent } from '../../api/subtasks'
 import { fetchPeople } from '../../api/people'
@@ -44,6 +44,7 @@ import {
 import { ProjectOverviewStats } from './ProjectOverviewStats'
 import { ProjectTodoSection, type ProjectTodoViewModel } from './ProjectTodoSection'
 import { buildDraftRows, type ProjectReviewDraftRow } from './projectReviewDraftRows'
+import { parseProjectPlanImportText, toBatchImportRows, type ProjectPlanImportError, type ProjectPlanImportRow } from './projectPlanImport'
 
 // ── 常量 ──────────────────────────────────────────────────────
 
@@ -112,23 +113,6 @@ function getReminderToneClass(status: string): string {
   if (status === 'ended') return 'border-indigo-200 bg-indigo-50 text-indigo-900'
   if (status === 'archived') return 'border-slate-200 bg-slate-50 text-slate-700'
   return 'border-sky-200 bg-sky-50 text-sky-900'
-}
-
-const IMPORT_COL_MAP: Record<string, keyof BatchImportRow> = {
-  项目: 'project_name',
-  阶段: 'project_name',
-  关键任务: 'key_task',
-  关键成果: 'key_achievement',
-  完成标准: 'completion_standard',
-  统筹人: 'coordinator',
-  负责人: 'owner',
-  协同: 'collaborators',
-  成员: 'collaborators',
-  计划时间: 'plan_time',
-  当前状态: 'status',
-  状态: 'status',
-  问题与需协调事项: 'issue',
-  问题: 'issue',
 }
 
 // ── 辅助函数 ──────────────────────────────────────────────────
@@ -340,7 +324,8 @@ export function ProjectsMgmtSection() {
   // 批量导入
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
-  const [importRows, setImportRows] = useState<BatchImportRow[]>([])
+  const [importRows, setImportRows] = useState<ProjectPlanImportRow[]>([])
+  const [importErrors, setImportErrors] = useState<ProjectPlanImportError[]>([])
   const [importing, setImporting] = useState(false)
 
   // 更多菜单
@@ -652,44 +637,26 @@ export function ProjectsMgmtSection() {
     reloadProjects()
   }
 
-  function parseImportText(text: string): BatchImportRow[] {
-    const lines = text.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim())
-    if (lines.length < 2) return []
-    const headers = lines[0].split('\t')
-    const mapped = headers.map((h) => IMPORT_COL_MAP[h.trim()] ?? null)
-    if (!mapped.some((f) => f === 'project_name')) return []
-    const rows: BatchImportRow[] = []
-    for (let i = 1; i < lines.length; i++) {
-      const cells = lines[i].split('\t')
-      const row: Partial<BatchImportRow> = {}
-      mapped.forEach((field, index) => {
-        if (!field) return
-        const value = cells[index]?.trim()
-        if (!value) return
-        row[field] = value
-      })
-      if (row.project_name && row.key_task) rows.push(row as BatchImportRow)
-    }
-    return rows
-  }
-
   function handleImportTextChange(text: string) {
+    const parsed = parseProjectPlanImportText(text)
     setImportText(text)
-    setImportRows(parseImportText(text))
+    setImportRows(parsed.rows)
+    setImportErrors(parsed.errors)
   }
 
   async function handleImportConfirm() {
-    if (!importRows.length) return
+    if (!importRows.length || importErrors.length > 0) return
     setImporting(true)
     try {
-      const result = await batchImportProjects(importRows)
-      toast.success(`导入完成：新建 ${result.projects_created} 个项目，创建 ${result.tasks_created} 条任务`)
+      const result = await batchImportProjects(toBatchImportRows(importRows))
+      toast.success(`导入完成：项目 ${result.projects_created} 个，重点工作 ${result.tasks_created} 条，关键任务 ${result.subtasks_created} 条，跳过重复 ${result.duplicates_skipped} 条`)
       const rows = await getProjects(true)
       setProjects(rows)
       reloadProjects()
       setImportOpen(false)
       setImportText('')
       setImportRows([])
+      setImportErrors([])
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '导入失败')
     } finally {
@@ -1046,8 +1013,9 @@ export function ProjectsMgmtSection() {
           importing={importing}
           text={importText}
           rows={importRows}
+          errors={importErrors}
           onTextChange={handleImportTextChange}
-          onClose={() => { if (!importing) { setImportOpen(false); setImportText(''); setImportRows([]) } }}
+          onClose={() => { if (!importing) { setImportOpen(false); setImportText(''); setImportRows([]); setImportErrors([]) } }}
           onConfirm={handleImportConfirm}
         />
       )}
@@ -1800,12 +1768,13 @@ function ProjectApproveModal({
 // ── 批量导入弹窗 ──────────────────────────────────────────────
 
 function ProjectBatchImportModal({
-  open, importing, text, rows, onTextChange, onClose, onConfirm,
+  open, importing, text, rows, errors, onTextChange, onClose, onConfirm,
 }: {
   open: boolean
   importing: boolean
   text: string
-  rows: BatchImportRow[]
+  rows: ProjectPlanImportRow[]
+  errors: ProjectPlanImportError[]
   onTextChange: (value: string) => void
   onClose: () => void
   onConfirm: () => void
@@ -1817,7 +1786,7 @@ function ProjectBatchImportModal({
         <div className="flex items-center justify-between border-b px-6 py-4" style={{ borderColor: '#E9EFF6' }}>
           <div>
             <div className="text-sm font-bold text-slate-800">批量导入项目</div>
-            <div className="mt-0.5 text-xs text-slate-400">从 Excel 复制制表符分隔数据，粘贴到下面的文本框中</div>
+            <div className="mt-0.5 text-xs text-slate-400">从 Excel 复制完整工作计划表（含标题和表头），粘贴到下面的文本框中</div>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100">
             <svg style={{ width: 15, height: 15 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
@@ -1827,23 +1796,35 @@ function ProjectBatchImportModal({
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
             <div className="font-semibold text-slate-600">支持的列名</div>
             <div className="mt-1 flex flex-wrap gap-2">
-              {['项目/阶段', '关键任务', '关键成果', '完成标准', '统筹人', '负责人', '协同/成员', '计划时间', '当前状态', '问题与需协调事项'].map((label) => (
+              {['目标', '重点工作', '关键任务', '评价标准', '责任人/负责人', '计划开始/结束时间', '协同人', '完成情况', '备注/问题'].map((label) => (
                 <span key={label} className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-slate-600">{label}</span>
               ))}
             </div>
           </div>
           <textarea value={text} onChange={(e) => onTextChange(e.target.value)}
-            placeholder={`从 Excel 粘贴数据（含表头），示例：\n项目\t关键任务\t负责人\t统筹人\t计划时间\t当前状态\n知识平台\t制定方案\t张三\t李四\t4-5月\t未启动`}
+            placeholder={`从 Excel 粘贴数据（含标题和表头），示例：\n模拟项目目标与重点工作计划表\n目标\t重点工作\t关键任务\t责任人\t计划开始时间\t计划结束时间\n目标A\t重点工作A\t任务A\t张三\t2026-09-15\t2026-09-20`}
             className="h-40 w-full resize-none rounded-xl border border-slate-200 p-3 font-mono text-xs outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20" />
-          {text && rows.length === 0 && <div className="px-1 text-xs text-red-500">未识别到有效数据，请检查表头是否包含"项目"和"关键任务"。</div>}
+          {errors.length > 0 && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+              <div className="font-semibold">有 {errors.length} 行无法导入，请修正后再确认：</div>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {errors.slice(0, 8).map((error) => <li key={`${error.row}-${error.message}`}>第 {error.row} 行：{error.message}</li>)}
+              </ul>
+              {errors.length > 8 && <div className="mt-1">其余错误请检查原表。</div>}
+            </div>
+          )}
           {rows.length > 0 && (
             <div>
-              <div className="mb-2 text-xs font-semibold text-slate-500">解析预览，共 {rows.length} 行</div>
+              <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-slate-500">
+                <span>解析 {rows.length} 行</span>
+                <span>重点工作 {new Set(rows.map((row) => `${row.project_name}::${row.work_area}`)).size} 个</span>
+                <span>关键任务 {rows.length} 条</span>
+              </div>
               <div className="overflow-x-auto rounded-xl border" style={{ borderColor: '#E9EFF6' }}>
                 <table className="w-full text-xs">
                   <thead>
                     <tr style={{ background: '#F8FAFC' }}>
-                      {['项目', '关键任务', '负责人', '统筹人', '计划时间', '状态', '问题'].map((label) => (
+                      {['项目', '重点工作', '关键任务', '负责人', '计划时间', '协同人', '状态', '备注/问题'].map((label) => (
                         <th key={label} className="whitespace-nowrap px-3 py-2 text-left font-semibold text-slate-500">{label}</th>
                       ))}
                     </tr>
@@ -1852,12 +1833,13 @@ function ProjectBatchImportModal({
                     {rows.map((row, index) => (
                       <tr key={index} className="border-t" style={{ borderColor: '#F1F5F9' }}>
                         <td className="whitespace-nowrap px-3 py-2 font-semibold text-indigo-700">{row.project_name}</td>
+                        <td className="max-w-xs truncate px-3 py-2 text-slate-700">{row.work_area}</td>
                         <td className="max-w-xs truncate px-3 py-2 text-slate-700">{row.key_task}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-slate-600">{row.owner || '-'}</td>
-                        <td className="whitespace-nowrap px-3 py-2 text-slate-600">{row.coordinator || '-'}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-slate-600">{fmtPlanTime(row.plan_time)}</td>
+                        <td className="whitespace-nowrap px-3 py-2 text-slate-600">{row.collaborators || '-'}</td>
                         <td className="whitespace-nowrap px-3 py-2"><span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-600">{row.status || '未填写'}</span></td>
-                        <td className="max-w-xs truncate px-3 py-2 text-amber-600">{row.issue || '-'}</td>
+                        <td className="max-w-xs truncate px-3 py-2 text-amber-600">{row.notes || row.issue || '-'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1867,10 +1849,10 @@ function ProjectBatchImportModal({
           )}
         </div>
         <div className="flex items-center justify-between border-t px-6 py-4" style={{ borderColor: '#E9EFF6' }}>
-          <div className="text-xs text-slate-400">{rows.length > 0 ? `将创建或匹配 ${rows.length} 个项目` : '粘贴后会自动解析预览'}</div>
+          <div className="text-xs text-slate-400">{rows.length > 0 ? `将创建或匹配 ${new Set(rows.map((row) => row.project_name)).size} 个项目` : '粘贴后会自动解析预览'}</div>
           <div className="flex gap-2">
             <button type="button" onClick={onClose} className="rounded-xl px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100">取消</button>
-            <button type="button" onClick={onConfirm} disabled={importing || rows.length === 0}
+            <button type="button" onClick={onConfirm} disabled={importing || rows.length === 0 || errors.length > 0}
               className="rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
               style={{ background: 'linear-gradient(135deg,#0369A1,#0EA5E9)' }}>
               {importing ? '导入中…' : `确认导入 ${rows.length} 行`}

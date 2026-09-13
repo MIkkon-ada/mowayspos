@@ -136,6 +136,8 @@ def test_github_actions_gate_runs_the_complete_isolated_runtime_contract():
     Fernet(ci_key_match.group(1).encode("utf-8"))
     assert "AI_CONFIG_ENCRYPTION_KEY=$CI_FERNET_KEY" in workflow
 
+    assert 'echo "AI_CONFIG_ENCRYPTION_KEY=$CI_FERNET_KEY" >> "$GITHUB_ENV"' in workflow
+
     assert "MOWAYS_DATA_ROOT: ${{ runner.temp }}" not in workflow
     assert "MOWAYS_ENV_FILE: ${{ runner.temp }}" not in workflow
     assert 'runtime_root="$RUNNER_TEMP/moways-p1b2a-runtime"' in workflow

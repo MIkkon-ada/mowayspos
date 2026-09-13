@@ -74,6 +74,7 @@ jobs:
           env_file="$runtime_root/env/production.env"
           echo "MOWAYS_DATA_ROOT=$runtime_root" >> "$GITHUB_ENV"
           echo "MOWAYS_ENV_FILE=$env_file" >> "$GITHUB_ENV"
+          echo "AI_CONFIG_ENCRYPTION_KEY=$CI_FERNET_KEY" >> "$GITHUB_ENV"
           MOWAYS_DATA_ROOT="$runtime_root"
           MOWAYS_ENV_FILE="$env_file"
 

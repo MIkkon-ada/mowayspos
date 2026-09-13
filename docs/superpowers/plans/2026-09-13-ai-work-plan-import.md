@@ -16,7 +16,7 @@
 - Create: `bowei_ai_dashboard/tests/test_project_plan_ai_import.py`
 - Modify: `bowei_ai_dashboard/app/schemas.py`
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 Add tests that define the public behavior before implementation. Each test must
 construct a real `TestClient` request or a real draft object, assert the exact
@@ -40,7 +40,7 @@ call to prove the preview path did not create business rows:
   issue counts are identical before and after preview, while invocation-log
   metadata may increase when a mocked AI call succeeds.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 ```powershell
 cd D:\项目整体备份\mowayspos-next-task\bowei_ai_dashboard
@@ -49,15 +49,15 @@ cd D:\项目整体备份\mowayspos-next-task\bowei_ai_dashboard
 
 Expected: FAIL because the AI import preview contract and conversion service do not exist yet.
 
-- [ ] **Step 3: Define typed response schemas only**
+- [x] **Step 3: Define typed response schemas only**
 
 Add bounded Pydantic schemas for an optional `project_name`, optional `target_project_id`, evidence, project profile, tasks, warnings, source files, provider/model name, and `fallback_mode`. Reject unknown fields and cap text/list sizes so an AI response cannot expand into an unbounded response.
 
-- [ ] **Step 4: Run the focused tests again**
+- [x] **Step 4: Run the focused tests again**
 
 Run the same pytest command. Expected: still FAIL at missing service/route assertions, with no schema construction errors.
 
-- [ ] **Step 5: Commit the contract**
+- [x] **Step 5: Commit the contract**
 
 ```powershell
 git add bowei_ai_dashboard/tests/test_project_plan_ai_import.py bowei_ai_dashboard/app/schemas.py
@@ -71,15 +71,15 @@ git commit -m "test: define ai work plan import contract"
 - Modify: `bowei_ai_dashboard/app/services/project_init_file_parser.py`
 - Test: `bowei_ai_dashboard/tests/test_project_plan_ai_import.py`
 
-- [ ] **Step 1: Add file-format coverage tests**
+- [x] **Step 1: Add file-format coverage tests**
 
 Extend the red tests with `.csv`, `.tsv`, and `.xlsx` fixtures. Assert that `.csv` and `.tsv` use the bounded `SourceChunk` contract and `.xlsx` preserves worksheet range locations.
 
-- [ ] **Step 2: Implement parser extension support**
+- [x] **Step 2: Implement parser extension support**
 
 Update `parse_project_init_file()` so `.csv` and `.tsv` are accepted and routed through the bounded text reader. Keep the existing size, archive, worksheet, and extracted-character limits unchanged.
 
-- [ ] **Step 3: Implement review-only analysis**
+- [x] **Step 3: Implement review-only analysis**
 
 Add `analyze_project_plan_upload(db, content, original_name, *, actor,
 project_name="", target_project_id=None) -> ProjectPlanAiImportDraft`. The
@@ -91,7 +91,7 @@ never create project records. If AI is unavailable and sources are deterministic
 spreadsheets, call `generate_structured_project_init_draft()` and mark
 `fallback_mode="deterministic"`; otherwise return a safe error.
 
-- [ ] **Step 4: Implement draft-to-import conversion**
+- [x] **Step 4: Implement draft-to-import conversion**
 
 Add `draft_to_batch_rows(draft, *, project_name_override="") ->
 list[schemas.BatchImportRow]`. Map task title to `workstream`, task goal to
@@ -100,7 +100,7 @@ process/evidence to `notes`, and each subtask title to `key_task`. Prefer
 subtask owner/date/status, then parent task values. Reject empty
 project/workstream/key-task values before conversion.
 
-- [ ] **Step 5: Run backend tests to verify GREEN**
+- [x] **Step 5: Run backend tests to verify GREEN**
 
 ```powershell
 cd D:\项目整体备份\mowayspos-next-task\bowei_ai_dashboard
@@ -109,7 +109,7 @@ cd D:\项目整体备份\mowayspos-next-task\bowei_ai_dashboard
 
 Expected: all focused tests pass without changing the production database.
 
-- [ ] **Step 6: Commit the service**
+- [x] **Step 6: Commit the service**
 
 ```powershell
 git add bowei_ai_dashboard/app/services/project_plan_ai_import.py bowei_ai_dashboard/app/services/project_init_file_parser.py bowei_ai_dashboard/tests/test_project_plan_ai_import.py
@@ -124,19 +124,19 @@ git commit -m "feat: add review-only ai work plan analysis"
 - Modify: `bowei_ai_dashboard/app/routers/projects.py` only for shared authorization/conversion
 - Test: `bowei_ai_dashboard/tests/test_project_plan_ai_import.py`
 
-- [ ] **Step 1: Add route tests**
+- [x] **Step 1: Add route tests**
 
 Cover multipart preview, global batch-import permission, no database mutation during preview, bounded malformed-AI errors, confirmed apply delegation to `import_project_plan_rows`, and duplicate re-apply counts.
 
-- [ ] **Step 2: Implement preview route**
+- [x] **Step 2: Implement preview route**
 
 Use `UploadFile`/`File`, `authorize_global_project_action(current_user, A_BATCH_IMPORT, db)`, and the service from Task 2. Keep the invocation context resource type `project_plan_import`; never expose API keys or raw upstream errors.
 
-- [ ] **Step 3: Implement apply route**
+- [x] **Step 3: Implement apply route**
 
 Accept only confirmed normalized `BatchImportRow` values, enforce the same permission, and call `import_project_plan_rows`. Do not trust client-supplied AI IDs, confidence, duplicate flags, or evidence as authority.
 
-- [ ] **Step 4: Register the router and run tests**
+- [x] **Step 4: Register the router and run tests**
 
 ```powershell
 cd D:\项目整体备份\mowayspos-next-task\bowei_ai_dashboard
@@ -159,19 +159,19 @@ git commit -m "feat: expose ai work plan import preview api"
 - Create: `frontend/src/features/settings/projectPlanAiImportDraft.ts`
 - Create: `frontend/src/features/settings/projectPlanAiImportDraft.test.ts`
 
-- [ ] **Step 1: Write failing frontend tests**
+- [x] **Step 1: Write failing frontend tests**
 
 Test FormData construction, target/project-name options, task/subtask-to-row conversion, parent fallback for blank subtask values, evidence notes, missing-field errors, and preservation of user edits.
 
-- [ ] **Step 2: Implement API decoder and calls**
+- [x] **Step 2: Implement API decoder and calls**
 
 Add typed `previewAiProjectPlan(file, options)` and `applyAiProjectPlan(rows)` functions, validating response shape at the boundary in the same style as `projectInitAi.ts`. Distinguish AI unavailable from validation errors.
 
-- [ ] **Step 3: Implement pure draft conversion**
+- [x] **Step 3: Implement pure draft conversion**
 
 Keep conversion outside the page component. Use `BatchImportRow`, map project profile/tasks/subtasks/status/dates/owners/collaborators/evidence, and retain evidence source labels in notes.
 
-- [ ] **Step 4: Run focused frontend tests**
+- [x] **Step 4: Run focused frontend tests**
 
 ```powershell
 cd D:\项目整体备份\mowayspos-next-task\frontend
@@ -180,7 +180,7 @@ npm run test:unit -- --run src/features/settings/projectPlanAiImportDraft.test.t
 
 Expected: PASS after minimal implementation.
 
-- [ ] **Step 5: Commit frontend contracts**
+- [x] **Step 5: Commit frontend contracts**
 
 ```powershell
 git add frontend/src/api/projectPlanAiImport.ts frontend/src/features/settings/projectPlanAiImportDraft.ts frontend/src/features/settings/projectPlanAiImportDraft.test.ts
@@ -196,11 +196,11 @@ git commit -m "feat: add ai work plan import frontend contract"
 - Create: `frontend/src/features/settings/ProjectPlanAiImportDialog.test.tsx` if supported by the test setup
 - Modify: `frontend/tests/projectPlanImportUiContract.test.mjs`
 
-- [ ] **Step 1: Add UI contract tests**
+- [x] **Step 1: Add UI contract tests**
 
 Assert file picker plus paste area, existing-project selector/new-project name, AI analyzing state, AI/fallback indicator, counts, warnings/unmapped fields, editable normalized rows, confirmation disabled on errors, and no write before confirmation.
 
-- [ ] **Step 2: Implement the dialog state machine**
+- [x] **Step 2: Implement the dialog state machine**
 
 Use only:
 
@@ -211,15 +211,15 @@ idle → reading → analyzing → review → importing → success
 
 Keep the draft open after analysis, preserve edits when the target changes, and show an explicit fallback notice.
 
-- [ ] **Step 3: Implement the review table**
+- [x] **Step 3: Implement the review table**
 
 Use a compact operations layout matching the existing project-management surface: progress header, source/model badge, warning strip, counts, then an editable table grouped by workstream. Put evidence/source location in expandable detail cells.
 
-- [ ] **Step 4: Wire file upload, paste, preview, and apply**
+- [x] **Step 4: Wire file upload, paste, preview, and apply**
 
 File upload uses the AI preview endpoint. Paste creates a UTF-8 `.tsv` `File` and uses the same endpoint. Apply sends only the edited normalized rows to the atomic import service.
 
-- [ ] **Step 5: Run frontend tests and build**
+- [x] **Step 5: Run frontend tests and build**
 
 ```powershell
 cd D:\项目整体备份\mowayspos-next-task\frontend
@@ -249,14 +249,14 @@ git commit -m "feat: add ai work plan import review dialog"
 
 Cover the supplied `主要工作 / 目标 / 验收标准与关键成果 / 关键任务 / 推进流程` shape, no-title input, project-column-only input, renamed fields such as `工作包 / 主责人 / 执行事项`, merged blank cells, two sheets, and repeated import.
 
-- [ ] **Step 2: Run backend regression tests**
+- [x] **Step 2: Run backend regression tests**
 
 ```powershell
 cd D:\项目整体备份\mowayspos-next-task\bowei_ai_dashboard
 ..\.venv\Scripts\python.exe -m pytest tests/test_project_plan_ai_import.py tests/test_project_work_plan_import.py tests/test_project_permission_characterization.py -q
 ```
 
-- [ ] **Step 3: Run frontend regression tests**
+- [x] **Step 3: Run frontend regression tests**
 
 ```powershell
 cd D:\项目整体备份\mowayspos-next-task\frontend
@@ -264,7 +264,7 @@ npm run test:all
 npm run build
 ```
 
-- [ ] **Step 4: Run diff and workspace checks**
+- [x] **Step 4: Run diff and workspace checks**
 
 ```powershell
 cd D:\项目整体备份\mowayspos-next-task
@@ -275,11 +275,11 @@ git diff HEAD~6..HEAD --stat
 
 Confirm no production database or supplied workbook is committed.
 
-- [ ] **Step 5: Update the manual runbook**
+- [x] **Step 5: Update the manual runbook**
 
 Document the AI flow, AI-unavailable fallback, low-confidence/manual correction, duplicate re-import, and supplied workbook shape.
 
-- [ ] **Step 6: Commit verification docs**
+- [x] **Step 6: Commit verification docs**
 
 ```powershell
 git add bowei_ai_dashboard/tests/test_project_plan_ai_import.py frontend/src/features/settings/projectPlanAiImportDraft.test.ts docs/full-flow-manual-acceptance-runbook.md docs/full-flow-manual-acceptance-checklist.md
@@ -288,7 +288,7 @@ git commit -m "test: cover ai work plan import formats"
 
 ## Task 7: Final verification and handoff
 
-- [ ] **Step 1: Run the complete relevant verification set fresh**
+- [x] **Step 1: Run the complete relevant verification set fresh**
 
 ```powershell
 cd D:\项目整体备份\mowayspos-next-task\bowei_ai_dashboard
@@ -301,11 +301,11 @@ git diff --check
 git status --short
 ```
 
-- [ ] **Step 2: Inspect the final implementation**
+- [x] **Step 2: Inspect the final implementation**
 
 Verify preview does not mutate projects/tasks, apply is the only write path, existing batch import behavior is unchanged, AI invocation logs use `project_plan_import`, and the UI never claims AI success when fallback/manual mode was used.
 
-- [ ] **Step 3: Commit only after verification**
+- [x] **Step 3: Commit only after verification**
 
 Do not commit the local database backup or the supplied workbook. Commit only intended source/docs/test changes after the fresh checks pass.
 

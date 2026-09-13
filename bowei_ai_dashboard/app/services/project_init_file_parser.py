@@ -96,7 +96,7 @@ def parse_project_init_file(
     """Parse a supported file and normalize parser failures for callers."""
     path = Path(path)
     extension = Path(original_name).suffix.lower()
-    if extension not in {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".txt"}:
+    if extension not in {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".txt", ".csv", ".tsv"}:
         raise UnsupportedProjectInitFile(f"不支持的项目初始化文件：{original_name}")
 
     try:

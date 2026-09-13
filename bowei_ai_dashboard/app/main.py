@@ -57,6 +57,7 @@ from .routers import (
     monthly_plans,
     key_tasks,
     project_init_ai,
+    project_plan_ai_import,
     task_plan_proposals,
     people,
     platform_settings,
@@ -585,6 +586,7 @@ app.include_router(monthly_plans.router)
 app.include_router(key_tasks.router)
 app.include_router(project_init_ai.router)
 app.include_router(project_init_ai.analysis_router)
+app.include_router(project_plan_ai_import.router)
 app.include_router(task_plan_proposals.router)
 app.include_router(admin.router)
 app.include_router(wecom_auth.router)

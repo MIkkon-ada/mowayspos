@@ -353,6 +353,18 @@ class ProjectBatchImportPayload(BaseModel):
     rows: list[BatchImportRow]
 
 
+class ProjectPlanAiImportPreviewResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_profile: dict[str, Any] = Field(default_factory=dict)
+    tasks: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    warnings: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    source_files: list[str] = Field(default_factory=list, max_length=20)
+    provider: str = ""
+    model_name: str = ""
+    fallback_mode: Literal["ai", "deterministic"]
+
+
 class ProjectPatchPayload(BaseModel):
     name: str | None = None
     code: str | None = None

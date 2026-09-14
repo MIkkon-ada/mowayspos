@@ -8,14 +8,18 @@ on:
   pull_request:
     paths:
       - .github/workflows/cloud-p1b2a-gate.yml
+      - .github/workflows/cloud-cvm-incremental-deploy.yml
       - bowei_ai_dashboard/**
       - frontend/**
       - .env.production.example
       - Dockerfile.backend
       - Dockerfile.frontend
       - docker-compose.prod.yml
+      - docker-compose.prod.incremental.yml
       - nginx.conf
       - docs/production-runtime-contract.md
+      - docs/tencent-cvm-incremental-deploy.md
+      - scripts/cvm-incremental-deploy.sh
       - docs/ghcr-private-image-publish.md
 
 permissions:

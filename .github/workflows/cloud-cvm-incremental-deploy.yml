@@ -1,0 +1,166 @@
+name: CLOUD CVM incremental application deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: Application area to synchronize
+        required: true
+        type: choice
+        options: [backend, frontend, all]
+        default: all
+      base_sha:
+        description: Last deployed commit SHA; blank uses the current commit parent
+        required: false
+        type: string
+        default: ''
+      run_migrations:
+        description: Run alembic upgrade head before restarting backend
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-cvm-incremental-deploy
+  cancel-in-progress: false
+
+jobs:
+  incremental-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPONENT: ${{ inputs.component }}
+      BASE_SHA: ${{ inputs.base_sha }}
+      RUN_MIGRATIONS: ${{ inputs.run_migrations }}
+      RELEASE_SHA: ${{ github.sha }}
+      CVM_ROOT: /opt/mowayspos
+      RUNTIME_ROOT: /opt/mowayspos/runtime
+
+    steps:
+      - name: Checkout exact main revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate main revision and incremental-safe change set
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          case "$COMPONENT" in backend|frontend|all) ;; *) exit 2 ;; esac
+          case "$RUN_MIGRATIONS" in true|false) ;; *) exit 2 ;; esac
+
+          base_sha="$BASE_SHA"
+          if [[ -z "$base_sha" ]]; then
+            base_sha="$(git rev-parse "$RELEASE_SHA^")"
+          fi
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "$base_sha^{commit}"
+          git merge-base --is-ancestor "$base_sha" "$RELEASE_SHA"
+
+          changed_file_list="$RUNNER_TEMP/cvm-incremental-changed-files.txt"
+          git diff --name-only "$base_sha" "$RELEASE_SHA" > "$changed_file_list"
+          if grep -E '^(Dockerfile([.]|$)|docker-compose[.]prod[.]yml$|nginx[.]conf$|\.env[.]production[.]example$|bowei_ai_dashboard/requirements([.]txt|/)|frontend/(package[.]json|package-lock[.]json))' "$changed_file_list"; then
+            echo 'The selected range changes the runtime image or dependency contract.' >&2
+            echo 'Use cloud-p1b2b-a-ghcr-private-publish.yml instead.' >&2
+            exit 1
+          fi
+          if [[ "$COMPONENT" != frontend ]] && grep -q '^bowei_ai_dashboard/migrations/' "$changed_file_list" && [[ "$RUN_MIGRATIONS" != true ]]; then
+            echo 'Migration files changed; rerun with run_migrations=true.' >&2
+            exit 1
+          fi
+          git diff --check "$base_sha" "$RELEASE_SHA"
+          echo "base_sha=$base_sha"
+          echo "release_sha=$RELEASE_SHA"
+
+      - name: Set up Node 24 for frontend artifact
+        if: ${{ inputs.component == 'frontend' || inputs.component == 'all' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend artifact only
+        if: ${{ inputs.component == 'frontend' || inputs.component == 'all' }}
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Configure CVM SSH
+        shell: bash
+        env:
+          CVM_HOST: ${{ secrets.CVM_HOST }}
+          CVM_USER: ${{ secrets.CVM_USER }}
+          CVM_SSH_KEY: ${{ secrets.CVM_SSH_KEY }}
+          CVM_KNOWN_HOSTS: ${{ secrets.CVM_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$CVM_HOST"
+          test -n "$CVM_USER"
+          test -n "$CVM_SSH_KEY"
+          test -n "$CVM_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$CVM_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$CVM_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+
+      - name: Preflight CVM deployment directory
+        shell: bash
+        env:
+          CVM_HOST: ${{ secrets.CVM_HOST }}
+          CVM_USER: ${{ secrets.CVM_USER }}
+        run: |
+          set -euo pipefail
+          remote="$CVM_USER@$CVM_HOST"
+          ssh_opts=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+          ssh "${ssh_opts[@]}" "$remote" 'set -eu; test -d /opt/mowayspos; test -f /opt/mowayspos/production.env; test -f /opt/mowayspos/docker-compose.prod.yml; command -v docker >/dev/null; command -v rsync >/dev/null; command -v curl >/dev/null'
+
+      - name: Stage selected files on CVM
+        shell: bash
+        env:
+          CVM_HOST: ${{ secrets.CVM_HOST }}
+          CVM_USER: ${{ secrets.CVM_USER }}
+        run: |
+          set -euo pipefail
+          remote="$CVM_USER@$CVM_HOST"
+          staging="$RUNTIME_ROOT/staging/$RELEASE_SHA"
+          ssh_opts=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+          rsync_ssh="ssh ${ssh_opts[*]}"
+
+          ssh "${ssh_opts[@]}" "$remote" "mkdir -p '$staging'"
+          if [[ "$COMPONENT" == backend || "$COMPONENT" == all ]]; then
+            ssh "${ssh_opts[@]}" "$remote" "mkdir -p '$staging/backend/app' '$staging/backend/migrations'"
+            rsync -az --delete -e "$rsync_ssh" bowei_ai_dashboard/app/ "$remote:$staging/backend/app/"
+            rsync -az --delete -e "$rsync_ssh" bowei_ai_dashboard/migrations/ "$remote:$staging/backend/migrations/"
+          fi
+          if [[ "$COMPONENT" == frontend || "$COMPONENT" == all ]]; then
+            ssh "${ssh_opts[@]}" "$remote" "mkdir -p '$staging/frontend/dist'"
+            rsync -az --delete -e "$rsync_ssh" frontend/dist/ "$remote:$staging/frontend/dist/"
+          fi
+          rsync -az -e "$rsync_ssh" docker-compose.prod.incremental.yml "$remote:$CVM_ROOT/docker-compose.prod.incremental.yml"
+          rsync -az -e "$rsync_ssh" scripts/cvm-incremental-deploy.sh "$remote:$staging/cvm-incremental-deploy.sh"
+
+      - name: Activate staged files on CVM
+        shell: bash
+        env:
+          CVM_HOST: ${{ secrets.CVM_HOST }}
+          CVM_USER: ${{ secrets.CVM_USER }}
+        run: |
+          set -euo pipefail
+          remote="$CVM_USER@$CVM_HOST"
+          staging="$RUNTIME_ROOT/staging/$RELEASE_SHA"
+          ssh_opts=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+          ssh "${ssh_opts[@]}" "$remote" "chmod 700 '$staging/cvm-incremental-deploy.sh'; RELEASE_SHA='$RELEASE_SHA' COMPONENT='$COMPONENT' RUN_MIGRATIONS='$RUN_MIGRATIONS' STAGING_ROOT='$staging' COMPOSE_ROOT='$CVM_ROOT' RUNTIME_ROOT='$RUNTIME_ROOT' bash '$staging/cvm-incremental-deploy.sh'"
+
+      - name: Remove temporary SSH material
+        if: always()
+        shell: bash
+        run: |
+          rm -f -- "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"

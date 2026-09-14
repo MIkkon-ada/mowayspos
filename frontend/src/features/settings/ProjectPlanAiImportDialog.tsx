@@ -1,26 +1,22 @@
 import { useMemo, useRef, useState } from 'react'
 import type { Project } from '../../types'
 import type { BatchImportResult, BatchImportRow } from '../../api/projects'
-import {
-  applyAiProjectPlan,
-  previewAiProjectPlan,
-  type ProjectPlanAiPreview,
-} from '../../api/projectPlanAiImport'
+import { applyAiProjectPlan, previewAiProjectPlan, type ProjectPlanAiEvidence, type ProjectPlanAiPreview } from '../../api/projectPlanAiImport'
 import { draftToBatchImportRows } from './projectPlanAiImportDraft'
-import { groupImportRows } from './projectPlanAiImportView'
+import { groupImportRows, type ProjectPlanImportGroup } from './projectPlanAiImportView'
 
 type Phase = 'idle' | 'reading' | 'analyzing' | 'review' | 'importing' | 'success' | 'error'
 type SourceMode = 'upload' | 'paste'
+type Props = { open: boolean; projects: Project[]; onClose: () => void; onImported: (result: BatchImportResult) => void }
 
-type Props = {
-  open: boolean
-  projects: Project[]
-  onClose: () => void
-  onImported: (result: BatchImportResult) => void
-}
-
-function editRow(rows: BatchImportRow[], index: number, field: keyof BatchImportRow, value: string): BatchImportRow[] {
-  return rows.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row)
+function clean(value: unknown): string { return typeof value === 'string' ? value.trim() : '' }
+function editRow(rows: BatchImportRow[], index: number, field: keyof BatchImportRow, value: string): BatchImportRow[] { return rows.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row) }
+function groupMatches(row: BatchImportRow, group: ProjectPlanImportGroup): boolean { return row.project_name.trim() === group.projectName && (row.workstream ?? '').trim() === group.workstream }
+function evidenceForRows(rows: BatchImportRow[], preview: ProjectPlanAiPreview | null): ProjectPlanAiEvidence[][] {
+  if (!preview) return []
+  const evidence: ProjectPlanAiEvidence[][] = []
+  preview.tasks.forEach((task) => task.subtasks.forEach((subtask) => evidence.push([...(task.evidence ?? []), ...(subtask.evidence ?? [])])))
+  return rows.map((_row, index) => evidence[index] ?? [])
 }
 
 export function ProjectPlanAiImportDialog({ open, projects, onClose, onImported }: Props) {
@@ -34,237 +30,98 @@ export function ProjectPlanAiImportDialog({ open, projects, onClose, onImported 
   const [rows, setRows] = useState<BatchImportRow[]>([])
   const [phase, setPhase] = useState<Phase>('idle')
   const [expandedRow, setExpandedRow] = useState<number | null>(null)
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [adoptedGroups, setAdoptedGroups] = useState<Set<string>>(new Set())
+  const [sourceDetail, setSourceDetail] = useState<ProjectPlanAiEvidence | null>(null)
   const [error, setError] = useState('')
 
   const busy = phase === 'reading' || phase === 'analyzing' || phase === 'importing'
   const groups = useMemo(() => groupImportRows(rows), [rows])
-  const projectCount = useMemo(() => new Set(rows.map((row) => row.project_name)).size, [rows])
+  const sourceEvidence = useMemo(() => evidenceForRows(rows, preview), [rows, preview])
   const selectedProject = projects.find((item) => String(item.id) === targetProjectId)
+  const taskCount = rows.length
+  const todoCount = useMemo(() => rows.filter((row) => !row.owner?.trim() || row.owner.trim() === '待指派').length, [rows])
+  const averageConfidence = useMemo(() => {
+    const values = preview?.tasks.flatMap((task) => task.subtasks.map((subtask) => subtask.confidence ?? task.confidence).filter((value): value is number => typeof value === 'number')) ?? []
+    return values.length ? Math.round(values.reduce((total, value) => total + value, 0) / values.length) : 0
+  }, [preview])
+  const adoptedCount = adoptedGroups.size
+  const allAdopted = groups.length > 0 && adoptedCount === groups.length
 
   function reset() {
-    setFile(null)
-    setText('')
-    setSourceMode('upload')
-    setProjectName('')
-    setTargetProjectId('')
-    setPreview(null)
-    setRows([])
-    setExpandedRow(null)
-    setPhase('idle')
-    setError('')
+    setFile(null); setText(''); setSourceMode('upload'); setProjectName(''); setTargetProjectId(''); setPreview(null); setRows([]); setExpandedRow(null); setCollapsedGroups(new Set()); setAdoptedGroups(new Set()); setSourceDetail(null); setPhase('idle'); setError('')
   }
-
-  function close() {
-    if (busy) return
-    reset()
-    onClose()
-  }
-
-  function selectFile(nextFile: File | null) {
-    if (!nextFile) return
-    setFile(nextFile)
-    setText('')
-    setPreview(null)
-    setRows([])
-    setExpandedRow(null)
-    setError('')
-    setPhase('idle')
-  }
-
-  function switchSourceMode(nextMode: SourceMode) {
-    setSourceMode(nextMode)
-    setFile(null)
-    setText('')
-    setPreview(null)
-    setRows([])
-    setExpandedRow(null)
-    setError('')
-    setPhase('idle')
-  }
+  function close() { if (busy) return; reset(); onClose() }
+  function selectFile(nextFile: File | null) { if (!nextFile) return; setFile(nextFile); setText(''); setPreview(null); setRows([]); setExpandedRow(null); setAdoptedGroups(new Set()); setError(''); setPhase('idle') }
+  function switchSourceMode(nextMode: SourceMode) { setSourceMode(nextMode); setFile(null); setText(''); setPreview(null); setRows([]); setExpandedRow(null); setAdoptedGroups(new Set()); setError(''); setPhase('idle') }
 
   async function analyze() {
     const source = file ?? (text.trim() ? new File([text], '粘贴的工作计划.tsv', { type: 'text/tab-separated-values' }) : null)
-    if (!source) {
-      setError('请先选择文件或粘贴工作计划内容')
-      setPhase('error')
-      return
-    }
-    setError('')
-    setPhase('reading')
+    if (!source) { setError('请先选择文件或粘贴工作计划内容'); setPhase('error'); return }
+    setError(''); setPhase('reading')
     try {
       setPhase('analyzing')
-      const result = await previewAiProjectPlan(source, {
-        projectName: projectName.trim(),
-        targetProjectId: targetProjectId ? Number(targetProjectId) : undefined,
-      })
-      const normalized = draftToBatchImportRows(result, selectedProject?.name || projectName)
-      setPreview(result)
-      setRows(normalized)
-      setExpandedRow(null)
-      setPhase('review')
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'AI 分析失败，请检查文件后重试')
-      setPhase('error')
-    }
+      const result = await previewAiProjectPlan(source, { projectName: projectName.trim(), targetProjectId: targetProjectId ? Number(targetProjectId) : undefined })
+      const resolvedName = selectedProject?.name || projectName.trim() || clean(result.project_profile.name)
+      setProjectName(resolvedName); setPreview(result); setRows(draftToBatchImportRows(result, resolvedName)); setExpandedRow(null); setCollapsedGroups(new Set()); setAdoptedGroups(new Set()); setPhase('review')
+    } catch (nextError) { setError(nextError instanceof Error ? nextError.message : 'AI 分析失败，请检查文件后重试'); setPhase('error') }
   }
 
+  function updateProjectName(value: string) { setProjectName(value); setRows((current) => current.map((row) => ({ ...row, project_name: value }))); setAdoptedGroups(new Set()) }
+  function updateGroup(group: ProjectPlanImportGroup, field: keyof BatchImportRow, value: string) {
+    setRows((current) => current.map((row) => groupMatches(row, group) ? { ...row, [field]: value } : row))
+    setAdoptedGroups((current) => { const next = new Set(current); next.delete(group.key); return next })
+  }
+  function toggleGroup(groupKey: string) { setAdoptedGroups((current) => { const next = new Set(current); if (next.has(groupKey)) next.delete(groupKey); else next.add(groupKey); return next }) }
+  function adoptAll() { setAdoptedGroups(new Set(groups.map((group) => group.key))) }
+  function toggleGroupOpen(groupKey: string) { setCollapsedGroups((current) => { const next = new Set(current); if (next.has(groupKey)) next.delete(groupKey); else next.add(groupKey); return next }) }
+  function openSource(rowIndex: number) { const evidence = sourceEvidence[rowIndex]?.[0]; if (evidence) setSourceDetail(evidence) }
+
   async function confirmImport() {
-    if (!rows.length || rows.some((row) => !row.project_name.trim() || !row.workstream?.trim() || !row.key_task.trim())) {
-      setError('项目、重点工作和关键任务不能为空')
-      setPhase('error')
-      return
-    }
-    setPhase('importing')
-    setError('')
-    try {
-      const result = await applyAiProjectPlan(rows)
-      setPhase('success')
-      onImported(result)
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '导入失败，请检查后重试')
-      setPhase('error')
-    }
+    if (!allAdopted) { setError('请先逐项核对并采纳所有重点工作'); setPhase('error'); return }
+    if (!rows.length || rows.some((row) => !row.project_name.trim() || !row.workstream?.trim() || !row.key_task.trim())) { setError('项目、重点工作和关键任务不能为空'); setPhase('error'); return }
+    setPhase('importing'); setError('')
+    try { const result = await applyAiProjectPlan(rows); setPhase('success'); onImported(result) }
+    catch (nextError) { setError(nextError instanceof Error ? nextError.message : '导入失败，请检查后重试'); setPhase('error') }
   }
 
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-3" onClick={close}>
-      <div className="flex max-h-[92vh] w-[min(760px,96vw)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
-        <header className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
-          <div>
-            <div className="text-base font-bold text-slate-800">导入工作计划</div>
-            <p className="mt-1 text-xs text-slate-500">表名和表头不需要固定，AI 会先识别，再由你确认写入。</p>
+    <div className="fixed inset-0 z-50 flex h-screen flex-col overflow-hidden bg-[#f4f5f9] text-slate-800" onClick={close}>
+      <header className="flex shrink-0 items-center gap-4 border-b border-[#e5e8ef] bg-white px-5 py-3">
+        <div className="min-w-0"><div className="flex flex-wrap items-center gap-2 text-base font-extrabold"><span>项目立项 · 导入工作推进表</span><span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ${preview?.fallback_mode === 'deterministic' ? 'bg-amber-50 text-amber-700' : 'bg-violet-50 text-violet-700'}`}><span className="h-1.5 w-1.5 rounded-full bg-current" />{preview ? (preview.fallback_mode === 'ai' ? 'AI 待核对' : '规则提取 · 待核对') : '待导入'}</span></div><p className="mt-0.5 text-xs text-slate-400">导入资料后，逐条核对 AI 生成的重点工作和关键任务，确认后才会写入项目。</p></div>
+        <div className="flex-1" />
+        {preview && phase === 'review' && <div className="hidden items-center gap-2 text-xs text-slate-400 sm:flex"><span className="font-semibold text-slate-700">{adoptedCount} / {groups.length}</span> 项重点工作已采纳</div>}
+        <button type="button" onClick={close} disabled={busy} className="rounded-lg p-2 text-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40" aria-label="关闭">×</button>
+      </header>
+
+      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3 lg:flex-row lg:px-5">
+        <aside className="flex min-h-0 w-full shrink-0 flex-col overflow-hidden rounded-[14px] border border-[#e5e8ef] bg-white shadow-[0_1px_2px_rgba(20,26,40,.05),0_6px_22px_rgba(20,26,40,.06)] lg:w-[292px]">
+          <div className="flex shrink-0 items-center justify-between border-b border-[#eff1f6] px-4 py-3"><b className="text-[15px]">项目概览</b>{preview && <span className="text-[11px] text-slate-400">预览中</span>}</div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+            {!preview ? <div className="flex h-full min-h-32 items-center justify-center text-center text-xs text-slate-400">导入工作推进表后<br />这里会显示项目概览</div> : <>
+              <div className="mt-3 text-[11px] font-extrabold tracking-wider text-slate-400">基本信息</div>
+              <div className="mt-1 divide-y divide-dashed divide-[#eff1f6]"><label className="flex items-baseline justify-between gap-2 py-2 text-xs"><span className="shrink-0 text-slate-400">项目名称</span><input aria-label="项目名称" value={projectName} onChange={(event) => updateProjectName(event.target.value)} className="min-w-0 rounded px-1 text-right text-xs font-semibold hover:bg-slate-50 focus:border-violet-400 focus:bg-white" /></label><div className="flex items-baseline justify-between gap-2 py-2 text-xs"><span className="shrink-0 text-slate-400">项目周期</span><span className="truncate font-semibold">{preview.project_profile.start_date || '未识别'}{preview.project_profile.end_date ? ` ~ ${preview.project_profile.end_date}` : ''}</span></div></div>
+              <div className="mt-4 text-[11px] font-extrabold tracking-wider text-slate-400">项目目标</div><div className="mt-1 rounded-[10px] bg-gradient-to-br from-[#f1edff] to-[#eaf0ff] px-3 py-2.5 text-xs leading-relaxed text-[#443a9e]">{preview.project_profile.objectives || '未识别项目目标，请在导入后补充。'}</div>
+              <div className="mt-4 text-[11px] font-extrabold tracking-wider text-slate-400">项目背景</div><p className="mt-1 text-xs leading-relaxed text-slate-500">{preview.project_profile.background || '未识别项目背景'}</p>
+              <div className="mt-4 grid grid-cols-2 gap-2"><div className="rounded-xl border border-[#e5e8ef] bg-[#fafbfe] p-2.5"><b className="text-lg text-violet-600">{taskCount}</b><span className="block text-[11px] text-slate-400">关键任务</span></div><div className="rounded-xl border border-[#e5e8ef] bg-[#fafbfe] p-2.5"><b className="text-lg text-amber-600">{todoCount}</b><span className="block text-[11px] text-slate-400">待指派</span></div></div>
+              <div className="mt-4 text-[11px] font-extrabold tracking-wider text-slate-400">已导入文档</div><div className="mt-1 space-y-2">{preview.source_files.map((source) => <div key={source} className="flex items-center gap-2 rounded-[10px] border border-[#e5e8ef] px-2.5 py-2 text-xs"><span className="flex h-6 w-7 items-center justify-center rounded-md bg-emerald-50 text-[9px] font-extrabold text-emerald-700">{source.toLowerCase().endsWith('pdf') ? 'PDF' : 'XLS'}</span><span className="min-w-0 flex-1 truncate font-semibold">{source}</span></div>)}</div>
+            </>}
           </div>
-          <button type="button" onClick={close} disabled={busy} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 disabled:opacity-40" aria-label="关闭">
-            <svg style={{ width: 15, height: 15 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </header>
+          {!preview && <div className="border-t border-[#eff1f6] p-3 text-xs text-slate-400">先在右侧上传文件或粘贴表格内容。</div>}
+        </aside>
 
-        <main className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
-          <section className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <div className="mb-2 text-xs font-semibold text-slate-600">导入位置</div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <label className="text-xs text-slate-500">
-                已有项目（可选）
-                <select value={targetProjectId} onChange={(event) => { setTargetProjectId(event.target.value); setPreview(null); setRows([]) }} disabled={busy} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400">
-                  <option value="">AI 自动识别或新建项目</option>
-                  {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-                </select>
-              </label>
-              <label className="text-xs text-slate-500">
-                新项目名称（可选）
-                <input value={projectName} onChange={(event) => setProjectName(event.target.value)} disabled={busy || Boolean(targetProjectId)} placeholder="留空则从材料中识别" className="mt-1 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400 disabled:bg-slate-100" />
-              </label>
-            </div>
-          </section>
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-[#e5e8ef] bg-white shadow-[0_1px_2px_rgba(20,26,40,.05),0_6px_22px_rgba(20,26,40,.06)]" onClick={(event) => event.stopPropagation()}>
+          <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[#eff1f6] px-4 py-3 sm:px-5"><h2 className="text-[15px]">工作推进方案</h2>{preview && <><span className="rounded-full bg-violet-50 px-2.5 py-1 text-[11px] font-bold text-violet-600">任务树</span><span className="rounded-full bg-violet-50 px-2.5 py-1 text-[11px] font-bold text-violet-600">✦ AI · {groups.length} 重点工作 / {taskCount} 关键任务</span></>}{<div className="flex-1" />}{preview && phase === 'review' && <><span className="sr-only">复核导入内容</span><button type="button" onClick={() => setCollapsedGroups(new Set(groups.map((group) => group.key)))} className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-100">收起全部</button><button type="button" onClick={adoptAll} className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-50">一键全部采纳</button></>}</div>
 
-          {phase !== 'review' && phase !== 'success' && (
-            <section className="rounded-xl border border-slate-200 p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-bold text-slate-800">提供工作计划</h2>
-                  <p className="mt-1 text-xs text-slate-500">支持 Excel、CSV、TSV、文档和复制粘贴。</p>
-                </div>
-                <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-                  {([['upload', '上传文件'], ['paste', '粘贴表格']] as const).map(([mode, label]) => (
-                    <button key={mode} type="button" aria-pressed={sourceMode === mode} onClick={() => switchSourceMode(mode)} disabled={busy} className={`rounded-md px-2.5 py-1.5 text-xs font-semibold ${sourceMode === mode ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+          {!preview || (phase !== 'review' && phase !== 'success') ? <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6"><section className="mx-auto max-w-2xl rounded-2xl border border-[#e5e8ef] bg-[#fafbfe] p-5"><div className="mb-4"><h2 className="text-base font-bold">提供工作计划</h2><p className="mt-1 text-xs text-slate-500">支持 Excel、CSV、TSV、文档和复制粘贴；表名和表头不需要固定。</p></div><div className="mb-4 flex rounded-lg border border-[#e5e8ef] bg-white p-0.5 sm:w-fit">{([['upload', '上传文件'], ['paste', '粘贴表格']] as const).map(([mode, label]) => <button key={mode} type="button" aria-pressed={sourceMode === mode} onClick={() => switchSourceMode(mode)} disabled={busy} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${sourceMode === mode ? 'bg-violet-50 text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{label}</button>)}</div>{sourceMode === 'upload' ? <button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy} className="flex min-h-32 w-full flex-col items-center justify-center rounded-xl border border-dashed border-[#cfd6ea] bg-white px-4 text-center hover:border-violet-300 hover:bg-violet-50/30 disabled:opacity-40"><span className="text-sm font-semibold text-slate-700">{file ? file.name : '选择工作推进表或项目方案'}</span><span className="mt-1 text-xs text-slate-400">点击选择或拖入文件</span></button> : <textarea value={text} onChange={(event) => { setText(event.target.value); setFile(null); setPreview(null); setRows([]) }} disabled={busy} placeholder="粘贴表格内容，AI 会自动识别重点工作和关键任务" aria-label="工作计划内容" className="h-32 w-full resize-none rounded-xl border border-[#e5e8ef] bg-white p-3 font-mono text-xs outline-none focus:border-violet-400" />}<input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt,.docx,.doc,.pdf" aria-label="工作计划文件" className="hidden" onChange={(event) => selectFile(event.target.files?.[0] ?? null)} /><button type="button" onClick={() => void analyze()} disabled={busy || (!file && !text.trim())} className="mt-4 w-full rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-40">{phase === 'reading' ? '读取文件…' : phase === 'analyzing' ? 'AI 分析中…' : '开始分析'}</button></section>{error && <div className="mx-auto mt-3 max-w-2xl rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{error}</div>}</div> : <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5"><div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4"><div className="rounded-xl border border-[#e5e8ef] bg-[#fafbfe] p-3"><b className="text-xl text-violet-600">{taskCount}</b><span className="block text-[11px] text-slate-400">拆解关键任务</span></div><div className="rounded-xl border border-[#e5e8ef] bg-[#fafbfe] p-3"><b className="text-xl text-amber-600">{todoCount}</b><span className="block text-[11px] text-slate-400">负责人待指派</span></div><div className="rounded-xl border border-[#e5e8ef] bg-[#fafbfe] p-3"><b className="text-xl text-emerald-600">{adoptedCount}</b><span className="block text-[11px] text-slate-400">已采纳重点工作</span></div><div className="rounded-xl border border-[#e5e8ef] bg-[#fafbfe] p-3"><b className="text-xl text-slate-700">{averageConfidence}<small className="text-[11px]">%</small></b><span className="block text-[11px] text-slate-400">平均提取置信度</span></div></div>{preview?.fallback_mode === 'deterministic' && <p role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">AI 当前不可用，已自动切换为规则提取，请重点核对关键字段。</p>}{preview && preview.warnings.length > 0 && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">有 {preview.warnings.length} 项需要人工核对：{preview.warnings.slice(0, 2).map((warning) => warning.message).join('；')}</div>}<div className="space-y-3">{groups.map((group, groupIndex) => { const adopted = adoptedGroups.has(group.key); const collapsed = collapsedGroups.has(group.key); const firstRow = group.rows[0]; return <article key={group.key} className={`overflow-hidden rounded-[14px] border bg-white transition-colors ${adopted ? 'border-emerald-200 bg-[#fdfffd]' : 'border-[#e5e8ef] hover:border-[#cfd6ea]'}`}><div className="flex items-start gap-2.5 px-3.5 py-3 sm:px-4"><button type="button" onClick={() => toggleGroupOpen(group.key)} className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-extrabold ${adopted ? 'bg-emerald-50 text-emerald-600' : 'bg-violet-50 text-violet-600'}`} aria-label={`${collapsed ? '展开' : '收起'}${group.workstream}`}>{adopted ? '✓' : groupIndex + 1}</button><div className="min-w-0 flex-1"><input value={firstRow.workstream} onChange={(event) => updateGroup(group, 'workstream', event.target.value)} className="w-full rounded-md px-1 text-sm font-bold hover:bg-slate-50 focus:border-violet-400 focus:bg-white" /><div className="mt-1 text-xs text-slate-400">{group.projectName} · {group.rows.length} 项关键任务</div></div>{sourceEvidence[rows.indexOf(firstRow)]?.[0] && <button type="button" aria-label="查看原文" onClick={() => openSource(rows.indexOf(firstRow))} className="rounded-full bg-violet-50 px-2.5 py-1 text-[11px] font-bold text-violet-600 hover:bg-violet-100">⟵ 原文</button>}<button type="button" onClick={() => toggleGroup(group.key)} className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-bold ${adopted ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-[#e5e8ef] text-slate-600 hover:border-emerald-400 hover:text-emerald-600'}`}>{adopted ? '已采纳' : '核对无误，采纳'}</button></div>{!collapsed && <div className="border-t border-[#eff1f6] px-3.5 pb-3 sm:px-4"><div className="grid gap-x-4 sm:grid-cols-2"><label className="flex items-baseline gap-2 border-b border-dashed border-[#eff1f6] py-2 text-xs sm:col-span-2"><span className="w-16 shrink-0 font-bold text-slate-400">目标成果</span><input value={firstRow.key_achievement} onChange={(event) => updateGroup(group, 'key_achievement', event.target.value)} className="min-w-0 flex-1 rounded px-1 text-xs text-slate-600 hover:bg-slate-50 focus:border-violet-400" /></label><label className="flex items-baseline gap-2 border-b border-dashed border-[#eff1f6] py-2 text-xs sm:col-span-2"><span className="w-16 shrink-0 font-bold text-slate-400">验收标准</span><input value={firstRow.completion_standard} onChange={(event) => updateGroup(group, 'completion_standard', event.target.value)} className="min-w-0 flex-1 rounded px-1 text-xs text-slate-600 hover:bg-slate-50 focus:border-violet-400" /></label><label className="flex items-baseline gap-2 py-2 text-xs"><span className="w-16 shrink-0 font-bold text-slate-400">计划时间</span><input value={firstRow.plan_time} onChange={(event) => updateGroup(group, 'plan_time', event.target.value)} className="min-w-0 flex-1 rounded px-1 text-xs text-slate-600 hover:bg-slate-50 focus:border-violet-400" /></label></div><div className="overflow-hidden rounded-xl border border-[#e5e8ef] bg-[#fafbfd]">{group.rows.map((row) => { const index = rows.indexOf(row); const isExpanded = expandedRow === index; const evidence = sourceEvidence[index]?.[0]; return <div key={`${row.workstream}-${row.key_task}-${index}`} className="border-b border-[#eff1f6] last:border-b-0"><div className="flex items-center gap-2 px-3 py-2.5 text-xs hover:bg-violet-50/40"><span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-md border text-[10px] ${adopted ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-[#c9cfdf] bg-white text-white'}`}>{adopted ? '✓' : ''}</span><span className="min-w-0 flex-1 font-semibold text-slate-700">{row.key_task}</span><span className={`hidden rounded-full px-2 py-1 font-semibold sm:inline ${row.owner === '待指派' || !row.owner ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>{row.owner || '待指派'}</span><span className="hidden text-slate-400 md:inline">📅 {row.plan_time || '未设置时间'}</span><span className="hidden rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500 lg:inline">{row.status || '未开始'}</span>{evidence && <button type="button" onClick={() => openSource(index)} className="rounded-full border border-[#ddd4ff] bg-white px-2 py-1 text-[10px] font-bold text-violet-600">原文</button>}<button type="button" onClick={() => setExpandedRow(isExpanded ? null : index)} className="rounded-md px-2 py-1 font-semibold text-violet-600 hover:bg-violet-50">{isExpanded ? '收起' : `编辑任务 ${row.key_task}`}</button></div>{isExpanded && <div className="grid gap-2 border-t border-[#eff1f6] px-3 py-3 sm:grid-cols-2"><label className="text-[11px] text-slate-400">负责人<input aria-label={`负责人：${row.key_task}`} value={row.owner} onChange={(event) => { setRows((current) => editRow(current, index, 'owner', event.target.value)); setAdoptedGroups((current) => { const next = new Set(current); next.delete(group.key); return next }) }} className="mt-1 w-full rounded-lg border border-[#e5e8ef] bg-white px-2.5 py-2 text-xs text-slate-700 focus:border-violet-400" /></label><label className="text-[11px] text-slate-400">状态<input aria-label={`状态：${row.key_task}`} value={row.status} onChange={(event) => setRows((current) => editRow(current, index, 'status', event.target.value))} className="mt-1 w-full rounded-lg border border-[#e5e8ef] bg-white px-2.5 py-2 text-xs text-slate-700 focus:border-violet-400" /></label><label className="text-[11px] text-slate-400">开始日期<input aria-label={`开始日期：${row.key_task}`} value={row.plan_start} onChange={(event) => setRows((current) => editRow(current, index, 'plan_start', event.target.value))} className="mt-1 w-full rounded-lg border border-[#e5e8ef] bg-white px-2.5 py-2 text-xs text-slate-700 focus:border-violet-400" /></label><label className="text-[11px] text-slate-400">结束日期<input aria-label={`结束日期：${row.key_task}`} value={row.plan_end} onChange={(event) => setRows((current) => editRow(current, index, 'plan_end', event.target.value))} className="mt-1 w-full rounded-lg border border-[#e5e8ef] bg-white px-2.5 py-2 text-xs text-slate-700 focus:border-violet-400" /></label><label className="text-[11px] text-slate-400 sm:col-span-2">备注<textarea aria-label={`备注：${row.key_task}`} value={row.notes} onChange={(event) => setRows((current) => editRow(current, index, 'notes', event.target.value))} className="mt-1 h-16 w-full resize-none rounded-lg border border-[#e5e8ef] bg-white px-2.5 py-2 text-xs text-slate-700 focus:border-violet-400" /></label></div>}</div>})}</div></div>}</article> })}</div>{error && <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{error}</div>}</div>}
+        </section>
+      </main>
 
-              {sourceMode === 'upload' ? (
-                <button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy} className="flex min-h-28 w-full flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 text-center hover:border-sky-300 hover:bg-sky-50 disabled:opacity-40">
-                  <span className="text-sm font-semibold text-slate-700">{file ? file.name : '选择工作计划文件'}</span>
-                  <span className="mt-1 text-xs text-slate-400">点击选择或拖入文件</span>
-                </button>
-              ) : (
-                <textarea value={text} onChange={(event) => { setText(event.target.value); setFile(null); setPreview(null); setRows([]) }} disabled={busy} placeholder="粘贴表格内容，AI 会自动识别表头、重点工作和关键任务" aria-label="工作计划内容" className="h-28 w-full resize-none rounded-lg border border-slate-200 p-3 font-mono text-xs outline-none focus:border-sky-400 disabled:bg-slate-50" />
-              )}
-              <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt,.docx,.doc,.pdf" aria-label="工作计划文件" className="hidden" onChange={(event) => selectFile(event.target.files?.[0] ?? null)} />
-              <button type="button" onClick={() => void analyze()} disabled={busy || (!file && !text.trim())} className="mt-3 w-full rounded-lg bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40">
-                {phase === 'reading' ? '读取文件…' : phase === 'analyzing' ? 'AI 分析中…' : '开始分析'}
-              </button>
-            </section>
-          )}
+      <footer className="flex shrink-0 flex-wrap items-center gap-3 border-t border-[#e5e8ef] bg-white px-4 py-3 sm:px-5">{preview ? <><div className="flex items-center gap-2 text-xs text-slate-500"><div className="h-1.5 w-32 overflow-hidden rounded-full bg-[#eceef5]"><div className="h-full rounded-full bg-gradient-to-r from-violet-400 to-emerald-500 transition-all" style={{ width: `${groups.length ? (adoptedCount / groups.length) * 100 : 0}%` }} /></div><span>已确认 <b className="text-slate-700">{adoptedCount}</b> / {groups.length} 项重点工作</span></div><div className="flex-1" /><span className="hidden text-xs text-slate-400 md:inline">{allAdopted ? '全部核对完成，可以提交 ✓' : `还有 ${Math.max(groups.length - adoptedCount, 0)} 项重点工作未核对采纳`}</span></> : <><span className="text-xs text-slate-400">AI 只生成预览，不会直接写入数据库</span><div className="flex-1" /></>}<button type="button" onClick={close} disabled={busy} className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-40">{phase === 'success' ? '关闭' : '取消'}</button>{preview && phase === 'review' && <button type="button" onClick={() => void confirmImport()} disabled={busy || !allAdopted || rows.some((row) => !row.project_name.trim() || !row.workstream?.trim() || !row.key_task.trim())} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-40">确认导入 {taskCount} 条</button>}</footer>
 
-          {preview && (
-            <section className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-sm font-bold text-slate-800">{phase === 'review' ? '复核导入内容' : '导入结果'}</h2>
-                  <p className="mt-1 text-xs text-slate-500">确认前不会写入项目数据。</p>
-                </div>
-                <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${preview.fallback_mode === 'ai' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                  {preview.fallback_mode === 'ai' ? 'AI 已识别' : '规则降级 · 请核对'}
-                </span>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                <span>{projectCount} 个项目</span><span className="text-slate-300">·</span><span>{groups.length} 项重点工作</span><span className="text-slate-300">·</span><span>{rows.length} 项关键任务</span>
-                {preview.source_files.map((source) => <span key={source} className="rounded-full bg-slate-100 px-2 py-1">来源：{source}</span>)}
-              </div>
-              {preview.warnings.length > 0 && <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">有 {preview.warnings.length} 项需要人工核对：{preview.warnings.slice(0, 2).map((warning) => warning.message).join('；')}</div>}
-            </section>
-          )}
-
-          {rows.length > 0 && (
-            <section className="space-y-3">
-              {groups.map((group) => (
-                <div key={group.key} className="rounded-xl border border-slate-200 bg-white">
-                  <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
-                    <div>
-                      <div className="text-sm font-bold text-slate-800">{group.workstream || '未识别重点工作'}</div>
-                      <div className="mt-1 text-xs text-slate-500">{group.projectName} · {group.rows.length} 项关键任务</div>
-                    </div>
-                    <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] text-slate-500">重点工作</span>
-                  </div>
-                  <div className="divide-y divide-slate-100">
-                    {group.rows.map((row) => {
-                      const index = rows.indexOf(row)
-                      const isExpanded = expandedRow === index
-                      return (
-                        <div key={`${row.workstream}-${row.key_task}-${index}`} className="px-4 py-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="text-sm font-medium text-slate-800">{row.key_task}</div>
-                              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
-                                <span>{row.owner || '未分配'}</span><span>{row.plan_time || '未设置时间'}</span><span>{row.status || '未开始'}</span>
-                              </div>
-                            </div>
-                            <button type="button" onClick={() => setExpandedRow(isExpanded ? null : index)} className="shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-50">{isExpanded ? '收起' : `编辑任务 ${row.key_task}`}</button>
-                          </div>
-                          {isExpanded && (
-                            <div className="mt-3 grid gap-2 border-t border-slate-100 pt-3 sm:grid-cols-2">
-                              {([['owner', '负责人'], ['status', '状态'], ['plan_start', '开始日期'], ['plan_end', '结束日期'], ['notes', '备注']] as const).map(([field, label]) => (
-                                <label key={field} className="text-xs text-slate-500">
-                                  {label}
-                                  <input aria-label={`${label}：${row.key_task}`} value={String(row[field] ?? '')} onChange={(event) => setRows((current) => editRow(current, index, field, event.target.value))} className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm text-slate-700 outline-none focus:border-sky-400" />
-                                </label>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              ))}
-            </section>
-          )}
-
-          {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{error}</div>}
-        </main>
-
-        <footer className="flex items-center justify-between gap-3 border-t border-slate-200 px-5 py-3">
-          <div className="text-xs text-slate-400">{phase === 'success' ? '导入已提交' : rows.length ? '确认后才会写入项目数据' : 'AI 只生成预览，不会直接写入数据库'}</div>
-          <div className="flex gap-2">
-            <button type="button" onClick={close} disabled={busy} className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-40">{phase === 'success' ? '关闭' : '取消'}</button>
-            <button type="button" onClick={() => void confirmImport()} disabled={busy || !rows.length || phase !== 'review'} className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40">{phase === 'importing' ? '导入中…' : `确认导入${rows.length ? ` ${rows.length} 条` : ''}`}</button>
-          </div>
-        </footer>
-      </div>
+      {sourceDetail && <><div className="fixed inset-0 z-[60] bg-slate-900/35" onClick={() => setSourceDetail(null)} /><aside className="fixed inset-y-0 right-0 z-[61] flex w-full max-w-[520px] flex-col bg-[#e9ebf2] shadow-[-16px_0_48px_rgba(20,26,40,.25)]" aria-label="原文对照"><div className="flex shrink-0 items-center gap-2 bg-[#1b2233] px-4 py-3 text-white"><b className="text-sm">原文对照</b><span className="rounded-full border border-[#333e5c] bg-[#262f47] px-2 py-0.5 text-[11px] text-[#b9c2dd]">{sourceDetail.file_name}</span><div className="flex-1" /><button type="button" onClick={() => setSourceDetail(null)} className="rounded-lg px-2 text-[#cfd6ee] hover:bg-[#2c3754]" aria-label="关闭原文对照">×</button></div><div className="flex-1 overflow-y-auto p-6"><div className="mx-auto max-w-[460px] rounded-md border-t-4 border-violet-500 bg-[#faf9f6] p-6 text-sm text-slate-700 shadow-lg"><div className="mb-4 text-xs font-bold text-slate-400">来源定位：{sourceDetail.location || '未提供定位'}</div><p className="leading-relaxed">{sourceDetail.excerpt || '没有可展示的原文摘要。'}</p></div><p className="mx-auto mt-4 max-w-[460px] text-center text-xs text-slate-400">紫色来源标记来自 AI 提取证据，确认前不会写入项目。</p></div></aside></>}
     </div>
   )
 }

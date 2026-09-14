@@ -6,6 +6,7 @@ import { fetchPeople } from '../../api/people'
 import type { ProjectWorkProgressTaskDraft } from '../../api/projects'
 import { toast } from '../../utils/toast'
 import type { Person, Project } from '../../types'
+import { canEditProjectInit, getProjectInitEditNotice, getProjectStatusBadge } from '../../domain/projectLifecycleStatus'
 import { OwnerSubmitAiPanel, type ProjectInitAiDecision } from './OwnerSubmitAiPanel'
 import type { ProjectInitAiDraft, ProjectInitCurrentDraft } from '../../api/projectInitAi'
 import { buildAiMergePreview, toCurrentDraft, toSubmitDraft, type OwnerSubmitAiDecision as DraftDecision, type OwnerSubmitMergePreview } from './ownerSubmitDraft'
@@ -443,6 +444,9 @@ function HelperPicker({
 }
 
 export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
+  const projectStatus = getProjectStatusBadge(project)
+  const canEditProject = canEditProjectInit(project)
+  const projectEditNotice = getProjectInitEditNotice(project)
   const [people, setPeople] = useState<Person[]>([])
   const [peopleLoading, setPeopleLoading] = useState(true)
   const [peopleError, setPeopleError] = useState('')
@@ -821,12 +825,12 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
     const memberCount = project.member_counts?.member ?? project.member_counts?.members ?? 0
 
     return (
-      <section className="owner-submit-workbench-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#f7f9fc] text-slate-900">
-        <header className="owner-submit-workbench-header flex min-h-[88px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-8 py-4">
+      <section className="owner-submit-workbench-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#f7f9fc] text-slate-900 owner-submit-reference-layout" data-testid="owner-submit-workbench" data-reference-style="project-import-v3">
+        <header className="owner-submit-workbench-header flex min-h-[88px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-8 py-4 owner-submit-reference-header" data-testid="owner-submit-workbench-header">
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2.5">
               <h2 className="truncate text-2xl font-bold tracking-[-0.02em] text-slate-900">填写项目方案 — {project.name}</h2>
-              <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-[11px] font-bold text-orange-700">待负责人完善</span>
+              <span className={`owner-submit-reference-status rounded-full border px-2.5 py-1 text-[11px] font-bold ${canEditProject ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>{projectStatus.label}</span>
             </div>
             <p className="mt-1 text-xs text-slate-500">完善项目计划内容，确认后提交企业教练审核</p>
           </div>
@@ -839,12 +843,12 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
         <main className="owner-submit-workbench-main min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-slate-50 pb-[88px]" data-testid="owner-submit-workbench-main">
           <div className="owner-submit-workbench-columns flex w-full flex-col gap-6 px-8 py-6 lg:flex-row">
             <aside className="owner-submit-left-pane self-start lg:sticky lg:top-4 lg:w-[360px] lg:shrink-0">
-              <section className="owner-submit-project-summary owner-submit-project-summary-display owner-submit-core-card rounded-2xl border border-slate-200 bg-white px-5 py-4 sm:px-6" data-layout="compact" data-testid="owner-submit-project-summary">
+              <section className="owner-submit-project-summary owner-submit-project-summary-display owner-submit-core-card rounded-2xl border border-slate-200 bg-white px-5 py-4 sm:px-6 owner-submit-reference-overview" data-layout="compact" data-testid="owner-submit-project-summary">
                 <h3 className="text-xl font-bold text-slate-900">项目概览</h3>
                 <div className="mt-4 space-y-1">
                   <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">项目编号</span><p className="min-w-0 font-semibold text-slate-800">{project.code || '未填写'}</p></div>
                   <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">项目名称</span><p className="min-w-0 font-semibold text-slate-900">{project.name}</p></div>
-                  <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">项目状态</span><div className="flex min-w-0 items-center gap-2 font-semibold text-slate-700"><span className="h-2 w-2 shrink-0 rounded-full bg-orange-500" />待负责人完善</div></div>
+                  <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">项目状态</span><div className="flex min-w-0 items-center gap-2 font-semibold text-slate-700"><span className={`h-2 w-2 shrink-0 rounded-full ${canEditProject ? 'bg-blue-500' : 'bg-amber-500'}`} />{projectStatus.label}</div></div>
                   <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">项目周期</span><div className="flex min-w-0 items-center gap-2 font-semibold text-slate-700"><svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></svg>{composeProjectPeriod(project.start_date, project.end_date) || '未设置'}</div></div>
                   <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">项目目标</span><p className="min-w-0 whitespace-pre-wrap leading-5 text-slate-600">{project.objectives?.trim() || '未填写'}</p></div>
                   <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">项目背景</span><p className="min-w-0 whitespace-pre-wrap leading-5 text-slate-600">{project.background?.trim() || '未填写'}</p></div>
@@ -860,18 +864,20 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
               </section>
             </aside>
 
+            <fieldset disabled={!canEditProject || fillLoading} className="min-w-0 flex-1 border-0 p-0">
             <section className="owner-submit-plan-section owner-submit-right-pane min-w-0 flex-1">
               <div className="owner-submit-workplan-heading mb-4 flex flex-wrap items-center justify-between gap-3">
                 <h3 className="text-xl font-bold text-slate-900">工作推进方案</h3>
-                <div className="flex shrink-0 flex-wrap gap-2"><button type="button" onClick={() => { setShowAiPanel((current) => !current); setAiError('') }} disabled={fillLoading} className="flex h-9 items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3.5 text-xs font-bold text-violet-700 transition-colors hover:border-violet-300 hover:bg-violet-100 disabled:opacity-50">{showAiPanel ? '收起 AI 草稿' : 'AI 分析文件 / AI 草稿'}</button><button type="button" onClick={addTaskDraft} className="owner-submit-primary-add flex h-9 items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3.5 text-xs font-bold text-blue-700 transition-colors hover:border-blue-300 hover:bg-blue-50">+ 新增重点工作</button></div>
+                <div className="flex shrink-0 flex-wrap gap-2"><button type="button" onClick={() => { setShowAiPanel((current) => !current); setAiError('') }} disabled={fillLoading || !canEditProject} className="owner-submit-reference-ai-toggle flex h-9 items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3.5 text-xs font-bold text-violet-700 transition-colors hover:border-violet-300 hover:bg-violet-100 disabled:opacity-50">{showAiPanel ? '收起 AI 草稿' : 'AI 分析文件 / AI 草稿'}</button><button type="button" onClick={addTaskDraft} disabled={!canEditProject || fillLoading} className="owner-submit-primary-add flex h-9 items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3.5 text-xs font-bold text-blue-700 transition-colors hover:border-blue-300 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50">+ 新增重点工作</button></div>
               </div>
+              {!canEditProject && <div role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800">{projectEditNotice}</div>}
               {showAiPanel && <div className="mb-4" data-testid="owner-submit-ai-panel"><OwnerSubmitAiPanel projectId={project.id} currentDraft={currentAiDraft()} onApplyDraft={handleAiDraft} onClose={() => setShowAiPanel(false)} disabled={fillLoading} /></div>}
               {aiError && <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><p>{aiError}</p>{aiAuditPendingRunId && <button type="button" onClick={() => void retryAiApplyAudit()} disabled={aiAuditRetrying} className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50">{aiAuditRetrying ? '正在补记审计…' : '重试补记 AI 审计'}</button>}</div>}
               {aiPreview && <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4" aria-label="AI 草稿合并预览" data-testid="owner-submit-ai-preview"><div className="flex flex-wrap items-start justify-between gap-3"><div><h4 className="text-sm font-bold text-emerald-900">请确认 AI 草稿合并</h4><p className="mt-1 text-xs text-emerald-800">将新增 {aiPreview.addedTaskCount} 项重点工作，检测到 {aiPreview.changeCount} 项字段或结构变化；现有非空内容不会被覆盖。</p></div><div className="flex gap-2"><button type="button" onClick={cancelAiPreview} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100">取消</button><button type="button" onClick={confirmAiPreview} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700">确认合并到表单</button></div></div>{aiPreview.warnings.length > 0 && <div role="alert" className="mt-3 space-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><p className="font-semibold">仍有 {aiPreview.warningCount} 条待确认提示：</p>{aiPreview.warnings.slice(0, 8).map((warning) => <p key={warning}>{warning}</p>)}</div>}</section>}
 
               {task && <div className="owner-submit-b-split h-auto min-h-0 overflow-hidden rounded-2xl border border-slate-200 bg-white" data-testid="owner-submit-b-split"><div className="flex h-auto min-h-0 flex-col lg:flex-row">
-                <nav className="w-full shrink-0 border-b border-slate-200 bg-white p-3 lg:w-[228px] lg:border-b-0 lg:border-r" aria-label="重点工作列表"><div className="space-y-1">{draftTasks.map((item, index) => <button key={index} type="button" onClick={() => { setSelectedTaskIndex(index); setEditingTitleIndex(null) }} aria-current={index === selectedTaskIndex ? 'true' : undefined} className={`flex w-full items-start rounded-xl px-3 py-3 text-left transition-colors ${index === selectedTaskIndex ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-slate-50'}`}><span className="min-w-0 truncate text-sm font-semibold">{item.title.trim() || '未命名重点工作'}</span></button>)}</div></nav>
-                <div className="min-w-0 flex-1 p-6 sm:p-8">
+                <nav className="owner-submit-reference-workstream-nav w-full shrink-0 border-b border-slate-200 bg-white p-3 lg:w-[228px] lg:border-b-0 lg:border-r" aria-label="重点工作列表" data-testid="owner-submit-workstream-nav"><div className="space-y-1">{draftTasks.map((item, index) => <button key={index} type="button" onClick={() => { setSelectedTaskIndex(index); setEditingTitleIndex(null) }} aria-current={index === selectedTaskIndex ? 'true' : undefined} className={`flex w-full items-start rounded-xl px-3 py-3 text-left transition-colors ${index === selectedTaskIndex ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-slate-50'}`}><span className="min-w-0 truncate text-sm font-semibold">{item.title.trim() || '未命名重点工作'}</span></button>)}</div></nav>
+                <div className="owner-submit-reference-detail min-w-0 flex-1 p-6 sm:p-8" data-testid="owner-submit-detail-pane">
                   <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4"><div className="flex min-w-0 flex-1 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-sm font-bold text-blue-700">{String(selectedTaskIndex + 1).padStart(2, '0')}</div><div className="min-w-0 flex-1">{editingTitleIndex === selectedTaskIndex ? <><label className="sr-only">重点工作名称</label><input autoFocus value={task.title} onChange={(e) => updateTaskDraft(selectedTaskIndex, 'title', e.target.value)} onBlur={() => setEditingTitleIndex(null)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }} placeholder="请输入重点工作名称" className="h-8 w-full min-w-0 border-0 bg-transparent px-0 text-xl font-bold text-slate-900 outline-none placeholder:text-slate-400 focus:ring-0" /></> : <button type="button" onClick={() => setEditingTitleIndex(selectedTaskIndex)} className={`owner-submit-title-display w-full rounded-lg px-0 text-left text-xl font-semibold ${task.title.trim() ? 'owner-submit-title-filled' : 'owner-submit-title-empty'}`} aria-label="编辑重点工作名称">{task.title.trim() || '未命名重点工作'}</button>}</div></div><details className="relative shrink-0"><summary aria-label={`重点工作 ${selectedTaskIndex + 1} 更多操作`} className="owner-submit-more-menu-trigger flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg text-lg hover:bg-slate-100">···</summary><div className="absolute right-0 top-9 z-20 w-32 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"><button type="button" onClick={() => removeTaskDraft(selectedTaskIndex)} disabled={draftTasks.length <= 1} className="w-full rounded-md px-2.5 py-2 text-left text-xs text-slate-500 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30">删除重点工作</button></div></details></div>
                   <div className="owner-submit-goal-result mt-5 space-y-3" data-layout="stacked" data-testid="owner-submit-goal-result">
                     <div><label className="block text-sm font-bold text-slate-700">目标</label><input value={task.goal || task.description} onChange={(e) => updateTaskDraft(selectedTaskIndex, 'goal', e.target.value)} placeholder="请输入目标成果" className="owner-submit-goal-result-input mt-2 h-10 w-full border-0 bg-transparent px-0 py-0 text-lg leading-8 text-slate-700 outline-none placeholder:text-slate-400 focus:ring-0" /></div>
@@ -884,10 +890,11 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
                 </div>
               </div></div>}
             </section>
+            </fieldset>
           </div>
         </main>
 
-        <footer className="owner-submit-workbench-footer sticky bottom-0 z-10 flex min-h-[72px] shrink-0 items-center justify-between border-t border-slate-200 bg-white/95 px-8 py-3 shadow-[0_-8px_20px_rgba(15,23,42,0.06)] backdrop-blur"><button type="button" onClick={onClose} disabled={fillLoading} className="h-10 rounded-xl border border-slate-200 bg-white px-5 text-sm font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50">取消</button><button type="button" onClick={handleSubmit} disabled={fillLoading} className="h-10 rounded-xl bg-orange-600 px-8 text-sm font-bold text-white shadow-[0_6px_16px_rgba(234,88,12,0.22)] transition-colors hover:bg-orange-700 disabled:opacity-50">{fillLoading ? '提交中…' : '提交立项审核'}</button></footer>
+        <footer className="owner-submit-workbench-footer owner-submit-reference-footer sticky bottom-0 z-10 flex min-h-[72px] shrink-0 items-center justify-between border-t border-slate-200 bg-white/95 px-8 py-3 shadow-[0_-8px_20px_rgba(15,23,42,0.06)] backdrop-blur" data-testid="owner-submit-workbench-footer"><button type="button" onClick={onClose} disabled={fillLoading} className="h-10 rounded-xl border border-slate-200 bg-white px-5 text-sm font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50">取消</button><button type="button" onClick={handleSubmit} disabled={fillLoading || !canEditProject} className="owner-submit-reference-submit h-10 rounded-xl bg-orange-600 px-8 py-2 text-sm font-bold text-white shadow-[0_6px_16px_rgba(234,88,12,0.22)] transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50">{fillLoading ? '提交中…' : '提交立项审核'}</button></footer>
       </section>
     )
   }

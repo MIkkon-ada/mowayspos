@@ -111,6 +111,13 @@ export type ProjectInitAiDraft = {
   model_name?: string
 }
 
+export type ProjectInitAiRecoveryMetadata = {
+  ai_recovery_attempted?: boolean
+  ai_recovery_succeeded?: boolean
+  ai_failure_stage?: '' | 'transport' | 'json' | 'schema' | 'evidence'
+  ai_failure_code?: string
+}
+
 export type ProjectWorkProgressSubTaskDraft = {
   title: string
   evaluation_standard: string
@@ -180,7 +187,7 @@ export type ProjectInitAnalysisRun = {
   progress: number
   error_message: string
   draft: ProjectInitDraft
-  result_metadata: Record<string, unknown>
+  result_metadata: Record<string, unknown> & ProjectInitAiRecoveryMetadata
   applied_at: string | null
   created_at: string | null
   started_at: string | null

@@ -57,6 +57,8 @@ class ChatResult:
     text: str
     model_code: str
     invocation_log_id: int
+    recovery_attempted: bool = False
+    recovery_succeeded: bool = False
 
 
 @dataclass(frozen=True)
@@ -332,6 +334,95 @@ class AIService:
             ),
         )
         return ChatResult(text=text, model_code=model.code, invocation_log_id=log.id)
+
+    def invoke_project_init_chat(
+        self,
+        prompt: str,
+        context: AIInvocationContext | None,
+        *,
+        validator: Callable[[str], object],
+        repair_prompt_factory: Callable[[list[dict[str, str]]], str],
+    ) -> ChatResult:
+        """Invoke project-init chat with one targeted repair per model."""
+        policy, candidates = self._candidates(Capability.PROJECT_INIT_ANALYSIS, ModelType.CHAT)
+        invocation_context = context or AIInvocationContext(resource_type="project_init")
+        attempt_no = 0
+        last_error: AIUpstreamError | None = None
+
+        for model in candidates:
+            fallback_used = model.id != policy.primary_model_id
+            repair_prompt = prompt
+            repair_attempted = False
+            while True:
+                attempt_no += 1
+                started = time.monotonic()
+                try:
+                    text = self._complete_validated_chat(
+                        model,
+                        self._credential(model.id),
+                        repair_prompt,
+                        policy.fallback_timeout_seconds if fallback_used else policy.timeout_seconds,
+                        None,
+                        {"type": "json_object"},
+                    )
+                    diagnostic = validator(text)
+                    code = getattr(diagnostic, "code", "")
+                    paths = [dict(item) for item in getattr(diagnostic, "paths", ())]
+                    if isinstance(diagnostic, str):
+                        code = diagnostic
+                        paths = []
+                    if code:
+                        log = self._log(
+                            policy,
+                            model,
+                            attempt_no,
+                            "failed",
+                            fallback_used,
+                            int((time.monotonic() - started) * 1000),
+                            code,
+                            invocation_context,
+                        )
+                        self.db.commit()
+                        last_error = AIUpstreamError(code, retryable=True)
+                        if repair_attempted:
+                            break
+                        repair_attempted = True
+                        repair_prompt = repair_prompt_factory(paths)
+                        continue
+                    log = self._log(
+                        policy,
+                        model,
+                        attempt_no,
+                        "succeeded",
+                        fallback_used,
+                        int((time.monotonic() - started) * 1000),
+                        "",
+                        invocation_context,
+                    )
+                    self.db.commit()
+                    return ChatResult(
+                        text=text,
+                        model_code=model.code,
+                        invocation_log_id=log.id,
+                        recovery_attempted=repair_attempted,
+                        recovery_succeeded=repair_attempted,
+                    )
+                except Exception as exc:
+                    error = self._to_upstream_error(exc)
+                    self._log(
+                        policy,
+                        model,
+                        attempt_no,
+                        "failed",
+                        fallback_used,
+                        int((time.monotonic() - started) * 1000),
+                        error.code,
+                        invocation_context,
+                    )
+                    self.db.commit()
+                    last_error = error
+                    break
+        raise last_error or AICapabilityNotConfigured("AI capability has no usable model")
 
     def _complete_validated_chat(
         self,

@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   uploadInitAttachments: vi.fn(),
 }))
 vi.mock('../../api/projectInitAi', async () => ({ ...(await vi.importActual<typeof import('../../api/projectInitAi')>('../../api/projectInitAi')), ...api }))
+import { ProjectInitApiError } from '../../api/projectInitAi'
 import { OwnerSubmitAiPanel } from './OwnerSubmitAiPanel'
 
 const failedRun = { id: 9, status: 'failed', stage: 'failed', progress: 100, error_message: '旧运行失败', draft: { tasks: [] }, result_metadata: {} } as any
@@ -41,7 +42,7 @@ const completedStructuredRun = {
       }],
     }],
   },
-  result_metadata: { model_name: 'structured-spreadsheet', attempted_models: [] },
+  result_metadata: { model_name: 'structured-spreadsheet-fallback', attempted_models: [], processing_mode: 'deterministic_fallback', ai_failure_stage: 'schema', ai_failure_code: 'schema_invalid' },
 } as any
 
 function renderPanel() {
@@ -70,6 +71,16 @@ describe('project-init analysis single-use upload flow', () => {
 
     expect(await screen.findByText(`主模型：${label}（1.5 秒）`)).toBeTruthy()
     expect(screen.queryByText(/PRIVATE_MODEL_SOURCE/)).toBeNull()
+  })
+
+  it('translates a lifecycle conflict into an actionable Chinese message', async () => {
+    api.uploadInitAttachments.mockRejectedValueOnce(new ProjectInitApiError(409, 'project lifecycle is not editable'))
+
+    renderPanel()
+    fireEvent.change(await screen.findByLabelText(/选择资料文件/), { target: { files: [new File(['source'], '资料.txt')] } })
+    fireEvent.click(screen.getByRole('button', { name: '开始分析' }))
+
+    expect(await screen.findByText('当前项目已提交审核或处于不可编辑状态，请先由审核人退回后再修改。')).toBeTruthy()
   })
 
   it('starts as a fresh upload session instead of restoring a failed historical run', async () => {
@@ -108,9 +119,25 @@ describe('project-init analysis single-use upload flow', () => {
     fireEvent.change(input, { target: { files: [new File(['source'], '工作推进表.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })] } })
     fireEvent.click(screen.getByRole('button', { name: '开始分析' }))
 
-    expect(await screen.findByText('实际处理器：structured-spreadsheet')).toBeTruthy()
+    expect(await screen.findByText('实际处理器：structured-spreadsheet-fallback')).toBeTruthy()
+    expect(screen.getByText('AI 已返回结果，但结构校验未通过，已切换为规则提取，请重点核对关键字段。')).toBeTruthy()
     expect(screen.getByText('郭熠彬：提交时自动加入项目')).toBeTruthy()
     expect(screen.queryByText(/未自动绑定/)).toBeNull()
+  })
+
+  it('shows that AI participated when the completed run used AI', async () => {
+    api.uploadInitAttachments.mockResolvedValueOnce([{ id: 2, original_name: '工作推进表.xlsx' }])
+    api.createInitAnalysisRun.mockResolvedValueOnce({
+      ...completedStructuredRun,
+      result_metadata: { provider: 'project.init.analysis', model_name: '', attempted_models: [], processing_mode: 'ai' },
+    })
+
+    renderPanel()
+    const input = await screen.findByLabelText(/选择资料文件/)
+    fireEvent.change(input, { target: { files: [new File(['source'], '工作推进表.xlsx')] } })
+    fireEvent.click(screen.getByRole('button', { name: '开始分析' }))
+
+    expect(await screen.findByText('AI 已参与分析，结果仅供核对，确认后再写入。')).toBeTruthy()
   })
 
   it('separates project-profile suggestions from work-progress suggestions', async () => {

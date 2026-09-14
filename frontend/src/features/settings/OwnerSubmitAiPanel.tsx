@@ -108,6 +108,7 @@ const INFORMATIONAL_PERSON_WARNING_CODE = 'will_join_project'
 
 function errorMessage(error: unknown): string {
   if (error instanceof ProjectInitApiError) {
+    if (error.detail === 'project lifecycle is not editable') return '当前项目已提交审核或处于不可编辑状态，请先由审核人退回后再修改。'
     if (error.detail === 'server_error' || error.code === 'SERVER_ERROR') return AI_SERVICE_UNAVAILABLE_MESSAGE
     return error.detail
   }
@@ -259,6 +260,29 @@ function analysisReviewNotice(run: ProjectInitAnalysisRun): string {
     return '该 Excel 包含复杂版式，当前结果来自文本提取，请重点核对人员、时间和层级关系。'
   }
   return '当前文件需要人工复核，请重点核对人员、时间和层级关系。'
+}
+
+function analysisModeNotice(run: ProjectInitAnalysisRun): string {
+  const mode = run.result_metadata.processing_mode
+  const recovered = run.result_metadata.ai_recovery_succeeded === true
+  const failureStage = run.result_metadata.ai_failure_stage
+  const failureCode = run.result_metadata.ai_failure_code
+  if (mode === 'ai' && recovered) {
+    return 'AI 已参与分析，系统已自动整理返回格式，请重点核对关键字段。'
+  }
+  if (mode === 'ai') {
+    return 'AI 已参与分析，结果仅供核对，确认后再写入。'
+  }
+  if (mode === 'deterministic_fallback' && (failureStage === 'schema' || failureCode === 'schema_invalid')) {
+    return 'AI 已返回结果，但结构校验未通过，已切换为规则提取，请重点核对关键字段。'
+  }
+  if (mode === 'deterministic_fallback' && failureStage === 'transport') {
+    return 'AI 服务暂时不可用，已切换为规则提取，请稍后重试 AI 分析。'
+  }
+  if (mode === 'deterministic_fallback') {
+    return '本次使用规则提取，请重点核对关键字段。'
+  }
+  return ''
 }
 
 function requiredDecisionKeys(draft: ProjectInitAiDraft): string[] {
@@ -751,7 +775,7 @@ export function OwnerSubmitAiPanel({
   if (loading) return <section aria-busy="true" className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">正在加载 AI 分析状态…</section>
 
   return (
-    <section aria-labelledby="owner-submit-ai-title" className="owner-submit-ai-panel space-y-4 rounded-2xl border border-blue-100 bg-white p-5 pb-6 shadow-sm">
+    <section aria-labelledby="owner-submit-ai-title" className="owner-submit-ai-panel owner-submit-reference-ai-panel space-y-4 rounded-2xl border border-blue-100 bg-white p-5 pb-6 shadow-sm">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 id="owner-submit-ai-title" className="text-base font-bold text-slate-900">AI 从文件生成</h2>
@@ -818,6 +842,7 @@ export function OwnerSubmitAiPanel({
         <div className="owner-submit-ai-preview-content space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3"><div><span className="text-sm font-semibold text-slate-800">文件分析完成</span><span className="ml-2 text-xs text-slate-500">识别到 {suggestedProfileFieldCount} 项项目基本信息、{draft.tasks.length} 项候选重点工作</span></div><div className="flex items-center gap-2"><span className="text-xs font-semibold text-slate-600">{draft.tasks.length} 项待确认</span><button type="button" onClick={resetToFreshUpload} disabled={disabled || applying || applySuccess} className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-50">重新上传资料</button></div></div>
           <details className="owner-submit-ai-technical-details rounded-lg border border-slate-100 bg-white px-3 py-2"><summary className="cursor-pointer text-xs font-semibold text-slate-500 hover:text-slate-800">查看分析信息</summary><div className="mt-2"><ModelUsageSummary run={run} /></div></details>
+          {analysisModeNotice(run) && <div role="status" className={`rounded-lg px-3 py-2 text-xs ${run.result_metadata.processing_mode === 'deterministic_fallback' ? 'border border-amber-200 bg-amber-50 text-amber-800' : 'border border-blue-100 bg-blue-50 text-blue-800'}`}>{analysisModeNotice(run)}</div>}
           {analysisReviewNotice(run) && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{analysisReviewNotice(run)}</div>}
           {draft.warnings && renderWarningMessages(draft.warnings.map((warning) => `${warning.code}: ${warning.message}`))}
           {run.status === 'partial_failed' && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">部分文件分析失败，下面仅展示已成功生成的结果。</div>}

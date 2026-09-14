@@ -20,7 +20,7 @@ const project = {
   id: 4,
   code: 'P-TEST1',
   name: 'test1',
-  status: 'pending_review',
+  status: 'dispatched',
   start_date: '',
   end_date: '',
   description: '',
@@ -51,6 +51,14 @@ describe('owner submit approved B layout', () => {
     render(<OwnerSubmitWorkbench project={project} onClose={vi.fn()} />)
 
     expect(await screen.findByText('项目概览')).toBeTruthy()
+    const workbench = screen.getByTestId('owner-submit-workbench')
+    expect(workbench.className).toContain('owner-submit-reference-layout')
+    expect(workbench.getAttribute('data-reference-style')).toBe('project-import-v3')
+    expect(screen.getByTestId('owner-submit-workbench-header').className).toContain('owner-submit-reference-header')
+    expect(screen.getByTestId('owner-submit-project-summary').className).toContain('owner-submit-reference-overview')
+    expect(screen.getByTestId('owner-submit-workstream-nav').className).toContain('owner-submit-reference-workstream-nav')
+    expect(screen.getByTestId('owner-submit-detail-pane').className).toContain('owner-submit-reference-detail')
+    expect(screen.getByTestId('owner-submit-workbench-footer').className).toContain('owner-submit-reference-footer')
     expect(screen.getByText('P-TEST1')).toBeTruthy()
     expect(screen.getByText('工作推进方案')).toBeTruthy()
     expect(screen.getAllByText('未命名重点工作').length).toBe(2)
@@ -115,5 +123,17 @@ describe('owner submit approved B layout', () => {
     expect(screen.getByTestId('owner-submit-project-summary').getAttribute('data-layout')).toBe('compact')
     expect(screen.getByTestId('owner-submit-b-split').className).not.toContain('min-h-[560px]')
     expect(screen.getByTestId('owner-submit-workbench-main').className).toContain('pb-[88px]')
+  })
+
+  it('makes a pending review project read-only before any upload can start', async () => {
+    render(<OwnerSubmitWorkbench project={{ ...project, status: 'pending_review' }} onClose={vi.fn()} />)
+    await screen.findByText('项目概览')
+
+    expect(screen.getAllByText('待审核').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText('项目已提交审核，当前只能查看，需审核退回后才能继续完善。')).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'AI 分析文件 / AI 草稿' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: '+ 新增重点工作' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: '提交立项审核' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByPlaceholderText('例如：任务名称') as HTMLInputElement).matches(':disabled')).toBe(true)
   })
 })

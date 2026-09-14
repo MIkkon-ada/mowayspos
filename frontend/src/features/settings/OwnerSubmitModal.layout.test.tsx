@@ -56,7 +56,7 @@ describe('owner submit approved B layout', () => {
     expect(workbench.getAttribute('data-reference-style')).toBe('project-import-v3')
     expect(screen.getByTestId('owner-submit-workbench-header').className).toContain('owner-submit-reference-header')
     expect(screen.getByTestId('owner-submit-project-summary').className).toContain('owner-submit-reference-overview')
-    expect(screen.getByTestId('owner-submit-workstream-nav').className).toContain('owner-submit-reference-workstream-nav')
+    expect(screen.getByTestId('owner-submit-task-nav').className).toContain('owner-submit-reference-task-nav')
     expect(screen.getByTestId('owner-submit-detail-pane').className).toContain('owner-submit-reference-detail')
     expect(screen.getByTestId('owner-submit-workbench-footer').className).toContain('owner-submit-reference-footer')
     expect(screen.getByText('P-TEST1')).toBeTruthy()

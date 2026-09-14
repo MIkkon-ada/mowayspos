@@ -62,6 +62,12 @@ curl --fail http://127.0.0.1:18100/api/health
 
 The health response must report `status=ok`, `database=ok`, and `env=production`. The host Nginx should proxy `pos.moways.com.cn` to `127.0.0.1:18100` and preserve `X-Forwarded-Proto`; configuring that host proxy and Certbot remains a separate infrastructure step.
 
+For ordinary application-code releases that do not change dependencies or the
+container runtime, use the [CVM incremental deployment runbook](tencent-cvm-incremental-deploy.md).
+It synchronizes backend source and frontend build output without rebuilding
+application images. Dependency, Dockerfile, Nginx, or production Compose
+changes must continue to use the immutable GHCR image release path.
+
 ## Meeting change-set release safety
 
 The meeting change-set release adds only `meeting_change_sets` and

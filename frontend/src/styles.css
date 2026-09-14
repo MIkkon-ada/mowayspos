@@ -1142,13 +1142,13 @@ select:focus {
   border-color: #eef2f6;
 }
 
-.owner-submit-reference-workstream-nav {
+.owner-submit-reference-task-nav {
   width: 228px;
   padding: 18px 12px;
   border-color: #e6ebf2;
 }
 
-.owner-submit-reference-workstream-nav button {
+.owner-submit-reference-task-nav button {
   min-height: 44px;
   border-radius: 12px;
   padding: 11px 14px;
@@ -1156,13 +1156,13 @@ select:focus {
   line-height: 1.4;
 }
 
-.owner-submit-reference-workstream-nav button[aria-current="true"] {
+.owner-submit-reference-task-nav button[aria-current="true"] {
   color: #2d68e8;
   background: #edf4ff;
   box-shadow: inset 3px 0 0 #4c83f5;
 }
 
-.owner-submit-reference-workstream-nav button:hover:not([aria-current="true"]) {
+.owner-submit-reference-task-nav button:hover:not([aria-current="true"]) {
   background: #f7f9fc;
   color: #2e405e;
 }
@@ -1238,7 +1238,7 @@ select:focus {
   opacity: 0.76;
 }
 
-.owner-submit-reference-layout fieldset:disabled .owner-submit-reference-workstream-nav,
+.owner-submit-reference-layout fieldset:disabled .owner-submit-reference-task-nav,
 .owner-submit-reference-layout fieldset:disabled .owner-submit-reference-detail {
   opacity: 0.86;
 }
@@ -1274,19 +1274,19 @@ select:focus {
     width: auto;
   }
 
-  .owner-submit-reference-workstream-nav {
+  .owner-submit-reference-task-nav {
     width: auto;
     padding: 12px;
   }
 
-  .owner-submit-reference-workstream-nav > div {
+  .owner-submit-reference-task-nav > div {
     display: flex;
     gap: 8px;
     overflow-x: auto;
     padding-bottom: 2px;
   }
 
-  .owner-submit-reference-workstream-nav button {
+  .owner-submit-reference-task-nav button {
     width: auto;
     min-width: 150px;
   }
@@ -1516,13 +1516,13 @@ select:focus {
   box-shadow: none;
 }
 
-.owner-submit-reference-workstream-nav {
+.owner-submit-reference-task-nav {
   width: 228px;
   padding: 12px;
   border-color: var(--owner-submit-soft-border);
 }
 
-.owner-submit-reference-workstream-nav button {
+.owner-submit-reference-task-nav button {
   min-height: 38px;
   border-radius: 8px;
   padding: 7px 10px;
@@ -1530,7 +1530,7 @@ select:focus {
   font-size: 12.5px;
 }
 
-.owner-submit-reference-workstream-nav button[aria-current="true"] {
+.owner-submit-reference-task-nav button[aria-current="true"] {
   background: var(--owner-submit-accent-soft);
   box-shadow: none;
   color: var(--owner-submit-accent);

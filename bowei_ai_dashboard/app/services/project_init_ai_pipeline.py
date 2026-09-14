@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ..ai.contracts import AIInvocationContext, AIUpstreamError, Capability
+from ..ai.contracts import AIInvocationContext, AIServiceError, Capability
 from ..ai.service import AIService
 from .project_init_ai_contracts import (
     AgentTask,
@@ -40,6 +40,11 @@ from .project_init_ai_spreadsheet import (
     _evidence_traceability_error,
     _repair_batch_evidence,
     _structured_spreadsheet_fallback,
+)
+from .project_init_ai_response import (
+    build_project_init_repair_prompt,
+    classify_project_init_response,
+    normalize_project_init_response,
 )
 from .project_init_file_parser import SourceChunk
 
@@ -508,19 +513,23 @@ def generate_project_init_draft(
             model_name="structured-spreadsheet",
             require_full_coverage=True,
         )
-    if structured_draft is not None:
+    if llm_call is None and ai_service is None and structured_draft is not None:
         return structured_draft
     if llm_call is not None:
         provider = "injected"
         caller = llm_call
+        response_parser = lambda raw: _normalise_llm_payload(_parse_json_response(raw))
     elif ai_service is not None:
         provider = Capability.PROJECT_INIT_ANALYSIS
-        caller = lambda prompt: ai_service.invoke_chat(
-            Capability.PROJECT_INIT_ANALYSIS,
-            prompt,
-            invocation_context or AIInvocationContext(resource_type="project_init"),
-            response_validator=_classify_raw_draft_envelope,
-        ).text
+        response_parser = lambda raw: normalize_project_init_response(raw)[0]
+        def caller(prompt: str) -> str:
+            result = ai_service.invoke_project_init_chat(
+                prompt,
+                invocation_context or AIInvocationContext(resource_type="project_init"),
+                validator=classify_project_init_response,
+                repair_prompt_factory=lambda paths: build_project_init_repair_prompt(prompt, paths),
+            )
+            return result.text
     else:
         raise ProjectInitAiError("AI capability service is required")
     batches = _split_batches(source_values)
@@ -532,14 +541,14 @@ def generate_project_init_draft(
         prompt = _context_prompt(batch, people, indexed_tasks)
         try:
             raw = _invoke_llm(caller, prompt, provider)
-            payload = _parse_json_response(raw)
-            envelope = _RawEnvelope.model_validate(_normalise_llm_payload(payload))
-        except (ProjectInitAiError, AIUpstreamError):
+            envelope = _RawEnvelope.model_validate(response_parser(raw))
+        except (ProjectInitAiError, AIServiceError):
             fallback = _structured_spreadsheet_fallback(
                 canonical_sources,
                 people,
                 indexed_tasks,
-                provider,
+                "local-rule",
+                model_name="structured-spreadsheet-fallback",
             )
             if fallback is not None:
                 return fallback
@@ -560,8 +569,7 @@ def generate_project_init_draft(
                     _semantic_repair_prompt(batch, envelope.tasks, missing_fields),
                     provider,
                 )
-                repair_payload = _parse_json_response(repair_raw)
-                repair_envelope = _RawEnvelope.model_validate(_normalise_llm_payload(repair_payload))
+                repair_envelope = _RawEnvelope.model_validate(response_parser(repair_raw))
                 envelope.tasks = _merge_tasks([*envelope.tasks, *repair_envelope.tasks])
             except Exception:
                 # Optional AI repair must not discard a valid, evidence-bound draft.
@@ -593,7 +601,8 @@ def generate_project_init_draft(
                 canonical_sources,
                 people,
                 indexed_tasks,
-                provider,
+                "local-rule",
+                model_name="structured-spreadsheet-fallback",
             )
             if fallback is not None:
                 return fallback
@@ -607,8 +616,7 @@ def generate_project_init_draft(
     if has_cross_batch_task_conflict(batch_tasks):
         try:
             merge_raw = _invoke_llm(caller, _final_merge_prompt(all_tasks, canonical_sources), provider)
-            merge_payload = _parse_json_response(merge_raw)
-            merge_envelope = _RawEnvelope.model_validate(_normalise_llm_payload(merge_payload))
+            merge_envelope = _RawEnvelope.model_validate(response_parser(merge_raw))
             merge_envelope.tasks = [
                 _repair_batch_evidence(task, canonical_sources)
                 for task in merge_envelope.tasks
@@ -620,7 +628,8 @@ def generate_project_init_draft(
                     canonical_sources,
                     people,
                     indexed_tasks,
-                    provider,
+                    "local-rule",
+                    model_name="structured-spreadsheet-fallback",
                 )
                 if fallback is not None:
                     return fallback
@@ -652,7 +661,8 @@ def generate_project_init_draft(
             canonical_sources,
             people,
             indexed_tasks,
-            provider,
+            "local-rule",
+            model_name="structured-spreadsheet-fallback",
         )
         if fallback is not None:
             return fallback

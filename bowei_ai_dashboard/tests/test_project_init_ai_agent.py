@@ -229,10 +229,66 @@ def test_invalid_primary_response_uses_project_init_fallback_model(invalid_kind,
         logs = db.query(models.AIInvocationLog).order_by(models.AIInvocationLog.id).all()
         assert [(log.status, log.fallback_used, log.error_code) for log in logs] == [
             ("failed", False, expected_code),
+            ("failed", False, expected_code),
             ("succeeded", True, ""),
         ]
         assert "9999999999" not in caplog.text
         assert "private_value" not in caplog.text
+    finally:
+        db.close()
+        Base.metadata.drop_all(engine)
+
+
+def test_invalid_primary_response_gets_one_targeted_repair_before_fallback():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        repo = AIConfigurationRepository(db, cipher_key=TEST_FERNET_KEY)
+        primary = repo.create_model(
+            code="primary",
+            display_name="Primary",
+            provider="deepseek",
+            model_name="deepseek-chat",
+            model_type="chat",
+            base_url="https://api.example.test",
+            config={},
+            enabled=True,
+            source="custom",
+        )
+        repo.replace_credential(primary.id, api_key="test-key", app_secret=None)
+        repo.save_policy(
+            Capability.PROJECT_INIT_ANALYSIS,
+            primary_model_id=primary.id,
+            fallback_model_ids=[],
+            timeout_seconds=30,
+            max_attempts=1,
+            enabled=True,
+        )
+
+        calls: list[str] = []
+
+        class RepairAdapter:
+            def complete_chat(self, _model, _api_key, prompt, *, timeout_seconds, response_format=None):
+                calls.append(prompt)
+                assert response_format == {"type": "json_object"}
+                if len(calls) == 1:
+                    return json.dumps({"tasks": [{"title": "原始任务"}]}, ensure_ascii=False)
+                return json.dumps({"tasks": [raw_task(title="修复后的任务")]}, ensure_ascii=False)
+
+        result = generate_project_init_draft(
+            [chunk("修复后的任务")],
+            [],
+            [],
+            ai_service=AIService(db, adapters=RepairAdapter(), cipher_key=TEST_FERNET_KEY),
+            invocation_context=AIInvocationContext(resource_type="project_init", resource_id=100),
+        )
+
+        assert len(calls) == 2
+        assert "修复上一轮" in calls[1]
+        assert result.tasks[0].title == "修复后的任务"
+        logs = db.query(models.AIInvocationLog).order_by(models.AIInvocationLog.id).all()
+        assert [(log.status, log.error_code) for log in logs] == [("failed", "schema_invalid"), ("succeeded", "")]
     finally:
         db.close()
         Base.metadata.drop_all(engine)
@@ -1388,7 +1444,7 @@ def test_structured_spreadsheet_fallback_accepts_alias_headers_and_merged_workst
     assert second.description == "按模板整理"
 
 
-def test_recognized_work_plan_rows_do_not_depend_on_ai_field_interpretation():
+def test_recognized_work_plan_rows_use_ai_when_an_ai_caller_is_available():
     spreadsheet_row = {
         "attachment_id": 7,
         "file_name": "推进表.xlsx",
@@ -1400,15 +1456,41 @@ def test_recognized_work_plan_rows_do_not_depend_on_ai_field_interpretation():
     }
     calls: list[str] = []
 
-    result = generate_project_init_draft(
-        [spreadsheet_row],
-        [],
-        [],
-        llm_call=lambda prompt: calls.append(prompt) or '{"tasks":[]}',
-    )
+    def llm(prompt: str) -> str:
+        calls.append(prompt)
+        return json.dumps({
+            "tasks": [raw_task(
+                title="AI 语义识别工作",
+                evidence=[{"attachment_id": 7, "file_name": "推进表.xlsx", "location": "'推进表'!A2:J2"}],
+            )]
+        }, ensure_ascii=False)
 
-    assert calls == []
-    assert result.model_name == "structured-spreadsheet"
+    result = generate_project_init_draft([spreadsheet_row], [], [], llm_call=llm)
+
+    assert calls
+    assert result.tasks[0].title == "AI 语义识别工作"
+    assert result.provider == "injected"
+    assert result.provider != "local-rule"
+
+
+def test_structured_work_plan_uses_rule_fallback_when_ai_is_unavailable():
+    spreadsheet_row = {
+        "attachment_id": 7,
+        "file_name": "推进表.xlsx",
+        "location": "'推进表'!A2:J2",
+        "text": (
+            "专项\t关键任务\t关键成果\t完成标准\t统筹人\t负责人\t协同成员\t计划时间\t当前状态\t问题与协调\n"
+            "专项甲\t任务甲\t成果甲\t标准甲\t张三\t李四\t王五\t2026-06-01\t进行中\t备注甲"
+        ),
+    }
+
+    def unavailable(_prompt: str) -> str:
+        raise AIUpstreamError("AI_UPSTREAM_CONNECTION", retryable=True)
+
+    result = generate_project_init_draft([spreadsheet_row], [], [], llm_call=unavailable)
+
+    assert result.provider == "local-rule"
+    assert result.model_name == "structured-spreadsheet-fallback"
     assert result.tasks[0].subtasks[0].helper_names == ["王五"]
 
 
@@ -1446,7 +1528,7 @@ def test_structured_fallback_does_not_discard_mixed_non_spreadsheet_sources():
     assert result.tasks[0].title == "文本工作"
 
 
-def test_structured_rows_merge_workstream_titles_after_normalization():
+def test_structured_rows_merge_workstream_titles_after_ai_fallback():
     rows = [
         {
             "attachment_id": 7,
@@ -1468,13 +1550,17 @@ def test_structured_rows_merge_workstream_titles_after_normalization():
         },
     ]
 
-    result = generate_project_init_draft(rows, [], [], llm_call=lambda _: pytest.fail("AI should not run"))
+    def unavailable(_prompt: str) -> str:
+        raise AIUpstreamError("AI_UPSTREAM_CONNECTION", retryable=True)
 
+    result = generate_project_init_draft(rows, [], [], llm_call=unavailable)
+
+    assert result.provider == "local-rule"
     assert len(result.tasks) == 1
     assert [item.title for item in result.tasks[0].subtasks] == ["任务一", "任务二"]
 
 
-def test_merged_alias_header_workbook_is_extracted_end_to_end_without_ai(tmp_path):
+def test_merged_alias_header_workbook_is_extracted_end_to_end_after_ai_fallback(tmp_path):
     path = tmp_path / "推进表.xlsx"
     workbook = Workbook()
     sheet = workbook.active
@@ -1490,10 +1576,11 @@ def test_merged_alias_header_workbook_is_extracted_end_to_end_without_ai(tmp_pat
         parse_project_init_file(path, path.name),
         [],
         [],
-        llm_call=lambda _prompt: (_ for _ in ()).throw(AssertionError("AI should not be called")),
+        llm_call=lambda _prompt: (_ for _ in ()).throw(AIUpstreamError("AI_UPSTREAM_CONNECTION", retryable=True)),
     )
 
-    assert result.model_name == "structured-spreadsheet"
+    assert result.model_name == "structured-spreadsheet-fallback"
+    assert result.provider == "local-rule"
     assert result.tasks[0].title == "知识资产AI化"
     assert [item.title for item in result.tasks[0].subtasks] == ["制定计划", "建立目录"]
     assert result.tasks[0].subtasks[1].helper_names == ["赵六"]

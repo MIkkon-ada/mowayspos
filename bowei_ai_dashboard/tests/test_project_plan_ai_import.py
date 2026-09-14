@@ -7,7 +7,7 @@ from io import BytesIO
 import pytest
 from openpyxl import Workbook
 
-from app.ai.contracts import AICapabilityNotConfigured
+from app.ai.contracts import AICapabilityNotConfigured, AIServiceError
 from app import models, schemas
 from tests.test_project_permission_characterization import _seed
 from app.services.project_init_file_parser import parse_project_init_file
@@ -152,6 +152,28 @@ def test_ai_preview_uses_deterministic_fallback_when_ai_is_unavailable(tmp_path,
 
     def unavailable(*_args, **_kwargs):
         raise AICapabilityNotConfigured("not configured")
+
+    monkeypatch.setattr(project_plan_ai_import, "generate_project_init_draft", unavailable)
+    monkeypatch.setattr(
+        project_plan_ai_import,
+        "generate_structured_project_init_draft",
+        lambda *_args, **_kwargs: _fake_draft(),
+    )
+    monkeypatch.setattr(project_plan_ai_import, "AIService", lambda _db: object())
+
+    preview = analyze_project_plan_upload(db, source.read_bytes(), source.name, actor="admin")
+
+    assert preview.fallback_mode == "deterministic"
+    assert preview.result.tasks[0].title == "工作A"
+    db.close()
+
+
+def test_ai_preview_uses_deterministic_fallback_when_ai_call_fails(tmp_path, monkeypatch):
+    db = _seed()
+    source = _work_plan_xlsx(tmp_path)
+
+    def unavailable(*_args, **_kwargs):
+        raise AIServiceError("upstream unavailable")
 
     monkeypatch.setattr(project_plan_ai_import, "generate_project_init_draft", unavailable)
     monkeypatch.setattr(

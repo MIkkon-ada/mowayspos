@@ -14,7 +14,7 @@ from tempfile import TemporaryDirectory
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
-from ..ai.contracts import AICapabilityNotConfigured, AIInvocationContext
+from ..ai.contracts import AIInvocationContext, AIServiceError
 from ..ai.service import AIService
 from .project_init_ai_agent import (
     ProjectInitAiResult,
@@ -131,7 +131,7 @@ def analyze_project_plan_upload(
                 invocation_context=context,
             )
             fallback_mode = _fallback_mode_for_result(result)
-        except AICapabilityNotConfigured:
+        except AIServiceError:
             result = generate_structured_project_init_draft(
                 chunks,
                 people,

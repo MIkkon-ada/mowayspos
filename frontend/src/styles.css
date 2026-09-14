@@ -922,3 +922,711 @@ select:focus {
   outline: none;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
 }
+
+/* 负责人补充立项：参考稿工作台视觉层。业务状态和交互仍由 React 控制。 */
+.owner-submit-reference-layout {
+  --owner-submit-ink: #17233d;
+  --owner-submit-muted: #7b879d;
+  --owner-submit-border: #e3e8f0;
+  --owner-submit-surface: #ffffff;
+  --owner-submit-canvas: #f6f8fb;
+  --owner-submit-blue: #2f6df6;
+  --owner-submit-orange: #f97316;
+  background: var(--owner-submit-canvas);
+  color: var(--owner-submit-ink);
+  letter-spacing: 0;
+}
+
+.owner-submit-reference-layout,
+.owner-submit-reference-layout * {
+  box-sizing: border-box;
+}
+
+.owner-submit-reference-header {
+  min-height: 88px;
+  padding: 16px 32px;
+  border-color: var(--owner-submit-border);
+  background: var(--owner-submit-surface);
+}
+
+.owner-submit-reference-header h2 {
+  color: var(--owner-submit-ink);
+  font-size: clamp(1.25rem, 1.65vw, 1.75rem);
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+}
+
+.owner-submit-reference-header p {
+  color: #8290a6;
+  line-height: 1.5;
+}
+
+.owner-submit-reference-header > button {
+  min-height: 42px;
+  border-color: #dfe6f0;
+  background: #fbfcfe;
+  color: #607089;
+  box-shadow: 0 2px 5px rgba(33, 53, 84, 0.03);
+}
+
+.owner-submit-reference-header > button:hover:not(:disabled) {
+  border-color: #c8d4e5;
+  background: #f5f8fc;
+  color: #30415d;
+}
+
+.owner-submit-workbench-main {
+  background: var(--owner-submit-canvas);
+  scrollbar-color: #c9d3e2 transparent;
+  scrollbar-width: thin;
+}
+
+.owner-submit-workbench-columns {
+  gap: 24px;
+  padding: 24px 32px 32px;
+}
+
+.owner-submit-left-pane {
+  width: 360px;
+}
+
+.owner-submit-reference-overview,
+.owner-submit-b-split,
+.owner-submit-reference-ai-panel {
+  border-color: var(--owner-submit-border);
+  border-radius: 16px;
+  background: var(--owner-submit-surface);
+  box-shadow: 0 3px 12px rgba(28, 46, 75, 0.035);
+}
+
+.owner-submit-reference-overview {
+  padding: 24px 28px 22px;
+}
+
+.owner-submit-reference-overview h3,
+.owner-submit-workplan-heading h3 {
+  color: var(--owner-submit-ink);
+  letter-spacing: -0.018em;
+}
+
+.owner-submit-reference-overview h3 {
+  font-size: 1.35rem;
+  line-height: 1.3;
+}
+
+.owner-submit-reference-overview .owner-submit-project-info-row {
+  grid-template-columns: 118px minmax(0, 1fr);
+  min-height: 44px;
+  align-items: center;
+  border-radius: 8px;
+  color: #51627d;
+}
+
+.owner-submit-reference-overview .owner-submit-project-info-row > span,
+.owner-submit-reference-overview .owner-submit-project-role-row > span {
+  color: #95a2b7;
+  font-weight: 500;
+}
+
+.owner-submit-reference-overview .owner-submit-project-info-row > p,
+.owner-submit-reference-overview .owner-submit-project-info-row > div,
+.owner-submit-reference-overview .owner-submit-project-role-row > span:last-child {
+  color: #33435e;
+  font-weight: 600;
+}
+
+.owner-submit-reference-overview .owner-submit-project-info-row:nth-child(n + 5) {
+  align-items: start;
+}
+
+.owner-submit-reference-overview .owner-submit-project-role-row {
+  grid-template-columns: 118px minmax(0, 1fr);
+  min-height: 40px;
+}
+
+.owner-submit-reference-overview .border-t {
+  border-color: #edf1f6;
+}
+
+.owner-submit-plan-section {
+  min-width: 0;
+}
+
+.owner-submit-workplan-heading {
+  min-height: 40px;
+  margin-bottom: 16px;
+}
+
+.owner-submit-workplan-heading h3 {
+  font-size: 1.35rem;
+  line-height: 1.3;
+}
+
+.owner-submit-workplan-heading button {
+  min-height: 38px;
+  border-radius: 9px;
+}
+
+.owner-submit-workplan-heading .owner-submit-primary-add {
+  border-color: #cbdcff;
+  color: var(--owner-submit-blue);
+  background: #fff;
+}
+
+.owner-submit-workplan-heading .owner-submit-primary-add:hover:not(:disabled) {
+  border-color: #9cbaff;
+  background: #f4f7ff;
+}
+
+.owner-submit-reference-detail {
+  background: #fff;
+}
+
+.owner-submit-reference-detail > .border-b {
+  border-color: #edf1f6;
+}
+
+.owner-submit-reference-detail .owner-submit-title-display,
+.owner-submit-reference-detail input[placeholder="请输入重点工作名称"] {
+  font-size: 1.25rem;
+  line-height: 1.35;
+  color: var(--owner-submit-ink);
+}
+
+.owner-submit-reference-detail .owner-submit-goal-result {
+  margin-top: 22px;
+}
+
+.owner-submit-reference-detail .owner-submit-goal-result label {
+  color: #293953;
+  font-size: 0.95rem;
+}
+
+.owner-submit-reference-detail .owner-submit-goal-result-input {
+  color: #455670;
+  font-size: 1.05rem;
+}
+
+.owner-submit-reference-detail textarea,
+.owner-submit-reference-detail .owner-submit-subtask-table input,
+.owner-submit-reference-detail .owner-submit-subtask-table button[aria-haspopup="listbox"] {
+  border-color: #e1e7ef;
+  background: #fbfcfe;
+}
+
+.owner-submit-reference-detail textarea {
+  min-height: 72px;
+  border-radius: 12px;
+}
+
+.owner-submit-reference-detail .owner-submit-subtask-table {
+  border-color: #e1e7ef;
+}
+
+.owner-submit-reference-detail .owner-submit-subtask-table thead tr {
+  background: #f7f9fc;
+}
+
+.owner-submit-reference-detail .owner-submit-subtask-table thead th {
+  height: 44px;
+  color: #8795aa;
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+}
+
+.owner-submit-reference-detail .owner-submit-subtask-table tbody tr {
+  height: 68px;
+}
+
+.owner-submit-reference-detail .owner-submit-subtask-table tbody td {
+  border-color: #eef2f6;
+}
+
+.owner-submit-reference-task-nav {
+  width: 228px;
+  padding: 18px 12px;
+  border-color: #e6ebf2;
+}
+
+.owner-submit-reference-task-nav button {
+  min-height: 44px;
+  border-radius: 12px;
+  padding: 11px 14px;
+  color: #53627a;
+  line-height: 1.4;
+}
+
+.owner-submit-reference-task-nav button[aria-current="true"] {
+  color: #2d68e8;
+  background: #edf4ff;
+  box-shadow: inset 3px 0 0 #4c83f5;
+}
+
+.owner-submit-reference-task-nav button:hover:not([aria-current="true"]) {
+  background: #f7f9fc;
+  color: #2e405e;
+}
+
+.owner-submit-reference-ai-panel {
+  padding: 20px 24px 24px;
+  border-color: #dce5fb;
+}
+
+.owner-submit-reference-ai-panel > header h2 {
+  color: #263452;
+  font-size: 1rem;
+}
+
+.owner-submit-reference-ai-panel > header p {
+  color: #7f8ba0;
+}
+
+.owner-submit-reference-ai-panel label[for="owner-submit-ai-files"] {
+  border-color: #b8d1ff;
+  background: #f6f9ff;
+  border-radius: 14px;
+  padding: 28px 20px;
+}
+
+.owner-submit-reference-ai-panel label[for="owner-submit-ai-files"]:hover {
+  border-color: #7da9ff;
+  background: #f1f6ff;
+}
+
+.owner-submit-reference-ai-panel label[for="owner-submit-ai-files"] span:first-child {
+  color: #2f63cc;
+  font-size: 1rem;
+}
+
+.owner-submit-reference-ai-panel label[for="owner-submit-ai-files"] span:last-child {
+  color: #6287c9;
+}
+
+.owner-submit-reference-ai-panel > div > button.w-full {
+  background: #386ff0;
+  box-shadow: 0 6px 14px rgba(56, 111, 240, 0.18);
+}
+
+.owner-submit-reference-ai-panel > div > button.w-full:hover:not(:disabled) {
+  background: #2e61da;
+}
+
+.owner-submit-reference-footer {
+  min-height: 72px;
+  padding: 12px 32px;
+  border-color: #e0e6ef;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 -8px 24px rgba(38, 55, 82, 0.065);
+}
+
+.owner-submit-reference-footer > button {
+  min-height: 42px;
+  border-radius: 10px;
+}
+
+.owner-submit-reference-footer > button:last-child {
+  min-width: 168px;
+  background: var(--owner-submit-orange);
+  box-shadow: 0 7px 16px rgba(249, 115, 22, 0.22);
+}
+
+.owner-submit-reference-footer > button:last-child:hover:not(:disabled) {
+  background: #ea690f;
+}
+
+.owner-submit-reference-layout fieldset:disabled {
+  opacity: 0.76;
+}
+
+.owner-submit-reference-layout fieldset:disabled .owner-submit-reference-task-nav,
+.owner-submit-reference-layout fieldset:disabled .owner-submit-reference-detail {
+  opacity: 0.86;
+}
+
+@media (max-width: 1279px) and (min-width: 1024px) {
+  .owner-submit-left-pane {
+    width: 320px;
+  }
+
+  .owner-submit-reference-overview {
+    padding-inline: 20px;
+  }
+
+  .owner-submit-reference-overview .owner-submit-project-info-row,
+  .owner-submit-reference-overview .owner-submit-project-role-row {
+    grid-template-columns: 102px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1023px) {
+  .owner-submit-reference-header,
+  .owner-submit-workbench-columns,
+  .owner-submit-reference-footer {
+    padding-inline: 20px;
+  }
+
+  .owner-submit-workbench-columns {
+    gap: 16px;
+    padding-block: 16px 24px;
+  }
+
+  .owner-submit-left-pane {
+    width: auto;
+  }
+
+  .owner-submit-reference-task-nav {
+    width: auto;
+    padding: 12px;
+  }
+
+  .owner-submit-reference-task-nav > div {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .owner-submit-reference-task-nav button {
+    width: auto;
+    min-width: 150px;
+  }
+}
+
+@media (max-width: 640px) {
+  .owner-submit-reference-header {
+    align-items: flex-start;
+    gap: 12px;
+    padding-block: 14px;
+  }
+
+  .owner-submit-reference-header > button {
+    padding-inline: 10px;
+  }
+
+  .owner-submit-reference-overview,
+  .owner-submit-reference-ai-panel,
+  .owner-submit-reference-detail {
+    padding: 16px;
+  }
+
+  .owner-submit-reference-overview .owner-submit-project-info-row,
+  .owner-submit-reference-overview .owner-submit-project-role-row {
+    grid-template-columns: 92px minmax(0, 1fr);
+  }
+
+  .owner-submit-reference-footer {
+    padding-block: 10px;
+  }
+
+  .owner-submit-reference-footer > button:last-child {
+    min-width: 138px;
+    padding-inline: 16px;
+  }
+}
+
+/* project-import-v3.html 的精确视觉 token 覆盖 */
+.owner-submit-reference-layout {
+  --owner-submit-ink: #1d2433;
+  --owner-submit-muted: #98a1b3;
+  --owner-submit-border: #e5e8ef;
+  --owner-submit-soft-border: #eff1f6;
+  --owner-submit-canvas: #f4f5f9;
+  --owner-submit-surface: #ffffff;
+  --owner-submit-accent: #6d5cff;
+  --owner-submit-accent-soft: #efecff;
+  --owner-submit-success: #12a150;
+  --owner-submit-success-soft: #e6f6ec;
+  --owner-submit-warning: #d97706;
+  --owner-submit-warning-soft: #fdf2df;
+  background: var(--owner-submit-canvas);
+  color: var(--owner-submit-ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.owner-submit-reference-header {
+  min-height: 0;
+  padding: 10px 20px;
+  gap: 14px;
+  border-color: var(--owner-submit-border);
+}
+
+.owner-submit-reference-header h2 {
+  font-size: 16px;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+
+.owner-submit-reference-header p {
+  margin-top: 1px;
+  color: var(--owner-submit-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.owner-submit-reference-status {
+  border: 0 !important;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11.5px;
+}
+
+.owner-submit-reference-status.border-amber-200 {
+  background: var(--owner-submit-warning-soft);
+  color: var(--owner-submit-warning);
+}
+
+.owner-submit-reference-status.border-blue-200 {
+  background: var(--owner-submit-success-soft);
+  color: var(--owner-submit-success);
+}
+
+.owner-submit-reference-header > button {
+  min-height: 34px;
+  padding: 8px 15px;
+  border-radius: 9px;
+  border-color: var(--owner-submit-border);
+  background: #fff;
+  color: #5b6478;
+  font-size: 13px;
+}
+
+.owner-submit-workbench-main {
+  background: var(--owner-submit-canvas);
+}
+
+.owner-submit-workbench-columns {
+  gap: 14px;
+  padding: 14px 20px;
+}
+
+.owner-submit-left-pane {
+  width: 292px;
+}
+
+.owner-submit-reference-overview,
+.owner-submit-right-pane,
+.owner-submit-b-split {
+  border-color: var(--owner-submit-border);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(20, 26, 40, 0.05), 0 6px 22px rgba(20, 26, 40, 0.06);
+}
+
+.owner-submit-reference-overview {
+  padding: 0;
+}
+
+.owner-submit-reference-overview > h3 {
+  padding: 15px 18px 11px;
+  border-bottom: 1px solid var(--owner-submit-soft-border);
+  font-size: 15px;
+}
+
+.owner-submit-reference-overview > div:first-of-type {
+  margin-top: 0;
+  padding: 12px 18px 6px;
+}
+
+.owner-submit-reference-overview > div:last-child {
+  margin-top: 0;
+  padding: 10px 18px 18px;
+}
+
+.owner-submit-reference-overview .owner-submit-project-info-row,
+.owner-submit-reference-overview .owner-submit-project-role-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+  min-height: 0;
+  padding: 6.5px 0;
+  border-bottom: 1px dashed var(--owner-submit-soft-border);
+  border-radius: 0;
+  font-size: 12.5px;
+}
+
+.owner-submit-reference-overview .owner-submit-project-info-row > span,
+.owner-submit-reference-overview .owner-submit-project-role-row > span:first-child {
+  color: var(--owner-submit-muted);
+}
+
+.owner-submit-reference-overview .owner-submit-project-info-row > p,
+.owner-submit-reference-overview .owner-submit-project-info-row > div,
+.owner-submit-reference-overview .owner-submit-project-role-row > span:last-child {
+  overflow: hidden;
+  color: var(--owner-submit-ink);
+  font-weight: 600;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.owner-submit-reference-overview .owner-submit-project-info-row:nth-child(n + 5) > p {
+  white-space: normal;
+}
+
+.owner-submit-reference-overview .border-t {
+  border-top: 0;
+}
+
+.owner-submit-right-pane {
+  overflow: hidden;
+  background: var(--owner-submit-surface);
+}
+
+.owner-submit-workplan-heading {
+  min-height: 0;
+  margin: 0;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--owner-submit-soft-border);
+}
+
+.owner-submit-workplan-heading h3 {
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.owner-submit-workplan-heading button {
+  min-height: 30px;
+  padding: 5px 11px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.owner-submit-reference-ai-toggle,
+.owner-submit-workplan-heading .owner-submit-primary-add {
+  border-color: #ddd4ff;
+  background: var(--owner-submit-accent-soft);
+  color: var(--owner-submit-accent);
+}
+
+.owner-submit-reference-ai-toggle:hover:not(:disabled),
+.owner-submit-workplan-heading .owner-submit-primary-add:hover:not(:disabled) {
+  border-color: #c7baff;
+  background: #e2dbff;
+}
+
+.owner-submit-reference-detail {
+  padding: 16px 18px 24px;
+}
+
+.owner-submit-b-split {
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--owner-submit-border);
+  background: #fff;
+  box-shadow: none;
+}
+
+.owner-submit-reference-task-nav {
+  width: 228px;
+  padding: 12px;
+  border-color: var(--owner-submit-soft-border);
+}
+
+.owner-submit-reference-task-nav button {
+  min-height: 38px;
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: #5b6478;
+  font-size: 12.5px;
+}
+
+.owner-submit-reference-task-nav button[aria-current="true"] {
+  background: var(--owner-submit-accent-soft);
+  box-shadow: none;
+  color: var(--owner-submit-accent);
+}
+
+.owner-submit-reference-detail .owner-submit-title-display,
+.owner-submit-reference-detail input[placeholder="请输入重点工作名称"] {
+  font-size: 14.5px;
+  font-weight: 700;
+}
+
+.owner-submit-reference-detail .owner-submit-goal-result {
+  margin-top: 16px;
+}
+
+.owner-submit-reference-detail .owner-submit-goal-result label {
+  font-size: 11px;
+  color: var(--owner-submit-muted);
+}
+
+.owner-submit-reference-detail .owner-submit-goal-result-input,
+.owner-submit-reference-detail textarea,
+.owner-submit-reference-detail .owner-submit-subtask-table input,
+.owner-submit-reference-detail .owner-submit-subtask-table button[aria-haspopup="listbox"] {
+  font-size: 12.5px;
+}
+
+.owner-submit-reference-detail textarea,
+.owner-submit-reference-detail .owner-submit-subtask-table input,
+.owner-submit-reference-detail .owner-submit-subtask-table button[aria-haspopup="listbox"] {
+  border-color: transparent;
+  background: transparent;
+  border-radius: 6px;
+}
+
+.owner-submit-reference-detail textarea:hover,
+.owner-submit-reference-detail .owner-submit-subtask-table input:hover,
+.owner-submit-reference-detail .owner-submit-subtask-table button[aria-haspopup="listbox"]:hover {
+  background: #f4f5fa;
+}
+
+.owner-submit-reference-detail textarea:focus,
+.owner-submit-reference-detail .owner-submit-subtask-table input:focus,
+.owner-submit-reference-detail .owner-submit-subtask-table button[aria-haspopup="listbox"]:focus-visible {
+  border-color: var(--owner-submit-accent);
+  background: #fff;
+  box-shadow: none;
+  outline: 1.5px solid var(--owner-submit-accent);
+}
+
+.owner-submit-reference-detail .owner-submit-subtask-table thead tr {
+  background: #fafbfd;
+}
+
+.owner-submit-reference-detail .owner-submit-subtask-table thead th {
+  height: auto;
+  color: var(--owner-submit-muted);
+  font-size: 11px;
+}
+
+.owner-submit-reference-footer {
+  min-height: 0;
+  padding: 10px 20px;
+  gap: 14px;
+  border-color: var(--owner-submit-border);
+  box-shadow: none;
+}
+
+.owner-submit-reference-footer > button {
+  min-height: 34px;
+  padding: 8px 15px;
+  border-radius: 9px;
+  font-size: 13px;
+}
+
+.owner-submit-reference-footer .owner-submit-reference-submit {
+  min-width: 0;
+  background: var(--owner-submit-success);
+  border-color: var(--owner-submit-success);
+  box-shadow: none;
+}
+
+.owner-submit-reference-footer .owner-submit-reference-submit:hover:not(:disabled) {
+  background: #0e8c45;
+}
+
+.owner-submit-reference-ai-panel {
+  margin-inline: 18px;
+  padding: 16px;
+  border-color: var(--owner-submit-border);
+  border-radius: 14px;
+  box-shadow: none;
+}
+
+@media (max-width: 1023px) {
+  .owner-submit-left-pane {
+    width: auto;
+  }
+}

@@ -24,7 +24,6 @@ from ..time_utils import utc_now
 from .project_init_ai_agent import (
     ProjectInitAiInvalidDraft,
     generate_project_init_draft,
-    generate_structured_project_init_draft,
 )
 from ..ai.service import AIService, sanitize_invocation_error_code
 from ..ai.contracts import AIInvocationContext
@@ -390,9 +389,49 @@ def _result_metadata(
         for field_name in ("name", "background", "objectives", "expected_outcomes", "start_date", "end_date", "description")
         if str(project_profile.get(field_name) or "").strip()
     )
+    processing_mode = (
+        "deterministic_fallback"
+        if provider == "local-rule"
+        or model_name in {"structured-spreadsheet", "structured-spreadsheet-fallback", "semantic-source-repair"}
+        else "ai"
+    )
+    route = dict(analysis_route or {
+        "mode": "text_structured",
+        "review_required": False,
+        "reason_codes": [],
+    })
+    reason_codes = list(route.get("reason_codes") or [])
+    if processing_mode == "deterministic_fallback" and "ai_unavailable_fallback" not in reason_codes:
+        reason_codes.append("ai_unavailable_fallback")
+    validation_error_codes = {
+        "json_missing_or_multiple",
+        "json_malformed",
+        "schema_invalid",
+        "evidence_invalid",
+    }
+    failed_attempts = [
+        attempt for attempt in (model_attempts or [])
+        if attempt.get("status") == "failed"
+    ]
+    recovery_attempted = any(
+        attempt.get("error_code") in validation_error_codes
+        for attempt in failed_attempts
+    )
+    last_failure_code = str(failed_attempts[-1].get("error_code") or "") if failed_attempts else ""
+    failure_stage = (
+        "schema" if last_failure_code in {"json_missing_or_multiple", "json_malformed", "schema_invalid"}
+        else "evidence" if last_failure_code == "evidence_invalid"
+        else "transport" if last_failure_code
+        else ""
+    )
+    if recovery_attempted and processing_mode == "deterministic_fallback":
+        if "ai_schema_invalid_fallback" not in reason_codes:
+            reason_codes.append("ai_schema_invalid_fallback")
+    route["reason_codes"] = reason_codes
     return {
         "provider": provider,
         "model_name": model_name,
+        "processing_mode": processing_mode,
         "task_count": len(tasks),
         "project_profile_field_count": profile_field_count,
         "warning_count": len(warnings),
@@ -400,11 +439,11 @@ def _result_metadata(
         "attempted_models": attempted_models or [],
         "model_attempts": model_attempts or [],
         "final_model": attempted_models[-1] if attempted_models else {},
-        "analysis_route": analysis_route or {
-            "mode": "text_structured",
-            "review_required": False,
-            "reason_codes": [],
-        },
+        "ai_recovery_attempted": recovery_attempted,
+        "ai_recovery_succeeded": recovery_attempted and processing_mode == "ai",
+        "ai_failure_stage": failure_stage if processing_mode == "deterministic_fallback" else "",
+        "ai_failure_code": last_failure_code if processing_mode == "deterministic_fallback" else "",
+        "analysis_route": route,
     }
 
 
@@ -518,9 +557,7 @@ def process_analysis_run(run_id: int) -> None:
         existing_tasks = snapshot.get("tasks", []) if isinstance(snapshot, dict) else []
         try:
             result = None
-            if not vision_sources:
-                result = generate_structured_project_init_draft(chunks, people, existing_tasks)
-            ai_service = AIService(db) if result is None else None
+            ai_service = AIService(db)
             context = AIInvocationContext(resource_type="project_init", resource_id=run_id)
             if vision_sources:
                 vision_reason_codes = [

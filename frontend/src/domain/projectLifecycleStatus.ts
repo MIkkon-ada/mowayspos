@@ -154,6 +154,17 @@ export function canShowProjectSubmitAction(project?: ProjectLifecycleLike | null
   return status === 'dispatched' || status === 'returned'
 }
 
+export function canEditProjectInit(project?: ProjectLifecycleLike | null): boolean {
+  return canShowProjectSubmitAction(project)
+}
+
+export function getProjectInitEditNotice(project?: ProjectLifecycleLike | null): string {
+  const status = getProjectPrimaryStatus(project)
+  if (status === 'pending_review') return '项目已提交审核，当前只能查看，需审核退回后才能继续完善。'
+  if (!status) return '项目状态未知，暂不能编辑工作推进表。'
+  return `项目当前为“${getProjectStatusLabel(project)}”状态，需进入已派发或已退回状态后才能编辑。`
+}
+
 export function canShowProjectApproveAction(project?: ProjectLifecycleLike | null): boolean {
   return getProjectPrimaryStatus(project) === 'pending_review'
 }

@@ -46,9 +46,32 @@ def test_model_attempt_metadata_is_log_derived_and_sanitized():
         }
         assert metadata["model_attempts"][1]["error_code"] == "AI_UPSTREAM_UNKNOWN"
         assert metadata["final_model"] == metadata["attempted_models"][-1]
+
         assert "PRIVATE_MODEL_SOURCE" not in json.dumps(metadata)
     finally:
         db.close()
+
+
+def test_result_metadata_explains_schema_fallback_without_raw_response():
+    from app.services import project_init_analysis as service
+
+    metadata = service._result_metadata(
+        {"tasks": []},
+        provider="local-rule",
+        model_name="structured-spreadsheet-fallback",
+        model_attempts=[
+            {"status": "failed", "error_code": "schema_invalid"},
+            {"status": "failed", "error_code": "schema_invalid"},
+        ],
+        attempted_models=[],
+    )
+
+    assert metadata["processing_mode"] == "deterministic_fallback"
+    assert metadata["ai_recovery_attempted"] is True
+    assert metadata["ai_recovery_succeeded"] is False
+    assert metadata["ai_failure_stage"] == "schema"
+    assert metadata["ai_failure_code"] == "schema_invalid"
+    assert "raw" not in metadata
 
 
 @pytest.mark.parametrize("failed", [False, True])
@@ -185,12 +208,10 @@ def test_worker_uses_structured_workbook_draft_only_without_vision_sources(monke
     run_id = run.id
     monkeypatch.setattr(service, "SessionLocal", lambda: db)
     monkeypatch.setattr(service, "_attachment_path", lambda _key: source_path)
-    chat = Mock(side_effect=AssertionError("regular Excel must bypass the chat draft generator"))
-    if workbook_kind in ("with_overview", "inline_overview"):
-        chat = Mock(return_value={
-            "tasks": [{"title": "知识资产AI化"}], "warnings": [],
-            "project_profile": {"name": "知识升级", "background": "提升知识复用能力"},
-        })
+    chat = Mock(return_value={
+        "tasks": [{"title": "AI 识别任务"}], "warnings": [],
+        "project_profile": {"name": "知识升级", "background": "提升知识复用能力"},
+    })
     vision = Mock(return_value={"tasks": [{"title": "视觉任务"}], "warnings": []})
     monkeypatch.setattr(service, "generate_project_init_draft", chat)
     monkeypatch.setattr(service, "generate_project_init_vision_draft", vision)
@@ -203,27 +224,19 @@ def test_worker_uses_structured_workbook_draft_only_without_vision_sources(monke
     assert stored.status == "completed"
     result = json.loads(stored.result_json)
     draft = json.loads(stored.current_draft_json)
-    if workbook_kind in ("with_overview", "inline_overview"):
+    if workbook_kind in ("regular", "with_overview", "inline_overview"):
         chat.assert_called_once()
         vision.assert_not_called()
-        assert any("建设背景" in chunk["text"] for chunk in chat.call_args.args[0])
-        assert draft["project_profile"]["name"] == "知识升级"
-        assert draft["project_profile"]["background"] == "提升知识复用能力"
+        assert draft["tasks"][0]["title"] == "AI 识别任务"
+        if workbook_kind in ("with_overview", "inline_overview"):
+            assert any("建设背景" in chunk["text"] for chunk in chat.call_args.args[0])
+            assert draft["project_profile"]["name"] == "知识升级"
+            assert draft["project_profile"]["background"] == "提升知识复用能力"
     elif workbook_kind == "complex":
         chat.assert_not_called()
         vision.assert_called_once()
         assert draft["tasks"][0]["title"] == "视觉任务"
         assert result["analysis_route"]["mode"] == "vision_with_review"
-    else:
-        chat.assert_not_called()
-        vision.assert_not_called()
-        assert result["model_name"] == "structured-spreadsheet-fallback"
-        assert result["model_attempts"] == []
-        task = draft["tasks"][0]
-        assert task["title"] == "知识资产AI化"
-        assert task["subtasks"][0]["title"] == "完成标签体系修订"
-        assert task["subtasks"][0]["assignee_name"] == "李四"
-        assert task["evidence"][0]["attachment_id"] == 1
 
 
 def test_run_model_has_frozen_snapshot_and_worker_timestamps():

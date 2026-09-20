@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import test from 'node:test'
+
+const source = readFileSync(new URL('../src/features/settings/ProjectsMgmtSection.tsx', import.meta.url), 'utf8')
+const dialog = readFileSync(new URL('../src/features/settings/ProjectPlanAiImportDialog.tsx', import.meta.url), 'utf8')
+const view = readFileSync(new URL('../src/features/settings/projectPlanAiImportView.ts', import.meta.url), 'utf8')
+const api = readFileSync(new URL('../src/api/projectPlanAiImport.ts', import.meta.url), 'utf8')
+const converter = readFileSync(new URL('../src/features/settings/projectPlanAiImportDraft.ts', import.meta.url), 'utf8')
+
+test('project management uses the AI work plan import review flow', () => {
+  assert.match(source, /ProjectPlanAiImportDialog/)
+  assert.match(source, /AI 批量导入弹窗/)
+  assert.match(dialog, /previewAiProjectPlan/)
+  assert.match(dialog, /draftToBatchImportRows/)
+  assert.match(dialog, /applyAiProjectPlan/)
+  assert.match(dialog, /提供工作计划/)
+  assert.match(dialog, /上传文件/)
+  assert.match(dialog, /粘贴表格/)
+  assert.match(dialog, /复核导入内容/)
+  assert.match(dialog, /编辑任务/)
+  assert.match(dialog, /项目概览/)
+  assert.match(dialog, /工作推进方案/)
+  assert.match(dialog, /任务树/)
+  assert.match(dialog, /原文对照/)
+  assert.match(dialog, /核对无误，采纳/)
+  assert.match(dialog, /aria-label="工作计划文件"/)
+  assert.doesNotMatch(dialog, /min-w-\[980px\]/)
+  assert.match(view, /groupImportRows/)
+  assert.match(dialog, /fallback_mode/)
+  assert.match(dialog, /targetProjectId/)
+  assert.match(api, /\/api\/projects\/ai-plan-import\/preview/)
+  assert.match(api, /\/api\/projects\/ai-plan-import\/apply/)
+  assert.match(converter, /evidenceNotes/)
+  assert.match(converter, /AI 未识别到项目名称/)
+})

@@ -1,0 +1,317 @@
+import { useState, type RefObject } from 'react'
+import type { WorkReportEntryIntent } from '../../domain/workReportEntry'
+import type { RecorderState } from './voiceRecorderProtocol'
+import type { Phase } from './voiceUpdateResultTypes'
+import { acceptedDocumentTypes } from '../../config/aiDocumentFormats'
+
+type AvailableProvider = { provider: string; display_name: string; model: string }
+export type VoiceInputMode = 'text' | 'voice' | 'upload' | 'document'
+
+type VoiceUpdateInputPanelProps = {
+  entryIntent: WorkReportEntryIntent
+  mode: VoiceInputMode
+  onModeChange: (mode: VoiceInputMode) => void
+  providers: AvailableProvider[]
+  selectedProvider: string
+  onSelectedProviderChange: (provider: string) => void
+  phase: Phase
+  controlsLocked: boolean
+  extractDisabled: boolean
+  recording: boolean
+  transcribing: boolean
+  mediaActive: boolean
+  recorderState: RecorderState
+  canRecord: boolean
+  timerLabel: string
+  text: string
+  onTextChange: (value: string) => void
+  uploading: boolean
+  uploadFileName: string
+  uploadInputRef: RefObject<HTMLInputElement | null>
+  onUploadFile: (file: File) => void
+  documentUploading: boolean
+  documentFileName: string
+  documentCharCount: number
+  documentInputRef: RefObject<HTMLInputElement | null>
+  onDocumentFile: (file: File) => void
+  onRemoveDocument: () => void
+  onStartRecording: () => void
+  onStopRecording: () => void
+  onExtract: () => void
+}
+
+const MODE_OPTIONS: { key: VoiceInputMode; label: string; path: string }[] = [
+  { key: 'text', label: '文本输入', path: 'M4 6h16M4 12h16M4 18h10' },
+  { key: 'voice', label: '录音输入', path: 'M12 3a3 3 0 00-3 3v5a3 3 0 006 0V6a3 3 0 00-3-3zm-7 8a7 7 0 0014 0M12 18v3' },
+  { key: 'upload', label: '上传音频', path: 'M12 16V4m0 0L8 8m4-4 4 4M5 14v5h14v-5' },
+  { key: 'document', label: '上传文档', path: 'M6 2h9l3 3v15H6zM15 2v4h4M9 11h6M9 15h6' },
+]
+
+const ENTRY_COPY: Record<WorkReportEntryIntent, { heading: string; placeholder: string; hint: string }> = {
+  report: {
+    heading: '提交工作汇报',
+    placeholder: '请输入本次完成、下一步计划、遇到的问题和形成的成果…',
+    hint: '建议包含：本次完成、下一步计划、问题、成果',
+  },
+  issue: {
+    heading: '记录问题',
+    placeholder: '请描述问题现象、影响范围、当前处理情况和需要的支持…',
+    hint: '建议包含：问题现象、影响范围、处理进展、所需支持',
+  },
+  achievement: {
+    heading: '添加成果',
+    placeholder: '请描述成果名称、完成内容、交付形式和可验证依据…',
+    hint: '建议包含：成果名称、完成内容、交付形式、验证依据',
+  },
+}
+
+export function VoiceUpdateInputPanel({
+  entryIntent,
+  mode,
+  onModeChange,
+  providers,
+  selectedProvider,
+  onSelectedProviderChange,
+  phase,
+  controlsLocked,
+  extractDisabled,
+  recording,
+  transcribing,
+  mediaActive,
+  recorderState,
+  canRecord,
+  timerLabel,
+  text,
+  onTextChange,
+  uploading,
+  uploadFileName,
+  uploadInputRef,
+  onUploadFile,
+  documentUploading,
+  documentFileName,
+  documentCharCount,
+  documentInputRef,
+  onDocumentFile,
+  onRemoveDocument,
+  onStartRecording,
+  onStopRecording,
+  onExtract,
+}: VoiceUpdateInputPanelProps) {
+  const entryCopy = ENTRY_COPY[entryIntent]
+  const [documentDragging, setDocumentDragging] = useState(false)
+  const recorderStatus = recorderState === 'connecting' || recorderState === 'starting'
+    ? '正在连接语音服务'
+    : recorderState === 'stopping'
+      ? '正在完成最后一句'
+      : recording
+        ? '正在录音'
+        : '录音输入'
+  const recorderHint = !canRecord
+    ? '请先选择执行中的项目和关键任务'
+    : recorderState === 'connecting' || recorderState === 'starting'
+      ? '连接成功后将自动开始录音'
+      : recorderState === 'stopping'
+        ? '正在等待最后一段识别结果'
+        : recording
+          ? timerLabel
+          : '点击开始录音，边说边出字'
+  const voiceBusy = mediaActive || transcribing
+
+  return (
+    <section className="voice-update-input-panel" aria-label="输入汇报内容">
+      <header className="voice-update-panel-header voice-update-input-panel-header">
+        <div className="voice-update-panel-heading">
+          <h2>{entryCopy.heading}</h2>
+        </div>
+      </header>
+
+      <div className="voice-update-mode-tabs" role="tablist" aria-label="输入方式">
+        {MODE_OPTIONS.map(({ key, label, path }) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={mode === key}
+            className={mode === key ? 'is-active' : ''}
+            disabled={controlsLocked}
+            onClick={() => onModeChange(key)}
+          >
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d={path} /></svg>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {mode !== 'document' && <div className="voice-update-input-heading">
+        <h2>原始汇报内容 <em aria-hidden="true">*</em></h2>
+        <span>提交前可继续修改</span>
+      </div>}
+
+      {mode === 'text' && (
+        <>
+          <textarea
+            className="voice-update-textarea"
+            value={text}
+            onChange={(event) => onTextChange(event.target.value)}
+            readOnly={mediaActive}
+            placeholder={entryCopy.placeholder}
+            maxLength={5000}
+          />
+          <div className="voice-update-character-count">{text.length}/5000</div>
+        </>
+      )}
+
+      {mode === 'voice' && (
+        <div className="voice-update-voice-panel">
+          <div className="voice-update-recorder-bar">
+            <div className="voice-update-recorder-info">
+              <strong>
+                {recording ? (
+                  <>
+                    <span className="voice-update-recording-dot" />
+                    {recorderStatus}
+                  </>
+                ) : (
+                  recorderStatus
+                )}
+              </strong>
+              <span>{recorderHint}</span>
+            </div>
+            <button
+              type="button"
+              className={recording ? 'voice-update-stop-button' : 'voice-update-record-button'}
+              onClick={recording ? onStopRecording : onStartRecording}
+              disabled={recording ? false : controlsLocked || voiceBusy || !canRecord}
+            >
+              {recording ? '停止录音' : voiceBusy ? recorderStatus : '开始录音'}
+            </button>
+          </div>
+          <textarea
+            className={`voice-update-textarea${mediaActive ? ' is-media-read-only' : ''}`}
+            value={text}
+            onChange={(event) => onTextChange(event.target.value)}
+            readOnly={mediaActive}
+            placeholder={recording ? '识别结果会实时显示在这里…' : '开始录音后，文字将实时显示在这里，也可以直接输入或修改…'}
+            maxLength={5000}
+          />
+          <div className="voice-update-character-count">{text.length}/5000</div>
+        </div>
+      )}
+
+      {mode === 'upload' && (
+        <div className="voice-update-voice-panel">
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept="audio/*,.mp3,.wav,.m4a,.flac,.aac,.ogg,.wma,.amr,.webm,.mp4"
+            disabled={mediaActive}
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (file) {
+                if (!mediaActive) onUploadFile(file)
+              }
+            }}
+          />
+          <div className="voice-update-recorder-bar">
+            <div className="voice-update-recorder-info">
+              <strong>{uploading ? `正在转写「${uploadFileName}」` : '上传音频文件'}</strong>
+              <span>{uploading ? '请稍候…' : '支持 MP3、WAV、M4A 等常见音频格式'}</span>
+            </div>
+            <button
+              type="button"
+              className="voice-update-record-button"
+              disabled={uploading || mediaActive}
+              onClick={() => uploadInputRef.current?.click()}
+            >
+              {uploading ? '转写中' : '选择音频'}
+            </button>
+          </div>
+          <textarea
+            className="voice-update-textarea"
+            value={text}
+            onChange={(event) => onTextChange(event.target.value)}
+            readOnly={mediaActive}
+            placeholder="选择音频文件后，转写结果将显示在这里…"
+            maxLength={5000}
+          />
+          <div className="voice-update-character-count">{text.length}/5000</div>
+        </div>
+      )}
+
+      {mode === 'document' && (
+        <div className="voice-update-document-panel">
+          <input
+            ref={documentInputRef}
+            type="file"
+            accept={acceptedDocumentTypes('workReport')}
+            disabled={controlsLocked}
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (file) onDocumentFile(file)
+            }}
+          />
+          <button
+            type="button"
+            className={`voice-update-document-dropzone${documentDragging ? ' is-dragging' : ''}`}
+            disabled={controlsLocked}
+            onClick={() => documentInputRef.current?.click()}
+            onDragEnter={(event) => { event.preventDefault(); setDocumentDragging(true) }}
+            onDragOver={(event) => event.preventDefault()}
+            onDragLeave={() => setDocumentDragging(false)}
+            onDrop={(event) => {
+              event.preventDefault()
+              setDocumentDragging(false)
+              const file = event.dataTransfer.files?.[0]
+              if (file) onDocumentFile(file)
+            }}
+          >
+            <strong>{documentUploading ? '正在解析文档…' : '拖入文档，或点击选择'}</strong>
+            <span>支持 Word、PDF、Excel、PPT · 单个文件不超过 20 MB</span>
+          </button>
+          {documentFileName && <div className="voice-update-document-file">
+            <div>
+              <strong>{documentFileName}</strong>
+              <span>{documentUploading ? '正在解析…' : `已完成解析 · 已提取 ${documentCharCount} 字`}</span>
+            </div>
+            <button type="button" className="voice-update-document-remove" onClick={onRemoveDocument} disabled={documentUploading}>移除</button>
+          </div>}
+          <div className="voice-update-input-heading voice-update-document-heading">
+            <h2>文档解析内容 <em aria-hidden="true">*</em></h2>
+            <span>可编辑，AI 将据此提取</span>
+          </div>
+          <textarea
+            className="voice-update-textarea"
+            value={text}
+            onChange={(event) => onTextChange(event.target.value)}
+            readOnly={documentUploading}
+            placeholder="上传后，文档解析内容将显示在这里…"
+            maxLength={5000}
+          />
+          <div className="voice-update-character-count">{text.length}/5000</div>
+        </div>
+      )}
+
+      <div className="voice-update-input-hints">
+        <span>{entryCopy.hint}</span>
+        <span>内容越完整，AI 提取结果越准确</span>
+      </div>
+
+      <div className="voice-update-extract-row">
+        <label className="voice-update-model-field">
+          <span>提取模型</span>
+          <span className="voice-update-model-select">
+            <select value={selectedProvider} disabled={controlsLocked} onChange={(event) => onSelectedProviderChange(event.target.value)}>
+              {providers.map((provider) => <option key={provider.provider} value={provider.provider}>{provider.display_name}（{provider.model}）</option>)}
+            </select>
+            {selectedProvider === 'deepseek' && <em className="voice-update-recommended">推荐</em>}
+          </span>
+        </label>
+        <button type="button" className="voice-update-extract-button" disabled={extractDisabled} onClick={onExtract}>
+          {phase === 'extracting' ? '正在提取…' : 'AI 提取'}
+        </button>
+      </div>
+    </section>
+  )
+}

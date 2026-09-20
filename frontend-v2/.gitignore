@@ -1,0 +1,9 @@
+node_modules
+dist
+*.tsbuildinfo
+.env
+.env.*
+*.log
+_cleanup_backup/
+vite.config.js
+vite.config.d.ts

@@ -1,0 +1,881 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ChangeEvent } from 'react'
+import {
+  createInitAnalysisRun,
+  deleteInitAttachment,
+  downloadInitAttachmentUrl,
+  getInitAnalysisRun,
+  ProjectInitApiError,
+  type AgentSubTask,
+  type AgentTask,
+  EMPTY_PROJECT_INIT_AI_PROFILE,
+  type ProjectInitAiDraft,
+  type ProjectInitAnalysisRun,
+  type ProjectInitAttachment,
+  type ProjectInitCurrentDraft,
+  type ProjectInitDraft,
+  uploadInitAttachments,
+} from '../../api/projectInitAi'
+import { acceptedDocumentTypes, aiDocumentFormats } from '../../config/aiDocumentFormats'
+import {
+  applyProjectProfileDecisions,
+  buildProjectProfileMergePreview,
+  PROJECT_PROFILE_FIELDS,
+  type ProjectProfileDecision,
+  type ProjectProfileField,
+  type ProjectProfileValues,
+} from './projectInitProfileDraft'
+
+const MAX_FILE_BYTES = 25 * 1024 * 1024
+const MAX_FILES = 10
+const MAX_TOTAL_BYTES = 100 * 1024 * 1024
+const POLL_INTERVAL_MS = 1500
+const ACCEPTED_EXTENSIONS = aiDocumentFormats.projectInit
+
+type PanelState = 'idle' | 'uploading' | 'analyzing' | 'preview' | 'failed'
+type UploadStatus = 'queued' | 'uploading' | 'success' | 'failed' | 'cancelled'
+export type ProjectInitAiDecisionAction = 'new' | 'ignore' | 'supplement'
+
+export type ProjectInitAiDecision = {
+  key: string
+  action: ProjectInitAiDecisionAction
+  itemType: 'task' | 'subtask'
+  taskIndex: number
+  subtaskIndex?: number
+  title: string
+}
+
+export function canBeginAnalysisRequest(inFlight: boolean): boolean {
+  return !inFlight
+}
+
+export function freshAnalysisPreviewState() {
+  return {
+    decisions: {} as Record<string, ProjectInitAiDecisionAction>,
+    applySuccess: false,
+    draft: undefined,
+  }
+}
+
+export function analysisProgressMessage(retryPending: boolean): string {
+  return retryPending ? '正在重新分析已上传文件…' : 'AI 正在分析文件…'
+}
+
+type UploadItem = {
+  id: string
+  file: File
+  status: UploadStatus
+  progress: number
+  error: string
+  retryable?: boolean
+  attachment?: ProjectInitAttachment
+}
+
+export type OwnerSubmitAiPanelProps = {
+  projectId: number
+  currentDraft: ProjectInitCurrentDraft
+  existingAttachments?: ProjectInitAttachment[]
+  onApplyDraft: (draft: ProjectInitAiDraft, decisions: ProjectInitAiDecision[], runId: number) => void | Promise<void>
+  /** Project owners can inspect profile suggestions but must not overwrite core project data. */
+  currentProjectProfile?: ProjectProfileValues
+  /** Provided only in the draft-stage project editor, where an initiator confirms profile changes. */
+  onApplyProfile?: (values: ProjectProfileValues, runId: number) => void | Promise<void>
+  showWorkProgress?: boolean
+  onClose?: () => void
+  disabled?: boolean
+}
+
+function isTerminal(status: ProjectInitAnalysisRun['status'] | undefined): boolean {
+  return status === 'completed' || status === 'partial_failed' || status === 'failed'
+}
+
+function isAiDraft(draft: ProjectInitDraft): draft is ProjectInitAiDraft {
+  return !Array.isArray(draft) && Array.isArray(draft.tasks)
+}
+
+function extensionOf(name: string): string {
+  const dot = name.lastIndexOf('.')
+  return dot >= 0 ? name.slice(dot).toLowerCase() : ''
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const AI_SERVICE_UNAVAILABLE_MESSAGE = 'AI 分析服务暂时不可用，请稍后重试。'
+const INFORMATIONAL_PERSON_WARNING_CODE = 'will_join_project'
+
+function errorMessage(error: unknown): string {
+  if (error instanceof ProjectInitApiError) {
+    if (error.detail === 'project lifecycle is not editable') return '当前项目已提交审核或处于不可编辑状态，请先由审核人退回后再修改。'
+    if (error.detail === 'server_error' || error.code === 'SERVER_ERROR') return AI_SERVICE_UNAVAILABLE_MESSAGE
+    return error.detail
+  }
+  if (error instanceof Error) {
+    if (error.message === 'server_error') return AI_SERVICE_UNAVAILABLE_MESSAGE
+    return error.message
+  }
+  return '操作失败，请稍后重试'
+}
+
+function statusLabel(status: ProjectInitAnalysisRun['status']): string {
+  return {
+    queued: '排队中',
+    processing: '处理中',
+    retrying: '重试中',
+    completed: '已完成',
+    partial_failed: '部分失败',
+    failed: '失败',
+  }[status]
+}
+
+function stageLabel(stage: ProjectInitAnalysisRun['stage']): string {
+  return {
+    reading: '读取文件',
+    parsing: '提取结构',
+    extracting: '生成草稿',
+    matching: '匹配人员',
+    merging: '合并结果',
+    retrying: '重试中',
+    completed: '已完成',
+    failed: '分析失败',
+    stale: '已中断',
+  }[stage]
+}
+
+function duplicateLabel(status: AgentTask['merge_status']): string {
+  if (status === 'definite_duplicate') return '确定重复'
+  if (status === 'possible_duplicate') return '疑似重复'
+  return '新增候选'
+}
+
+function warningText(task: AgentTask | AgentSubTask): string[] {
+  return task.warnings.filter((warning) => warning.code !== INFORMATIONAL_PERSON_WARNING_CODE).map((warning) => {
+    const code = warning.code.toLowerCase()
+    const message = warning.message.trim()
+    const label = code.includes('low_confidence') || code.includes('confidence')
+      ? '低置信度'
+      : code.includes('ambiguous')
+        ? '人员匹配不明确'
+        : code.includes('inactive')
+          ? '人员已停用'
+          : code.includes('unmatched') || code.includes('not_found')
+            ? '未匹配人员'
+            : '需要人工确认'
+    return `${label}（${warning.code}）：${message}`
+  })
+}
+
+type FileResult = {
+  attachment_id?: number
+  status?: string
+  error?: string
+}
+
+function fileResults(run: ProjectInitAnalysisRun): FileResult[] {
+  const value = run.result_metadata.file_results
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is FileResult => {
+    if (!item || typeof item !== 'object') return false
+    return typeof (item as Record<string, unknown>).status === 'string'
+  })
+}
+
+type ModelUsage = { display_name?: string; model_name?: string; code?: string }
+type ModelAttempt = ModelUsage & { status?: string; duration_ms?: number; error_code?: string; fallback_used?: boolean }
+
+const ATTEMPT_ERROR_LABELS: Record<string, string> = {
+  AI_UPSTREAM_TIMEOUT: '请求超时',
+  AI_UPSTREAM_RATE_LIMIT: '请求过于频繁',
+  AI_UPSTREAM_CONNECTION: '连接失败',
+  AI_UPSTREAM_5XX: '模型服务暂时不可用',
+  AI_UPSTREAM_BAD_REQUEST: '模型请求配置不受支持',
+  AI_UPSTREAM_AUTH: '模型身份验证失败',
+  AI_RESPONSE_INVALID: '模型返回格式不符合要求',
+  json_missing_or_multiple: '未返回唯一的 JSON 对象',
+  json_malformed: 'JSON 格式错误',
+  schema_invalid: '草稿字段结构不符合要求',
+}
+
+function modelUsages(run: ProjectInitAnalysisRun, key: 'model_strategy' | 'attempted_models'): ModelUsage[] {
+  const value = run.result_metadata[key]
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is ModelUsage => item !== null && typeof item === 'object')
+}
+
+function modelLabel(model: ModelUsage): string {
+  return model.display_name || model.model_name || model.code || '未记录'
+}
+
+function ModelUsageSummary({ run }: { run: ProjectInitAnalysisRun }) {
+  const strategy = modelUsages(run, 'model_strategy')
+  const attempted = modelUsages(run, 'attempted_models')
+  const attempts: ModelAttempt[] = Array.isArray(run.result_metadata.model_attempts)
+    ? run.result_metadata.model_attempts.filter((item): item is ModelAttempt => item !== null && typeof item === 'object')
+    : []
+  const strategyStatus = run.result_metadata.model_strategy_status
+  const strategyLabel = strategy.length
+    ? strategy.map(modelLabel).join(' → ')
+    : strategyStatus === 'historical_unavailable'
+      ? '历史记录未保存策略'
+      : '未记录'
+  const finalModel = run.result_metadata.final_model
+  const finalLabel = finalModel && typeof finalModel === 'object'
+    ? modelLabel(finalModel as ModelUsage)
+    : ''
+  const deterministicProcessor = typeof run.result_metadata.model_name === 'string'
+    ? run.result_metadata.model_name.trim()
+    : ''
+  return <div className="space-y-1 text-xs text-slate-500">
+    <p>模型策略：{strategyLabel}</p>
+    {attempted.length > 0 && <p>本次尝试：{attempted.map(modelLabel).join(' → ')}</p>}
+    {attempts.filter(attempt => attempt.status === 'failed').map((attempt, index) => {
+      const label = Object.hasOwn(ATTEMPT_ERROR_LABELS, attempt.error_code || '')
+        ? ATTEMPT_ERROR_LABELS[attempt.error_code!]
+        : '模型调用失败'
+      const duration = typeof attempt.duration_ms === 'number' && Number.isFinite(attempt.duration_ms) && attempt.duration_ms >= 0
+        ? `（${(attempt.duration_ms / 1000).toFixed(1)} 秒）`
+        : ''
+      return <p key={index}>{modelLabel(attempt)}：{label}{duration}{attempt.fallback_used === true ? ' · 备用模型' : ''}</p>
+    })}
+    {finalLabel && <p>实际模型：{finalLabel}</p>}
+    {!finalLabel && deterministicProcessor && <p>实际处理器：{deterministicProcessor}</p>}
+  </div>
+}
+
+function analysisReviewNotice(run: ProjectInitAnalysisRun): string {
+  const route = run.result_metadata.analysis_route
+  if (!route || typeof route !== 'object') return ''
+  const value = route as Record<string, unknown>
+  if (value.review_required !== true) return ''
+  if (value.mode === 'vision_with_review') {
+    return '复杂 Excel 已通过视觉分析生成候选，请复核后应用。'
+  }
+  const reasons = Array.isArray(value.reason_codes) ? value.reason_codes : []
+  if (reasons.includes('workbook_structure_unavailable')) {
+    return '该 Excel 的结构无法完整检查，当前结果来自文本提取，请重点核对人员、时间和层级关系。'
+  }
+  if (reasons.includes('complex_workbook_layout')) {
+    return '该 Excel 包含复杂版式，当前结果来自文本提取，请重点核对人员、时间和层级关系。'
+  }
+  return '当前文件需要人工复核，请重点核对人员、时间和层级关系。'
+}
+
+function analysisModeNotice(run: ProjectInitAnalysisRun): string {
+  const mode = run.result_metadata.processing_mode
+  const recovered = run.result_metadata.ai_recovery_succeeded === true
+  const failureStage = run.result_metadata.ai_failure_stage
+  const failureCode = run.result_metadata.ai_failure_code
+  if (mode === 'ai' && recovered) {
+    return 'AI 已参与分析，系统已自动整理返回格式，请重点核对关键字段。'
+  }
+  if (mode === 'ai') {
+    return 'AI 已参与分析，结果仅供核对，确认后再写入。'
+  }
+  if (mode === 'deterministic_fallback' && (failureStage === 'schema' || failureCode === 'schema_invalid')) {
+    return 'AI 已返回结果，但结构校验未通过，已切换为规则提取，请重点核对关键字段。'
+  }
+  if (mode === 'deterministic_fallback' && failureStage === 'transport') {
+    return 'AI 服务暂时不可用，已切换为规则提取，请稍后重试 AI 分析。'
+  }
+  if (mode === 'deterministic_fallback') {
+    return '本次使用规则提取，请重点核对关键字段。'
+  }
+  return ''
+}
+
+function requiredDecisionKeys(draft: ProjectInitAiDraft): string[] {
+  const keys: string[] = []
+  draft.tasks.forEach((task, taskIndex) => {
+    if (task.merge_status !== 'new') keys.push(`task-${taskIndex}`)
+    task.subtasks.forEach((subtask, subtaskIndex) => {
+      if (subtask.merge_status !== 'new') keys.push(`task-${taskIndex}-subtask-${subtaskIndex}`)
+    })
+  })
+  return keys
+}
+
+function sourceLabel(task: AgentTask | AgentSubTask): string {
+  return task.source || 'AI 分析结果'
+}
+
+const PROFILE_FIELD_LABELS: Record<ProjectProfileField, string> = {
+  name: '项目名称',
+  background: '项目背景',
+  objectives: '项目目标',
+  expected_outcomes: '预期成果',
+  start_date: '开始日期',
+  end_date: '结束日期',
+  description: '项目说明',
+}
+
+const PROFILE_STATUS_LABELS = {
+  empty: '未识别',
+  same: '与当前一致',
+  supplement: '可补充',
+  change: '待确认变更',
+  unverified: '缺少来源证据',
+} as const
+
+function EvidenceList({
+  projectId,
+  evidence,
+  sourceLabel,
+}: {
+  projectId: number
+  evidence: AgentTask['evidence']
+  sourceLabel: string
+}) {
+  if (evidence.length === 0) return <p className="text-xs text-slate-400">暂无来源证据</p>
+  return (
+    <details className="owner-submit-ai-evidence rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2">
+      <summary className="cursor-pointer text-xs font-semibold text-slate-600 hover:text-slate-900">查看来源证据 · {evidence.length} 条</summary>
+      <ul className="mt-2 space-y-1.5" aria-label="来源证据">
+        {evidence.map((item, index) => (
+          <li key={`${item.file_name}-${item.location}-${index}`} className="rounded-lg bg-white px-3 py-2 text-xs text-slate-600">
+            <div className="flex flex-wrap items-center gap-2 font-semibold text-slate-700">
+              {item.attachment_id ? (
+                <button
+                  type="button"
+                  className="text-blue-700 underline underline-offset-2 hover:text-blue-900"
+                  onClick={() => window.open(downloadInitAttachmentUrl(projectId, item.attachment_id as number), '_blank', 'noopener,noreferrer')}
+                >
+                  {item.file_name}
+                </button>
+              ) : <span>{item.file_name}</span>}
+              <span className="font-normal text-slate-400">{item.location}</span>
+              <span className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-400">source_label: {sourceLabel || item.file_name}</span>
+              <span className="rounded bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-400">attachment_id: {item.attachment_id ?? '—'}</span>
+            </div>
+            <p className="mt-1 line-clamp-3 leading-5">quote: {item.excerpt}</p>
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+function DecisionButtons({
+  value,
+  disabled,
+  onChange,
+}: {
+  value?: ProjectInitAiDecisionAction
+  disabled?: boolean
+  onChange: (value: ProjectInitAiDecisionAction) => void
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label="候选项处理决定">
+      {(['new', 'ignore', 'supplement'] as const).map((action) => (
+        <button
+          key={action}
+          type="button"
+          disabled={disabled}
+          aria-pressed={value === action}
+          onClick={() => onChange(action)}
+          className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${value === action ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:bg-blue-50'}`}
+        >
+          {{ new: '新增', ignore: '忽略', supplement: '补充' }[action]}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+export function OwnerSubmitAiPanel({
+  projectId,
+  currentDraft,
+  onApplyDraft,
+  currentProjectProfile = {},
+  onApplyProfile,
+  showWorkProgress = true,
+  onClose,
+  disabled = false,
+}: OwnerSubmitAiPanelProps) {
+  const [panelState, setPanelState] = useState<PanelState>('idle')
+  const [queue, setQueue] = useState<UploadItem[]>([])
+  const [attachments, setAttachments] = useState<ProjectInitAttachment[]>([])
+  const [run, setRun] = useState<ProjectInitAnalysisRun>()
+  const [draft, setDraft] = useState<ProjectInitAiDraft>()
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [decisions, setDecisions] = useState<Record<string, ProjectInitAiDecisionAction>>({})
+  const [applying, setApplying] = useState(false)
+  const [applySuccess, setApplySuccess] = useState(false)
+  const [profileDecisions, setProfileDecisions] = useState<Partial<Record<ProjectProfileField, ProjectProfileDecision>>>({})
+  const [profileApplySuccess, setProfileApplySuccess] = useState(false)
+  const [previewModule, setPreviewModule] = useState<'profile' | 'work_progress'>('profile')
+  const mountedRef = useRef(true)
+  const pollInFlightTokenRef = useRef<number | undefined>(undefined)
+  const activeRunIdRef = useRef<number | undefined>(undefined)
+  const pollTimerRef = useRef<number | undefined>(undefined)
+  const pollControllerRef = useRef<AbortController | undefined>(undefined)
+  const pollTokenRef = useRef(0)
+  const uploadControllerRef = useRef<AbortController | undefined>(undefined)
+  const analysisControllerRef = useRef<AbortController | undefined>(undefined)
+  const analysisRequestIdRef = useRef(0)
+  const analysisStartInFlightRef = useRef(false)
+
+  const isCurrentAnalysisRequest = useCallback((requestId: number, controller: AbortController) => (
+    mountedRef.current && !controller.signal.aborted && analysisRequestIdRef.current === requestId
+  ), [])
+
+  const successfulAttachmentIds = useMemo(
+    () => [...new Set([
+      ...attachments.map((attachment) => attachment.id),
+      ...queue.flatMap((item) => item.attachment ? [item.attachment.id] : []),
+    ])],
+    [attachments, queue],
+  )
+
+  const clearPolling = useCallback(() => {
+    if (pollTimerRef.current !== undefined) window.clearInterval(pollTimerRef.current)
+    pollTimerRef.current = undefined
+    pollControllerRef.current?.abort()
+    pollControllerRef.current = undefined
+    pollTokenRef.current += 1
+  }, [])
+
+  const updateRun = useCallback((nextRun: ProjectInitAnalysisRun) => {
+    if (!mountedRef.current) return
+    if (activeRunIdRef.current !== nextRun.id) {
+      clearPolling()
+      activeRunIdRef.current = nextRun.id
+    }
+    setRun(nextRun)
+    if (isAiDraft(nextRun.draft)) {
+      setDraft(nextRun.draft)
+      const profile = nextRun.draft.project_profile ?? EMPTY_PROJECT_INIT_AI_PROFILE
+      const hasProfile = PROJECT_PROFILE_FIELDS.some((field) => Boolean(profile[field]?.trim()))
+      setPreviewModule(onApplyProfile && (hasProfile || !showWorkProgress) ? 'profile' : 'work_progress')
+    }
+    setPanelState(nextRun.status === 'failed' ? 'failed' : isTerminal(nextRun.status) ? 'preview' : 'analyzing')
+    setError(nextRun.status === 'failed' ? nextRun.error_message : '')
+    if (isTerminal(nextRun.status)) clearPolling()
+  }, [clearPolling, onApplyProfile, showWorkProgress])
+
+  const pollRun = useCallback(async (runId: number, token: number, controller: AbortController) => {
+    if (controller.signal.aborted || activeRunIdRef.current !== runId || pollInFlightTokenRef.current !== undefined) return
+    pollInFlightTokenRef.current = token
+    try {
+      const nextRun = await getInitAnalysisRun(projectId, runId, controller.signal)
+      if (controller.signal.aborted || !mountedRef.current || activeRunIdRef.current !== runId || nextRun.id !== runId || pollTokenRef.current !== token) return
+      updateRun(nextRun)
+    } catch (nextError) {
+      if (mountedRef.current && !controller.signal.aborted && activeRunIdRef.current === runId && pollTokenRef.current === token) {
+        // Do not leave the last server progress (for example, 55%) on screen
+        // after the status request itself has failed. The run can no longer be
+        // observed reliably, so stop polling and expose an actionable failure
+        // state instead of showing a contradictory error banner plus spinner.
+        setError(errorMessage(nextError))
+        setPanelState('failed')
+        clearPolling()
+      }
+    } finally {
+      if (pollInFlightTokenRef.current === token) pollInFlightTokenRef.current = undefined
+    }
+  }, [projectId, updateRun])
+
+  useEffect(() => {
+    mountedRef.current = true
+    setAttachments([])
+    setQueue([])
+    setRun(undefined)
+    setDraft(undefined)
+    setError('')
+    setPanelState('idle')
+    setLoading(false)
+    return () => {
+      mountedRef.current = false
+      analysisRequestIdRef.current += 1
+      uploadControllerRef.current?.abort()
+      analysisControllerRef.current?.abort()
+      clearPolling()
+    }
+  }, [clearPolling, projectId])
+
+  useEffect(() => {
+    clearPolling()
+    if (!run || isTerminal(run.status)) return undefined
+    const controller = new AbortController()
+    const token = ++pollTokenRef.current
+    const runId = run.id
+    pollControllerRef.current = controller
+    const poll = () => { void pollRun(runId, token, controller) }
+    poll()
+    pollTimerRef.current = window.setInterval(poll, POLL_INTERVAL_MS)
+    return clearPolling
+  }, [clearPolling, pollRun, run?.id, run?.status])
+
+  function addFiles(event: ChangeEvent<HTMLInputElement>) {
+    const selected = Array.from(event.target.files ?? [])
+    event.target.value = ''
+    if (selected.length === 0) return
+    const nextQueue = [...queue]
+    const totalExisting = nextQueue.reduce((sum, item) => sum + item.file.size, 0)
+    let total = totalExisting
+    for (const file of selected) {
+      const extension = extensionOf(file.name)
+      let itemError = ''
+      if (!ACCEPTED_EXTENSIONS.includes(extension as typeof ACCEPTED_EXTENSIONS[number])) itemError = '文件类型不支持'
+      else if (file.size > MAX_FILE_BYTES) itemError = '单文件不能超过 25 MiB'
+      else if (nextQueue.length >= MAX_FILES) itemError = '最多选择 10 个文件'
+      else if (total + file.size > MAX_TOTAL_BYTES) itemError = '文件总大小不能超过 100 MiB'
+      if (!itemError) total += file.size
+      nextQueue.push({ id: `${file.name}-${file.lastModified}-${Math.random()}`, file, status: itemError ? 'failed' : 'queued', progress: 0, error: itemError, retryable: false })
+    }
+    setQueue(nextQueue.slice(0, MAX_FILES))
+    setError('')
+  }
+
+  function updateQueueItem(id: string, patch: Partial<UploadItem>) {
+    if (!mountedRef.current) return
+    setQueue((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item))
+  }
+
+  async function removeItem(item: UploadItem) {
+    if (item.attachment) {
+      try {
+        await deleteInitAttachment(projectId, item.attachment.id)
+        setAttachments((items) => items.filter((attachment) => attachment.id !== item.attachment?.id))
+      } catch (nextError) {
+        setError(errorMessage(nextError))
+        return
+      }
+    }
+    setQueue((items) => items.filter((current) => current.id !== item.id))
+  }
+
+  function isAbortError(nextError: unknown): boolean {
+    return (nextError instanceof ProjectInitApiError && nextError.code === 'ABORT_ERROR')
+      || (nextError instanceof DOMException && nextError.name === 'AbortError')
+  }
+
+  async function uploadQueueItem(item: UploadItem, controller: AbortController): Promise<ProjectInitAttachment> {
+    updateQueueItem(item.id, { status: 'uploading', progress: 0, error: '' })
+    try {
+      const uploaded = await uploadInitAttachments(projectId, [item.file], (progress) => updateQueueItem(item.id, { progress }), controller.signal)
+      const attachment = uploaded[0]
+      if (!attachment) throw new Error('upload response did not contain an attachment')
+      setAttachments((items) => [...items.filter((current) => current.id !== attachment.id), attachment])
+      updateQueueItem(item.id, { status: 'success', progress: 100, error: '', retryable: false, attachment })
+      return attachment
+    } catch (nextError) {
+      if (isAbortError(nextError)) updateQueueItem(item.id, { status: 'cancelled', error: 'cancelled; retry is available', retryable: true })
+      else updateQueueItem(item.id, { status: 'failed', error: errorMessage(nextError), retryable: true })
+      throw nextError
+    }
+  }
+
+  async function retryUpload(item: UploadItem) {
+    if (!item.retryable || item.status === 'uploading') return
+    setError('')
+    setPanelState('uploading')
+    const controller = new AbortController()
+    uploadControllerRef.current = controller
+    try {
+      await uploadQueueItem(item, controller)
+      if (mountedRef.current) setPanelState('idle')
+    } catch (nextError) {
+      if (mountedRef.current) {
+        setPanelState('idle')
+        if (!isAbortError(nextError)) setError(errorMessage(nextError))
+      }
+    } finally {
+      if (uploadControllerRef.current === controller) uploadControllerRef.current = undefined
+    }
+  }
+
+  function resetAnalysisPreview() {
+    const nextPreview = freshAnalysisPreviewState()
+    setDecisions(nextPreview.decisions)
+    setApplySuccess(nextPreview.applySuccess)
+    setProfileDecisions({})
+    setProfileApplySuccess(false)
+    setDraft(nextPreview.draft)
+  }
+
+  function resetToFreshUpload() {
+    analysisRequestIdRef.current += 1
+    uploadControllerRef.current?.abort()
+    analysisControllerRef.current?.abort()
+    clearPolling()
+    activeRunIdRef.current = undefined
+    setQueue([])
+    setAttachments([])
+    setRun(undefined)
+    resetAnalysisPreview()
+    setError('')
+    setPanelState('idle')
+  }
+
+  async function startAnalysis() {
+    if (!canBeginAnalysisRequest(analysisStartInFlightRef.current)) return
+    const pending = queue.filter((item) => item.status === 'queued' || ((item.status === 'failed' || item.status === 'cancelled') && item.retryable === true))
+    if (pending.length === 0 && successfulAttachmentIds.length === 0) {
+      setError('请先选择至少一个有效文件')
+      return
+    }
+    analysisStartInFlightRef.current = true
+    resetAnalysisPreview()
+    setRun(undefined)
+    setError('')
+    setPanelState('uploading')
+    const controller = new AbortController()
+    const analysisController = new AbortController()
+    const requestId = ++analysisRequestIdRef.current
+    uploadControllerRef.current = controller
+    analysisControllerRef.current = analysisController
+    const uploadedIds = [...successfulAttachmentIds]
+    try {
+      for (const item of pending) {
+        if (controller.signal.aborted) throw new DOMException('upload aborted', 'AbortError')
+        try {
+          const attachment = await uploadQueueItem(item, controller)
+          uploadedIds.push(attachment.id)
+        } catch (nextError) {
+          if (isAbortError(nextError)) throw nextError
+          // uploadQueueItem already records retryable failures; continue with the next file.
+        }
+      }
+      if (uploadedIds.length === 0) {
+        if (!isCurrentAnalysisRequest(requestId, analysisController)) return
+        setPanelState('failed')
+        setError('没有可用于分析的已上传文件')
+        return
+      }
+      if (!isCurrentAnalysisRequest(requestId, analysisController)) return
+      const nextRun = await createInitAnalysisRun(projectId, uploadedIds, currentDraft, analysisController.signal)
+      if (!isCurrentAnalysisRequest(requestId, analysisController)) return
+      updateRun(nextRun)
+    } catch (nextError) {
+      if (isAbortError(nextError) || !isCurrentAnalysisRequest(requestId, analysisController)) {
+        if (!isCurrentAnalysisRequest(requestId, analysisController)) return
+        setPanelState('idle')
+        setError('operation cancelled; you can try again')
+        clearPolling()
+      } else {
+        setError(errorMessage(nextError))
+        setPanelState('failed')
+      }
+    } finally {
+      if (uploadControllerRef.current === controller) uploadControllerRef.current = undefined
+      if (analysisControllerRef.current === analysisController) analysisControllerRef.current = undefined
+      analysisStartInFlightRef.current = false
+    }
+  }
+
+  function setDecision(key: string, action: ProjectInitAiDecisionAction) {
+    setDecisions((current) => ({ ...current, [key]: action }))
+  }
+
+  async function applyDraft() {
+    if (!draft) return
+    const missingKeys = requiredDecisionKeys(draft).filter((key) => !decisions[key])
+    if (missingKeys.length > 0) {
+      setError(`请先为所有重复候选项选择处理方式（还缺少 ${missingKeys.length} 项）`)
+      return
+    }
+    setError('')
+    setApplySuccess(false)
+    setApplying(true)
+    const selected: ProjectInitAiDecision[] = []
+    draft.tasks.forEach((task, taskIndex) => {
+      const taskKey = `task-${taskIndex}`
+      selected.push({ key: taskKey, action: decisions[taskKey] ?? 'new', itemType: 'task', taskIndex, title: task.title })
+      task.subtasks.forEach((subtask, subtaskIndex) => {
+        const key = `${taskKey}-subtask-${subtaskIndex}`
+        selected.push({ key, action: decisions[key] ?? 'new', itemType: 'subtask', taskIndex, subtaskIndex, title: subtask.title })
+      })
+    })
+    try {
+      if (!run?.id) {
+        throw new Error('AI 分析运行记录不存在，无法建立审计关联；请重新分析文件')
+      }
+      await onApplyDraft(draft, selected, run.id)
+      if (mountedRef.current) setApplySuccess(true)
+    } catch (nextError) {
+      if (mountedRef.current) setError(`应用失败：${errorMessage(nextError)}`)
+    } finally {
+      if (mountedRef.current) setApplying(false)
+    }
+  }
+
+  async function applyProfile() {
+    if (!draft || !run?.id || !onApplyProfile) return
+    const profile = draft.project_profile ?? EMPTY_PROJECT_INIT_AI_PROFILE
+    const preview = buildProjectProfileMergePreview(currentProjectProfile, profile)
+    const values = applyProjectProfileDecisions(preview, profileDecisions)
+    if (Object.keys(values).length === 0) {
+      setError('没有可应用且已验证的项目基本信息')
+      return
+    }
+    setError('')
+    setApplying(true)
+    setProfileApplySuccess(false)
+    try {
+      await onApplyProfile(values, run.id)
+      if (mountedRef.current) setProfileApplySuccess(true)
+    } catch (nextError) {
+      if (mountedRef.current) setError(`应用基本信息失败：${errorMessage(nextError)}`)
+    } finally {
+      if (mountedRef.current) setApplying(false)
+    }
+  }
+
+  const renderWarningMessages = (warnings: string[]) => {
+    if (warnings.length === 0) return null
+    return <div role="alert" className="mt-2 space-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{warnings.map((warning, index) => <p key={`${warning}-${index}`}>{warning}</p>)}</div>
+  }
+
+  const renderFileResults = (currentRun: ProjectInitAnalysisRun) => {
+    const results = fileResults(currentRun)
+    if (results.length === 0) return null
+    const failedFiles = results.filter((item) => item.status === 'failed')
+    const successfulFiles = results.filter((item) => item.status !== 'failed')
+    return <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs" aria-label="文件分析结果">
+      <p className="font-semibold text-slate-700">文件分析摘要：成功 {successfulFiles.length} 个，失败 {failedFiles.length} 个</p>
+      {failedFiles.length > 0 && <ul className="space-y-1 text-red-700">{failedFiles.map((item, index) => {
+        const name = attachments.find((attachment) => attachment.id === item.attachment_id)?.original_name || `附件 #${item.attachment_id ?? '未知'}`
+        return <li key={`${item.attachment_id ?? 'file'}-${index}`}>失败文件 {name}：{item.error || '未知错误'}</li>
+      })}</ul>}
+    </div>
+  }
+
+  const renderWarnings = (item: AgentTask | AgentSubTask) => {
+    const autoJoinPeople = item.warnings
+      .filter((warning) => warning.code === INFORMATIONAL_PERSON_WARNING_CODE)
+      .map((warning) => warning.person_name)
+      .filter(Boolean)
+    const warnings = warningText(item)
+    if (autoJoinPeople.length === 0 && warnings.length === 0) return null
+    return <>
+      {autoJoinPeople.length > 0 && <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">{autoJoinPeople.join('、')}：提交时自动加入项目</div>}
+      {warnings.length > 0 && <div role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{warnings.join('；')}（未自动绑定）</div>}
+    </>
+  }
+
+  function handleClose() {
+    analysisRequestIdRef.current += 1
+    uploadControllerRef.current?.abort()
+    analysisControllerRef.current?.abort()
+    clearPolling()
+    if (mountedRef.current) setPanelState('idle')
+    onClose?.()
+  }
+
+  const canStartAnalysis = successfulAttachmentIds.length > 0 || queue.some((item) => item.status === 'queued' || ((item.status === 'failed' || item.status === 'cancelled') && item.retryable === true))
+  const showUploadStage = panelState === 'idle' || panelState === 'uploading' || (panelState === 'failed' && !run)
+  const projectProfile = draft?.project_profile ?? EMPTY_PROJECT_INIT_AI_PROFILE
+  const profilePreview = buildProjectProfileMergePreview(currentProjectProfile, projectProfile)
+  const hasProfileSuggestion = PROJECT_PROFILE_FIELDS.some((field) => Boolean(projectProfile[field]?.trim()))
+  const suggestedProfileFieldCount = PROJECT_PROFILE_FIELDS.filter((field) => Boolean(projectProfile[field]?.trim())).length
+
+  if (loading) return <section aria-busy="true" className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">正在加载 AI 分析状态…</section>
+
+  return (
+    <section aria-labelledby="owner-submit-ai-title" className="owner-submit-ai-panel owner-submit-reference-ai-panel space-y-4 rounded-2xl border border-blue-100 bg-white p-5 pb-6 shadow-sm">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 id="owner-submit-ai-title" className="text-base font-bold text-slate-900">AI 从文件生成</h2>
+          <p className="mt-1 text-xs leading-5 text-slate-500">上传项目资料，读取文件、提取结构、匹配人员并生成草稿。AI 只提供预览，不会直接修改项目。</p>
+        </div>
+        {onClose && <button type="button" onClick={handleClose} disabled={disabled} className="rounded-lg px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 disabled:opacity-50" aria-label="关闭 AI 文件面板">关闭</button>}
+      </header>
+
+      {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+
+      {showUploadStage && (
+        <div className="space-y-3">
+          <label htmlFor="owner-submit-ai-files" className="block cursor-pointer rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/50 p-5 text-center hover:border-blue-400">
+            <span className="block text-sm font-semibold text-blue-800">选择资料文件</span>
+            <span className="mt-1 block text-xs text-blue-600">PDF、DOC、DOCX、XLS、XLSX、TXT；单个不超过 25 MiB</span>
+            <input id="owner-submit-ai-files" type="file" multiple accept={acceptedDocumentTypes('projectInit')} onChange={addFiles} disabled={disabled || panelState === 'uploading'} className="sr-only" aria-describedby="owner-submit-ai-file-help" />
+          </label>
+          <p id="owner-submit-ai-file-help" className="text-xs text-slate-400">最多 10 个文件，合计不超过 100 MiB。文件内容通过上传接口发送，不会放入 JSON。</p>
+          {queue.length > 0 && <ul className="space-y-2" aria-label="文件上传队列">{queue.map((item) => (
+            <li key={item.id} className="rounded-xl border border-slate-200 p-3">
+              <div className="flex items-center gap-3">
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-700">{item.file.name}</span>
+                <span className="shrink-0 text-xs text-slate-400">{formatBytes(item.file.size)}</span>
+                <span className={`shrink-0 text-xs ${item.status === 'failed' ? 'text-red-600' : item.status === 'success' ? 'text-emerald-600' : 'text-slate-500'}`}>{item.status === 'uploading' ? `${item.progress}%` : item.status === 'success' ? '已上传' : item.status === 'failed' ? '失败' : item.status === 'cancelled' ? '已取消' : '待上传'}</span>
+                {item.status === 'uploading' ? (
+                  <button type="button" onClick={() => uploadControllerRef.current?.abort()} className="rounded px-2 py-1 text-xs text-red-600 hover:bg-red-50" aria-label={`取消上传 ${item.file.name}`}>取消</button>
+                ) : item.retryable && (item.status === 'failed' || item.status === 'cancelled') ? (
+                  <button type="button" onClick={() => void retryUpload(item)} disabled={panelState === 'uploading'} className="rounded px-2 py-1 text-xs text-blue-600 hover:bg-blue-50" aria-label={`重试上传 ${item.file.name}`}>重试</button>
+                ) : (
+                  <button type="button" onClick={() => void removeItem(item)} className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100" aria-label={`移除 ${item.file.name}`}>移除</button>
+                )}
+              </div>
+              {(item.status === 'uploading' || item.status === 'success') && <progress className="mt-2 h-1.5 w-full" max={100} value={item.progress} aria-label={`${item.file.name} 上传进度`} />}
+              {item.error && <p className="mt-1 text-xs text-red-600">{item.error}</p>}
+            </li>
+          ))}</ul>}
+          {attachments.length > 0 && <ul className="space-y-2" aria-label="已有附件">{attachments.map((attachment) => {
+            const queueItem = queue.find((item) => item.attachment?.id === attachment.id)
+            return <li key={attachment.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-100 px-3 py-2 text-xs">
+              <span className="min-w-0 flex-1 truncate text-slate-700">{attachment.original_name}</span>
+              <a href={downloadInitAttachmentUrl(projectId, attachment.id)} target="_blank" rel="noreferrer" className="text-blue-700 underline underline-offset-2">下载</a>
+              <button type="button" onClick={() => void removeItem(queueItem ?? { id: `attachment-${attachment.id}`, file: new File([], attachment.original_name), status: 'success', progress: 100, error: '', attachment })} disabled={disabled || panelState === 'uploading'} className="rounded px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-50">删除</button>
+            </li>
+          })}</ul>}
+          <button type="button" onClick={() => void startAnalysis()} disabled={disabled || panelState === 'uploading' || !canStartAnalysis} className="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{panelState === 'uploading' ? '上传中…' : '开始分析'}</button>
+        </div>
+      )}
+
+      {panelState === 'analyzing' && (
+        <div className="space-y-4 rounded-xl bg-slate-50 p-4" aria-live="polite">
+          <p className="text-sm font-semibold text-slate-800">{analysisProgressMessage(!run)}</p>
+          {run && <><div className="flex items-center justify-between gap-3"><span className="text-sm font-semibold text-slate-800">{stageLabel(run.stage)}</span><span className="text-xs text-slate-500">{statusLabel(run.status)} · {run.progress}%</span></div>
+          <ModelUsageSummary run={run} />
+          <progress className="h-2 w-full" max={100} value={run.progress} aria-label="AI 分析进度" /></>}
+          <p className="text-xs text-slate-500">分析会自动轮询最新进度，请不要关闭此面板。</p>
+        </div>
+      )}
+
+      {panelState === 'failed' && (
+        <div className="space-y-3 rounded-xl border border-red-100 bg-red-50 p-4"><p className="text-sm font-semibold text-red-800">分析失败</p>{run && <ModelUsageSummary run={run} />}<p className="text-xs text-red-700">{run?.error_message || error || '未能生成草稿'}</p><button type="button" onClick={resetToFreshUpload} disabled={disabled} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-50">重新上传资料</button></div>
+      )}
+
+      {panelState === 'preview' && run && draft && (
+        <div className="owner-submit-ai-preview-content space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3"><div><span className="text-sm font-semibold text-slate-800">文件分析完成</span><span className="ml-2 text-xs text-slate-500">识别到 {suggestedProfileFieldCount} 项项目基本信息、{draft.tasks.length} 项候选重点工作</span></div><div className="flex items-center gap-2"><span className="text-xs font-semibold text-slate-600">{draft.tasks.length} 项待确认</span><button type="button" onClick={resetToFreshUpload} disabled={disabled || applying || applySuccess} className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-50">重新上传资料</button></div></div>
+          <details className="owner-submit-ai-technical-details rounded-lg border border-slate-100 bg-white px-3 py-2"><summary className="cursor-pointer text-xs font-semibold text-slate-500 hover:text-slate-800">查看分析信息</summary><div className="mt-2"><ModelUsageSummary run={run} /></div></details>
+          {analysisModeNotice(run) && <div role="status" className={`rounded-lg px-3 py-2 text-xs ${run.result_metadata.processing_mode === 'deterministic_fallback' ? 'border border-amber-200 bg-amber-50 text-amber-800' : 'border border-blue-100 bg-blue-50 text-blue-800'}`}>{analysisModeNotice(run)}</div>}
+          {analysisReviewNotice(run) && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{analysisReviewNotice(run)}</div>}
+          {draft.warnings && renderWarningMessages(draft.warnings.map((warning) => `${warning.code}: ${warning.message}`))}
+          {run.status === 'partial_failed' && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">部分文件分析失败，下面仅展示已成功生成的结果。</div>}
+          {renderFileResults(run)}
+          <div className="flex flex-wrap gap-2 border-b border-slate-200" role="tablist" aria-label="AI 识别模块">
+            <button type="button" role="tab" aria-selected={previewModule === 'profile'} onClick={() => setPreviewModule('profile')} className={`border-b-2 px-3 py-2 text-sm font-bold ${previewModule === 'profile' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>项目基本信息</button>
+            {showWorkProgress && <button type="button" role="tab" aria-selected={previewModule === 'work_progress'} onClick={() => setPreviewModule('work_progress')} className={`border-b-2 px-3 py-2 text-sm font-bold ${previewModule === 'work_progress' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>工作推进方案</button>}
+          </div>
+          {previewModule === 'profile' && <section aria-label="项目基本信息识别结果" className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+            <div><h3 className="text-sm font-bold text-slate-900">项目基本信息识别结果</h3><p className="mt-1 text-xs text-slate-500">每一项均需有来源证据；缺少证据的信息不会被应用。</p></div>
+            {!hasProfileSuggestion && <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">未从本次资料中识别到可确认的项目基本信息。</p>}
+            <div className="space-y-2">{PROJECT_PROFILE_FIELDS.map((field) => {
+              const item = profilePreview.fields[field]
+              return <div key={field} className="rounded-lg border border-slate-100 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-semibold text-slate-700">{PROFILE_FIELD_LABELS[field]}</p><span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${item.status === 'unverified' ? 'bg-amber-50 text-amber-700' : item.status === 'change' ? 'bg-blue-50 text-blue-700' : 'bg-slate-50 text-slate-500'}`}>{PROFILE_STATUS_LABELS[item.status]}</span></div>{item.suggested && <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">{item.suggested}</p>}{item.current && item.status === 'change' && <p className="mt-1 text-xs text-slate-500">当前值：{item.current}</p>}{onApplyProfile && item.status === 'change' && <div className="mt-2 flex gap-2"><button type="button" onClick={() => setProfileDecisions((current) => ({ ...current, [field]: 'apply' }))} aria-pressed={profileDecisions[field] === 'apply'} className={`rounded px-2 py-1 text-xs font-semibold ${profileDecisions[field] === 'apply' ? 'bg-blue-600 text-white' : 'border border-blue-200 text-blue-700'}`}>采用 AI 建议</button><button type="button" onClick={() => setProfileDecisions((current) => ({ ...current, [field]: 'keep' }))} aria-pressed={profileDecisions[field] === 'keep'} className={`rounded px-2 py-1 text-xs font-semibold ${profileDecisions[field] === 'keep' ? 'bg-slate-700 text-white' : 'border border-slate-200 text-slate-600'}`}>保留当前值</button></div>}</div>
+            })}</div>
+            <EvidenceList projectId={projectId} evidence={projectProfile.evidence} sourceLabel="项目基本信息" />
+            {onApplyProfile ? <><button type="button" onClick={() => void applyProfile()} disabled={disabled || applying || !hasProfileSuggestion} className="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{applying ? '应用中…' : '应用已确认的基本信息'}</button>{profileApplySuccess && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">基本信息建议已带回立项表单，请点击“保存”完成更新。</p>}</> : <p className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">项目基本信息由立项人确认，本页不会直接覆盖。</p>}
+          </section>}
+          {previewModule === 'work_progress' && showWorkProgress && <>
+          {draft.tasks.length === 0 && <p className="rounded-xl border border-slate-200 p-4 text-sm text-slate-500">暂无可预览草稿。</p>}
+          <div className="space-y-3">{draft.tasks.map((task, taskIndex) => {
+            const taskKey = `task-${taskIndex}`
+            return <article key={taskKey} className="owner-submit-ai-task-card rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-bold text-slate-900">{task.title}</h3><p className="mt-1 text-xs text-slate-600"><span className="font-semibold text-slate-700">目标：</span>{task.goal || task.description || '暂无目标'}</p><p className="mt-1 whitespace-pre-wrap text-xs text-slate-600"><span className="font-semibold text-slate-700">验收标准 / 关键成果：</span>{task.acceptance_criteria || '暂无'}</p><p className="mt-1 whitespace-pre-wrap text-xs text-slate-600"><span className="font-semibold text-slate-700">推进流程：</span>{task.process || '暂无'}</p><p className="mt-1 text-xs text-slate-500">负责人：{task.owner_name || '未匹配'} · 时间：{task.plan_start || '—'} 至 {task.plan_end || '—'} · 状态：{task.status || '—'} · 优先级：{task.priority || '—'}</p></div><div className="text-right"><span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">{duplicateLabel(task.merge_status)}</span><DecisionButtons value={decisions[taskKey]} disabled={disabled} onChange={(action) => setDecision(taskKey, action)} /></div></div>
+              {renderWarnings(task)}
+              <div className="mt-4 space-y-2 border-l-2 border-slate-100 pl-3"><p className="text-xs font-semibold text-slate-500">关键任务 / 子任务</p>{task.subtasks.map((subtask, subtaskIndex) => { const key = `${taskKey}-subtask-${subtaskIndex}`; return <div key={key} className="owner-submit-ai-subtask-card rounded-lg border border-slate-100 p-3"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs font-semibold text-slate-800">{subtask.title}</p><p className="mt-1 text-[11px] text-slate-500">负责人：{subtask.assignee_name || '未匹配'} · 协助人：{subtask.helper_names.join('、') || '—'} · 时间：{subtask.plan_start || '—'} 至 {subtask.plan_end || '—'}</p><p className="mt-1 text-[11px] text-slate-500">状态：{subtask.status || '—'} · 优先级：{subtask.priority || '—'}</p></div><div className="space-y-1 text-right"><span className="block rounded-full bg-slate-50 px-2 py-1 text-[10px] text-slate-600">{duplicateLabel(subtask.merge_status)}</span><DecisionButtons value={decisions[key]} disabled={disabled} onChange={(action) => setDecision(key, action)} /></div></div>{renderWarnings(subtask)}<div className="mt-2"><EvidenceList projectId={projectId} evidence={subtask.evidence} sourceLabel={sourceLabel(subtask)} /></div></div> })}</div>
+            </article>
+          })}</div>
+          {applySuccess && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">草稿已提交给推进表页面处理。</p>}
+          <button type="button" onClick={() => void applyDraft()} disabled={disabled || applying || requiredDecisionKeys(draft).some((key) => !decisions[key])} className="w-full rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">{applying ? '应用中…' : '应用到推进表'}</button>
+          </>}
+        </div>
+      )}
+    </section>
+  )
+}

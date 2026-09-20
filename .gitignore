@@ -106,6 +106,7 @@ pw-qa3/
 bowei_ai_dashboard/attachment-storage/
 
 # Local operator artifacts (never version)
+.runtime/
 /tmp/
 /bowei_ai_dashboard/tmp/
 /bowei_ai_dashboard/*.db.codex-backup-*

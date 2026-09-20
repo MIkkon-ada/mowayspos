@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 import type { Project, SubTaskItem, TaskItem } from '../../types'
 import {
@@ -12,6 +12,10 @@ import {
   PLAN_TABLE_COLUMNS,
   type PlanTableColumnKey,
 } from './planTableColumns'
+import { PlanTableToolbar } from './PlanTableToolbar'
+import { usePlanTableColumnLayout } from './usePlanTableColumnLayout'
+import { usePlanTableZoom } from './usePlanTableZoom'
+import './planTableExcel.css'
 import './planTableExcelV2.css'
 
 type Props = {
@@ -167,6 +171,9 @@ export function PlanTableViewV2({
   const [showProjectStandard, setShowProjectStandard] = useState(false)
   const [standardTask, setStandardTask] = useState<TaskItem | null>(null)
   const hasProjectStandard = Boolean(project?.objectives?.trim())
+  const workspaceRef = useRef<HTMLDivElement>(null)
+  const { zoomPercent, zoomIn, zoomOut, fitWidth, resetView } = usePlanTableZoom(workspaceRef)
+  const { getColumnWidth, resetColumnWidths, startResize } = usePlanTableColumnLayout()
   const rows = useMemo(() => buildPlanRows({ project, tasks, taskSubMap, searchText }), [project, searchText, taskSubMap, tasks])
 
   const openKeyTask = (row: PlanTableRow) => {
@@ -196,24 +203,50 @@ export function PlanTableViewV2({
         {canCreateTask && onCreateTask && <button type="button" className="v2-project-banner__create" onClick={onCreateTask}>
           新增重点工作
         </button>}
-        {onExport && <button type="button" className="v2-table-actions__export" disabled={exportDisabled} onClick={onExport}>
-          导出 Excel
-        </button>}
       </div>
     </div>
 
-    <div className="v2-table-scroll">
-      <div className="v2-table-canvas v2-sheet-frame">
+    <PlanTableToolbar
+      zoomPercent={zoomPercent}
+      onZoomOut={zoomOut}
+      onZoomIn={zoomIn}
+      onFitWidth={fitWidth}
+      onResetView={resetView}
+      onExport={() => onExport?.()}
+      exportDisabled={exportDisabled || !onExport}
+    />
+    <div className="v2-table-view-options">
+      <span>拖拽表头右侧边界调整列宽，横向滚动查看完整字段</span>
+      <button type="button" onClick={resetColumnWidths}>重置标准列宽</button>
+    </div>
+
+    <div ref={workspaceRef} className="v2-table-scroll">
+      <div
+        className="v2-table-canvas v2-sheet-frame"
+        style={{
+          zoom: zoomPercent / 100,
+          ['--v2-wbs-width' as string]: `${getColumnWidth('wbsCode')}px`,
+        }}
+      >
         <table className="v2-grid">
           <colgroup>
-            {PLAN_TABLE_COLUMNS.map((column) => <col key={column.key} className={`v2-col--${column.priority}`} style={{ width: `${column.width}px` }} />)}
+            {PLAN_TABLE_COLUMNS.map((column) => <col key={column.key} className={`v2-col--${column.priority}`} style={{ width: `${getColumnWidth(column.key)}px` }} />)}
           </colgroup>
           <thead>
             <tr>
               {PLAN_TABLE_COLUMNS.map((column) => <th
                 key={column.key}
                 className={`v2-th v2-th--${column.key} v2-col--${column.priority}${column.key === 'wbsCode' ? ' v2-th--sticky-wbs' : ''}${column.key === 'workstream' ? ' v2-th--sticky-workstream' : ''}`}
-              >{column.label}</th>)}
+              >
+                <span className="v2-th__label">{column.label}</span>
+                <button
+                  type="button"
+                  className="v2-th__resize-handle"
+                  aria-label={`${column.label}列宽调整`}
+                  title="拖拽调整列宽"
+                  onPointerDown={(event) => startResize(column.key, event)}
+                />
+              </th>)}
             </tr>
           </thead>
           <tbody>

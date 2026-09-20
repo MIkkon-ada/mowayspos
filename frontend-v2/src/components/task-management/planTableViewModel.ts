@@ -1,11 +1,38 @@
 import type { Project, SubTaskItem, TaskItem } from '../../types'
-import { PLAN_TABLE_COLUMNS } from './planTableColumns'
+import { PLAN_TABLE_COLUMNS, type PlanTableColumnKey } from './planTableColumns'
 
 export const EMPTY_PLAN_CELL = '—'
 export const DEFAULT_PLAN_TABLE_ZOOM = 100
 export const MIN_PLAN_TABLE_ZOOM = 50
 export const MAX_PLAN_TABLE_ZOOM = 160
 export const PLAN_TABLE_ZOOM_STEP = 10
+export const PLAN_TABLE_COLUMN_MIN_WIDTH = 64
+export const PLAN_TABLE_COLUMN_MAX_WIDTH = 520
+
+export function getDefaultPlanTableWidths(): Record<PlanTableColumnKey, number> {
+  return Object.fromEntries(PLAN_TABLE_COLUMNS.map((column) => [column.key, column.width])) as Record<PlanTableColumnKey, number>
+}
+
+export function clampPlanTableColumnWidth(key: PlanTableColumnKey, width: number): number {
+  const fallback = PLAN_TABLE_COLUMNS.find((column) => column.key === key)?.width ?? PLAN_TABLE_COLUMN_MIN_WIDTH
+  if (!Number.isFinite(width)) return fallback
+  return Math.min(PLAN_TABLE_COLUMN_MAX_WIDTH, Math.max(PLAN_TABLE_COLUMN_MIN_WIDTH, Math.round(width)))
+}
+
+export function normalizeStoredPlanTableWidths(value: string | null): Record<PlanTableColumnKey, number> {
+  const defaults = getDefaultPlanTableWidths()
+  if (!value?.trim()) return defaults
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>
+    for (const column of PLAN_TABLE_COLUMNS) {
+      const storedWidth = parsed[column.key]
+      if (typeof storedWidth === 'number') defaults[column.key] = clampPlanTableColumnWidth(column.key, storedWidth)
+    }
+  } catch {
+    return defaults
+  }
+  return defaults
+}
 
 export const PLAN_TABLE_BUSINESS_HEADERS = PLAN_TABLE_COLUMNS.map((column) => column.label)
 

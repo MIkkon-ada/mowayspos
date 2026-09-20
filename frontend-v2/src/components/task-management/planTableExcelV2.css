@@ -248,7 +248,7 @@
 
 /* ── 表格画布 ── */
 .v2-table-canvas {
-  width: 100%;
+  width: max-content;
   min-width: 100%;
   padding: 0;
 }
@@ -257,13 +257,13 @@
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background-color: #fff;
-  overflow: hidden;
+  overflow: visible;
 }
 
 /* ── 表格 ── */
 .v2-grid {
-  width: 100%;
-  min-width: 1120px;
+  width: max-content;
+  min-width: 100%;
   table-layout: fixed;
   border-spacing: 0;
   border-collapse: separate;
@@ -1225,7 +1225,7 @@
 }
 
 .v2-grid {
-  min-width: 2042px;
+  min-width: max-content;
 }
 
 .v2-th--sticky-wbs,
@@ -1239,7 +1239,7 @@
 .v2-th--sticky-workstream,
 .v2-td--sticky-workstream {
   position: sticky;
-  left: 72px;
+  left: var(--v2-wbs-width, 72px);
   z-index: 22;
   background: #fff;
   box-shadow: 4px 0 8px rgba(15, 23, 42, .06);
@@ -1256,6 +1256,39 @@
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.v2-th__label {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.v2-th__resize-handle {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  z-index: 3;
+  width: 9px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+}
+
+.v2-th__resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  right: 4px;
+  bottom: 8px;
+  width: 1px;
+  background: transparent;
+}
+
+.v2-th__resize-handle:hover::after,
+.v2-th__resize-handle:focus-visible::after {
+  background: #2563eb;
 }
 
 .v2-td--workstream,
@@ -1290,12 +1323,42 @@
 .v2-status-text--amber { color: #b45309; background: #fffbeb; }
 
 .v2-latest-submission__summary {
+  overflow: visible;
   overflow-wrap: anywhere;
+  text-overflow: clip;
   white-space: pre-wrap;
+}
+
+.v2-table-view-options {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 30px;
+  padding: 0 12px 8px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.v2-table-view-options button {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  color: #475569;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.v2-table-view-options button:hover {
+  border-color: #93c5fd;
+  color: #1d4ed8;
 }
 
 @media (max-width: 1100px) {
   .v2-grid {
-    min-width: 1182px;
+    min-width: max-content;
   }
 }

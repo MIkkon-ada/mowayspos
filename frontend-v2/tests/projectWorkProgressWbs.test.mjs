@@ -5,6 +5,10 @@ import path from 'node:path'
 import ts from 'typescript'
 
 const root = path.resolve(import.meta.dirname, '..')
+const MODEL_FILE = 'src/components/task-management/planTableViewModel.ts'
+const COLUMN_LAYOUT_FILE = 'src/components/task-management/usePlanTableColumnLayout.ts'
+const VIEW_FILE = 'src/components/task-management/PlanTableViewV2.tsx'
+const CSS_FILE = 'src/components/task-management/planTableExcelV2.css'
 
 function read(file) {
   return fs.readFileSync(path.join(root, file), 'utf8')
@@ -146,4 +150,42 @@ test('page and export use the project work progress naming and shared schema', (
   assert.match(view, /PLAN_TABLE_COLUMNS/)
   assert.match(exportSource, /PLAN_TABLE_COLUMNS/)
   assert.match(exportSource, /getPlanRowCellValue/)
+})
+
+test('column layout clamps resized widths and restores canonical widths', async () => {
+  const {
+    clampPlanTableColumnWidth,
+    normalizeStoredPlanTableWidths,
+    getDefaultPlanTableWidths,
+  } = await loadModule(MODEL_FILE)
+
+  assert.equal(clampPlanTableColumnWidth('wbsCode', 20), 64)
+  assert.equal(clampPlanTableColumnWidth('keyTask', 720), 520)
+  assert.equal(clampPlanTableColumnWidth('keyTask', 340), 340)
+  assert.equal(normalizeStoredPlanTableWidths('{"wbsCode":88,"keyTask":360}').wbsCode, 88)
+  assert.deepEqual(normalizeStoredPlanTableWidths('{"unknown":999}'), getDefaultPlanTableWidths())
+})
+
+test('column layout hook persists personal widths without changing export columns', () => {
+  const source = read(COLUMN_LAYOUT_FILE)
+  assert.match(source, /moways\.workProgress\.planColumnWidths/)
+  assert.match(source, /PLAN_TABLE_COLUMNS/)
+  assert.match(source, /pointermove/)
+  assert.match(source, /pointerup/)
+  assert.match(source, /clampPlanTableColumnWidth/)
+})
+
+test('smart grid exposes zoom and drag-resize controls', () => {
+  const viewSource = read(VIEW_FILE)
+  const cssSource = read(CSS_FILE)
+  assert.match(viewSource, /usePlanTableZoom/)
+  assert.match(viewSource, /usePlanTableColumnLayout/)
+  assert.match(viewSource, /调整列宽/)
+  assert.match(viewSource, /onPointerDown/)
+  assert.match(viewSource, /style=\{\{ width:/)
+  assert.match(viewSource, /PlanTableToolbar/)
+  assert.match(viewSource, /v2-table-scroll/)
+  assert.match(cssSource, /resize-handle/)
+  assert.doesNotMatch(cssSource, /\.v2-sheet-frame\s*\{[^}]*overflow:\s*hidden/s)
+  assert.match(cssSource, /position:\s*sticky/)
 })

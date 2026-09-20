@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import type { Project, SubTaskItem, TaskItem } from '../../types'
 import {
   getPlanStatusLabel,
@@ -97,10 +97,10 @@ function ProjectStandardModal({ project, onClose }: { project: Project | null; o
   </div>
 }
 
-function TaskCard({ task, onOpenStandard }: { task: TaskItem; onOpenStandard: (task: TaskItem) => void }) {
+function TaskCell({ task, onOpenStandard }: { task: TaskItem; onOpenStandard: (task: TaskItem) => void }) {
   const hasStandard = Boolean(task.completion_standard || task.key_achievement)
   return <div
-    className="v2-task-card"
+    className="v2-task-cell"
     role="button"
     tabIndex={0}
     onClick={(event) => { event.stopPropagation(); onOpenStandard(task) }}
@@ -111,11 +111,11 @@ function TaskCard({ task, onOpenStandard }: { task: TaskItem; onOpenStandard: (t
       }
     }}
   >
-    <div className="v2-task-card__body">
-      <div className="v2-task-card__title">{task.key_task || EMPTY_PLAN_CELL}</div>
+    <div className="v2-task-cell__body">
+      <div className="v2-task-cell__title">{task.key_task || EMPTY_PLAN_CELL}</div>
       {hasStandard && <button
         type="button"
-        className="v2-task-card__std-btn"
+        className="v2-task-cell__std-btn"
         onClick={(event) => { event.stopPropagation(); onOpenStandard(task) }}
       >查看评价标准</button>}
     </div>
@@ -168,6 +168,7 @@ export function PlanTableViewV2({
   onOpenSubTask,
 }: Props) {
   const [selectedSubTaskId, setSelectedSubTaskId] = useState<number | null>(null)
+  const [selectedCellKey, setSelectedCellKey] = useState<string | null>(null)
   const [showProjectStandard, setShowProjectStandard] = useState(false)
   const [standardTask, setStandardTask] = useState<TaskItem | null>(null)
   const hasProjectStandard = Boolean(project?.objectives?.trim())
@@ -180,12 +181,6 @@ export function PlanTableViewV2({
     if (!row.subtask) return
     setSelectedSubTaskId(row.subtask.id)
     onOpenSubTask?.(row.subtask)
-  }
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLElement>, row: PlanTableRow) => {
-    if (!row.subtask || (event.key !== 'Enter' && event.key !== ' ')) return
-    event.preventDefault()
-    openKeyTask(row)
   }
 
   if (loading) return <div className="h-40 flex items-center justify-center text-slate-400 text-sm">加载中...</div>
@@ -225,15 +220,18 @@ export function PlanTableViewV2({
         className="v2-table-canvas v2-sheet-frame"
         style={{
           zoom: zoomPercent / 100,
+          ['--v2-row-number-width' as string]: '42px',
           ['--v2-wbs-width' as string]: `${getColumnWidth('wbsCode')}px`,
         }}
       >
         <table className="v2-grid">
           <colgroup>
+            <col className="v2-col--row-number" style={{ width: '42px' }} />
             {PLAN_TABLE_COLUMNS.map((column) => <col key={column.key} className={`v2-col--${column.priority}`} style={{ width: `${getColumnWidth(column.key)}px` }} />)}
           </colgroup>
           <thead>
             <tr>
+              <th className="v2-th v2-th--row-number v2-th--sticky-row-number" aria-label="行号">#</th>
               {PLAN_TABLE_COLUMNS.map((column) => <th
                 key={column.key}
                 className={`v2-th v2-th--${column.key} v2-col--${column.priority}${column.key === 'wbsCode' ? ' v2-th--sticky-wbs' : ''}${column.key === 'workstream' ? ' v2-th--sticky-workstream' : ''}`}
@@ -251,27 +249,41 @@ export function PlanTableViewV2({
           </thead>
           <tbody>
             {rows.length === 0
-              ? <tr className="v2-empty-row"><td colSpan={PLAN_TABLE_COLUMNS.length}>当前筛选条件下没有匹配的关键任务</td></tr>
-              : rows.map((row) => {
+              ? <tr className="v2-empty-row"><td colSpan={PLAN_TABLE_COLUMNS.length + 1}>当前筛选条件下没有匹配的关键任务</td></tr>
+              : rows.map((row, rowIndex) => {
                 const selected = row.subtask?.id === selectedSubTaskId
                 const canClick = row.subtask !== null
                 return <tr
                   key={`${row.task.id}-${row.subtask?.id ?? 'empty'}-${row.sequence}`}
-                  className={`${selected ? 'v2-tr--selected' : ''}${canClick ? ' v2-tr--clickable' : ''}`}
-                  role={canClick ? 'button' : undefined}
-                  tabIndex={canClick ? 0 : undefined}
-                  onClick={canClick ? () => openKeyTask(row) : undefined}
-                  onKeyDown={canClick ? (event) => handleKeyDown(event, row) : undefined}
+                  className={selected ? 'v2-tr--selected' : ''}
                 >
+                  <td className="v2-td v2-td--row-number v2-td--sticky-row-number">{rowIndex + 1}</td>
                   {PLAN_TABLE_COLUMNS.map((column) => {
                     const isTaskLevel = column.key === 'workstream' || column.key === 'deliverable'
                     if (isTaskLevel && !row.showTaskCells) return null
                     const isWorkstream = column.key === 'workstream'
                     const isWbs = column.key === 'wbsCode'
-                    const className = `v2-td v2-td--${column.key} v2-col--${column.priority}${isWbs ? ' v2-td--sticky-wbs' : ''}${isWorkstream ? ' v2-td--sticky-workstream' : ''}${column.key === 'keyTask' && selected ? ' v2-td--selected' : ''}`
-                    return <td key={column.key} rowSpan={isTaskLevel ? row.taskRowSpan : undefined} className={className}>
+                    const cellKey = `${row.task.id}-${row.subtask?.id ?? 'empty'}-${row.sequence}-${column.key}`
+                    const isActive = selectedCellKey === cellKey
+                    const className = `v2-td v2-td--${column.key} v2-col--${column.priority}${isWbs ? ' v2-td--sticky-wbs' : ''}${isWorkstream ? ' v2-td--sticky-workstream' : ''}${column.key === 'keyTask' && selected ? ' v2-td--selected' : ''}${isActive ? ' v2-cell--active' : ''}`
+                    return <td
+                      key={column.key}
+                      rowSpan={isTaskLevel ? row.taskRowSpan : undefined}
+                      className={className}
+                      tabIndex={0}
+                      aria-label={`${column.label}，第${rowIndex + 1}行`}
+                      onFocus={() => setSelectedCellKey(cellKey)}
+                      onClick={() => setSelectedCellKey(cellKey)}
+                      onDoubleClick={column.key === 'keyTask' ? () => canClick && openKeyTask(row) : undefined}
+                      onKeyDown={(event) => {
+                        if (column.key === 'keyTask' && canClick && (event.key === 'Enter' || event.key === ' ')) {
+                          event.preventDefault()
+                          openKeyTask(row)
+                        }
+                      }}
+                    >
                       {isWorkstream
-                        ? <TaskCard task={row.task} onOpenStandard={setStandardTask} />
+                        ? <TaskCell task={row.task} onOpenStandard={setStandardTask} />
                         : renderCellContent(column.key, row)}
                     </td>
                   })}

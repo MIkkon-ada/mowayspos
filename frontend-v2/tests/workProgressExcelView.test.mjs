@@ -237,7 +237,7 @@ test('key-task cells open the existing detail flow without inline editing', () =
   // V2 renders key-task cells; subtask detail is opened via parent page callback
   // The table component itself does not contain editing logic
   assert.doesNotMatch(source, /contentEditable/)
-  assert.doesNotMatch(source, /onDoubleClick/) // no double-click-to-edit
+  assert.match(source, /onDoubleClick=\{column\.key === 'keyTask' \?/) // double-click opens detail, not inline editing
   // No undo/redo/save-cell operations
   assert.doesNotMatch(source, /撤销|重做|保存单元格/)
   // No CRUD mutations inside the table component itself
@@ -333,7 +333,7 @@ test('V2 table is a compact data table without a fake empty spreadsheet canvas',
 
   assert.match(source, /v2-sheet-frame/)
   assert.match(source, /v2-table-actions__project/)
-  assert.match(source, /v2-task-card__std-btn/)
+  assert.match(source, /v2-task-cell__std-btn/)
   assert.doesNotMatch(source, /v2-task-card__index/)
   assert.doesNotMatch(source, /v2-keytask-line__num/)
   assert.doesNotMatch(source, /v2-pager/)

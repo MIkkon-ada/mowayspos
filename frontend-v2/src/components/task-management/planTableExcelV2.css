@@ -1362,3 +1362,262 @@
     min-width: max-content;
   }
 }
+
+/* ── Excel 工作表视觉层：平铺网格、紧凑行高、冻结窗格 ── */
+.v2-plan-view {
+  background: #eef1f5;
+}
+
+.v2-table-actions {
+  min-height: 42px;
+  padding: 7px 12px;
+  border-bottom: 1px solid #cbd2da;
+  background: #f7f8fa;
+}
+
+.v2-table-actions__project {
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.v2-table-actions__buttons {
+  gap: 6px;
+}
+
+.v2-project-banner__toggle,
+.v2-project-banner__create {
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 2px;
+  font-size: 12px;
+}
+
+.plan-table-toolbar {
+  min-height: 36px;
+  padding: 4px 12px;
+  border-bottom: 1px solid #cbd2da;
+  border-radius: 0;
+  background: #f7f8fa;
+}
+
+.plan-table-toolbar__zoom,
+.plan-table-toolbar__action,
+.plan-table-toolbar__export {
+  height: 26px;
+  border-radius: 2px;
+}
+
+.plan-table-toolbar__zoom {
+  border-color: #c3cad3;
+  background: #fff;
+}
+
+.plan-table-toolbar__action {
+  padding: 3px 8px;
+  border-color: #c3cad3;
+  background: #fff;
+  color: #374151;
+}
+
+.plan-table-toolbar__export {
+  padding: 3px 11px;
+  border-color: #217346;
+  border-radius: 2px;
+  background: #217346;
+}
+
+.v2-table-view-options {
+  min-height: 26px;
+  padding: 0 12px 4px;
+  border-bottom: 1px solid #cbd2da;
+  background: #f7f8fa;
+  font-size: 11px;
+}
+
+.v2-table-view-options button {
+  padding: 2px 7px;
+  border-radius: 2px;
+}
+
+.v2-table-scroll {
+  padding: 0 12px 18px;
+  overflow-x: auto;
+  overflow-y: auto;
+  background: #eef1f5;
+}
+
+.v2-sheet-frame {
+  border: 1px solid #aeb8c4;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(31, 41, 55, .08);
+}
+
+.v2-grid {
+  font-family: "Aptos", "等线", "Microsoft YaHei", sans-serif;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.v2-grid th,
+.v2-grid td {
+  border-right: 1px solid #d4d9df;
+  border-bottom: 1px solid #d4d9df;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.v2-th {
+  height: 32px;
+  padding: 5px 8px;
+  background: #e7ebf0;
+  color: #26323f;
+  font-size: 12px;
+  font-weight: 700;
+  border-top: 1px solid #c3cad3;
+  border-bottom: 1px solid #aeb8c4;
+}
+
+.v2-td {
+  min-height: 28px;
+  padding: 5px 8px;
+  color: #273444;
+}
+
+.v2-grid tbody tr {
+  min-height: 28px;
+  background: #fff;
+}
+
+.v2-grid tbody tr:nth-child(even) {
+  background: #fbfcfd;
+}
+
+.v2-grid tbody tr:hover:not(.v2-tr--selected) {
+  background: #f3f7fb;
+}
+
+.v2-grid td.v2-cell--active {
+  outline: 2px solid #217346;
+  outline-offset: -2px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.v2-grid td {
+  overflow: hidden;
+}
+
+.v2-grid td:focus-visible {
+  outline: 2px solid #217346;
+  outline-offset: -2px;
+}
+
+.v2-th--row-number,
+.v2-td--row-number {
+  width: 42px;
+  min-width: 42px;
+  max-width: 42px;
+  padding: 4px 3px;
+  color: #6b7280;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.v2-th--sticky-row-number,
+.v2-td--sticky-row-number {
+  position: sticky;
+  left: 0;
+  z-index: 26;
+  background: #edf0f3;
+}
+
+.v2-td--sticky-row-number {
+  background: #f4f6f8;
+}
+
+.v2-th--sticky-wbs,
+.v2-td--sticky-wbs {
+  left: var(--v2-row-number-width, 42px);
+}
+
+.v2-th--sticky-workstream,
+.v2-td--sticky-workstream {
+  left: calc(var(--v2-row-number-width, 42px) + var(--v2-wbs-width, 72px));
+}
+
+.v2-th--sticky-wbs,
+.v2-th--sticky-workstream,
+.v2-td--sticky-wbs,
+.v2-td--sticky-workstream {
+  background: #fff;
+}
+
+.v2-th--sticky-row-number,
+.v2-th--sticky-wbs,
+.v2-th--sticky-workstream {
+  background: #e7ebf0;
+}
+
+.v2-th--sticky-workstream,
+.v2-td--sticky-workstream,
+.v2-freeze-divider {
+  box-shadow: 4px 0 0 #9da8b4, 7px 0 8px rgba(31, 41, 55, .08);
+}
+
+.v2-task-cell {
+  min-height: 28px;
+  padding: 6px 8px;
+  background: transparent;
+}
+
+.v2-task-cell__body {
+  gap: 2px;
+}
+
+.v2-task-cell__title {
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.v2-task-cell__std-btn {
+  color: #217346;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.v2-task-cell__std-btn:hover {
+  color: #185c38;
+}
+
+.v2-grid td.v2-td--keytask {
+  padding: 5px 8px;
+}
+
+.v2-keytask-line {
+  gap: 4px;
+  line-height: 1.35;
+}
+
+.v2-status-text {
+  padding: 1px 5px;
+  border-radius: 2px;
+  font-size: 11px;
+}
+
+.v2-td--person,
+.v2-td--time,
+.v2-td--status {
+  white-space: nowrap;
+}
+
+.v2-td--latestProgress,
+.v2-td--nextStep {
+  min-height: 28px;
+  padding: 5px 8px;
+}

@@ -156,14 +156,13 @@ test('column layout clamps resized widths and restores canonical widths', async 
   const {
     clampPlanTableColumnWidth,
     normalizeStoredPlanTableWidths,
-    getDefaultPlanTableWidths,
   } = await loadModule(MODEL_FILE)
 
   assert.equal(clampPlanTableColumnWidth('wbsCode', 20), 64)
   assert.equal(clampPlanTableColumnWidth('keyTask', 720), 520)
   assert.equal(clampPlanTableColumnWidth('keyTask', 340), 340)
   assert.equal(normalizeStoredPlanTableWidths('{"wbsCode":88,"keyTask":360}').wbsCode, 88)
-  assert.deepEqual(normalizeStoredPlanTableWidths('{"unknown":999}'), getDefaultPlanTableWidths())
+  assert.deepEqual(normalizeStoredPlanTableWidths('{"unknown":999}'), {})
 })
 
 test('column layout hook persists personal widths without changing export columns', () => {
@@ -221,4 +220,16 @@ test('worksheet view exposes density, field visibility and sheet controls', () =
   assert.match(cssSource, /v2-density--compact/)
   assert.match(cssSource, /v2-density--standard/)
   assert.match(cssSource, /v2-density--roomy/)
+})
+
+test('worksheet columns start adaptive and become explicit only after resizing', () => {
+  const viewSource = read(VIEW_FILE)
+  const hookSource = read(COLUMN_LAYOUT_FILE)
+  const cssSource = read(CSS_FILE)
+  assert.match(viewSource, /自动列宽/)
+  assert.match(viewSource, /const width = getColumnWidth\(column\.key\)/)
+  assert.match(hookSource, /Partial<Record<PlanTableColumnKey, number>>/)
+  assert.match(hookSource, /getBoundingClientRect\(\)\.width/)
+  assert.match(cssSource, /table-layout:\s*auto/)
+  assert.match(cssSource, /min-width:\s*72px/)
 })

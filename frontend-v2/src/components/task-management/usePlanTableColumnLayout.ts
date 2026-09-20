@@ -7,27 +7,31 @@ import {
 } from './planTableViewModel'
 import { PLAN_TABLE_COLUMNS, type PlanTableColumnKey } from './planTableColumns'
 
-export const PLAN_TABLE_COLUMN_WIDTHS_STORAGE_KEY = 'moways.workProgress.planColumnWidths'
+export const PLAN_TABLE_COLUMN_WIDTHS_STORAGE_KEY = 'moways.workProgress.planColumnWidths.v2'
 
-function readStoredWidths(): Record<PlanTableColumnKey, number> {
-  if (typeof window === 'undefined') return getDefaultPlanTableWidths()
+type PlanTableColumnWidths = Partial<Record<PlanTableColumnKey, number>>
+
+function readStoredWidths(): PlanTableColumnWidths {
+  if (typeof window === 'undefined') return {}
   return normalizeStoredPlanTableWidths(window.localStorage.getItem(PLAN_TABLE_COLUMN_WIDTHS_STORAGE_KEY))
 }
 
 export function usePlanTableColumnLayout() {
-  const [columnWidths, setColumnWidths] = useState<Record<PlanTableColumnKey, number>>(readStoredWidths)
+  const [columnWidths, setColumnWidths] = useState<PlanTableColumnWidths>(readStoredWidths)
 
   const getColumnWidth = useCallback((key: PlanTableColumnKey) => columnWidths[key], [columnWidths])
 
   const resetColumnWidths = useCallback(() => {
-    setColumnWidths(getDefaultPlanTableWidths())
+    setColumnWidths({})
   }, [])
 
   const startResize = useCallback((key: PlanTableColumnKey, event: ReactPointerEvent<HTMLElement>) => {
     event.preventDefault()
     event.stopPropagation()
     const startX = event.clientX
-    const startWidth = columnWidths[key]
+    const handle = event.currentTarget as HTMLElement
+    const measuredWidth = handle.closest('th')?.getBoundingClientRect().width
+    const startWidth = measuredWidth || columnWidths[key] || getDefaultPlanTableWidths()[key]
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
       const nextWidth = clampPlanTableColumnWidth(key, startWidth + moveEvent.clientX - startX)
@@ -48,6 +52,7 @@ export function usePlanTableColumnLayout() {
 
   return {
     columnWidths,
+    hasCustomWidths: Object.keys(columnWidths).length > 0,
     getColumnWidth,
     resetColumnWidths,
     startResize,

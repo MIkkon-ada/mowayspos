@@ -1846,3 +1846,63 @@
     grid-template-columns: repeat(2, minmax(120px, 1fr));
   }
 }
+
+/* ── 自适应列宽：默认让浏览器按内容排布，拖拽后才写入明确宽度 ── */
+.v2-grid {
+  table-layout: auto;
+}
+
+.v2-grid .v2-th--wbsCode,
+.v2-grid .v2-td--wbsCode {
+  min-width: 72px;
+}
+
+.v2-grid .v2-th--workstream,
+.v2-grid .v2-td--workstream {
+  min-width: 180px;
+}
+
+.v2-grid .v2-th--keyTask,
+.v2-grid .v2-td--keyTask {
+  min-width: 220px;
+}
+
+.v2-grid .v2-th--deliverable,
+.v2-grid .v2-td--deliverable {
+  min-width: 160px;
+}
+
+.v2-grid .v2-th--acceptance,
+.v2-grid .v2-td--acceptance {
+  min-width: 180px;
+}
+
+.v2-grid .v2-th--responsible,
+.v2-grid .v2-td--responsible {
+  min-width: 96px;
+}
+
+.v2-grid .v2-th--planTime,
+.v2-grid .v2-td--planTime {
+  min-width: 110px;
+}
+
+.v2-grid .v2-th--status,
+.v2-grid .v2-td--status {
+  min-width: 84px;
+}
+
+.v2-grid .v2-th--risk,
+.v2-grid .v2-td--risk {
+  min-width: 140px;
+}
+
+.v2-grid .v2-th--latestProgress,
+.v2-grid .v2-td--latestProgress {
+  min-width: 180px;
+}
+
+.v2-grid .v2-th--nextStep,
+.v2-grid .v2-td--nextStep {
+  min-width: 160px;
+}

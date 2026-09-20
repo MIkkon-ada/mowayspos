@@ -19,19 +19,19 @@ export function clampPlanTableColumnWidth(key: PlanTableColumnKey, width: number
   return Math.min(PLAN_TABLE_COLUMN_MAX_WIDTH, Math.max(PLAN_TABLE_COLUMN_MIN_WIDTH, Math.round(width)))
 }
 
-export function normalizeStoredPlanTableWidths(value: string | null): Record<PlanTableColumnKey, number> {
-  const defaults = getDefaultPlanTableWidths()
-  if (!value?.trim()) return defaults
+export function normalizeStoredPlanTableWidths(value: string | null): Partial<Record<PlanTableColumnKey, number>> {
+  const widths: Partial<Record<PlanTableColumnKey, number>> = {}
+  if (!value?.trim()) return widths
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>
     for (const column of PLAN_TABLE_COLUMNS) {
       const storedWidth = parsed[column.key]
-      if (typeof storedWidth === 'number') defaults[column.key] = clampPlanTableColumnWidth(column.key, storedWidth)
+      if (typeof storedWidth === 'number') widths[column.key] = clampPlanTableColumnWidth(column.key, storedWidth)
     }
   } catch {
-    return defaults
+    return widths
   }
-  return defaults
+  return widths
 }
 
 export const PLAN_TABLE_BUSINESS_HEADERS = PLAN_TABLE_COLUMNS.map((column) => column.label)

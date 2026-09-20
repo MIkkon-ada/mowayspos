@@ -186,7 +186,7 @@ export function PlanTableViewV2({
   const hasProjectStandard = Boolean(project?.objectives?.trim())
   const workspaceRef = useRef<HTMLDivElement>(null)
   const { zoomPercent, zoomIn, zoomOut, fitWidth, resetView } = usePlanTableZoom(workspaceRef)
-  const { getColumnWidth, resetColumnWidths, startResize } = usePlanTableColumnLayout()
+  const { getColumnWidth, hasCustomWidths, resetColumnWidths, startResize } = usePlanTableColumnLayout()
   const rows = useMemo(() => buildPlanRows({ project, tasks, taskSubMap, searchText }), [project, searchText, taskSubMap, tasks])
   const visibleColumns = useMemo(
     () => PLAN_TABLE_COLUMNS.filter((column) => columnVisibility[column.key]),
@@ -240,6 +240,7 @@ export function PlanTableViewV2({
       <div className="v2-sheet-toolbar__meta">
         <span className="v2-sheet-toolbar__title">工作推进表</span>
         <span>{rows.length} 行 · {visibleColumns.length} / {PLAN_TABLE_COLUMNS.length} 列</span>
+        <span>列宽：{hasCustomWidths ? '含手动调整' : '自适应'}</span>
         <span>当前单元格：{selectedCellLabel}</span>
       </div>
       <div className="v2-sheet-toolbar__controls">
@@ -261,7 +262,7 @@ export function PlanTableViewV2({
         >
           显示字段
         </button>
-        <button type="button" className="v2-sheet-toolbar__button" onClick={resetColumnWidths}>重置列宽</button>
+        <button type="button" className="v2-sheet-toolbar__button" onClick={resetColumnWidths}>自动列宽</button>
       </div>
     </div>
     {showColumnPanel && <div className="v2-column-panel" role="dialog" aria-label="显示字段">
@@ -293,13 +294,20 @@ export function PlanTableViewV2({
         style={{
           zoom: zoomPercent / 100,
           ['--v2-row-number-width' as string]: '42px',
-          ['--v2-wbs-width' as string]: `${getColumnWidth('wbsCode')}px`,
+          ['--v2-wbs-width' as string]: `${getColumnWidth('wbsCode') ?? 72}px`,
         }}
       >
         <table className="v2-grid">
           <colgroup>
             <col className="v2-col--row-number" style={{ width: '42px' }} />
-            {visibleColumns.map((column) => <col key={column.key} className={`v2-col--${column.priority}`} style={{ width: `${getColumnWidth(column.key)}px` }} />)}
+            {visibleColumns.map((column) => {
+              const width = getColumnWidth(column.key)
+              return <col
+                key={column.key}
+                className={`v2-col--${column.priority}`}
+                style={width ? { width: `${width}px` } : undefined}
+              />
+            })}
           </colgroup>
           <thead>
             <tr>

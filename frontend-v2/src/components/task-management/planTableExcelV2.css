@@ -1621,3 +1621,228 @@
   min-height: 28px;
   padding: 5px 8px;
 }
+
+/* ── 工作表工具栏、字段面板与行高模式 ── */
+.v2-sheet-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 34px;
+  padding: 4px 12px;
+  border-bottom: 1px solid #cbd2da;
+  background: #f7f8fa;
+  color: #66717d;
+  font-size: 11px;
+}
+
+.v2-sheet-toolbar__meta,
+.v2-sheet-toolbar__controls,
+.v2-density-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.v2-sheet-toolbar__meta {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.v2-sheet-toolbar__meta > span:not(:last-child)::after {
+  content: '·';
+  margin-left: 8px;
+  color: #a1aab5;
+}
+
+.v2-sheet-toolbar__title {
+  color: #334155;
+  font-weight: 700;
+}
+
+.v2-sheet-toolbar__controls {
+  flex: 0 0 auto;
+}
+
+.v2-density-switch {
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #c3cad3;
+  border-radius: 2px;
+  background: #fff;
+}
+
+.v2-density-switch > span {
+  padding: 3px 6px;
+  border-right: 1px solid #d7dce2;
+  color: #7b8490;
+}
+
+.v2-density-switch button,
+.v2-sheet-toolbar__button {
+  height: 24px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: #4b5563;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.v2-density-switch button:hover,
+.v2-sheet-toolbar__button:hover,
+.v2-density-switch button.is-active,
+.v2-sheet-toolbar__button.is-active {
+  border-color: #9bc2aa;
+  background: #e8f2eb;
+  color: #217346;
+}
+
+.v2-sheet-toolbar__button {
+  border-color: #c3cad3;
+  background: #fff;
+}
+
+.v2-column-panel {
+  position: relative;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #bac4cf;
+  border-top: 0;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(31, 41, 55, .12);
+}
+
+.v2-column-panel__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: #334155;
+  font-size: 12px;
+}
+
+.v2-column-panel__header span {
+  color: #8a94a0;
+  font-size: 11px;
+}
+
+.v2-column-panel__list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 6px 14px;
+}
+
+.v2-column-panel__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #475569;
+  font-size: 12px;
+}
+
+.v2-column-panel__item input {
+  accent-color: #217346;
+}
+
+.v2-column-panel__item small {
+  margin-left: auto;
+  color: #9aa4af;
+  font-size: 10px;
+}
+
+.v2-density--compact .v2-td {
+  min-height: 24px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.v2-density--compact .v2-task-cell {
+  min-height: 24px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.v2-density--standard .v2-td {
+  min-height: 28px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.v2-density--standard .v2-task-cell {
+  min-height: 28px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.v2-density--roomy .v2-td {
+  min-height: 40px;
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+.v2-density--roomy .v2-task-cell {
+  min-height: 40px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.v2-sheet-tabbar {
+  display: flex;
+  flex: 0 0 30px;
+  align-items: stretch;
+  gap: 12px;
+  padding: 0 12px;
+  border-top: 1px solid #c3cad3;
+  background: #e8ecf1;
+}
+
+.v2-sheet-tabbar__tab {
+  min-width: 116px;
+  padding: 0 14px;
+  border: 0;
+  border-right: 1px solid #c3cad3;
+  border-left: 1px solid #c3cad3;
+  background: #dce2e8;
+  color: #64707c;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.v2-sheet-tabbar__tab.is-active {
+  border-top: 2px solid #217346;
+  background: #fff;
+  color: #217346;
+  font-weight: 700;
+}
+
+.v2-sheet-tabbar__hint {
+  display: inline-flex;
+  align-items: center;
+  color: #7b8490;
+  font-size: 11px;
+}
+
+@media (max-width: 900px) {
+  .v2-sheet-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .v2-sheet-toolbar__meta {
+    width: 100%;
+  }
+
+  .v2-column-panel__list {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+}

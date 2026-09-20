@@ -34,6 +34,14 @@ type Props = {
   onOpenSubTask?: (subtask: SubTaskItem) => void
 }
 
+type SheetDensity = 'compact' | 'standard' | 'roomy'
+
+const FIXED_SHEET_COLUMNS: readonly PlanTableColumnKey[] = ['wbsCode', 'workstream']
+
+const DEFAULT_COLUMN_VISIBILITY = Object.fromEntries(
+  PLAN_TABLE_COLUMNS.map((column) => [column.key, true]),
+) as Record<PlanTableColumnKey, boolean>
+
 function cellText(value: string): ReactNode {
   return [EMPTY_PLAN_CELL, '未填写项目目标', '未填写验收标准', '暂无关键任务'].includes(value)
     ? <span className="v2-cell-placeholder">{value}</span>
@@ -169,6 +177,10 @@ export function PlanTableViewV2({
 }: Props) {
   const [selectedSubTaskId, setSelectedSubTaskId] = useState<number | null>(null)
   const [selectedCellKey, setSelectedCellKey] = useState<string | null>(null)
+  const [selectedCellLabel, setSelectedCellLabel] = useState('未选择单元格')
+  const [sheetDensity, setSheetDensity] = useState<SheetDensity>('standard')
+  const [columnVisibility, setColumnVisibility] = useState(DEFAULT_COLUMN_VISIBILITY)
+  const [showColumnPanel, setShowColumnPanel] = useState(false)
   const [showProjectStandard, setShowProjectStandard] = useState(false)
   const [standardTask, setStandardTask] = useState<TaskItem | null>(null)
   const hasProjectStandard = Boolean(project?.objectives?.trim())
@@ -176,11 +188,25 @@ export function PlanTableViewV2({
   const { zoomPercent, zoomIn, zoomOut, fitWidth, resetView } = usePlanTableZoom(workspaceRef)
   const { getColumnWidth, resetColumnWidths, startResize } = usePlanTableColumnLayout()
   const rows = useMemo(() => buildPlanRows({ project, tasks, taskSubMap, searchText }), [project, searchText, taskSubMap, tasks])
+  const visibleColumns = useMemo(
+    () => PLAN_TABLE_COLUMNS.filter((column) => columnVisibility[column.key]),
+    [columnVisibility],
+  )
 
   const openKeyTask = (row: PlanTableRow) => {
     if (!row.subtask) return
     setSelectedSubTaskId(row.subtask.id)
     onOpenSubTask?.(row.subtask)
+  }
+
+  const selectCell = (cellKey: string, columnLabel: string, rowIndex: number) => {
+    setSelectedCellKey(cellKey)
+    setSelectedCellLabel(`${columnLabel} · 第 ${rowIndex + 1} 行`)
+  }
+
+  const toggleColumnVisibility = (columnKey: PlanTableColumnKey) => {
+    if (FIXED_SHEET_COLUMNS.includes(columnKey)) return
+    setColumnVisibility((current) => ({ ...current, [columnKey]: !current[columnKey] }))
   }
 
   if (loading) return <div className="h-40 flex items-center justify-center text-slate-400 text-sm">加载中...</div>
@@ -210,12 +236,58 @@ export function PlanTableViewV2({
       onExport={() => onExport?.()}
       exportDisabled={exportDisabled || !onExport}
     />
-    <div className="v2-table-view-options">
-      <span>拖拽表头右侧边界调整列宽，横向滚动查看完整字段</span>
-      <button type="button" onClick={resetColumnWidths}>重置标准列宽</button>
+    <div className="v2-sheet-toolbar" aria-label="工作表设置">
+      <div className="v2-sheet-toolbar__meta">
+        <span className="v2-sheet-toolbar__title">工作推进表</span>
+        <span>{rows.length} 行 · {visibleColumns.length} / {PLAN_TABLE_COLUMNS.length} 列</span>
+        <span>当前单元格：{selectedCellLabel}</span>
+      </div>
+      <div className="v2-sheet-toolbar__controls">
+        <div className="v2-density-switch" aria-label="行高模式">
+          <span>行高</span>
+          {(['compact', 'standard', 'roomy'] as const).map((density) => <button
+            key={density}
+            type="button"
+            className={sheetDensity === density ? 'is-active' : ''}
+            onClick={() => setSheetDensity(density)}
+          >
+            {density === 'compact' ? '紧凑' : density === 'standard' ? '标准' : '宽松'}
+          </button>)}
+        </div>
+        <button
+          type="button"
+          className={`v2-sheet-toolbar__button${showColumnPanel ? ' is-active' : ''}`}
+          onClick={() => setShowColumnPanel((current) => !current)}
+        >
+          显示字段
+        </button>
+        <button type="button" className="v2-sheet-toolbar__button" onClick={resetColumnWidths}>重置列宽</button>
+      </div>
     </div>
+    {showColumnPanel && <div className="v2-column-panel" role="dialog" aria-label="显示字段">
+      <div className="v2-column-panel__header">
+        <strong>显示字段</strong>
+        <span>固定列不可隐藏</span>
+      </div>
+      <div className="v2-column-panel__list">
+        {PLAN_TABLE_COLUMNS.map((column) => {
+          const fixed = FIXED_SHEET_COLUMNS.includes(column.key)
+          return <label key={column.key} className="v2-column-panel__item">
+            <input
+              type="checkbox"
+              checked={columnVisibility[column.key]}
+              disabled={fixed}
+              onChange={() => toggleColumnVisibility(column.key)}
+            />
+            <span>{column.label}</span>
+            {fixed && <small>固定</small>}
+          </label>
+        })}
+      </div>
+    </div>
+    }
 
-    <div ref={workspaceRef} className="v2-table-scroll">
+    <div ref={workspaceRef} className={`v2-table-scroll v2-density--${sheetDensity}`}>
       <div
         className="v2-table-canvas v2-sheet-frame"
         style={{
@@ -227,12 +299,12 @@ export function PlanTableViewV2({
         <table className="v2-grid">
           <colgroup>
             <col className="v2-col--row-number" style={{ width: '42px' }} />
-            {PLAN_TABLE_COLUMNS.map((column) => <col key={column.key} className={`v2-col--${column.priority}`} style={{ width: `${getColumnWidth(column.key)}px` }} />)}
+            {visibleColumns.map((column) => <col key={column.key} className={`v2-col--${column.priority}`} style={{ width: `${getColumnWidth(column.key)}px` }} />)}
           </colgroup>
           <thead>
             <tr>
               <th className="v2-th v2-th--row-number v2-th--sticky-row-number" aria-label="行号">#</th>
-              {PLAN_TABLE_COLUMNS.map((column) => <th
+              {visibleColumns.map((column) => <th
                 key={column.key}
                 className={`v2-th v2-th--${column.key} v2-col--${column.priority}${column.key === 'wbsCode' ? ' v2-th--sticky-wbs' : ''}${column.key === 'workstream' ? ' v2-th--sticky-workstream' : ''}`}
               >
@@ -249,7 +321,7 @@ export function PlanTableViewV2({
           </thead>
           <tbody>
             {rows.length === 0
-              ? <tr className="v2-empty-row"><td colSpan={PLAN_TABLE_COLUMNS.length + 1}>当前筛选条件下没有匹配的关键任务</td></tr>
+              ? <tr className="v2-empty-row"><td colSpan={visibleColumns.length + 1}>当前筛选条件下没有匹配的关键任务</td></tr>
               : rows.map((row, rowIndex) => {
                 const selected = row.subtask?.id === selectedSubTaskId
                 const canClick = row.subtask !== null
@@ -258,7 +330,7 @@ export function PlanTableViewV2({
                   className={selected ? 'v2-tr--selected' : ''}
                 >
                   <td className="v2-td v2-td--row-number v2-td--sticky-row-number">{rowIndex + 1}</td>
-                  {PLAN_TABLE_COLUMNS.map((column) => {
+                  {visibleColumns.map((column) => {
                     const isTaskLevel = column.key === 'workstream' || column.key === 'deliverable'
                     if (isTaskLevel && !row.showTaskCells) return null
                     const isWorkstream = column.key === 'workstream'
@@ -272,8 +344,8 @@ export function PlanTableViewV2({
                       className={className}
                       tabIndex={0}
                       aria-label={`${column.label}，第${rowIndex + 1}行`}
-                      onFocus={() => setSelectedCellKey(cellKey)}
-                      onClick={() => setSelectedCellKey(cellKey)}
+                      onFocus={() => selectCell(cellKey, column.label, rowIndex)}
+                      onClick={() => selectCell(cellKey, column.label, rowIndex)}
                       onDoubleClick={column.key === 'keyTask' ? () => canClick && openKeyTask(row) : undefined}
                       onKeyDown={(event) => {
                         if (column.key === 'keyTask' && canClick && (event.key === 'Enter' || event.key === ' ')) {
@@ -292,6 +364,10 @@ export function PlanTableViewV2({
           </tbody>
         </table>
       </div>
+    </div>
+    <div className="v2-sheet-tabbar">
+      <button type="button" className="v2-sheet-tabbar__tab is-active">工作推进表</button>
+      <span className="v2-sheet-tabbar__hint">单击选中单元格 · 双击关键任务查看详情</span>
     </div>
 
     <TaskStandardModal task={standardTask} onClose={() => setStandardTask(null)} />

@@ -207,3 +207,18 @@ test('worksheet view exposes spreadsheet selection and row coordinates', () => {
   assert.match(cssSource, /overflow-x:\s*auto/)
   assert.match(cssSource, /\.v2-grid td\s*\{[^}]*overflow:\s*hidden/s)
 })
+
+test('worksheet view exposes density, field visibility and sheet controls', () => {
+  const viewSource = read(VIEW_FILE)
+  const cssSource = read(CSS_FILE)
+  assert.match(viewSource, /columnVisibility/)
+  assert.match(viewSource, /v2-sheet-toolbar/)
+  assert.match(viewSource, /显示字段/)
+  assert.match(viewSource, /紧凑/)
+  assert.match(viewSource, /标准/)
+  assert.match(viewSource, /宽松/)
+  assert.match(viewSource, /v2-sheet-tabbar/)
+  assert.match(cssSource, /v2-density--compact/)
+  assert.match(cssSource, /v2-density--standard/)
+  assert.match(cssSource, /v2-density--roomy/)
+})

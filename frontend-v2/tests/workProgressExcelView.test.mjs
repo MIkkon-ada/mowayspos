@@ -347,7 +347,7 @@ test('V2 table is a compact data table without a fake empty spreadsheet canvas',
   assert.doesNotMatch(css, /\.v2-task-card__index/)
   assert.match(source, /column\.width/)
   assert.match(css, /min-width:\s*2042px/)
-  assert.match(css, /v2-col--medium/)
+  assert.match(source, /column\.priority/)
   assert.doesNotMatch(css, /repeating-linear-gradient/)
   assert.doesNotMatch(css, /background-size:\s*80px 28px/)
   assert.doesNotMatch(css, /\.v2-table-canvas\s*\{[^}]*height:\s*100%/s)

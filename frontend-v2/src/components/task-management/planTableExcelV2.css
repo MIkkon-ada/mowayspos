@@ -1298,8 +1298,4 @@
   .v2-grid {
     min-width: 1182px;
   }
-
-  .v2-grid .v2-col--medium {
-    display: none;
-  }
 }

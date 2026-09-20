@@ -6,6 +6,7 @@ import ts from 'typescript'
 
 const root = path.resolve(import.meta.dirname, '..')
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
+const readRepo = (file) => fs.readFileSync(path.resolve(root, '..', file), 'utf8')
 
 async function loadAuthFlow() {
   const source = read('src/domain/authFlow.ts')
@@ -51,6 +52,37 @@ test('blocked frontend origins explain the backend allowlist problem', async () 
     normalizeLoginError({ status: 403, body: { detail: 'origin_not_allowed' } }),
     '前端来源未加入后端白名单，请重启 V2 开发环境',
   )
+})
+
+test('V2 startup delegates to the readiness-aware orchestrator', () => {
+  const launcher = readRepo('start-frontend-v2-dev.bat')
+  assert.match(launcher, /start-v2-dev\.ps1/)
+  assert.doesNotMatch(launcher, /timeout \/t 6/)
+
+  const orchestrator = readRepo('start-v2-dev.ps1')
+  assert.match(orchestrator, /6005/)
+  assert.match(orchestrator, /8011/)
+  assert.match(orchestrator, /api\/health/)
+  assert.match(orchestrator, /v2-dev-processes\.json/)
+  assert.match(orchestrator, /backend\.err\.log/)
+  assert.match(orchestrator, /frontend\.err\.log/)
+  assert.match(orchestrator, /Get-Process -Id \$ProcessId/)
+  assert.match(readRepo('.gitignore'), /\.runtime\//)
+  const backendLauncher = readRepo('bowei_ai_dashboard/start-backend-v2-dev.bat')
+  assert.match(backendLauncher, /import dotenv, uvicorn/)
+  assert.match(backendLauncher, /pip install -r requirements\.txt/)
+  const frontendLauncher = read('start-frontend-v2-dev.bat')
+  assert.match(frontendLauncher, /node_modules\\\.bin\\vite\.cmd/)
+})
+
+test('V2 shutdown only stops recorded processes', () => {
+  const shutdown = readRepo('stop-v2-dev.ps1')
+  assert.match(shutdown, /v2-dev-processes\.json/)
+  assert.match(shutdown, /Stop-Process/)
+  assert.match(shutdown, /taskkill\.exe/)
+  assert.match(shutdown, /\/T/)
+  assert.match(shutdown, /Remove-Item/)
+  assert.match(readRepo('stop-frontend-v2-dev.bat'), /stop-v2-dev\.ps1/)
 })
 
 test('mytasks sidebar navigation always enters the personal task center', async () => {

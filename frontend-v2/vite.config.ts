@@ -8,7 +8,7 @@ export default defineConfig({
   },
   server: {
     host: '127.0.0.1',
-    port: 6004,
+    port: 6005,
     proxy: {
       '/api': {
         // Local development uses the isolated safe backend launcher.

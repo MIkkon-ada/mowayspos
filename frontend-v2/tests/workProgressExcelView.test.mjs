@@ -9,6 +9,7 @@ const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 const exists = (file) => fs.existsSync(path.join(root, file))
 
 const MODEL_FILE = 'src/components/task-management/planTableViewModel.ts'
+const COLUMNS_FILE = 'src/components/task-management/planTableColumns.ts'
 const ZOOM_FILE = 'src/components/task-management/usePlanTableZoom.ts'
 const TOOLBAR_FILE = 'src/components/task-management/PlanTableToolbar.tsx'
 const STATUS_FILE = 'src/components/task-management/PlanTableStatusBar.tsx'
@@ -20,7 +21,11 @@ const EXPORT_FILE = 'src/utils/exportPlanTableExcel.ts'
 
 async function loadViewModel() {
   assert.ok(exists(MODEL_FILE), `${MODEL_FILE} must exist`)
-  const source = read(MODEL_FILE)
+  const columnsSource = ts.transpileModule(read(COLUMNS_FILE), {
+    compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
+  }).outputText
+  const columnsUrl = `data:text/javascript;base64,${Buffer.from(columnsSource).toString('base64')}`
+  const source = read(MODEL_FILE).replace("from './planTableColumns'", `from '${columnsUrl}'`)
   const js = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
   }).outputText
@@ -97,23 +102,20 @@ test('work progress keeps only the plan table while key-task detail remains avai
   assert.match(source, /fetchSubtaskDetail\(st\.id\)/)
 })
 
-test('the executable view model exposes the exact fourteen business columns', async () => {
+test('the executable view model exposes the shared project work progress columns', async () => {
   const { PLAN_TABLE_BUSINESS_HEADERS } = await loadViewModel()
   assert.deepEqual(PLAN_TABLE_BUSINESS_HEADERS, [
-    '目标',
+    'WBS编号',
     '重点工作',
-    '评价标准',
-    '序号',
     '关键任务',
-    '责任人',
-    '计划开始时间',
-    '计划结束时间',
-    '协同人',
-    '完成情况',
-    '备注',
-    '项目经理',
-    '重点工作计划开始时间',
-    '重点工作计划结束时间',
+    '交付成果',
+    '验收标准',
+    '负责人',
+    '计划时间',
+    '状态',
+    '风险/问题',
+    '最新进展',
+    '下一步',
   ])
 })
 
@@ -242,15 +244,15 @@ test('key-task cells open the existing detail flow without inline editing', () =
   assert.doesNotMatch(source, /createTask|updateTask|deleteTask|createSubTask|updateSubTask/)
 })
 
-test('plan export uses the web model, fourteen headers, merges and frozen panes', () => {
+test('plan export uses the shared web model, merges and frozen panes', () => {
   const source = requireSources(EXPORT_FILE)
-  assert.match(source, /PLAN_TABLE_BUSINESS_HEADERS/)
+  assert.match(source, /PLAN_TABLE_COLUMNS/)
+  assert.match(source, /getPlanRowCellValue/)
   assert.match(source, /buildPlanRows/)
   assert.match(source, /mergeCells/)
   assert.match(source, /xSplit:\s*3/)
   assert.match(source, /ySplit:\s*2/)
   assert.match(source, /工作推进表_/)
-  assert.match(source, /row\.keyTask/)
 })
 
 test('plan mode loads subtasks before search projection and disables incomplete export', () => {
@@ -336,27 +338,16 @@ test('V2 table is a compact data table without a fake empty spreadsheet canvas',
   assert.doesNotMatch(source, /v2-keytask-line__num/)
   assert.doesNotMatch(source, /v2-pager/)
   assert.doesNotMatch(source, /v2-task-card__meta/)
-  assert.match(source, />\s*重点工作\s*</)
-  assert.match(source, />\s*关键任务\s*</)
-  assert.match(source, />\s*负责人\s*</)
-  assert.match(source, />\s*计划时间\s*</)
-  assert.match(source, />\s*协同人\s*</)
-  assert.match(source, />\s*最新已确认提交\s*</)
-  assert.doesNotMatch(source, />\s*状态\s*</)
+  assert.match(source, /PLAN_TABLE_COLUMNS/)
+  assert.match(source, />\{column\.label\}</)
   assert.match(source, /latestConfirmedSubmission/)
   assert.match(source, /statusMarkers/)
-  assert.match(source, /暂无已确认提交/)
 
   assert.match(css, /\.v2-sheet-frame/)
   assert.doesNotMatch(css, /\.v2-task-card__index/)
-  assert.match(source, /<col style=\{\{ width: '14%' \}\} \/>/)
-  assert.match(source, /<col style=\{\{ width: '23%' \}\} \/>/)
-  assert.match(source, /<col style=\{\{ width: '6%' \}\} \/>/)
-  assert.match(source, /<col style=\{\{ width: '9%' \}\} \/>/)
-  assert.match(source, /<col style=\{\{ width: '11%' \}\} \/>/)
-  assert.equal((source.match(/<col style=\{\{ width: '18\.5%' \}\} \/>/g) ?? []).length, 2)
-  assert.match(css, /min-width:\s*1120px/)
-  assert.doesNotMatch(css, /min-width:\s*1305px/)
+  assert.match(source, /column\.width/)
+  assert.match(css, /min-width:\s*2042px/)
+  assert.match(css, /v2-col--medium/)
   assert.doesNotMatch(css, /repeating-linear-gradient/)
   assert.doesNotMatch(css, /background-size:\s*80px 28px/)
   assert.doesNotMatch(css, /\.v2-table-canvas\s*\{[^}]*height:\s*100%/s)
@@ -376,7 +367,7 @@ test('table view only exposes the project-standard button when a project standar
   assert.match(source, /const hasProjectStandard = Boolean\(project\?\.objectives\?\.trim\(\)\)/)
   assert.match(
     source,
-    /\{hasProjectStandard && \(\s*<button type="button" className="v2-project-banner__toggle"/s,
+    /\{hasProjectStandard && <button type="button" className="v2-project-banner__toggle"/s,
   )
 })
 

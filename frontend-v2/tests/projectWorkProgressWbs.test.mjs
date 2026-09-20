@@ -10,12 +10,20 @@ function read(file) {
   return fs.readFileSync(path.join(root, file), 'utf8')
 }
 
-async function loadModule(file) {
-  const source = read(file)
+function toDataUrl(source) {
   const js = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
   }).outputText
-  return import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`)
+  return `data:text/javascript;base64,${Buffer.from(js).toString('base64')}`
+}
+
+async function loadModule(file) {
+  let source = read(file)
+  if (file.endsWith('planTableViewModel.ts')) {
+    const columnsUrl = toDataUrl(read('src/components/task-management/planTableColumns.ts'))
+    source = source.replace("from './planTableColumns'", `from '${columnsUrl}'`)
+  }
+  return import(toDataUrl(source))
 }
 
 const project = {
@@ -114,6 +122,7 @@ test('shared columns describe the same project work progress fields for web and 
 
 test('plan rows expose stable WBS codes and project-control summaries', async () => {
   const { buildPlanRows } = await loadModule('src/components/task-management/planTableViewModel.ts')
+  const { getPlanRowCellValue } = await loadModule('src/components/task-management/planTableColumns.ts')
   const rows = buildPlanRows({ project, tasks, taskSubMap })
 
   assert.deepEqual(rows.map((row) => row.wbsCode), ['1.1', '1.2', '2'])
@@ -121,6 +130,7 @@ test('plan rows expose stable WBS codes and project-control summaries', async ()
   assert.equal(rows[0].deliverable, '年度经营目标责任书')
   assert.equal(rows[0].acceptance, '年度经营目标责任书经管理层确认')
   assert.equal(rows[0].latestProgress, '已完成第一轮目标核验')
+  assert.equal(getPlanRowCellValue(rows[0], 'latestProgress'), '2026-08-24 · 张三\n已完成第一轮目标核验')
   assert.equal(rows[0].nextStep, '提交管理层复核')
   assert.equal(rows[0].risk, '有风险')
   assert.equal(rows[2].wbsCode, '2')

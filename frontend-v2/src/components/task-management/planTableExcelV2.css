@@ -1199,3 +1199,107 @@
     left: auto;
   }
 }
+
+/* ── 项目工作推进表 WBS 列布局 ── */
+.v2-table-actions__export {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 13px;
+  border: 1px solid #0f766e;
+  border-radius: 5px;
+  background: #0f766e;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.v2-table-actions__export:hover:not(:disabled) {
+  background: #115e59;
+  border-color: #115e59;
+}
+
+.v2-table-actions__export:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.v2-grid {
+  min-width: 2042px;
+}
+
+.v2-th--sticky-wbs,
+.v2-td--sticky-wbs {
+  position: sticky;
+  left: 0;
+  z-index: 23;
+  background: #fff;
+}
+
+.v2-th--sticky-workstream,
+.v2-td--sticky-workstream {
+  position: sticky;
+  left: 72px;
+  z-index: 22;
+  background: #fff;
+  box-shadow: 4px 0 8px rgba(15, 23, 42, .06);
+}
+
+.v2-th--sticky-wbs,
+.v2-th--sticky-workstream {
+  background: #f8fafc;
+}
+
+.v2-td--wbs {
+  color: #64748b;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.v2-td--workstream,
+.v2-td--deliverable,
+.v2-td--acceptance,
+.v2-td--risk,
+.v2-td--latestProgress,
+.v2-td--nextStep {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.v2-td--status {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.v2-status-text {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.v2-status-text--neutral { color: #64748b; background: #f1f5f9; }
+.v2-status-text--blue { color: #1d4ed8; background: #eff6ff; }
+.v2-status-text--green { color: #15803d; background: #f0fdf4; }
+.v2-status-text--red { color: #b91c1c; background: #fef2f2; }
+.v2-status-text--amber { color: #b45309; background: #fffbeb; }
+
+.v2-latest-submission__summary {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 1100px) {
+  .v2-grid {
+    min-width: 1182px;
+  }
+
+  .v2-grid .v2-col--medium {
+    display: none;
+  }
+}

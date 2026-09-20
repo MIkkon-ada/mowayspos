@@ -2,9 +2,11 @@ import type { Alignment, Cell, Worksheet } from 'exceljs'
 import type { Project, SubTaskItem, TaskItem } from '../types'
 import {
   buildPlanRows,
-  PLAN_TABLE_BUSINESS_HEADERS,
-  PLAN_TABLE_COLUMN_WIDTHS,
 } from '../components/task-management/planTableViewModel'
+import {
+  getPlanRowCellValue,
+  PLAN_TABLE_COLUMNS,
+} from '../components/task-management/planTableColumns'
 
 type ExportPlanTableInput = {
   project: Project
@@ -51,58 +53,46 @@ export async function exportPlanTableToExcel({
   const sheet = workbook.addWorksheet('工作推进表')
   const rows = buildPlanRows({ project, tasks, taskSubMap, searchText })
 
-  sheet.columns = PLAN_TABLE_COLUMN_WIDTHS.map((width) => ({ width: Math.max(8, Math.round(width / 8)) }))
+  sheet.columns = PLAN_TABLE_COLUMNS.map((column) => ({ width: Math.max(8, Math.round(column.width / 9)) }))
   sheet.views = [{ state: 'frozen', xSplit: 3, ySplit: 2 }]
 
-  sheet.addRow(Array(PLAN_TABLE_BUSINESS_HEADERS.length).fill(''))
-  sheet.mergeCells(`A1:N1`)
+  sheet.addRow(Array(PLAN_TABLE_COLUMNS.length).fill(''))
+  sheet.mergeCells(`A1:${String.fromCharCode(64 + PLAN_TABLE_COLUMNS.length)}1`)
   const titleCell = sheet.getCell('A1')
   titleCell.value = `${project.name}目标与重点工作计划表`
   styleCell(titleCell, { bold: true, size: 16, horizontal: 'center', fill: TITLE_FILL })
   sheet.getRow(1).height = 46
 
-  const headerRow = sheet.addRow([...PLAN_TABLE_BUSINESS_HEADERS])
+  const headerRow = sheet.addRow(PLAN_TABLE_COLUMNS.map((column) => column.label))
   headerRow.height = 36
   headerRow.eachCell({ includeEmpty: true }, (cell) => {
     styleCell(cell, { bold: true, horizontal: 'center', fill: HEADER_FILL })
   })
 
   rows.forEach((row) => {
-    const completion = row.completionNote ? `[${row.status}] ${row.completionNote}` : `[${row.status}]`
-    const dataRow = sheet.addRow([
-      row.objective,
-      row.task.key_task,
-      row.task.completion_standard || row.task.key_achievement || '未填写评价标准',
-      row.sequence,
-      row.keyTask,
-      row.responsible,
-      row.planStart,
-      row.planEnd,
-      row.assistingPerson,
-      completion,
-      row.remarks,
-      row.projectManager,
-      row.taskPlanStart,
-      row.taskPlanEnd,
-    ])
-    dataRow.height = 36
+    const values = PLAN_TABLE_COLUMNS.map((column) => getPlanRowCellValue(row, column.key))
+    const dataRow = sheet.addRow(values)
+    const estimatedLines = values.reduce((total, value) => {
+      const lines = String(value ?? '').split(/\r?\n/)
+      return total + lines.reduce((lineTotal, line) => lineTotal + Math.max(1, Math.ceil(line.length / 32)), 0)
+    }, 0)
+    dataRow.height = Math.min(120, Math.max(36, estimatedLines * 15))
     dataRow.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
-      styleCell(cell, { horizontal: columnNumber === 4 ? 'center' : 'left' })
+      styleCell(cell, { horizontal: [1, 8].includes(columnNumber) ? 'center' : 'left' })
     })
   })
 
   if (rows.length === 0) {
     const emptyRow = sheet.addRow(['当前筛选条件下没有匹配的关键任务'])
-    sheet.mergeCells('A3:N3')
+    sheet.mergeCells(`A3:${String.fromCharCode(64 + PLAN_TABLE_COLUMNS.length)}3`)
     styleCell(emptyRow.getCell(1), { horizontal: 'center' })
     emptyRow.height = 44
   } else {
     const dataStartRow = 3
-    mergeVertical(sheet, 'A', dataStartRow, rows.length)
     rows.forEach((row, index) => {
       if (!row.showTaskCells) return
       const startRow = dataStartRow + index
-      for (const column of ['B', 'C', 'L', 'M', 'N']) {
+      for (const column of ['B', 'D']) {
         mergeVertical(sheet, column, startRow, row.taskRowSpan)
       }
     })

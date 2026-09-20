@@ -1,4 +1,5 @@
 import type { Project, SubTaskItem, TaskItem } from '../../types'
+import { PLAN_TABLE_COLUMNS } from './planTableColumns'
 
 export const EMPTY_PLAN_CELL = '—'
 export const DEFAULT_PLAN_TABLE_ZOOM = 100
@@ -6,28 +7,11 @@ export const MIN_PLAN_TABLE_ZOOM = 50
 export const MAX_PLAN_TABLE_ZOOM = 160
 export const PLAN_TABLE_ZOOM_STEP = 10
 
-export const PLAN_TABLE_BUSINESS_HEADERS = [
-  '目标',
-  '重点工作',
-  '评价标准',
-  '序号',
-  '关键任务',
-  '责任人',
-  '计划开始时间',
-  '计划结束时间',
-  '协同人',
-  '完成情况',
-  '备注',
-  '项目经理',
-  '重点工作计划开始时间',
-  '重点工作计划结束时间',
-] as const
+export const PLAN_TABLE_BUSINESS_HEADERS = PLAN_TABLE_COLUMNS.map((column) => column.label)
 
-export const PLAN_TABLE_COLUMN_WIDTHS = [
-  210, 230, 260, 56, 330, 110, 130, 130, 140, 260, 220, 110, 140, 140,
-] as const
+export const PLAN_TABLE_COLUMN_WIDTHS = PLAN_TABLE_COLUMNS.map((column) => column.width)
 
-export const PLAN_TABLE_ROW_NUMBER_WIDTH = 48
+export const PLAN_TABLE_ROW_NUMBER_WIDTH = 0
 export const PLAN_TABLE_NATURAL_WIDTH = PLAN_TABLE_ROW_NUMBER_WIDTH
   + PLAN_TABLE_COLUMN_WIDTHS.reduce((total, width) => total + width, 0)
 
@@ -44,6 +28,8 @@ export type ParsedAssistingPerson = {
 export type PlanTableRow = {
   task: TaskItem
   subtask: SubTaskItem | null
+  wbsCode: string
+  workstream: string
   sequence: number
   subtaskIndex: number
   objective: string
@@ -52,6 +38,8 @@ export type PlanTableRow = {
   taskRowSpan: number
   showTaskCells: boolean
   keyTask: string
+  deliverable: string
+  acceptance: string
   responsible: string
   planStart: string
   planEnd: string
@@ -59,6 +47,8 @@ export type PlanTableRow = {
   nextStep: string
   status: string
   statusTone: 'neutral' | 'blue' | 'green' | 'red' | 'amber'
+  risk: string
+  latestProgress: string
   latestConfirmedSubmission: SubTaskItem['latest_confirmed_submission'] | null
   statusMarkers: PlanStatusMarker[]
   completionNote: string
@@ -226,7 +216,8 @@ export function buildPlanRows({
   const groupedRows: Array<Omit<PlanTableRow, 'sequence' | 'objectiveRowSpan' | 'showObjective'>> = []
   let globalSubtaskIndex = 0
 
-  tasks.forEach((task) => {
+  tasks.forEach((task, taskIndex) => {
+    const taskWbsCode = String(taskIndex + 1)
     const allSubtasks = taskSubMap[task.id] ?? []
     const taskMatched = query ? taskMatchesSearch(task, project, query) : true
     const visibleSubtasks = query && !taskMatched
@@ -239,7 +230,7 @@ export function buildPlanRows({
     const taskPlanTime = parsePlanTimeRange(task.plan_time)
     const taskRowSpan = taskRows.length
 
-    taskRows.forEach((subtask, taskIndex) => {
+    taskRows.forEach((subtask, rowIndex) => {
       if (subtask) globalSubtaskIndex += 1
       const subtaskIndex = subtask ? globalSubtaskIndex : 0
       const parsedNotes = parseAssistingPerson(subtask?.notes)
@@ -248,11 +239,15 @@ export function buildPlanRows({
       groupedRows.push({
         task,
         subtask,
+      wbsCode: subtask ? `${taskWbsCode}.${rowIndex + 1}` : taskWbsCode,
+        workstream: textOrFallback(task.key_task, EMPTY_PLAN_CELL),
         subtaskIndex,
         objective,
         taskRowSpan,
-        showTaskCells: taskIndex === 0,
+        showTaskCells: rowIndex === 0,
         keyTask: subtask ? textOrFallback(subtask.title, '暂无关键任务') : '暂无关键任务',
+        deliverable: textOrFallback(task.key_achievement, EMPTY_PLAN_CELL),
+        acceptance: textOrFallback(subtask?.completion_criteria || task.completion_standard, '未填写验收标准'),
         responsible: subtask
           ? textOrFallback(subtask.assignee || task.owner, EMPTY_PLAN_CELL)
           : EMPTY_PLAN_CELL,
@@ -262,6 +257,8 @@ export function buildPlanRows({
         nextStep: subtask ? textOrFallback(subtask.latest_next_step, EMPTY_PLAN_CELL) : EMPTY_PLAN_CELL,
         status,
         statusTone: getPlanStatusTone(status),
+        risk: subtask?.has_risk ? '有风险' : EMPTY_PLAN_CELL,
+        latestProgress: textOrFallback(subtask?.latest_confirmed_submission?.summary || parsedNotes.remainingNotes, EMPTY_PLAN_CELL),
         latestConfirmedSubmission: subtask?.latest_confirmed_submission ?? null,
         statusMarkers: getPlanStatusMarkers(subtask),
         completionNote: subtask ? parsedNotes.remainingNotes : '',

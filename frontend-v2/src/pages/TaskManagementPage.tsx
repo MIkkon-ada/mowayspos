@@ -840,7 +840,7 @@ export function TaskManagementPage() {
 
   function handleExport() {
     const proj = resolvedTaskProjects.find((p) => p.id === (viewProjectId ?? currentProjectId))
-    const title = proj ? `${proj.name} 工作推进表` : '工作推进表'
+    const title = proj ? `${proj.name} 项目工作推进表` : '项目工作推进表'
     exportTasksToExcel(filtered, title, resolvedTaskProjects)
   }
 
@@ -936,7 +936,7 @@ function handleFormSave(payload: TaskPayload) {
       {/* Top Bar */}
       {!selectedSubTask && <header className="min-h-14 px-4 py-2 lg:px-6 gap-3 flex flex-wrap items-center flex-shrink-0 bg-white border-b overflow-x-auto" style={{ borderColor: '#E9EFF6' }}>
         <div className="work-progress-title-group flex-shrink-0">
-          <h1 className="text-base font-bold text-slate-800">工作推进表</h1>
+          <h1 className="text-base font-bold text-slate-800">项目工作推进表</h1>
         </div>
 
         {/* Filters */}

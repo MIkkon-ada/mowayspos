@@ -1,0 +1,246 @@
+.work-progress-plan-shell {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.plan-table-excel-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.plan-table-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 5px 10px;
+  border-bottom: 1px solid #d8dee8;
+  background: #fff;
+}
+
+.plan-table-toolbar button,
+.plan-table-status-bar button {
+  height: 28px;
+  border: 1px solid #d8dee8;
+  border-radius: 3px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.plan-table-toolbar button:hover,
+.plan-table-status-bar button:hover { background: #f8fafc; }
+.plan-table-toolbar button:disabled { cursor: not-allowed; opacity: .55; }
+
+.plan-table-toolbar__zoom {
+  display: inline-grid;
+  grid-template-columns: 30px 58px 30px;
+}
+
+.plan-table-toolbar__zoom button { border-radius: 0; }
+.plan-table-toolbar__zoom button:first-child { border-radius: 3px 0 0 3px; }
+.plan-table-toolbar__zoom button:last-child { border-radius: 0 3px 3px 0; }
+.plan-table-toolbar__percent {
+  display: grid;
+  place-items: center;
+  height: 28px;
+  border-top: 1px solid #d8dee8;
+  border-bottom: 1px solid #d8dee8;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-table-toolbar__action { padding: 0 12px; }
+.plan-table-toolbar__spacer { flex: 1; }
+.plan-table-toolbar .plan-table-toolbar__export {
+  min-width: 102px;
+  padding: 0 14px;
+  border-color: #16a34a;
+  background: #16a34a;
+  color: #fff;
+}
+.plan-table-toolbar .plan-table-toolbar__export:hover { background: #15803d; }
+
+.plan-table-sheet-title {
+  display: flex;
+  flex: 0 0 44px;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 44px;
+  padding: 0 16px;
+  border-bottom: 1px solid #d8dee8;
+  background: #fff;
+  color: #0f172a;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 750;
+}
+
+.plan-table-workspace {
+  position: relative;
+  flex: 1 1 auto;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #fff;
+  scrollbar-gutter: stable;
+}
+
+.plan-table-canvas {
+  width: max-content;
+  min-width: 100%;
+  zoom: var(--plan-table-zoom);
+  transform-origin: left top;
+}
+
+.plan-table-excel-grid {
+  width: 2514px;
+  table-layout: fixed;
+  border-spacing: 0;
+  border-collapse: separate;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.plan-table-excel-grid th,
+.plan-table-excel-grid td {
+  box-sizing: border-box;
+  min-height: 34px;
+  padding: 6px 7px;
+  border-right: 1px solid #d8dee8;
+  border-bottom: 1px solid #d8dee8;
+  background-clip: padding-box;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  vertical-align: middle;
+}
+
+.plan-table-excel-grid tr > :first-child { border-left: 1px solid #cbd5e1; }
+
+.plan-table-column-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  height: 36px;
+  background: #f3f6fa !important;
+  color: #334155;
+  text-align: center;
+  font-weight: 700;
+}
+
+.plan-table-excel-grid tbody tr:hover td:not([rowspan]) { background-color: #f8fafc; }
+.plan-table-row-number-cell {
+  color: #64748b;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.plan-table-placeholder { color: #94a3b8; }
+.plan-table-task-name { color: #1e293b; font-weight: 700; }
+
+.plan-table-sticky-row-number {
+  position: sticky;
+  left: 0;
+  z-index: 12;
+  background: #f3f6fa !important;
+}
+.plan-table-sticky-objective {
+  position: sticky;
+  left: 48px;
+  z-index: 11;
+  background: #f8fafc !important;
+}
+.plan-table-sticky-task {
+  position: sticky;
+  left: 258px;
+  z-index: 10;
+  background: #fff !important;
+  box-shadow: 6px 0 8px -8px rgba(15, 23, 42, .45);
+}
+.plan-table-column-header.plan-table-sticky-row-number,
+.plan-table-column-header.plan-table-sticky-objective,
+.plan-table-column-header.plan-table-sticky-task { z-index: 25; }
+
+.plan-table-key-task-cell { cursor: pointer; outline: none; }
+.plan-table-key-task-cell:hover { background: #eff6ff !important; }
+.plan-table-key-task-cell--selected {
+  position: relative;
+  z-index: 2;
+  box-shadow: inset 0 0 0 2px #2563eb;
+  background: #eff6ff !important;
+}
+
+.plan-table-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 21px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.plan-table-status--neutral { background: #f1f5f9; color: #64748b; }
+.plan-table-status--blue { background: #dbeafe; color: #2563eb; }
+.plan-table-status--green { background: #dcfce7; color: #15803d; }
+.plan-table-status--red { background: #fee2e2; color: #dc2626; }
+.plan-table-status--amber { background: #fef3c7; color: #b45309; }
+.plan-table-completion { display: flex; align-items: flex-start; gap: 6px; }
+.plan-table-completion__note { padding-top: 2px; color: #475569; }
+
+.plan-table-empty-row td {
+  height: 120px;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.plan-table-status-bar {
+  display: flex;
+  flex: 0 0 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 0 12px;
+  border-top: 1px solid #e2e8f0;
+  background: #fff;
+  color: #64748b;
+  font-size: 12px;
+}
+.plan-table-status-bar__summary { display: flex; gap: 16px; min-width: 0; }
+.plan-table-status-bar__zoom { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.plan-table-status-bar__zoom button { width: 28px; }
+.plan-table-status-bar__zoom input { width: 128px; accent-color: #2563eb; }
+.plan-table-status-bar__zoom span { width: 42px; color: #334155; text-align: right; font-variant-numeric: tabular-nums; }
+.plan-table-status-bar__zoom .plan-table-status-bar__reset { border-color: transparent; font-size: 16px; }
+
+@media (max-width: 1279px) {
+  .plan-table-toolbar { flex-wrap: wrap; }
+  .plan-table-sticky-task { position: static; box-shadow: none; }
+  .plan-table-column-header.plan-table-sticky-task { position: sticky; left: auto; }
+}
+
+@media (max-width: 899px) {
+  .plan-table-toolbar__spacer { display: none; }
+  .plan-table-toolbar__export { margin-left: auto; }
+  .plan-table-status-bar__summary { gap: 8px; }
+  .plan-table-status-bar__zoom input { width: 86px; }
+}

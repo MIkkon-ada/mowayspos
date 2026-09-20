@@ -21,6 +21,7 @@ export function normalizeLoginError(error: unknown): string {
   // 后端 must_change_password 中间件返回 403 + detail="must_change_password"，非账号禁用
   const detail = (error as { body?: { detail?: string } } | undefined)?.body?.detail
   if (status === 403 && detail === 'must_change_password') return '请先修改初始密码'
+  if (status === 403 && detail === 'origin_not_allowed') return '前端来源未加入后端白名单，请重启 V2 开发环境'
   if (status === 401) return '账号或密码错误'
   if (status === 403) return '账号已禁用，请联系管理员'
   if (status === 423) return '密码错误次数过多，请稍后再试'

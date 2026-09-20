@@ -38,6 +38,21 @@ test('external auth returns to the shared home route resolver', () => {
   const backendAuth = fs.readFileSync(path.resolve(root, '..', 'bowei_ai_dashboard/app/routers/wecom_auth.py'), 'utf8')
   assert.match(backendAuth, /RedirectResponse\(_frontend_url\(["']\/home["']\)\)/)
 })
+
+test('V2 local backend launcher allows the V2 frontend origin', () => {
+  const launcher = fs.readFileSync(path.resolve(root, '..', 'bowei_ai_dashboard/run_local_backend_safe.py'), 'utf8')
+  assert.match(launcher, /127\.0\.0\.1:6005/)
+  assert.match(launcher, /localhost:6005/)
+})
+
+test('blocked frontend origins explain the backend allowlist problem', async () => {
+  const { normalizeLoginError } = await loadAuthFlow()
+  assert.equal(
+    normalizeLoginError({ status: 403, body: { detail: 'origin_not_allowed' } }),
+    '前端来源未加入后端白名单，请重启 V2 开发环境',
+  )
+})
+
 test('mytasks sidebar navigation always enters the personal task center', async () => {
   const { getProjectScopedNavigationDestination } = await loadAuthFlow()
   assert.equal(getProjectScopedNavigationDestination('mytasks', null, []), '/member/tasks')

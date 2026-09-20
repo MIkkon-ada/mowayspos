@@ -6,7 +6,7 @@ echo ===================================
 echo   博维 AI 驾驶舱 V2 开发环境
 echo ===================================
 
-start "博维-V2后端" cmd /k ""%~dp0bowei_ai_dashboard\start-backend-dev.bat""
+start "博维-V2后端" cmd /k ""%~dp0bowei_ai_dashboard\start-backend-v2-dev.bat""
 start "博维-V2前端" cmd /k ""%~dp0frontend-v2\start-frontend-v2-dev.bat""
 
 timeout /t 6 /nobreak > nul

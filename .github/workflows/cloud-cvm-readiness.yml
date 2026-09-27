@@ -1,0 +1,87 @@
+name: CLOUD CVM read-only release inspection
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require main branch
+        shell: bash
+        run: test "$GITHUB_REF" = refs/heads/main
+
+      - name: Configure verified CVM SSH
+        shell: bash
+        env:
+          CVM_HOST: ${{ secrets.CVM_HOST }}
+          CVM_USER: ${{ secrets.CVM_USER }}
+          CVM_SSH_KEY: ${{ secrets.CVM_SSH_KEY }}
+          CVM_KNOWN_HOSTS: ${{ secrets.CVM_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$CVM_HOST"
+          test -n "$CVM_USER"
+          test -n "$CVM_SSH_KEY"
+          test -n "$CVM_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$CVM_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$CVM_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/id_ed25519" |
+            ssh-keygen -lf - -E sha256 |
+            sed 's/^/deployment_key_fingerprint=/'
+
+      - name: Inspect CVM without changing it
+        shell: bash
+        env:
+          CVM_HOST: ${{ secrets.CVM_HOST }}
+          CVM_USER: ${{ secrets.CVM_USER }}
+        run: |
+          set -euo pipefail
+          ssh \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$CVM_USER@$CVM_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          printf 'remote_user=%s\n' "$(id -un)"
+          for path in \
+            /opt/mowayspos/production.env \
+            /opt/mowayspos/docker-compose.prod.yml \
+            /opt/mowayspos/runtime/frontend-dist/index.html \
+            /opt/mowayspos/runtime/backend/app; do
+            if test -e "$path"; then
+              printf 'present=%s\n' "$path"
+            else
+              printf 'missing=%s\n' "$path"
+            fi
+          done
+          if test -f /opt/mowayspos/runtime/.last-successful-release; then
+            printf 'last_successful_release='
+            cat /opt/mowayspos/runtime/.last-successful-release
+          else
+            echo 'last_successful_release=missing'
+          fi
+          if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+            for container in mowayspos-backend mowayspos-frontend mowayspos-postgres; do
+              if docker inspect "$container" >/dev/null 2>&1; then
+                docker inspect "$container" \
+                  --format 'container={{.Name}} image={{.Config.Image}} status={{.State.Status}}'
+              else
+                printf 'container_missing=%s\n' "$container"
+              fi
+            done
+          else
+            echo 'docker_access=unavailable'
+          fi
+          REMOTE
+
+      - name: Remove temporary SSH material
+        if: always()
+        shell: bash
+        run: rm -f -- "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"

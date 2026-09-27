@@ -65,7 +65,7 @@ jobs:
 
           changed_file_list="$RUNNER_TEMP/cvm-incremental-changed-files.txt"
           git diff --name-only "$base_sha" "$RELEASE_SHA" > "$changed_file_list"
-          if grep -E '^(Dockerfile([.]|$)|docker-compose[.]prod[.]yml$|nginx[.]conf$|\.env[.]production[.]example$|bowei_ai_dashboard/requirements([.]txt|/)|frontend/(package[.]json|package-lock[.]json))' "$changed_file_list"; then
+          if grep -E '^(Dockerfile([.]|$)|docker-compose[.]prod[.]yml$|nginx[.]conf$|\.env[.]production[.]example$|bowei_ai_dashboard/requirements([.]txt|/)|frontend(-v2)?/(package[.]json|package-lock[.]json))' "$changed_file_list"; then
             echo 'The selected range changes the runtime image or dependency contract.' >&2
             echo 'Use cloud-p1b2b-a-ghcr-private-publish.yml instead.' >&2
             exit 1
@@ -84,11 +84,11 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: frontend-v2/package-lock.json
 
       - name: Build frontend artifact only
         if: ${{ inputs.component == 'frontend' || inputs.component == 'all' }}
-        working-directory: frontend
+        working-directory: frontend-v2
         run: |
           npm ci
           npm run build
@@ -142,7 +142,7 @@ jobs:
           fi
           if [[ "$COMPONENT" == frontend || "$COMPONENT" == all ]]; then
             ssh "${ssh_opts[@]}" "$remote" "mkdir -p '$staging/frontend/dist'"
-            rsync -az --delete -e "$rsync_ssh" frontend/dist/ "$remote:$staging/frontend/dist/"
+            rsync -az --delete -e "$rsync_ssh" frontend-v2/dist/ "$remote:$staging/frontend/dist/"
           fi
           rsync -az -e "$rsync_ssh" docker-compose.prod.incremental.yml "$remote:$CVM_ROOT/docker-compose.prod.incremental.yml"
           rsync -az -e "$rsync_ssh" scripts/cvm-incremental-deploy.sh "$remote:$staging/cvm-incremental-deploy.sh"

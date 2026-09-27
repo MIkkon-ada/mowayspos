@@ -417,6 +417,7 @@ def test_workspace_api_returns_one_contract_without_percentages():
         "project",
         "workstream",
         "current_progress",
+        "latest_submission",
         "completion_eligibility",
         "plan_summary",
         "execution_plans",
@@ -426,6 +427,7 @@ def test_workspace_api_returns_one_contract_without_percentages():
         "permissions",
     }
     assert result["current_progress"] is None
+    assert result["latest_submission"] is None
     assert result["plan_summary"] == {
         "total": 0,
         "completed": 0,

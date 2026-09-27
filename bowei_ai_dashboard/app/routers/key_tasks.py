@@ -18,6 +18,7 @@ from ..permissions import (
 from ..services.key_task_execution import (
     completion_eligibility_dict,
     current_progress_dict,
+    latest_submission_dict,
     plan_summary_dict,
     record_execution_event,
     timeline_dicts,
@@ -107,6 +108,26 @@ def get_execution_workspace(
         .limit(100)
         .all()
     )
+    achievement_ids = [row.id for row in achievements]
+    attachment_rows = (
+        db.query(models.AchievementAttachment)
+        .filter(
+            models.AchievementAttachment.achievement_id.in_(achievement_ids),
+            models.AchievementAttachment.deleted_at.is_(None),
+        )
+        .order_by(models.AchievementAttachment.created_at.desc(), models.AchievementAttachment.id.desc())
+        .all()
+        if achievement_ids else []
+    )
+    attachments_by_achievement: dict[int, list[dict]] = {}
+    for attachment in attachment_rows:
+        attachments_by_achievement.setdefault(attachment.achievement_id, []).append({
+            "id": attachment.id,
+            "original_name": attachment.original_name,
+            "mime_type": attachment.mime_type,
+            "size_bytes": attachment.size_bytes,
+            "created_at": attachment.created_at.isoformat() if attachment.created_at else None,
+        })
     issues = (
         db.query(models.Issue)
         .filter(models.Issue.related_subtask_id == key_task.id)
@@ -162,6 +183,7 @@ def get_execution_workspace(
             "name": workstream.key_task,
         },
         "current_progress": current_progress_dict(db, key_task.id),
+        "latest_submission": latest_submission_dict(db, key_task.id),
         "completion_eligibility": completion_eligibility_dict(db, key_task.id),
         "plan_summary": plan_summary_dict(db, key_task.id),
         "execution_plans": execution_plans,
@@ -174,6 +196,7 @@ def get_execution_workspace(
                 "owner": row.owner,
                 "version": row.version,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
+                "attachments": attachments_by_achievement.get(row.id, []),
             }
             for row in achievements
         ],

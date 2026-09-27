@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { getProject } from '../api/projects'
+import { getAITaskExtractionModels } from '../api/aiConfig'
 import { useProject } from '../context/ProjectContext'
 import { VoiceUpdateDetailDrawer } from '../features/voice-update/VoiceUpdateDetailDrawer'
 import { VoiceUpdateHistoryDrawer } from '../features/voice-update/VoiceUpdateHistoryDrawer'
@@ -52,13 +53,34 @@ export function VoiceUpdatePage() {
   const [reportScope, setReportScope] = useState<VoiceReportScope>('all')
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
   const [quickSubtaskId, setQuickSubtaskId] = useState<number | null>(null)
-  const [providers] = useState<AvailableProvider[]>([
-    { provider: 'capability', display_name: 'AI能力策略', model: '' },
+  const [providers, setProviders] = useState<AvailableProvider[]>([
+    { provider: 'capability', display_name: 'AI能力策略', model: '模型信息加载中' },
   ])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [resolvedProjectDetail, setResolvedProjectDetail] = useState<Project | null>(null)
   const projectSelectionInitialized = useRef(false)
   const historyDeepLinkHandled = useRef(false)
+
+  useEffect(() => {
+    let cancelled = false
+    getAITaskExtractionModels()
+      .then(({ primary_model_name, fallback_model_names }) => {
+        if (cancelled) return
+        const modelNames = [
+          primary_model_name,
+          fallback_model_names.length ? `备用：${fallback_model_names.join('、')}` : null,
+        ].filter((name): name is string => Boolean(name))
+        setProviders([{
+          provider: 'capability',
+          display_name: 'AI能力策略',
+          model: modelNames.join('；') || '未配置模型',
+        }])
+      })
+      .catch(() => {
+        if (!cancelled) setProviders([{ provider: 'capability', display_name: 'AI能力策略', model: '模型信息暂不可用' }])
+      })
+    return () => { cancelled = true }
+  }, [])
 
   const pageProjects = useMemo(() => {
     const projectsById = new Map(projects.map((project) => [project.id, project]))

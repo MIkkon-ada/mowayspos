@@ -70,7 +70,6 @@ type ProjectContextValue = {
   error: string | null
   login: (username: string, password: string) => Promise<void>
   logout: () => Promise<void>
-  setCurrentProjectId: (id: number | null) => void
   reloadProjects: () => Promise<void>
   refreshUser: () => Promise<void>
   getPreferredProjectId: () => number | null
@@ -99,19 +98,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(LS_LAST_PROJECT, String(currentProjectId))
     }
   }, [currentProjectId])
-
-  const setCurrentProjectId = useCallback(
-    (id: number | null) => {
-      if (id === null) {
-        navigate('/projects')
-      } else {
-        localStorage.setItem(LS_LAST_PROJECT, String(id))
-        const subPath = location.pathname.split('/').slice(3).join('/')
-        navigate(`/project/${id}${subPath ? `/${subPath}` : ''}`)
-      }
-    },
-    [navigate, location.pathname],
-  )
 
   const reloadProjects = useCallback(async (fallbackUser: CurrentUser | null = null) => {
     try {
@@ -230,7 +216,6 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     error,
     login,
     logout,
-    setCurrentProjectId,
     reloadProjects,
     refreshUser,
     getPreferredProjectId,

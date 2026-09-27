@@ -11,6 +11,8 @@ type Metric = {
 }
 
 export type MobileDashboardContentProps = {
+  workbenchTitle: string
+  projectRows: Array<{ id: number; name: string; completedTasks: number; totalTasks: number; completionRate: number; openIssues: number; latestUpdate: string; nextMilestone: string }>
   scopeOptions: Array<{ value: string; label: string }>
   selectedScope: string
   selectedMonth: string
@@ -29,7 +31,6 @@ export type MobileDashboardContentProps = {
   recentTasks: DashboardRecord[]
   delayedTasks: DashboardRecord[]
   roleQueue: { type: RoleQueueType; count: number; items: DashboardRecord[] }
-  completionRows: Array<{ id: number; name: string; done: number; total: number; rate: number }>
   onOpenTasks: (status?: string) => void
   onOpenAchievements: () => void
   onOpenRoleQueue: (type: RoleQueueType) => void
@@ -77,9 +78,10 @@ function Section({ title, badge, onMore, children }: { title: string; badge?: nu
 
 export function MobileDashboardContent(props: MobileDashboardContentProps) {
   const {
+    workbenchTitle, projectRows,
     scopeOptions, selectedScope, selectedMonth, monthOptions, onScopeChange, onMonthChange,
     total, notStarted, inProgress, completed, delayed, paused, achievements, pendingDecisions, canViewDecisions,
-    recentTasks, delayedTasks, roleQueue, completionRows, onOpenTasks, onOpenAchievements, onOpenRoleQueue, onOpenNotifications,
+    recentTasks, delayedTasks, roleQueue, onOpenTasks, onOpenAchievements, onOpenRoleQueue, onOpenNotifications,
     formatPlanTime, projectNameFromRecord,
   } = props
   const roleQueueMeta = ROLE_QUEUE_META[roleQueue.type]
@@ -103,7 +105,7 @@ export function MobileDashboardContent(props: MobileDashboardContentProps) {
   return (
     <main className="min-[800px]:hidden min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-slate-100 p-4 pb-24">
       <header className="mb-4 flex items-center justify-between">
-        <h1 className="text-base font-bold text-slate-800">首页驾驶舱</h1>
+        <h1 className="text-base font-bold text-slate-900">{workbenchTitle}</h1>
         <button type="button" onClick={onOpenNotifications} className="rounded-lg px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200">通知中心</button>
       </header>
 
@@ -118,6 +120,16 @@ export function MobileDashboardContent(props: MobileDashboardContentProps) {
           {monthOptions.map((month) => <option key={month} value={month}>{month}</option>)}
         </select>
       </div>
+
+      <Section title={selectedScope === 'global' ? '项目整体情况' : selectedScope === 'my' ? '我负责的项目' : '当前项目'}>
+        {projectRows.length ? <div className="space-y-1">
+          {projectRows.slice(0, 6).map((project) => <button key={project.id} type="button" onClick={() => onScopeChange(String(project.id))} className="block w-full rounded-xl px-2 py-3 text-left hover:bg-slate-50">
+            <span className="flex items-center justify-between gap-3"><span className="min-w-0 truncate text-xs font-semibold text-slate-700">{project.name}</span><span className={`shrink-0 text-[11px] font-semibold ${project.openIssues > 0 ? 'text-amber-700' : 'text-slate-500'}`}>{project.openIssues > 0 ? `${project.openIssues} 项待闭环` : '暂无待闭环问题'}</span></span>
+            <span className="mt-2 flex items-center justify-between gap-2 text-[10px] text-slate-400"><span>{project.completedTasks}/{project.totalTasks} 项关键任务完成</span><span>{project.nextMilestone || project.latestUpdate?.slice(0, 10) || '暂无节点'}</span></span>
+            <span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-sky-600" style={{ width: `${Math.max(0, Math.min(100, project.completionRate))}%` }} /></span>
+          </button>)}
+        </div> : <p className="py-3 text-center text-xs text-slate-400">当前范围没有可查看的项目。</p>}
+      </Section>
 
       <section className="mt-4 grid grid-cols-2 gap-2" aria-label="风险与待办">
         <button type="button" onClick={() => onOpenTasks('延期')} className="rounded-2xl border border-red-200 bg-red-50 p-4 text-left text-red-700">
@@ -152,10 +164,6 @@ export function MobileDashboardContent(props: MobileDashboardContentProps) {
 
         <Section title={roleQueueTitle} badge={roleQueue.count} onMore={() => onOpenRoleQueue(roleQueue.type)}>
           {roleQueue.items.length ? <div className="space-y-2">{roleQueue.items.slice(0, 3).map((item, index) => <button key={String(item.id ?? index)} type="button" onClick={() => onOpenRoleQueue(roleQueue.type)} className={`w-full rounded-xl border p-3 text-left ${roleQueueMeta.tone}`}><span className="block line-clamp-2 text-xs font-semibold leading-5 text-slate-700">{text(item.title ?? item.key_task ?? item.description, '提交事项')}</span><span className="mt-1 block text-[11px] text-slate-400">{text(item.submitter ?? item.owner, '')}{projectNameFromRecord(item) ? ` · ${projectNameFromRecord(item)}` : ''}</span></button>)}</div> : <p className="py-3 text-center text-xs text-slate-400">{roleQueueMeta.empty}</p>}
-        </Section>
-
-        <Section title="专项进度总览">
-          {completionRows.length ? <div className="space-y-3">{completionRows.map((project) => <button key={project.id} type="button" onClick={() => onScopeChange(String(project.id))} className="block w-full text-left"><span className="flex items-center justify-between gap-3"><span className="truncate text-xs font-medium text-slate-700">{project.name}</span><span className="shrink-0 text-xs font-bold text-slate-700">{project.rate}%</span></span><span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full bg-blue-500" style={{ width: `${project.rate}%` }} /></span><span className="mt-1 block text-[10px] text-slate-400">{project.total ? `${project.done}/${project.total}` : '暂无数据'}</span></button>)}</div> : <p className="py-3 text-center text-xs text-slate-400">暂无项目进度数据</p>}
         </Section>
 
         <Section title="任务状态分布">

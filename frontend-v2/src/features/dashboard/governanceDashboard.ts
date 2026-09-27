@@ -12,6 +12,13 @@ const actionRank: Record<GovernanceAction['kind'], number> = {
   owner_confirmation: 2,
 }
 
+const initiativeHealthRank: Record<GovernanceInitiative['health'], number> = {
+  risk: 0,
+  watch: 1,
+  unstarted: 2,
+  healthy: 3,
+}
+
 const healthLabels: Record<GovernanceHealth, string> = {
   healthy: '健康',
   watch: '关注',
@@ -29,6 +36,7 @@ const healthTones: Record<GovernanceHealth, string> = {
 export function emptyGovernance(): GovernanceDashboardOverview {
   return {
     signals: { pending_decisions: 0, pending_coordination: 0, pending_owner_confirmation: 0 },
+    project_signals: {},
     actions: [],
     initiatives: [],
   }
@@ -46,6 +54,13 @@ export function aggregateGovernanceOverviews(overviews: DashboardOverview[]): Go
     aggregate.signals.pending_coordination += governance.signals.pending_coordination || 0
     aggregate.signals.pending_owner_confirmation += governance.signals.pending_owner_confirmation || 0
 
+    for (const [projectId, signals] of Object.entries(governance.project_signals ?? {})) {
+      const current = aggregate.project_signals[projectId] ?? { pending_decisions: 0, pending_coordination: 0 }
+      current.pending_decisions += signals.pending_decisions || 0
+      current.pending_coordination += signals.pending_coordination || 0
+      aggregate.project_signals[projectId] = current
+    }
+
     for (const action of governance.actions) {
       actions.set(`${action.kind}:${action.id}:${action.project_id ?? 'none'}`, action)
     }
@@ -58,11 +73,10 @@ export function aggregateGovernanceOverviews(overviews: DashboardOverview[]): Go
     .sort((left, right) => actionRank[left.kind] - actionRank[right.kind]
       || (left.due_at ?? '9999-12-31').localeCompare(right.due_at ?? '9999-12-31')
       || left.title.localeCompare(right.title, 'zh-CN'))
-    .slice(0, 3)
   aggregate.initiatives = Array.from(initiatives.values())
-    .sort((left, right) => (left.next_milestone_at ?? '9999-12-31').localeCompare(right.next_milestone_at ?? '9999-12-31')
+    .sort((left, right) => initiativeHealthRank[left.health] - initiativeHealthRank[right.health]
+      || (left.next_milestone_at ?? '9999-12-31').localeCompare(right.next_milestone_at ?? '9999-12-31')
       || left.title.localeCompare(right.title, 'zh-CN'))
-    .slice(0, 6)
   return aggregate
 }
 

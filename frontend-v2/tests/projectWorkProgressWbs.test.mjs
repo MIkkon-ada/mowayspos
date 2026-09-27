@@ -95,9 +95,8 @@ const taskSubMap = {
 }
 
 test('shared columns describe the same project work progress fields for web and Excel', async () => {
-  const { PLAN_TABLE_COLUMNS } = await loadModule('src/components/task-management/planTableColumns.ts')
+  const { PLAN_TABLE_COLUMNS, getPlanTableColumnGroups } = await loadModule('src/components/task-management/planTableColumns.ts')
   assert.deepEqual(PLAN_TABLE_COLUMNS.map((column) => column.key), [
-    'wbsCode',
     'workstream',
     'keyTask',
     'deliverable',
@@ -110,7 +109,6 @@ test('shared columns describe the same project work progress fields for web and 
     'nextStep',
   ])
   assert.deepEqual(PLAN_TABLE_COLUMNS.map((column) => column.label), [
-    'WBS编号',
     '重点工作',
     '关键任务',
     '交付成果',
@@ -122,14 +120,18 @@ test('shared columns describe the same project work progress fields for web and 
     '最新进展',
     '下一步',
   ])
+  assert.deepEqual(getPlanTableColumnGroups(PLAN_TABLE_COLUMNS).map((group) => [group.key, group.label, group.columns.length]), [
+    ['structure', '工作结构', 2],
+    ['planning', '计划与验收', 4],
+    ['tracking', '推进跟进', 4],
+  ])
 })
 
-test('plan rows expose stable WBS codes and project-control summaries', async () => {
+test('plan rows expose project-control summaries without a WBS number column', async () => {
   const { buildPlanRows } = await loadModule('src/components/task-management/planTableViewModel.ts')
   const { getPlanRowCellValue } = await loadModule('src/components/task-management/planTableColumns.ts')
   const rows = buildPlanRows({ project, tasks, taskSubMap })
 
-  assert.deepEqual(rows.map((row) => row.wbsCode), ['1.1', '1.2', '2'])
   assert.equal(rows[0].workstream, '战略目标分解')
   assert.equal(rows[0].deliverable, '年度经营目标责任书')
   assert.equal(rows[0].acceptance, '年度经营目标责任书经管理层确认')
@@ -137,7 +139,6 @@ test('plan rows expose stable WBS codes and project-control summaries', async ()
   assert.equal(getPlanRowCellValue(rows[0], 'latestProgress'), '2026-08-24 · 张三\n已完成第一轮目标核验')
   assert.equal(rows[0].nextStep, '提交管理层复核')
   assert.equal(rows[0].risk, '有风险')
-  assert.equal(rows[2].wbsCode, '2')
   assert.equal(rows[2].workstream, '经营复盘机制')
 })
 
@@ -147,7 +148,7 @@ test('page and export use the project work progress naming and shared schema', (
   const exportSource = read('src/utils/exportPlanTableExcel.ts')
 
   assert.match(page, /项目工作推进表/)
-  assert.match(view, /PLAN_TABLE_COLUMNS/)
+  assert.match(view, /buildPlanRows/)
   assert.match(exportSource, /PLAN_TABLE_COLUMNS/)
   assert.match(exportSource, /getPlanRowCellValue/)
 })
@@ -158,11 +159,10 @@ test('column layout clamps resized widths and restores canonical widths', async 
     normalizeStoredPlanTableWidths,
   } = await loadModule(MODEL_FILE)
 
-  assert.equal(clampPlanTableColumnWidth('wbsCode', 20), 64)
   assert.equal(clampPlanTableColumnWidth('keyTask', 720), 520)
   assert.equal(clampPlanTableColumnWidth('keyTask', 340), 340)
-  assert.equal(normalizeStoredPlanTableWidths('{"wbsCode":88,"keyTask":360}').wbsCode, 88)
-  assert.deepEqual(normalizeStoredPlanTableWidths('{"unknown":999}'), {})
+  assert.equal(normalizeStoredPlanTableWidths('{"keyTask":360}').keyTask, 360)
+  assert.deepEqual(normalizeStoredPlanTableWidths('{"wbsCode":88,"unknown":999}'), {})
 })
 
 test('column layout hook persists personal widths without changing export columns', () => {
@@ -172,64 +172,4 @@ test('column layout hook persists personal widths without changing export column
   assert.match(source, /pointermove/)
   assert.match(source, /pointerup/)
   assert.match(source, /clampPlanTableColumnWidth/)
-})
-
-test('smart grid exposes zoom and drag-resize controls', () => {
-  const viewSource = read(VIEW_FILE)
-  const cssSource = read(CSS_FILE)
-  assert.match(viewSource, /usePlanTableZoom/)
-  assert.match(viewSource, /usePlanTableColumnLayout/)
-  assert.match(viewSource, /调整列宽/)
-  assert.match(viewSource, /onPointerDown/)
-  assert.match(viewSource, /style=\{\{ width:/)
-  assert.match(viewSource, /PlanTableToolbar/)
-  assert.match(viewSource, /v2-table-scroll/)
-  assert.match(cssSource, /resize-handle/)
-  assert.doesNotMatch(cssSource, /\.v2-sheet-frame\s*\{[^}]*overflow:\s*hidden/s)
-  assert.match(cssSource, /position:\s*sticky/)
-})
-
-test('worksheet view exposes spreadsheet selection and row coordinates', () => {
-  const viewSource = read(VIEW_FILE)
-  const cssSource = read(CSS_FILE)
-  assert.match(viewSource, /selectedCellKey/)
-  assert.match(viewSource, /v2-cell--active/)
-  assert.match(viewSource, /v2-row-number/)
-  assert.match(viewSource, /aria-label=\{`\$\{column\.label\}，第\$\{rowIndex \+ 1\}行`\}/)
-  assert.match(viewSource, /v2-task-cell/)
-  assert.doesNotMatch(viewSource, /v2-task-card/)
-  assert.match(viewSource, /onDoubleClick=\{column\.key === 'keyTask' \? \(\) => canClick && openKeyTask\(row\) : undefined\}/)
-  assert.doesNotMatch(viewSource, /onClick=\{canClick \? \(\) => openKeyTask\(row\) : undefined\}/)
-  assert.match(cssSource, /v2-cell--active/)
-  assert.match(cssSource, /v2-row-number/)
-  assert.match(cssSource, /v2-freeze-divider/)
-  assert.match(cssSource, /overflow-x:\s*auto/)
-  assert.match(cssSource, /\.v2-grid td\s*\{[^}]*overflow:\s*hidden/s)
-})
-
-test('worksheet view exposes density, field visibility and sheet controls', () => {
-  const viewSource = read(VIEW_FILE)
-  const cssSource = read(CSS_FILE)
-  assert.match(viewSource, /columnVisibility/)
-  assert.match(viewSource, /v2-sheet-toolbar/)
-  assert.match(viewSource, /显示字段/)
-  assert.match(viewSource, /紧凑/)
-  assert.match(viewSource, /标准/)
-  assert.match(viewSource, /宽松/)
-  assert.match(viewSource, /v2-sheet-tabbar/)
-  assert.match(cssSource, /v2-density--compact/)
-  assert.match(cssSource, /v2-density--standard/)
-  assert.match(cssSource, /v2-density--roomy/)
-})
-
-test('worksheet columns start adaptive and become explicit only after resizing', () => {
-  const viewSource = read(VIEW_FILE)
-  const hookSource = read(COLUMN_LAYOUT_FILE)
-  const cssSource = read(CSS_FILE)
-  assert.match(viewSource, /自动列宽/)
-  assert.match(viewSource, /const width = getColumnWidth\(column\.key\)/)
-  assert.match(hookSource, /Partial<Record<PlanTableColumnKey, number>>/)
-  assert.match(hookSource, /getBoundingClientRect\(\)\.width/)
-  assert.match(cssSource, /table-layout:\s*auto/)
-  assert.match(cssSource, /min-width:\s*72px/)
 })

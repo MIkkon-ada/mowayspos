@@ -80,7 +80,6 @@ export function MyTasksPage() {
   const selectedProjectId = onlyProject?.id ?? activeProjects[0]?.id ?? null
   const openSelectedProject = () => {
     if (selectedProjectId !== null) navigate(`/work/tasks?projectId=${selectedProjectId}`)
-    else navigate('/member/projects')
   }
 
   return (
@@ -122,7 +121,7 @@ export function MyTasksPage() {
 
         {loading && <div className="my-task-state"><span className="my-task-state-icon is-spinning" aria-hidden="true">↻</span><h2>正在汇总跨项目任务</h2><p>请稍候，我们正在逐个读取你参与的进行中项目。</p></div>}
         {!loading && error && <div className="my-task-state is-error"><span className="my-task-state-icon" aria-hidden="true">!</span><h2>任务加载失败</h2><p>暂时无法读取你参与项目中的任务，请稍后重试。</p><button type="button" onClick={refresh}>重新加载</button></div>}
-        {noActiveProjects && <div className="my-task-state"><span className="my-task-state-icon" aria-hidden="true">◇</span><h2>暂无进行中的项目</h2><p>你当前没有可汇总任务的进行中项目。</p><div className="my-task-empty-actions"><button type="button" onClick={() => navigate('/member/projects')}>创建新任务</button><button type="button" onClick={() => navigate('/member/projects')}>查看项目详情</button></div></div>}
+        {noActiveProjects && <div className="my-task-state"><span className="my-task-state-icon" aria-hidden="true">◇</span><h2>暂无进行中的项目</h2><p>你当前没有可汇总任务的进行中项目。</p></div>}
         {noTasks && <div className="my-task-state"><span className="my-task-state-icon" aria-hidden="true">✓</span><h2>暂无分配给你的任务</h2><p>进行中项目已经加载完成，但还没有以当前账号姓名分配给你的关键任务。</p><div className="my-task-empty-actions"><button type="button" onClick={openSelectedProject}>创建新任务</button><button type="button" onClick={openSelectedProject}>查看项目详情</button></div></div>}
         {noFilteredTasks && <div className="my-task-state"><span className="my-task-state-icon" aria-hidden="true">⌕</span><h2>没有符合条件的任务</h2><p>调整项目、状态或搜索关键词后再试。</p><button type="button" onClick={clearFilters}>清除筛选</button></div>}
 

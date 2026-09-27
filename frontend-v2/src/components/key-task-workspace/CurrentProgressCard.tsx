@@ -1,12 +1,17 @@
-import type { CurrentProgress } from '../../api/keyTaskWorkspace'
-import { formatDateTime, sourceLabel } from './workspaceFormat'
+import type { LatestKeyTaskSubmission } from '../../api/keyTaskWorkspace'
+import { formatDateTime } from './workspaceFormat'
 
-export function CurrentProgressCard({ progress }: { progress: CurrentProgress | null }) {
-  return <section className="rounded-lg border border-slate-300 border-l-4 border-l-blue-700 bg-white p-5 shadow-sm" aria-label="当前进展">
-    <h2 className="text-lg font-semibold text-slate-900">⌁　当前进展</h2>
-    {!progress ? <div className="mt-4 grid min-h-28 place-items-center border border-dashed border-slate-300 bg-slate-50 px-6 text-center text-sm leading-6 text-slate-500"><div><p className="mb-2 text-2xl text-slate-300">▣</p>暂无已确认的有效推进事实。会议 AI 候选内容需经人工确认并正式回填后，才会显示在这里。</div></div> : <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_320px]">
-      <div><p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{progress.progress_summary}</p><div className="mt-4 border-t border-slate-200 pt-4 text-sm"><span className="font-semibold text-slate-800">下一步：</span><span className="text-slate-600">{progress.next_step || '暂未记录'}</span></div></div>
-      <dl className="space-y-2 rounded-lg border border-blue-100 bg-blue-50/40 p-4 text-sm text-slate-600"><div><dt className="inline text-slate-400">来源类型： </dt><dd className="inline font-medium text-blue-700">{sourceLabel({ source_type: progress.source_type, source_label: progress.source_label })}</dd></div><div><dt className="inline text-slate-400">来源对象： </dt><dd className="inline">#{progress.source_id}</dd></div><div><dt className="inline text-slate-400">提交/确认人： </dt><dd className="inline">{progress.actor.name || '—'}</dd></div><div><dt className="inline text-slate-400">生效时间： </dt><dd className="inline">{formatDateTime(progress.effective_at)}</dd></div></dl>
-    </div>}
+export function CurrentProgressCard({ progress }: { progress: LatestKeyTaskSubmission | null }) {
+  return <section className="rounded-xl border border-slate-200 border-l-4 border-l-blue-700 bg-white p-5 shadow-sm" aria-label="关键任务最新提交">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h2 className="text-base font-bold text-slate-900">最新提交</h2>
+      {progress && <p className="text-xs text-slate-500">{progress.submitter || '未记录提交人'} · {formatDateTime(progress.confirmed_at)}</p>}
+    </div>
+    {!progress
+      ? <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600"><p>还没有已确认的工作提交。</p><p className="mt-1">提交并确认后的最新内容会同步显示在工作推进表中。</p></div>
+      : <div className="mt-3">
+        <p className="whitespace-pre-wrap text-sm leading-6 text-slate-800">{progress.summary || '本次提交暂无摘要'}</p>
+        {progress.next_step && <p className="mt-3 border-t border-slate-100 pt-3 text-sm leading-6 text-slate-700"><span className="font-semibold">下一步计划：</span>{progress.next_step}</p>}
+      </div>}
   </section>
 }

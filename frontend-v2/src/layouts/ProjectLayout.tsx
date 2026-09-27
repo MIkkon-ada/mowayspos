@@ -121,6 +121,8 @@ export function ProjectLayout() {
 
   const isPrivileged = !!(
     currentUser?.is_tech_admin ||
+    currentUser?.is_ceo ||
+    currentUser?.can_view_all ||
     globalUserRoles.some((r) => ['owner', 'coordinator', 'project_ceo'].includes(r))
   )
   const defaultPage: AppPage = isPrivileged ? 'dashboard' : 'mytasks'

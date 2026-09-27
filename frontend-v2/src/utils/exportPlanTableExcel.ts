@@ -4,6 +4,7 @@ import {
   buildPlanRows,
 } from '../components/task-management/planTableViewModel'
 import {
+  getPlanTableColumnGroups,
   getPlanRowCellValue,
   PLAN_TABLE_COLUMNS,
 } from '../components/task-management/planTableColumns'
@@ -12,6 +13,8 @@ type ExportPlanTableInput = {
   project: Project
   tasks: TaskItem[]
   taskSubMap: Record<number, SubTaskItem[]>
+  statusFilter?: string
+  ownerFilter?: string
   searchText?: string
 }
 
@@ -34,12 +37,22 @@ function styleCell(
 }
 
 function mergeVertical(sheet: Worksheet, column: string, startRow: number, rowSpan: number) {
-  if (rowSpan <= 1) return
-  sheet.mergeCells(`${column}${startRow}:${column}${startRow + rowSpan - 1}`)
+  if (rowSpan > 1) sheet.mergeCells(`${column}${startRow}:${column}${startRow + rowSpan - 1}`)
 }
 
 function safeFilenamePart(value: string): string {
   return value.replace(/[\\/:*?"<>|]/g, '_').trim() || '未命名项目'
+}
+
+function excelColumnName(columnNumber: number): string {
+  let current = columnNumber
+  let name = ''
+  while (current > 0) {
+    const remainder = (current - 1) % 26
+    name = String.fromCharCode(65 + remainder) + name
+    current = Math.floor((current - 1) / 26)
+  }
+  return name
 }
 
 export async function exportPlanTableToExcel({
@@ -47,21 +60,38 @@ export async function exportPlanTableToExcel({
   tasks,
   taskSubMap,
   searchText = '',
+  statusFilter = '',
+  ownerFilter = '',
 }: ExportPlanTableInput) {
   const ExcelJS = await import('exceljs')
   const workbook = new ExcelJS.Workbook()
   const sheet = workbook.addWorksheet('工作推进表')
-  const rows = buildPlanRows({ project, tasks, taskSubMap, searchText })
+  const rows = buildPlanRows({ project, tasks, taskSubMap, searchText, statusFilter, ownerFilter })
 
   sheet.columns = PLAN_TABLE_COLUMNS.map((column) => ({ width: Math.max(8, Math.round(column.width / 9)) }))
-  sheet.views = [{ state: 'frozen', xSplit: 3, ySplit: 2 }]
+  sheet.views = [{ state: 'frozen', xSplit: 2, ySplit: 3 }]
 
   sheet.addRow(Array(PLAN_TABLE_COLUMNS.length).fill(''))
-  sheet.mergeCells(`A1:${String.fromCharCode(64 + PLAN_TABLE_COLUMNS.length)}1`)
+  sheet.mergeCells(`A1:${excelColumnName(PLAN_TABLE_COLUMNS.length)}1`)
   const titleCell = sheet.getCell('A1')
   titleCell.value = `${project.name}目标与重点工作计划表`
   styleCell(titleCell, { bold: true, size: 16, horizontal: 'center', fill: TITLE_FILL })
   sheet.getRow(1).height = 46
+
+  const groupRow = sheet.addRow(Array(PLAN_TABLE_COLUMNS.length).fill(''))
+  const groups = getPlanTableColumnGroups(PLAN_TABLE_COLUMNS)
+  let groupStart = 1
+  groups.forEach((group) => {
+    const groupStartColumn = excelColumnName(groupStart)
+    const groupEndColumn = excelColumnName(groupStart + group.columns.length - 1)
+    groupRow.getCell(groupStart).value = group.label
+    sheet.mergeCells(`${groupStartColumn}2:${groupEndColumn}2`)
+    groupStart += group.columns.length
+  })
+  groupRow.height = 24
+  groupRow.eachCell({ includeEmpty: true }, (cell) => {
+    styleCell(cell, { bold: true, horizontal: 'center', fill: 'FFE7EBF0' })
+  })
 
   const headerRow = sheet.addRow(PLAN_TABLE_COLUMNS.map((column) => column.label))
   headerRow.height = 36
@@ -78,22 +108,23 @@ export async function exportPlanTableToExcel({
     }, 0)
     dataRow.height = Math.min(120, Math.max(36, estimatedLines * 15))
     dataRow.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
-      styleCell(cell, { horizontal: [1, 8].includes(columnNumber) ? 'center' : 'left' })
+      styleCell(cell, { horizontal: ['status', 'responsible'].includes(PLAN_TABLE_COLUMNS[columnNumber - 1].key) ? 'center' : 'left' })
     })
   })
 
   if (rows.length === 0) {
     const emptyRow = sheet.addRow(['当前筛选条件下没有匹配的关键任务'])
-    sheet.mergeCells(`A3:${String.fromCharCode(64 + PLAN_TABLE_COLUMNS.length)}3`)
+    sheet.mergeCells(`A4:${excelColumnName(PLAN_TABLE_COLUMNS.length)}4`)
     styleCell(emptyRow.getCell(1), { horizontal: 'center' })
     emptyRow.height = 44
   } else {
-    const dataStartRow = 3
+    const dataStartRow = 4
     rows.forEach((row, index) => {
       if (!row.showTaskCells) return
       const startRow = dataStartRow + index
-      for (const column of ['B', 'D']) {
-        mergeVertical(sheet, column, startRow, row.taskRowSpan)
+      for (const key of ['workstream']) {
+        const columnIndex = PLAN_TABLE_COLUMNS.findIndex((column) => column.key === key)
+        if (columnIndex >= 0) mergeVertical(sheet, excelColumnName(columnIndex + 1), startRow, row.taskRowSpan)
       }
     })
   }

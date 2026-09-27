@@ -23,7 +23,7 @@ from ..permissions import (
 from ..time_utils import utc_now
 from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
-from ..services.key_task_execution import record_execution_event
+from ..services.key_task_execution import record_execution_event, submission_summary
 
 router = APIRouter(tags=["subtasks"])  # endpoint 不变；业务语义：KeyTask/关键任务 CRUD
 _TRASH_ROLES = {"owner"}
@@ -50,32 +50,6 @@ def _get_task_project_id(task: models.Task, db: Session) -> int | None:
         project_id=task.project_id,
         special_project=task.special_project or "",
     )["project_id"]
-
-
-def _submission_summary(row: models.UpdateSubmission, subtask_id: int) -> str:
-    """Return the readable, key-task-scoped summary for a confirmed submission."""
-    try:
-        payload = json.loads(row.human_result_json or row.ai_result_json or "{}")
-    except (TypeError, ValueError):
-        payload = {}
-
-    reports = payload.get("task_reports") if isinstance(payload, dict) else []
-    if isinstance(reports, list):
-        matched = next(
-            (
-                report for report in reports
-                if isinstance(report, dict) and report.get("matched_subtask_id") == subtask_id
-            ),
-            None,
-        )
-        if matched:
-            completed = matched.get("completed") or matched.get("completed_items")
-            if isinstance(completed, list):
-                completed = next((str(item).strip() for item in completed if str(item).strip()), "")
-            if isinstance(completed, str) and completed.strip():
-                return completed.strip()
-
-    return (row.title or row.transcript_text or "").strip()[:160]
 
 
 def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[dict], db: Session) -> None:
@@ -105,7 +79,7 @@ def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[d
                 "id": submission.id,
                 "submitter": submission.submitter or "",
                 "confirmed_at": submission.confirmed_at.isoformat(),
-                "summary": _submission_summary(submission, subtask_id),
+                "summary": submission_summary(submission, subtask_id),
             }
 
         execution_events = (

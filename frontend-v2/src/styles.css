@@ -1591,6 +1591,73 @@ select:focus {
   font-size: 11px;
 }
 
+/* Keep every editable field visible before it receives focus. */
+.owner-submit-reference-detail .owner-submit-goal-result > div {
+  display: grid;
+  gap: 5px;
+}
+
+.owner-submit-reference-detail .owner-submit-goal-result label {
+  color: #344054;
+  font-size: 13px;
+}
+
+.owner-submit-reference-detail .owner-submit-field-help {
+  margin: 0;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.owner-submit-reference-detail .owner-submit-goal-result-input,
+.owner-submit-reference-detail textarea,
+.owner-submit-reference-detail .owner-submit-subtask-table input,
+.owner-submit-reference-detail .owner-submit-subtask-table button[aria-haspopup="listbox"] {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 9px;
+  color: #344054;
+}
+
+.owner-submit-reference-detail .owner-submit-goal-result-input {
+  height: 42px;
+  padding: 0 12px;
+}
+
+.owner-submit-reference-detail textarea {
+  display: block;
+  height: 76px;
+  min-height: 76px;
+  padding: 9px 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.owner-submit-reference-detail .owner-submit-goal-result-input::placeholder,
+.owner-submit-reference-detail textarea::placeholder,
+.owner-submit-reference-detail .owner-submit-subtask-table input::placeholder {
+  color: #7a8699;
+  opacity: 1;
+}
+
+.owner-submit-reference-detail .owner-submit-goal-result-input:hover,
+.owner-submit-reference-detail textarea:hover,
+.owner-submit-reference-detail .owner-submit-subtask-table input:hover,
+.owner-submit-reference-detail .owner-submit-subtask-table button[aria-haspopup="listbox"]:hover {
+  border-color: #94a3b8;
+  background: #fbfcfe;
+}
+
+.owner-submit-reference-detail .owner-submit-goal-result-input:focus,
+.owner-submit-reference-detail textarea:focus,
+.owner-submit-reference-detail .owner-submit-subtask-table input:focus,
+.owner-submit-reference-detail .owner-submit-subtask-table button[aria-haspopup="listbox"]:focus-visible {
+  border-color: var(--owner-submit-accent);
+  background: #fff;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.14);
+}
+
 .owner-submit-reference-footer {
   min-height: 0;
   padding: 10px 20px;
@@ -1628,5 +1695,128 @@ select:focus {
 @media (max-width: 1023px) {
   .owner-submit-left-pane {
     width: auto;
+  }
+}
+
+.owner-submit-reference-layout .owner-submit-workbench-columns {
+  gap: 18px;
+  padding: 18px 24px 28px;
+}
+
+.owner-submit-reference-layout .owner-submit-left-pane {
+  width: 320px;
+}
+
+.owner-submit-reference-layout .owner-submit-reference-overview {
+  padding: 18px 20px;
+}
+
+.owner-submit-reference-layout .owner-submit-reference-overview h3 {
+  font-size: 1.1rem;
+}
+
+.owner-submit-reference-layout .owner-submit-reference-overview .owner-submit-project-info-row {
+  grid-template-columns: 96px minmax(0, 1fr);
+  min-height: 36px;
+  align-items: start;
+}
+
+.owner-submit-reference-layout .owner-submit-reference-overview .owner-submit-project-role-row {
+  grid-template-columns: 96px minmax(0, 1fr);
+  min-height: 34px;
+}
+
+.owner-submit-reference-layout .owner-submit-workplan-heading {
+  min-height: 36px;
+  margin-bottom: 10px;
+}
+
+.owner-submit-reference-layout .owner-submit-reference-detail .owner-submit-goal-result {
+  margin-top: 14px;
+}
+
+.owner-submit-reference-layout .owner-submit-reference-detail textarea {
+  min-height: 56px;
+}
+
+.owner-submit-field-help {
+  margin-top: 2px;
+  color: #8793a5;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.owner-submit-progress-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 1px solid #e7ecf3;
+  border-radius: 9px;
+  background: #fff;
+  color: #78869a;
+  font-size: 11px;
+}
+
+.owner-submit-progress-summary > div {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.owner-submit-progress-summary strong {
+  color: #33435e;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.owner-submit-progress-summary > div:last-child strong {
+  color: #b76b14;
+}
+
+.owner-submit-submit-issue {
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 9px;
+  background: #fef2f2;
+  color: #b42318;
+  font-size: 12px;
+}
+
+.owner-submit-reference-footer .owner-submit-reference-submit {
+  min-width: 220px;
+}
+
+@media (max-width: 1023px) {
+  .owner-submit-reference-layout .owner-submit-workbench-columns {
+    padding: 16px 18px 24px;
+  }
+
+  .owner-submit-reference-layout .owner-submit-left-pane {
+    width: 100%;
+  }
+}
+
+@media (max-width: 639px) {
+  .owner-submit-reference-header {
+    min-height: 76px;
+    padding: 12px 16px;
+  }
+
+  .owner-submit-reference-layout .owner-submit-workbench-columns {
+    padding: 12px 12px 20px;
+  }
+
+  .owner-submit-reference-footer {
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .owner-submit-reference-footer .owner-submit-reference-submit {
+    min-width: 0;
+    padding-inline: 12px;
   }
 }

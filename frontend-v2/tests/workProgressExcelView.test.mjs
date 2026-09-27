@@ -105,7 +105,6 @@ test('work progress keeps only the plan table while key-task detail remains avai
 test('the executable view model exposes the shared project work progress columns', async () => {
   const { PLAN_TABLE_BUSINESS_HEADERS } = await loadViewModel()
   assert.deepEqual(PLAN_TABLE_BUSINESS_HEADERS, [
-    'WBS编号',
     '重点工作',
     '关键任务',
     '交付成果',
@@ -117,6 +116,16 @@ test('the executable view model exposes the shared project work progress columns
     '最新进展',
     '下一步',
   ])
+})
+
+test('key-task detail uses the project work progress vocabulary', () => {
+  const source = read(PAGE_FILE)
+  assert.match(source, />验收标准</)
+  assert.match(source, />交付成果</)
+  assert.match(source, />风险\/问题</)
+  assert.match(source, />下一步</)
+  assert.match(source, /panelSubTask\.latest_next_step/)
+  assert.match(source, /panelSubTask\.has_risk/)
 })
 
 test('buildPlanRows calculates project and task row spans from visible rows', async () => {
@@ -220,38 +229,14 @@ test('toolbar, status bar and zoom hook share the required controls', () => {
   assert.match(source, /isContentEditable/)
 })
 
-test('V2 table uses scroll workspace with overflow containment', () => {
-  const viewSource = requireSources(VIEW_FILE, CSS_FILE)
-  // V2 uses v2-table-scroll for workspace with overflow containment
-  assert.match(viewSource, /v2-table-scroll|overflow:\s*auto/)
-  assert.match(viewSource, /overscroll-behavior:\s*contain/)
-  // V2 uses position:sticky for frozen headers (top:0)
-  assert.match(viewSource, /position:\s*sticky/)
-  assert.match(viewSource, /top:\s*0/)
-  // No raw overflow-x-auto on the main container
-  assert.doesNotMatch(read(VIEW_FILE), /overflow-x-auto/)
-})
-
-test('key-task cells open the existing detail flow without inline editing', () => {
-  const source = read(VIEW_FILE)
-  // V2 renders key-task cells; subtask detail is opened via parent page callback
-  // The table component itself does not contain editing logic
-  assert.doesNotMatch(source, /contentEditable/)
-  assert.match(source, /onDoubleClick=\{column\.key === 'keyTask' \?/) // double-click opens detail, not inline editing
-  // No undo/redo/save-cell operations
-  assert.doesNotMatch(source, /撤销|重做|保存单元格/)
-  // No CRUD mutations inside the table component itself
-  assert.doesNotMatch(source, /createTask|updateTask|deleteTask|createSubTask|updateSubTask/)
-})
-
 test('plan export uses the shared web model, merges and frozen panes', () => {
   const source = requireSources(EXPORT_FILE)
   assert.match(source, /PLAN_TABLE_COLUMNS/)
   assert.match(source, /getPlanRowCellValue/)
   assert.match(source, /buildPlanRows/)
   assert.match(source, /mergeCells/)
-  assert.match(source, /xSplit:\s*3/)
-  assert.match(source, /ySplit:\s*2/)
+  assert.match(source, /xSplit:\s*2/)
+  assert.match(source, /ySplit:\s*3/)
   assert.match(source, /工作推进表_/)
 })
 
@@ -306,72 +291,6 @@ test('archived plan rendering remains read-only and other global layouts stay ou
   assert.equal(exists('src/layouts/ProjectLayout.tsx'), true)
 })
 
-test('V2 layout uses a clean scroll + canvas hierarchy without extra chrome', () => {
-  const view = read(VIEW_FILE)
-  const css = read(CSS_FILE)
-  // V2 layout: v2-plan-view > v2-table-scroll > v2-table-canvas > v2-grid
-  assert.match(view, /v2-plan-view/)
-  assert.match(view, /v2-table-scroll/)
-  assert.match(view, /v2-table-canvas/)
-  assert.match(view, /v2-grid/)
-  const scrollIdx = view.indexOf('v2-table-scroll')
-  const canvasIdx = view.indexOf('v2-table-canvas')
-  assert.ok(scrollIdx > -1 && canvasIdx > -1, 'scroll and canvas layers present')
-  assert.ok(scrollIdx < canvasIdx, 'canvas must be inside scroll area')
-  assert.doesNotMatch(view, /v2-progress-topbar/)
-  assert.doesNotMatch(view, /v2-progress-summary/)
-  assert.doesNotMatch(view, /v2-footer-stats/)
-  assert.doesNotMatch(view, /v2-keytask-line__num/)
-  assert.doesNotMatch(view, /plan-table-title-cell/)
-  assert.doesNotMatch(css, /\.plan-table-title-cell/)
-  assert.match(css, /position:\s*sticky/)
-})
-
-test('V2 table is a compact data table without a fake empty spreadsheet canvas', () => {
-  const source = read(VIEW_FILE)
-  const css = read(CSS_FILE)
-
-  assert.match(source, /v2-sheet-frame/)
-  assert.match(source, /v2-table-actions__project/)
-  assert.match(source, /v2-task-cell__std-btn/)
-  assert.doesNotMatch(source, /v2-task-card__index/)
-  assert.doesNotMatch(source, /v2-keytask-line__num/)
-  assert.doesNotMatch(source, /v2-pager/)
-  assert.doesNotMatch(source, /v2-task-card__meta/)
-  assert.match(source, /PLAN_TABLE_COLUMNS/)
-  assert.match(source, />\{column\.label\}</)
-  assert.match(source, /latestConfirmedSubmission/)
-  assert.match(source, /statusMarkers/)
-
-  assert.match(css, /\.v2-sheet-frame/)
-  assert.doesNotMatch(css, /\.v2-task-card__index/)
-  assert.match(source, /getColumnWidth\(column\.key\)/)
-  assert.match(css, /width:\s*max-content/)
-  assert.match(css, /min-width:\s*max-content/)
-  assert.match(source, /column\.priority/)
-  assert.doesNotMatch(css, /repeating-linear-gradient/)
-  assert.doesNotMatch(css, /background-size:\s*80px 28px/)
-  assert.doesNotMatch(css, /\.v2-table-canvas\s*\{[^}]*height:\s*100%/s)
-  assert.doesNotMatch(css, /\.v2-grid\s*{[^}]*height:\s*100%/s)
-  assert.match(css, /\.v2-grid th,[\s\S]*vertical-align:\s*middle/)
-  assert.match(css, /\.v2-td--person\s*\{[^}]*text-overflow:\s*ellipsis/s)
-  assert.match(css, /\.v2-grid td\.v2-td--keytask\s*\{[^}]*padding:\s*14px 12px/s)
-  assert.match(css, /\.v2-keytask-line\s*\{[^}]*line-height:\s*1\.45/s)
-  assert.match(css, /\.v2-status-marker--overdue/)
-  assert.match(css, /\.v2-latest-submission/)
-  assert.doesNotMatch(css, /\.v2-task-card__std-btn\s*{[^}]*display:\s*none/s)
-})
-
-test('table view only exposes the project-standard button when a project standard exists', () => {
-  const source = read(VIEW_FILE)
-
-  assert.match(source, /const hasProjectStandard = Boolean\(project\?\.objectives\?\.trim\(\)\)/)
-  assert.match(
-    source,
-    /\{hasProjectStandard && <button type="button" className="v2-project-banner__toggle"/s,
-  )
-})
-
 test('work progress header keeps only the plan table without losing operations', () => {
   const page = read(PAGE_FILE)
   assert.match(page, /work-progress-title-group/)
@@ -379,7 +298,7 @@ test('work progress header keeps only the plan table without losing operations',
   assert.doesNotMatch(page, /执行详情/)
   assert.match(page, /plan-execution-actions/)
   assert.match(page, /handleExport\(\)/)
-  assert.match(page, /从大纲导入/)
+  assert.match(page, /导入大纲/)
   assert.match(page, /回收站/)
   assert.doesNotMatch(page, /min-w-\[260px\]/)
 })

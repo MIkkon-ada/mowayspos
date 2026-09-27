@@ -17,8 +17,8 @@ import { getProjectById, getProjectIdFromRecord } from '../domain/projectIdentit
 import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
 import { getKeyTaskAssigneeNames, taskHasKeyTaskAssignee } from '../domain/keyTaskAssigneeFilter'
 import { PlanTableViewV2 } from '../components/task-management/PlanTableViewV2'
+import { ChevronDownIcon } from '../components/icons/ChevronDownIcon'
 import { KeyTaskExecutionDetailView } from '../components/task-management/KeyTaskExecutionDetailView'
-import { MobileTaskList } from '../features/mobile-core-pages/MobileTaskList'
 import { toast } from '../utils/toast'
 
 const NOT_STARTED = new Set(['未开始', 'not_started', 'notstarted'])
@@ -237,6 +237,10 @@ export function TaskManagementPage() {
   const [search, setSearch]           = useState('')
   const [filterStatus, setFilterStatus] = useState(() => searchParams.get('status') ?? '')
   const [filterOwner, setFilterOwner] = useState('')
+  const [filterPageOpen, setFilterPageOpen] = useState(false)
+  const [filterDraft, setFilterDraft] = useState({ status: '', owner: '', search: '' })
+  const [operationsOpen, setOperationsOpen] = useState(false)
+  const [projectStandardExpanded, setProjectStandardExpanded] = useState(false)
   const [showDeleted, setShowDeleted] = useState(false)
   // viewProjectId：null=全部任务，非null=特定项目
   const [viewProjectId, setViewProjectId] = useState<number | null>(null)
@@ -429,6 +433,37 @@ export function TaskManagementPage() {
     if (!name) return setViewProjectId(null)
     const pid = Number(name)
     setViewProjectId(Number.isFinite(pid) ? pid : null)
+  }
+
+  function openFilterPage() {
+    setFilterDraft({
+      status: filterStatus,
+      owner: filterOwner,
+      search,
+    })
+    setFilterPageOpen(true)
+    setOperationsOpen(false)
+  }
+
+  function applyFilterDraft() {
+    setFilterStatus(filterDraft.status)
+    setFilterOwner(filterDraft.owner)
+    setSearch(filterDraft.search)
+    setFilterPageOpen(false)
+  }
+
+  function clearFilterDraft() {
+    setFilterDraft({ status: '', owner: '', search: '' })
+  }
+
+  function openTrash() {
+    clearSelection()
+    setExpandedTasks(new Set())
+    setSearch('')
+    setFilterStatus('')
+    setFilterOwner('')
+    setShowDeleted(true)
+    setOperationsOpen(false)
   }
 
   const planBaseTasks = useMemo(() => tasks
@@ -848,9 +883,11 @@ export function TaskManagementPage() {
     if (!focusedProject || !planTableReady) return
     void exportPlanTableToExcel({
       project: focusedProject,
-      tasks: planBaseTasks,
+      tasks,
       taskSubMap,
       searchText: search,
+      statusFilter: filterStatus,
+      ownerFilter: filterOwner,
     })
   }
 
@@ -860,7 +897,7 @@ export function TaskManagementPage() {
     setFormOpen(true)
   }
 
-function handleFormSave(payload: TaskPayload) {
+  function handleFormSave(payload: TaskPayload) {
     const pid = payload.project_id ?? viewProjectId ?? currentProjectId
     if (!pid) {
       toast.error('请选择专项')
@@ -878,6 +915,8 @@ function handleFormSave(payload: TaskPayload) {
     }).catch(() => toast.error('保存失败，请重试'))
   }
 
+  const projectStandardText = focusedProject?.objectives?.trim() || focusedProject?.description?.trim() || ''
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {formOpen && (
@@ -891,9 +930,9 @@ function handleFormSave(payload: TaskPayload) {
           onClose={() => { setFormOpen(false); setFormTask(null); setFormDefaultProjectId(null) }}
         />
       )}
-      {importOpen && currentProjectId && (
+      {importOpen && effectiveTaskProjectId && (
         <OutlineImportModal
-          defaultProjectId={currentProjectId}
+          defaultProjectId={effectiveTaskProjectId}
           projects={resolvedTaskProjects}
           onCreated={(newTasks) => {
             setTasks((prev) => [...prev, ...newTasks])
@@ -933,99 +972,63 @@ function handleFormSave(payload: TaskPayload) {
         />
       )}
 
-      {/* Top Bar */}
-      {!selectedSubTask && <header className="min-h-14 px-4 py-2 lg:px-6 gap-3 flex flex-wrap items-center flex-shrink-0 bg-white border-b overflow-x-auto" style={{ borderColor: '#E9EFF6' }}>
-        <div className="work-progress-title-group flex-shrink-0">
-          <h1 className="text-base font-bold text-slate-800">项目工作推进表</h1>
-        </div>
-
-        {/* Filters */}
-        <div className="flex flex-1 items-center justify-end gap-2 flex-wrap">
+      {/* Compact project header: project selection stays visible; other filters open in a small panel. */}
+      {!selectedSubTask && <header className="work-progress-page-header min-h-14 px-4 py-2 lg:px-6 gap-3 flex items-center flex-shrink-0 min-w-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
+        {!showDeleted && projectStandardText && <button type="button" className="wp-standard-toggle" aria-expanded={projectStandardExpanded} onClick={() => setProjectStandardExpanded((expanded) => !expanded)}>
+          <span>项目总体标准</span><span>{projectStandardExpanded ? '收起' : '展开'}</span>
+        </button>}
+        <div className="wp-project-picker">
           <select
+            aria-label="切换项目"
             value={String(effectiveTaskProjectId ?? '')}
-            onChange={(event) => {
-              handleProjectFilter(event.target.value)
-              setAutoSelectedTaskProjectId(null)
-            }}
-            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 cursor-pointer focus:outline-none font-medium"
+            onChange={(event) => { handleProjectFilter(event.target.value); setAutoSelectedTaskProjectId(null) }}
           >
-            <option value="">请选择项目</option>
-            {availableTaskProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            <option value="">选择项目</option>
+            {availableTaskProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
           </select>
-          <select
-            value={filterStatus}
-            onChange={(event) => setFilterStatus(event.target.value)}
-            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 cursor-pointer focus:outline-none font-medium"
-          >
-            <option value="">全部状态</option>
-            <option value="未开始">未开始</option>
-            <option value="进行中">进行中</option>
-            <option value="已完成">已完成</option>
-            <option value="延期">延期</option>
-            <option value="暂缓">暂缓</option>
-          </select>
-          <select
-            value={filterOwner}
-            onChange={(e) => setFilterOwner(e.target.value)}
-            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 cursor-pointer focus:outline-none font-medium"
-          >
-            <option value="">全部负责人</option>
-            {assigneeNames.map((name) => <option key={name} value={name}>{name}</option>)}
-          </select>
-          <div className="relative">
-            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" style={{ width: 13, height: 13 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索重点工作、关键任务、责任人"
-              className="pl-8 pr-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none w-64"
-            />
-          </div>
+          <span><ChevronDownIcon className="wp-project-picker-icon" /></span>
         </div>
-
-        <div className="plan-execution-actions flex items-center gap-2 ml-1 flex-shrink-0">
-          <div className="inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-            <button
-              onClick={() => { clearSelection(); setExpandedTasks(new Set()); setShowDeleted(false) }}
-              className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${!showDeleted ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              在办
+        <div className="wp-header-controls">
+          <div className="wp-filter-anchor">
+            <button type="button" className="wp-header-button" onClick={() => { if (filterPageOpen) setFilterPageOpen(false); else openFilterPage() }} aria-haspopup="dialog" aria-expanded={filterPageOpen}>
+              筛选{(filterStatus || filterOwner || search) ? <span className="wp-filter-count">{[filterStatus, filterOwner, search].filter(Boolean).length}</span> : null}
             </button>
-            {canManageTrash && (
-              <button
-                onClick={() => {
-                  clearSelection()
-                  setExpandedTasks(new Set())
-                  setSearch('')
-                  setFilterStatus('')
-                  setFilterOwner('')
-                  setShowDeleted(true)
-                }}
-                className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors ${showDeleted ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                回收站
-              </button>
-            )}
+            {filterPageOpen && <div className="wp-filter-popover" role="dialog" aria-labelledby="wp-filter-title">
+              <div className="wp-filter-popover-title"><h2 id="wp-filter-title">筛选条件</h2><button type="button" aria-label="关闭筛选" onClick={() => setFilterPageOpen(false)}>×</button></div>
+              <div className="wp-filter-fields">
+                <label className="wp-filter-field"><span>任务状态</span><select value={filterDraft.status} onChange={(event) => setFilterDraft((draft) => ({ ...draft, status: event.target.value }))}>
+                  <option value="">全部状态</option><option value="未开始">未开始</option><option value="进行中">进行中</option><option value="已完成">已完成</option><option value="延期">延期</option><option value="暂缓">暂缓</option>
+                </select></label>
+                <label className="wp-filter-field"><span>负责人</span><select value={filterDraft.owner} onChange={(event) => setFilterDraft((draft) => ({ ...draft, owner: event.target.value }))}>
+                  <option value="">全部负责人</option>{assigneeNames.map((name) => <option key={name} value={name}>{name}</option>)}
+                </select></label>
+                <label className="wp-filter-field"><span>搜索</span><input value={filterDraft.search} onChange={(event) => setFilterDraft((draft) => ({ ...draft, search: event.target.value }))} placeholder="搜索重点工作、关键任务、责任人" /></label>
+              </div>
+              <footer className="wp-filter-popover-footer">
+                <button type="button" className="wp-filter-clear" onClick={clearFilterDraft}>清空</button><span />
+                <button type="button" className="wp-header-button" onClick={() => setFilterPageOpen(false)}>取消</button>
+                <button type="button" className="wp-header-button wp-header-button--primary" onClick={applyFilterDraft}>应用</button>
+              </footer>
+            </div>}
           </div>
-          <select
-            defaultValue=""
-            onChange={(e) => {
-              const action = e.target.value
-              if (!action) return
-              if (action === 'export') handleExport()
-              if (action === 'import') setImportOpen(true)
-              e.currentTarget.value = ''
-            }}
-            className="cursor-pointer min-w-[220px] px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-semibold focus:outline-none hover:bg-slate-50"
-          >
-            <option value="" disabled>操作</option>
-            <option value="export">导出表格</option>
-            {!showDeleted && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProjectRoles }) && currentProjectId && !projectArchived && (
-              <option value="import">从大纲导入</option>
-            )}
-          </select>
+          <div className="wp-operations-wrap">
+            <button type="button" className="wp-header-button" onClick={() => setOperationsOpen((open) => !open)} aria-haspopup="menu" aria-expanded={operationsOpen}>操作</button>
+            {operationsOpen && <div className="wp-operations-menu" role="menu">
+              {showDeleted ? <button type="button" role="menuitem" onClick={() => { setShowDeleted(false); setOperationsOpen(false) }}>返回在办工作</button> : <>
+                <button type="button" role="menuitem" disabled={!planTableReady || !focusedProject} onClick={() => { handlePlanExport(); setOperationsOpen(false) }}>导出 Excel</button>
+                {canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProjectRoles }) && effectiveTaskProjectId && !projectArchived && <button type="button" role="menuitem" onClick={() => { openTaskCreateForProject(effectiveTaskProjectId); setOperationsOpen(false) }}>新增重点工作</button>}
+                {canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProjectRoles }) && effectiveTaskProjectId && !projectArchived && <button type="button" role="menuitem" onClick={() => { setImportOpen(true); setOperationsOpen(false) }}>导入大纲</button>}
+                {canManageTrash && <button type="button" role="menuitem" onClick={openTrash}>回收站</button>}
+              </>}
+              {showDeleted && <button type="button" role="menuitem" onClick={() => { handleExport(); setOperationsOpen(false) }}>导出回收站表格</button>}
+            </div>}
+          </div>
         </div>
       </header>}
+
+      {!selectedSubTask && !showDeleted && projectStandardExpanded && projectStandardText && <section className="wp-standard-expanded" aria-label="项目总体标准">
+        <div className="wp-standard-expanded-content">{projectStandardText}</div>
+      </section>}
 
       {/* Main */}
       {selectedSubTask ? (
@@ -1064,20 +1067,15 @@ function handleFormSave(payload: TaskPayload) {
             </div>
           ) : !showDeleted ? (
             <>
-              <div className="min-[800px]:hidden flex-1 overflow-y-auto bg-slate-50 pt-3">
-                <MobileTaskList tasks={planBaseTasks} subTasksByTaskId={taskSubMap} loading={planTableLoading} onOpenSubTask={openSubDetail} />
-              </div>
-              <div className="hidden min-[800px]:flex min-w-0 flex-1 flex-col">
+              <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden">
                 <PlanTableViewV2
                   project={focusedProject}
-                  tasks={planBaseTasks}
+                  tasks={tasks}
+                  statusFilter={filterStatus}
+                  ownerFilter={filterOwner}
                   taskSubMap={taskSubMap}
                   searchText={search}
                   loading={planTableLoading}
-                  exportDisabled={!planTableReady}
-                  onExport={handlePlanExport}
-                  canCreateTask={!showDeleted && !projectArchived && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: currentProjectRoles })}
-                  onCreateTask={() => openTaskCreateForProject(focusedProject?.id)}
                   onOpenSubTask={openSubDetail}
                 />
               </div>
@@ -1377,6 +1375,7 @@ function handleFormSave(payload: TaskPayload) {
                             { label: '所属项目', value: selectedSubProject?.name },
                             { label: '重点工作', value: subParent?.key_task ?? panelSubTask.parent_task?.key_task },
                             { label: '负责人', value: panelSubTask.assignee },
+                            { label: '协作人', value: panelSubTask.collaborators?.filter(Boolean).join('、') },
                           ] as { label: string; value?: string }[]).filter((r) => r.value).map((row) => (
                             <div key={row.label} className="flex gap-2 px-2.5 py-1.5 border-b last:border-b-0" style={{ borderColor: '#F1F5F9' }}>
                               <span className="w-14 shrink-0 text-xs font-semibold" style={{ color: '#94A3B8' }}>{row.label}</span>
@@ -1404,9 +1403,27 @@ function handleFormSave(payload: TaskPayload) {
                         {/* 完成标准 */}
                         {panelSubTask.completion_criteria && (
                           <div>
-                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>评价标准</p>
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>验收标准</p>
                             <div className="rounded px-2.5 py-1.5 text-xs leading-relaxed" style={{ background: '#EEF2FF', color: '#3730A3', border: '1px solid #C7D2FE' }}>
                               {panelSubTask.completion_criteria}
+                            </div>
+                          </div>
+                        )}
+
+                        {panelSubTask.latest_next_step && (
+                          <div>
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>下一步</p>
+                            <div className="rounded px-2.5 py-1.5 text-xs leading-relaxed" style={{ background: '#F0FDF4', color: '#166534', border: '1px solid #BBF7D0' }}>
+                              {panelSubTask.latest_next_step}
+                            </div>
+                          </div>
+                        )}
+
+                        {panelSubTask.has_risk && (
+                          <div>
+                            <p className="text-xs font-bold mb-0.5" style={{ color: '#64748B' }}>风险/问题</p>
+                            <div className="rounded px-2.5 py-1.5 text-xs leading-relaxed" style={{ background: '#FFF7ED', color: '#9A3412', border: '1px solid #FED7AA' }}>
+                              {panelSubTask.related_issues?.[0]?.description || '当前关键任务已标记为有风险，请补充处理说明。'}
                             </div>
                           </div>
                         )}
@@ -1539,7 +1556,7 @@ function handleFormSave(payload: TaskPayload) {
                     {/* 完成标准 */}
                     {selectedTask.completion_standard && (
                       <div>
-                        <p className="text-xs font-bold text-slate-500 mb-1.5">完成标准</p>
+                        <p className="text-xs font-bold text-slate-500 mb-1.5">验收标准</p>
                         <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2.5 text-xs text-indigo-900 leading-relaxed">{selectedTask.completion_standard}</div>
                       </div>
                     )}
@@ -1547,7 +1564,7 @@ function handleFormSave(payload: TaskPayload) {
                     {/* 关键成果 */}
                     {selectedTask.key_achievement && (
                       <div>
-                        <p className="text-xs font-bold text-slate-500 mb-1.5">关键成果</p>
+                        <p className="text-xs font-bold text-slate-500 mb-1.5">交付成果</p>
                         <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2.5 text-xs text-amber-900 leading-relaxed">{selectedTask.key_achievement}</div>
                       </div>
                     )}
@@ -1563,7 +1580,7 @@ function handleFormSave(payload: TaskPayload) {
                     {/* 当前问题 */}
                     {selectedTask.problem_note && (
                       <div>
-                        <p className="text-xs font-bold text-slate-500 mb-1.5">当前问题</p>
+                        <p className="text-xs font-bold text-slate-500 mb-1.5">风险/问题</p>
                         <div className="rounded-lg bg-red-50 border border-red-100 px-3 py-2.5 text-xs text-red-900 leading-relaxed">{selectedTask.problem_note}</div>
                       </div>
                     )}

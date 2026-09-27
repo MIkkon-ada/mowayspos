@@ -55,10 +55,8 @@ export type ParsedAssistingPerson = {
 export type PlanTableRow = {
   task: TaskItem
   subtask: SubTaskItem | null
-  wbsCode: string
   workstream: string
   sequence: number
-  subtaskIndex: number
   objective: string
   objectiveRowSpan: number
   showObjective: boolean
@@ -95,6 +93,8 @@ export type BuildPlanRowsInput = {
   tasks: TaskItem[]
   taskSubMap: Record<number, SubTaskItem[]>
   searchText?: string
+  statusFilter?: string
+  ownerFilter?: string
 }
 
 export function clampPlanTableZoom(value: number): number {
@@ -236,45 +236,53 @@ export function buildPlanRows({
   tasks,
   taskSubMap,
   searchText = '',
+  statusFilter = '',
+  ownerFilter = '',
 }: BuildPlanRowsInput): PlanTableRow[] {
   const objective = textOrFallback(project?.objectives || project?.description, '未填写项目目标')
   const projectManagers = project?.owners?.filter(Boolean).join('、') || ''
   const query = searchText.trim()
   const groupedRows: Array<Omit<PlanTableRow, 'sequence' | 'objectiveRowSpan' | 'showObjective'>> = []
-  let globalSubtaskIndex = 0
-
-  tasks.forEach((task, taskIndex) => {
-    const taskWbsCode = String(taskIndex + 1)
+  tasks.forEach((task) => {
     const allSubtasks = taskSubMap[task.id] ?? []
     const taskMatched = query ? taskMatchesSearch(task, project, query) : true
-    const visibleSubtasks = query && !taskMatched
+    const searchedSubtasks = query && !taskMatched
       ? allSubtasks.filter((subtask) => subtaskMatchesSearch(subtask, query))
       : allSubtasks
 
-    if (query && !taskMatched && visibleSubtasks.length === 0) return
+    const visibleSubtasks = searchedSubtasks.filter((subtask) => {
+      if (ownerFilter && (subtask.assignee || task.owner || '').trim() !== ownerFilter.trim()) return false
+      if (statusFilter) {
+        const status = getPlanStatusLabel(subtask.status || task.status)
+        if (statusFilter === '延期') {
+          if (status !== '延期' && !(subtask.is_overdue && status !== '已完成')) return false
+        } else if (status !== getPlanStatusLabel(statusFilter)) return false
+      }
+      return true
+    })
+    if ((ownerFilter || statusFilter || (query && !taskMatched)) && visibleSubtasks.length === 0) return
 
     const taskRows: Array<SubTaskItem | null> = visibleSubtasks.length > 0 ? visibleSubtasks : [null]
     const taskPlanTime = parsePlanTimeRange(task.plan_time)
     const taskRowSpan = taskRows.length
 
     taskRows.forEach((subtask, rowIndex) => {
-      if (subtask) globalSubtaskIndex += 1
-      const subtaskIndex = subtask ? globalSubtaskIndex : 0
       const parsedNotes = parseAssistingPerson(subtask?.notes)
       const planTime = parsePlanTimeRange(subtask?.plan_time)
       const status = getPlanStatusLabel(subtask?.status || task.status)
       groupedRows.push({
         task,
         subtask,
-      wbsCode: subtask ? `${taskWbsCode}.${rowIndex + 1}` : taskWbsCode,
         workstream: textOrFallback(task.key_task, EMPTY_PLAN_CELL),
-        subtaskIndex,
         objective,
         taskRowSpan,
         showTaskCells: rowIndex === 0,
         keyTask: subtask ? textOrFallback(subtask.title, '暂无关键任务') : '暂无关键任务',
         deliverable: textOrFallback(task.key_achievement, EMPTY_PLAN_CELL),
-        acceptance: textOrFallback(subtask?.completion_criteria || task.completion_standard, '未填写验收标准'),
+        acceptance: textOrFallback(
+          subtask?.completion_criteria || task.completion_standard,
+          '未填写验收标准',
+        ),
         responsible: subtask
           ? textOrFallback(subtask.assignee || task.owner, EMPTY_PLAN_CELL)
           : EMPTY_PLAN_CELL,
@@ -285,7 +293,7 @@ export function buildPlanRows({
         status,
         statusTone: getPlanStatusTone(status),
         risk: subtask?.has_risk ? '有风险' : EMPTY_PLAN_CELL,
-        latestProgress: textOrFallback(subtask?.latest_confirmed_submission?.summary || parsedNotes.remainingNotes, EMPTY_PLAN_CELL),
+        latestProgress: textOrFallback(subtask?.latest_confirmed_submission?.summary, EMPTY_PLAN_CELL),
         latestConfirmedSubmission: subtask?.latest_confirmed_submission ?? null,
         statusMarkers: getPlanStatusMarkers(subtask),
         completionNote: subtask ? parsedNotes.remainingNotes : '',

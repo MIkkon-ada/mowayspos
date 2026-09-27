@@ -36,8 +36,6 @@ const ProjectOwnerSubmitPage = lazy(() => import('../pages/ProjectOwnerSubmitPag
 const ProjectArchivePage = lazy(() => import('../pages/ProjectArchivePage').then((m) => ({ default: m.ProjectArchivePage })))
 const NoAccessPage = lazy(() => import('../pages/NoAccessPage').then((m) => ({ default: m.NoAccessPage })))
 const ClientPortalPlaceholderPage = lazy(() => import('../pages/ClientPortalPlaceholderPage').then((m) => ({ default: m.ClientPortalPlaceholderPage })))
-const MemberProjectsPage = lazy(() => import('../pages/MemberProjectsPage').then((m) => ({ default: m.MemberProjectsPage })))
-const MemberProjectTasksPage = lazy(() => import('../pages/MemberProjectTasksPage').then((m) => ({ default: m.MemberProjectTasksPage })))
 const MyTasksPage = lazy(() => import('../pages/MyTasksPage').then((m) => ({ default: m.MyTasksPage })))
 const MyTaskDetailPage = lazy(() => import('../pages/MyTaskDetailPage').then((m) => ({ default: m.MyTaskDetailPage })))
 
@@ -50,6 +48,11 @@ function LegacyProjectRedirect({ to, includeProjectId = false }: { to: string; i
   const { projectId } = useParams()
   const target = includeProjectId && projectId ? `${to}?projectId=${projectId}` : to
   return <Navigate to={target} replace />
+}
+
+function MemberProjectWorkProgressRedirect() {
+  const { projectId = '' } = useParams()
+  return <Navigate to={`/work/tasks?projectId=${projectId}`} replace />
 }
 
 function LegacyCoachDecisionRedirect() {
@@ -240,8 +243,8 @@ export function AppRoutes() {
           <Route index element={<Navigate to="/member/tasks" replace />} />
           <Route path="tasks" element={<MyTasksPage />} />
           <Route path="tasks/:taskId" element={<MyTaskDetailPage />} />
-          <Route path="projects" element={<MemberProjectsPage />} />
-          <Route path="projects/:projectId" element={<MemberProjectTasksPage />} />
+          <Route path="projects" element={<Navigate to="/work/tasks" replace />} />
+          <Route path="projects/:projectId" element={<MemberProjectWorkProgressRedirect />} />
         </Route>
         <Route
           path="/projects"

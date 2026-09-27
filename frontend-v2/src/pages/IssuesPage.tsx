@@ -144,6 +144,8 @@ export function IssuesPage() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const projectId = parseProjectId(searchParams)
+  const requestedStatus = searchParams.get('status')
+  const initialStatus = requestedStatus === '待决策' || requestedStatus === '待协调' ? requestedStatus : '全部'
   const currentProject = projects.find((p) => p.id === projectId) ?? null
   const projectArchived = isProjectArchived(currentProject)
 
@@ -162,7 +164,7 @@ export function IssuesPage() {
   // filters
   const [filterType, setFilterType] = useState('全部')
   const [filterPriority, setFilterPriority] = useState('全部')
-  const [filterStatus, setFilterStatus] = useState('全部')
+  const [filterStatus, setFilterStatus] = useState(initialStatus)
   const [filterOwner, setFilterOwner] = useState('')
   const [filterHelper, setFilterHelper] = useState('')
   const [keyword, setKeyword] = useState('')
@@ -280,7 +282,12 @@ export function IssuesPage() {
   const isMemberIssueView = Boolean(currentProject) && !canViewAllProjectIssues
 
   // N4-P2-N: 普通成员状态筛选
-  const [memberStatusFilter, setMemberStatusFilter] = useState('全部')
+  const [memberStatusFilter, setMemberStatusFilter] = useState(initialStatus)
+
+  useEffect(() => {
+    setFilterStatus(initialStatus)
+    setMemberStatusFilter(initialStatus)
+  }, [initialStatus, projectId])
 
   // --- Derived data ---
   const filteredIssues = useMemo(() => {

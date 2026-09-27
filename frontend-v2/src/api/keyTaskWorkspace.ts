@@ -42,6 +42,14 @@ export type CurrentProgress = {
   effective_at: string | null
 }
 
+export type LatestKeyTaskSubmission = {
+  id: number
+  summary: string
+  next_step: string
+  submitter: string
+  confirmed_at: string | null
+}
+
 export type ExecutionEvent = {
   id: number
   event_type: string
@@ -92,7 +100,8 @@ export type KeyTaskWorkspace = {
   }
   plan_summary: { total: number; completed: number; in_progress: number; not_started: number; delayed: number }
   execution_plans: ExecutionPlan[]
-  achievements: Array<{ id: number; name: string; achievement_type: string; status: string; owner: string; version: string; created_at: string | null }>
+  latest_submission: LatestKeyTaskSubmission | null
+  achievements: Array<{ id: number; name: string; achievement_type: string; status: string; owner: string; version: string; created_at: string | null; attachments: Array<{ id: number; original_name: string; mime_type: string; size_bytes: number; created_at: string | null }> }>
   issues: Array<{ id: number; description: string; issue_type: string; status: string; priority: string; owner: string; updated_at: string | null }>
   timeline: ExecutionEvent[]
   permissions: { can_view: boolean; can_operate: boolean; can_manage_execution_plans: boolean; can_submit_update: boolean; can_confirm_completion: boolean; can_manage_risk: boolean }

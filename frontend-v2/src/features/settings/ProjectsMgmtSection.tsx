@@ -82,7 +82,7 @@ const STATUS_COLOR_MAP: Record<string, string> = {
 
 const STAGE_DESCRIPTIONS: Record<string, string> = {
   draft: '管理者需先完善项目目标和开始日期；结束日期可待定，基础信息齐全后即可下发给负责人。',
-  dispatched: '项目已下发给负责人，可继续完善立项信息。',
+  dispatched: '项目已下发给负责人，负责人正在完善工作计划。',
   pending_kickoff: '历史项目状态：项目已进入执行阶段，启动会作为执行事件留痕。',
   pending_review: '负责人已提交，等待企业教练审核立项和推进表草案。',
   returned: '企业教练已退回，请负责人修改后重新提交。',
@@ -94,7 +94,7 @@ const STAGE_DESCRIPTIONS: Record<string, string> = {
 
 const ACTION_REMINDERS: Record<string, string> = {
   draft: '请由管理者完善项目目标和开始日期；结束日期可待定，信息齐全后下发给负责人。',
-  dispatched: '项目已下发给负责人，可继续完善立项信息和工作推进表雏形。',
+  dispatched: '项目已下发给负责人，请负责人补齐工作计划后提交企业教练审核。',
   pending_kickoff: '项目已进入执行阶段，启动会可作为执行事件补录。',
   pending_review: '负责人已提交立项信息和工作推进表雏形，请企业教练审核项目完成准则、重点工作和关键任务安排。',
   returned: '项目已被企业教练退回，请负责人根据意见修改后重新提交。',
@@ -1171,7 +1171,7 @@ function LifecycleCard({
         </button>
         <button type="button" onClick={(event) => { event.stopPropagation(); onSelect() }}
           className="cursor-pointer rounded-lg border border-sky-300 bg-white px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-50">
-          进入项目 →
+          <span className="inline-flex items-center gap-1">进入项目<svg aria-hidden="true" viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m7 4 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
         </button>
       </div>
     </div>
@@ -1393,7 +1393,7 @@ export function DetailPanel({
     actionButtons.push({ label: '编辑项目', primary: true, onClick: onEdit })
   }
   if (status === 'dispatched' && roles.isRealOwner && canOwnerSubmit) {
-    actionButtons.push({ label: '完善立项信息', primary: true, onClick: onOwnerSubmit })
+    actionButtons.push({ label: '完善项目计划', primary: true, onClick: onOwnerSubmit })
   }
   if (status === 'pending_review') {
     actionButtons.push({ label: '查看审核材料', primary: true, onClick: onOpenApprovalMaterials })

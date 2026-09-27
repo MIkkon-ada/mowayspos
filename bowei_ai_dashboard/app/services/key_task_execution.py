@@ -168,6 +168,52 @@ def current_progress_dict(db: Session, key_task_id: int) -> dict[str, Any] | Non
     }
 
 
+def submission_summary(row: models.UpdateSubmission, key_task_id: int) -> str:
+    """Return the same key-task-scoped confirmed submission summary used by the plan table."""
+    try:
+        payload = json.loads(row.human_result_json or row.ai_result_json or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+    reports = payload.get("task_reports") if isinstance(payload, dict) else []
+    if isinstance(reports, list):
+        matched = next(
+            (
+                report for report in reports
+                if isinstance(report, dict) and report.get("matched_subtask_id") == key_task_id
+            ),
+            None,
+        )
+        if matched:
+            completed = matched.get("completed") or matched.get("completed_items")
+            if isinstance(completed, list):
+                completed = next((str(item).strip() for item in completed if str(item).strip()), "")
+            if isinstance(completed, str) and completed.strip():
+                return completed.strip()
+    return (row.title or row.transcript_text or "").strip()[:160]
+
+
+def latest_submission_dict(db: Session, key_task_id: int) -> dict[str, Any] | None:
+    row = (
+        db.query(models.UpdateSubmission)
+        .filter(
+            models.UpdateSubmission.related_subtask_id == key_task_id,
+            models.UpdateSubmission.confirmed_at.is_not(None),
+        )
+        .order_by(models.UpdateSubmission.confirmed_at.desc(), models.UpdateSubmission.id.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    progress = current_progress_dict(db, key_task_id)
+    return {
+        "id": row.id,
+        "summary": submission_summary(row, key_task_id),
+        "next_step": progress["next_step"] if progress else "",
+        "submitter": row.submitter or "",
+        "confirmed_at": _iso(row.confirmed_at),
+    }
+
+
 def timeline_dicts(db: Session, key_task_id: int, *, limit: int = 200) -> list[dict[str, Any]]:
     rows = (
         db.query(models.KeyTaskExecutionEvent)

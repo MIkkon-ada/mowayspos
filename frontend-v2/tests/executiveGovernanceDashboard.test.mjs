@@ -13,6 +13,7 @@ test('dashboard overview declares the compact governance contract', () => {
   assert.match(types, /governance\?:\s*GovernanceDashboardOverview/)
   assert.match(types, /key_task_id:\s*number/)
   assert.match(types, /workstream_title:\s*string/)
+  assert.match(types, /project_signals:\s*Record<string/)
 })
 
 test('governance view model module exists for deterministic scope aggregation', () => {
@@ -22,20 +23,20 @@ test('governance view model module exists for deterministic scope aggregation', 
 test('governance presentation module exists separately from dashboard routing', () => {
   assert.equal(existsSync(componentUrl), true)
   const component = readFileSync(componentUrl, 'utf8')
-  assert.match(component, /当前需要关注/)
-  assert.match(component, /需要处理/)
-  assert.match(component, /项目健康/)
-  assert.match(component, /重点 Initiative/)
-  assert.match(component, /collaborators\.slice\(0, 3\)/)
-  assert.match(component, /evidence_confirmed/)
-  assert.match(component, /healthLabel/)
+  assert.match(component, /管理层关注/)
+  assert.match(component, /待决策问题/)
+  assert.match(component, /待协调问题/)
+  assert.match(component, /项目概况/)
+  assert.match(component, /进入问题中心/)
+  assert.match(component, /onOpenIssueCenter\(project\.id, '待决策'\)/)
+  assert.doesNotMatch(component, /重点 Initiative/)
 })
 
-test('desktop dashboard preserves real controls and mounts governance content', () => {
+test('dashboard preserves scope control and mounts one responsive governance content', () => {
   assert.match(page, /<select[\s\S]*handleScopeChange/)
-  assert.match(page, /<select[\s\S]*setSelectedMonth/)
+  assert.match(page, /<ChevronDownIcon/)
   assert.match(page, /<GovernanceDashboardContent/)
-  assert.match(page, /onOpenAction=/)
-  assert.match(page, /onOpenInitiative=/)
-  assert.match(page, /<MobileDashboardContent/)
+  assert.match(page, /onOpenIssueCenter=\{openIssueCenter\}/)
+  assert.match(page, /onOpenProject=/)
+  assert.doesNotMatch(page, /<MobileDashboardContent/)
 })

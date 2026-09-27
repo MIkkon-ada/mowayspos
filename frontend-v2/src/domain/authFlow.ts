@@ -62,9 +62,9 @@ export function getPostLoginDestination(
   if (currentUser?.is_tech_admin || currentUser?.is_ceo || currentUser?.can_view_all) return '/home/dashboard'
   if (
     Boolean(currentUser?.owned_projects?.length || currentUser?.ceo_projects?.length) ||
-    projects.some((project) => project.user_roles?.some((role) => role === 'owner' || role === 'project_ceo'))
+    projects.some((project) => project.user_roles?.some((role) => ['owner', 'coordinator', 'project_ceo'].includes(role)))
   ) {
-    return '/home/projects'
+    return '/home/dashboard?scope=my'
   }
   if (projects.length === 0) return '/home/dashboard'
 

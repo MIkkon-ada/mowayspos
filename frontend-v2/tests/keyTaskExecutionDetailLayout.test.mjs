@@ -27,5 +27,5 @@ test('plan table still opens the key-task detail flow from the progress table', 
   const page = read('src/pages/TaskManagementPage.tsx')
   const table = read('src/components/task-management/PlanTableViewV2.tsx')
   assert.match(page, /<PlanTableViewV2[\s\S]*?onOpenSubTask=\{openSubDetail\}/)
-  assert.match(table, /onOpenSubTask\?\.\(row\.subtask\)/)
+  assert.match(table, /onOpen\(subtask\)/)
 })

@@ -1,18 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getOverview, exportWeeklyReport } from '../api/dashboard'
 import { ApiError } from '../api/client'
 import { toast } from '../utils/toast'
 import { useProject } from '../context/ProjectContext'
 import {
-  getProjectPrimaryStatus,
   getProjectStatusBadge,
+  isProjectArchived,
 } from '../domain/projectLifecycleStatus'
-import type { DashboardOverview, GovernanceAction, GovernanceInitiative, Project } from '../types'
-import { fmtMonth, fmtPlanTime } from '../utils/time'
-import { Skel, SkeletonStatCard } from '../components/Skeleton'
-import { MobileDashboardContent, type RoleQueueType } from '../features/dashboard/MobileDashboardContent'
-import { GovernanceDashboardContent, type ProjectHealthRow } from '../features/dashboard/GovernanceDashboardContent'
+import type { DashboardOverview, Project } from '../types'
+import { Skel } from '../components/Skeleton'
+import { ChevronDownIcon } from '../components/icons/ChevronDownIcon'
+import { GovernanceDashboardContent, type ProjectOverviewRow } from '../features/dashboard/GovernanceDashboardContent'
 import { aggregateGovernanceOverviews, emptyGovernance } from '../features/dashboard/governanceDashboard'
 
 type DashboardScope = 'global' | 'my' | 'project'
@@ -84,7 +83,7 @@ function aggregateDashboardOverviews(projects: Project[], overviews: DashboardOv
 }
 
 export function DashboardPage() {
-  const { currentProjectId, projects, currentUser, reloadProjects } = useProject()
+  const { projects, currentUser, reloadProjects } = useProject()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
@@ -94,17 +93,20 @@ export function DashboardPage() {
 
   const rawProjectId = searchParams.get('projectId')
   const urlProjectId = rawProjectId && Number.isFinite(Number(rawProjectId)) ? Number(rawProjectId) : null
+  const requestedScope = searchParams.get('scope')
   const canViewGlobalDashboard = !!(currentUser?.is_tech_admin || currentUser?.is_ceo || currentUser?.can_view_all)
   const managedDashboardProjects = projects.filter((project) =>
-    project.user_roles?.some((role) => ['owner', 'coordinator', 'project_ceo'].includes(role)),
+    !isProjectArchived(project) && project.user_roles?.some((role) => ['owner', 'coordinator', 'project_ceo'].includes(role)),
   )
   const hasProjectDashboardRole = managedDashboardProjects.length > 0
   const canViewMyDashboard = canViewGlobalDashboard || hasProjectDashboardRole
 
   function initialDashboardScope(): DashboardScope {
     if (urlProjectId !== null) return 'project'
-    if (projects.length === 1) return 'project'
+    if (requestedScope === 'global' && canViewGlobalDashboard) return 'global'
+    if (requestedScope === 'my' && canViewMyDashboard) return 'my'
     if (canViewGlobalDashboard) return 'global'
+    if (projects.length === 1) return 'project'
     if (hasProjectDashboardRole) return 'my'
     return 'my'
   }
@@ -114,21 +116,7 @@ export function DashboardPage() {
   const [scopeMode, setScopeMode] = useState<DashboardScope>(() => initialDashboardScope())
   const [scopeId, setScopeId] = useState<number | null>(() => urlProjectId)
 
-  // 月份筛选：生成最近 6 个月选项
-  function buildMonthOptions(): string[] {
-    const opts: string[] = []
-    const d = new Date()
-    for (let i = 0; i < 6; i++) {
-      opts.push(`${d.getFullYear()}年${d.getMonth() + 1}月`)
-      d.setMonth(d.getMonth() - 1)
-    }
-    return opts
-  }
-  const monthOptions = buildMonthOptions()
-  const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [exportLoading, setExportLoading] = useState(false)
-  const [showNotif, setShowNotif] = useState(false)
-  const notifRef = useRef<HTMLDivElement>(null)
 
   const [data, setData] = useState<DashboardOverview | null>(null)
   const [loading, setLoading] = useState(false)
@@ -156,19 +144,20 @@ export function DashboardPage() {
     if (nextScopeId !== scopeId) {
       setScopeId(nextScopeId)
     }
-  }, [urlProjectId, canViewGlobalDashboard, hasProjectDashboardRole, managedDashboardProjects.length])
+  }, [urlProjectId, requestedScope, canViewGlobalDashboard, hasProjectDashboardRole, managedDashboardProjects.length])
 
   // 切换筛选时，同步更新驾驶舱 URL，保留在 /home/dashboard 自己的项目范围内。
   function handleScopeChange(val: string) {
+    if (val === 'global' && !canViewGlobalDashboard) return
+    if (val !== (scopeMode === 'project' ? String(scopeId ?? '') : scopeMode)) setData(null)
     if (val === 'global') {
-      if (!canViewGlobalDashboard) return
       setScopeMode('global')
       setScopeId(null)
-      navigate('/home/dashboard')
+      navigate('/home/dashboard?scope=global')
     } else if (val === 'my') {
       setScopeMode('my')
       setScopeId(null)
-      navigate('/home/dashboard')
+      navigate('/home/dashboard?scope=my')
     } else {
       const id = Number(val)
       setScopeMode('project')
@@ -184,7 +173,7 @@ export function DashboardPage() {
       return
     }
     const results = await Promise.allSettled(
-      managedDashboardProjects.map((project) => getOverview(project.id, selectedMonth)),
+      managedDashboardProjects.map((project) => getOverview(project.id)),
     )
     if (cancelledRef.cancelled) return
     results.forEach((result, index) => {
@@ -217,7 +206,7 @@ export function DashboardPage() {
     setLoading(true)
     const load = scopeMode === 'my'
       ? loadMyProjectDashboard(cancelledRef)
-      : getOverview(scopeMode === 'global' ? undefined : scopeId, selectedMonth)
+      : getOverview(scopeMode === 'global' ? undefined : scopeId)
         .then((d) => { if (!cancelledRef.cancelled) { setData(d); setLoadError(null) } })
     load
       .catch((err) => {
@@ -230,7 +219,7 @@ export function DashboardPage() {
       })
       .finally(() => { if (!cancelledRef.cancelled) setLoading(false) })
     return () => { cancelledRef.cancelled = true }
-  }, [scopeMode, scopeId, selectedMonth, shouldBlockDashboardLoading, projects])
+  }, [scopeMode, scopeId, shouldBlockDashboardLoading, projects])
 
   async function handleExport() {
     if (scopeMode === 'my') {
@@ -243,7 +232,7 @@ export function DashboardPage() {
     }
     setExportLoading(true)
     try {
-      await exportWeeklyReport(scopeMode === 'global' ? null : scopeId, selectedMonth)
+      await exportWeeklyReport(scopeMode === 'global' ? null : scopeId)
     } catch {
       toast.error('导出失败，请稍后重试')
     } finally {
@@ -251,16 +240,6 @@ export function DashboardPage() {
     }
   }
 
-  const stats = data?.task_stats ?? {}
-  const total = stats.total_tasks ?? 0
-  const inProgress = stats.in_progress ?? 0
-  const completed = stats.completed ?? 0
-  const delayed = stats.delayed ?? 0
-  const paused = stats.paused ?? 0
-  const notStarted = stats.not_started ?? 0
-  const achievements = (data?.achievement_stats?.total_achievements as number) ?? 0
-  const pendingDecisions = data?.issue_stats?.waiting_ceo_decision ?? 0
-  const canViewDecisions = (data as any)?.access?.can_view_decisions ?? false
 
   function projectNameFromRecord(record: any) {
     if (!record) return ""
@@ -268,81 +247,52 @@ export function DashboardPage() {
     return matched?.name ?? record.special_project ?? record.related_special_project ?? record.name ?? ""
   }
 
-  // 专项进度：用 project_cards 里后端算好的 completion_rate
-  const completionMap = new Map<string, { rate: number; done: number; total: number }>()
-  ;(data?.project_cards as any[] ?? []).forEach((card: any) => {
-    const name = projectNameFromRecord(card)
-    if (name) completionMap.set(name, {
-      rate:  card.completion_rate ?? 0,
-      done:  card.completed_count ?? 0,
-      total: card.task_count ?? 0,
-    })
+  // 项目概况使用重点工作统计；管理关注点来自问题中心的当前状态。
+  const projectCards = (data?.project_cards as any[] ?? [])
+  const projectCardById = new Map<number, Record<string, any>>()
+  projectCards.forEach((card: any) => {
+    const projectId = Number(card.project_id)
+    if (Number.isFinite(projectId)) projectCardById.set(projectId, card)
   })
 
-  // ── 通知数据 ────────────────────────────────────────────────
-  const delayedTasks: any[]   = (data as any)?.recent?.delayed_tasks ?? []
-  const queue: any            = (data as any)?.role_queue ?? {}
-  const qItems: any[]         = queue.items ?? []
-  const qCount: number        = queue.count ?? 0
-  const qType: string         = queue.type ?? ''
-  const QUEUE_LABEL: Record<string, string> = {
-    pending_decisions:   '需决策事项',
-    pending_review:      '待审核内容',
-    pending_coordinator: '待给出建议',
-    in_progress:         '流程推进中',
-  }
-  const notifTotal = delayedTasks.length + (canViewDecisions ? pendingDecisions : qCount)
-  const mobileRoleQueueType: RoleQueueType = ['pending_decisions', 'pending_review', 'pending_coordinator', 'in_progress'].includes(qType)
-    ? qType as RoleQueueType
-    : 'pending_decisions'
-  const mobileScopeOptions = [
-    ...(canViewGlobalDashboard ? [{ value: 'global', label: '全部项目' }] : []),
-    ...(!canViewGlobalDashboard && canViewMyDashboard ? [{ value: 'my', label: '我的项目' }] : []),
-    ...projects.map((project) => ({ value: String(project.id), label: project.name })),
-  ]
-  const mobileCompletionRows = projects.slice(0, 6).map((project) => {
-    const card = completionMap.get(project.name)
-    return { id: project.id, name: project.name, done: card?.done ?? 0, total: card?.total ?? 0, rate: card?.rate ?? 0 }
-  })
   const governance = data?.governance ?? emptyGovernance()
   const scopedProjects = scopeMode === 'project' && scopeId
     ? projects.filter((project) => project.id === scopeId)
-    : projects
-  const projectHealthRows: ProjectHealthRow[] = scopedProjects.slice(0, 4).map((project) => {
-    const card = completionMap.get(project.name)
-    const relatedInitiative = governance.initiatives.find((initiative) => initiative.project_id === project.id)
+    : scopeMode === 'my'
+      ? managedDashboardProjects
+      : projectCards.length > 0
+        ? projects.filter((project) => projectCardById.has(project.id))
+        : projects.filter((project) => !isProjectArchived(project))
+  const projectRows: ProjectOverviewRow[] = scopedProjects.map((project) => {
+    const card = projectCardById.get(project.id) ?? projectCards.find((item: any) => projectNameFromRecord(item) === project.name)
+    const signals = governance.project_signals?.[String(project.id)]
+    const status = getProjectStatusBadge(project)
     return {
       id: project.id,
       name: project.name,
-      nextMilestone: relatedInitiative?.next_milestone || '未设置',
-      health: card?.rate === 0 && (card?.total ?? 0) > 0 ? 'unstarted' : card?.rate === 100 ? 'healthy' : 'watch',
+      statusLabel: status.label,
+      statusClassName: status.className,
+      completedWorkstreams: asNumber(card?.completed_count ?? card?.task_stats?.completed),
+      totalWorkstreams: asNumber(card?.task_count ?? card?.task_stats?.total_tasks),
+      openIssues: asNumber(card?.open_issue_count),
+      latestUpdate: String(card?.latest_update ?? ''),
+      pendingDecisions: signals?.pending_decisions ?? 0,
+      pendingCoordination: signals?.pending_coordination ?? 0,
     }
-  })
+  }).sort((left, right) =>
+    right.pendingDecisions - left.pendingDecisions
+    || right.pendingCoordination - left.pendingCoordination
+    || right.openIssues - left.openIssues
+    || left.name.localeCompare(right.name, 'zh-CN'),
+  )
 
-  function openGovernanceAction(action: GovernanceAction) {
-    if (!action.route || (scopeMode === 'project' && action.project_id !== scopeId)) return
-    navigate(action.route)
+  function openIssueCenter(projectId?: number, status?: '待决策' | '待协调') {
+    const targetProjectId = projectId ?? (scopeMode === 'project' ? scopeId : null)
+    const params = new URLSearchParams()
+    if (targetProjectId) params.set('projectId', String(targetProjectId))
+    if (targetProjectId && status) params.set('status', status)
+    navigate(`/work/issues${params.size ? `?${params.toString()}` : ''}`)
   }
-
-  function openGovernanceInitiative(initiative: GovernanceInitiative) {
-    if (!initiative.project_id) return
-    navigate(`/work/tasks?projectId=${initiative.project_id}`)
-  }
-
-  // 点击面板外部关闭
-  useEffect(() => {
-    if (!showNotif) return
-    function handler(e: MouseEvent) {
-      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
-        setShowNotif(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showNotif])
-
-  const now = new Date()
-  const monthStr = `${now.getFullYear()}年${now.getMonth() + 1}月`
 
   const exportTitle = scopeMode === 'my'
     ? '请选择单个项目后导出周报；多项目周报将在后续聚合导出中支持。'
@@ -351,189 +301,34 @@ export function DashboardPage() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="min-[800px]:hidden flex min-h-0 flex-1 flex-col">
-        {dataReady ? (
-          <MobileDashboardContent
-            scopeOptions={mobileScopeOptions}
-            selectedScope={scopeMode === 'project' ? String(scopeId ?? '') : scopeMode}
-            selectedMonth={selectedMonth}
-            monthOptions={monthOptions}
-            onScopeChange={handleScopeChange}
-            onMonthChange={setSelectedMonth}
-            total={total}
-            notStarted={notStarted}
-            inProgress={inProgress}
-            completed={completed}
-            delayed={delayed}
-            paused={paused}
-            achievements={achievements}
-            pendingDecisions={pendingDecisions}
-            canViewDecisions={canViewDecisions}
-            recentTasks={(data?.recent?.tasks as Array<Record<string, unknown>>) ?? []}
-            delayedTasks={delayedTasks}
-            roleQueue={{ type: mobileRoleQueueType, count: qCount, items: qItems }}
-            completionRows={mobileCompletionRows}
-            onOpenTasks={(status) => {
-              const pid = scopeId ?? currentProjectId
-              if (pid) navigate(status ? `/project/${pid}/tasks?status=${encodeURIComponent(status)}` : `/project/${pid}/tasks`)
-            }}
-            onOpenAchievements={() => {
-              const pid = scopeId ?? currentProjectId
-              if (pid) navigate(`/project/${pid}/achievements`)
-            }}
-            onOpenRoleQueue={(type) => {
-              const pid = scopeId ?? currentProjectId
-              const route = { pending_decisions: 'decisions', pending_review: 'confirm', pending_coordinator: 'coordinate', in_progress: 'confirm' }[type]
-              if (pid) navigate(`/project/${pid}/${route}`)
-            }}
-            onOpenNotifications={() => navigate('/home/notifications')}
-            formatPlanTime={fmtPlanTime}
-            projectNameFromRecord={projectNameFromRecord}
-          />
-        ) : (
-          <main className="flex min-h-0 flex-1 items-center justify-center bg-slate-100 p-4">
-            <div className="w-full rounded-2xl border border-[#E9EFF6] bg-white p-5 text-center shadow-sm">
-              <p className="text-sm font-semibold text-slate-700">{shouldBlockDashboardLoading ? '普通成员请从我的任务查看个人工作' : initialLoading ? '驾驶舱加载中…' : loadError ?? '暂无可查看的项目驾驶舱数据。'}</p>
-              {errorWithNoData ? <p className="mt-2 text-xs text-slate-500">{loadError}</p> : null}
-            </div>
-          </main>
-        )}
-      </div>
       {/* Top Bar */}
-      <header className="hidden min-[800px]:flex min-h-16 flex-wrap items-center px-4 py-3 lg:px-6 gap-4 flex-shrink-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
+      <header className="flex min-h-16 flex-shrink-0 flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-4 py-3 lg:gap-4 lg:px-6">
         <div className="flex-1 min-w-0">
-          <h1 className="text-base font-bold text-slate-800">首页驾驶舱</h1>
-          {!canViewGlobalDashboard && (
-            <p className="text-xs text-slate-500">实时掌握我参与项目的进度、风险、成果与待决策事项</p>
-          )}
+          <h1 className="text-lg font-bold text-slate-900">
+            {scopeMode === 'global' ? '全局项目工作台' : scopeMode === 'my' ? '我负责的项目' : '项目工作台'}
+          </h1>
+          <p className="text-xs text-slate-500">管理层项目概况与问题提醒</p>
         </div>
 
         {/* 专项筛选 —— 这里是仪表盘自己的筛选，与 URL 项目无关 */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <label className="sr-only" htmlFor="dashboard-scope">项目范围</label>
           <select
+            id="dashboard-scope"
             value={scopeMode === 'project' ? String(scopeId ?? '') : scopeMode}
             onChange={(e) => handleScopeChange(e.target.value)}
-            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30"
+            className="max-w-full flex-1 cursor-pointer appearance-none rounded-lg border border-slate-200 bg-white py-2 pl-3 pr-9 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500 sm:flex-none"
           >
             {canViewGlobalDashboard && <option value="global">全部项目</option>}
-            {!canViewGlobalDashboard && canViewMyDashboard && <option value="my">我的项目</option>}
-            {projects.map((p) => (
+            {hasProjectDashboardRole && <option value="my">我负责的项目</option>}
+            {projects.filter((project) => !isProjectArchived(project)).map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
-          <select
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400/30"
-          >
-            <option value="">全部月份</option>
-            {monthOptions.map((m) => (
-              <option key={m} value={m}>{fmtMonth(m)}</option>
-            ))}
-          </select>
+          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500"><ChevronDownIcon /></span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* 通知铃铛 */}
-          <div ref={notifRef} className="relative">
-            <button
-              onClick={() => setShowNotif((v) => !v)}
-              className="cursor-pointer relative p-2 rounded-lg hover:bg-slate-100 transition-colors"
-            >
-              <svg style={{ width: 18, height: 18, color: showNotif ? '#2563EB' : '#64748B' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-              </svg>
-              {notifTotal > 0 && (
-                <span className="absolute top-1 right-1 min-w-[16px] h-4 px-0.5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white leading-none">
-                  {notifTotal > 99 ? '99+' : notifTotal}
-                </span>
-              )}
-            </button>
-
-            {/* 通知下拉面板 */}
-            {showNotif && (
-              <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl border shadow-xl z-50 overflow-hidden"
-                style={{ borderColor: '#E9EFF6', boxShadow: '0 8px 30px rgba(15,23,42,0.12)' }}>
-                <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: '#F1F5F9' }}>
-                  <span className="text-sm font-bold text-slate-800">待办提醒</span>
-                  {notifTotal > 0 && (
-                    <span className="text-xs text-slate-400">{notifTotal} 项需关注</span>
-                  )}
-                </div>
-
-                <div className="max-h-96 overflow-y-auto">
-                  {/* 延期/超期任务 */}
-                  {delayedTasks.length > 0 && (
-                    <div>
-                      <div className="px-4 py-2 bg-red-50 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
-                        <span className="text-xs font-semibold text-red-600">延期 / 超期任务</span>
-                        <span className="ml-auto text-xs text-red-400">{delayedTasks.length} 项</span>
-                      </div>
-                      {delayedTasks.slice(0, 5).map((t: any, i: number) => {
-                        const pid = scopeId ?? currentProjectId
-                        return (
-                          <div key={i}
-                            onClick={() => { pid && navigate(`/project/${pid}/tasks`); setShowNotif(false) }}
-                            className="flex items-start gap-3 px-4 py-2.5 hover:bg-red-50 cursor-pointer transition-colors border-b last:border-0"
-                            style={{ borderColor: '#FEF2F2' }}>
-                            <svg style={{ width: 14, height: 14, color: '#DC2626', flexShrink: 0, marginTop: 2 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium text-slate-700 truncate">{t.key_task ?? '任务'}</p>
-                              <p className="text-xs text-slate-400 mt-0.5">
-                                {t.is_overdue ? <span className="text-red-500 font-semibold">超期 · </span> : null}
-                                {t.owner ?? ''}{t.plan_time ? ` · ${fmtPlanTime(t.plan_time)}` : ''}
-                              </p>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-
-                  {/* 角色队列 */}
-                  {qItems.length > 0 && (
-                    <div>
-                      <div className="px-4 py-2 bg-blue-50 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" />
-                        <span className="text-xs font-semibold text-blue-600">{QUEUE_LABEL[qType] ?? '待处理事项'}</span>
-                        <span className="ml-auto text-xs text-blue-400">{qCount} 项</span>
-                      </div>
-                      {qItems.slice(0, 4).map((item: any, i: number) => {
-                        const pid = scopeId ?? currentProjectId
-                        const route = { pending_decisions: 'decisions', pending_review: 'confirm', pending_coordinator: 'coordinate', in_progress: 'confirm' }[qType] ?? 'confirm'
-                        return (
-                          <div key={i}
-                            onClick={() => { pid && navigate(`/project/${pid}/${route}`); setShowNotif(false) }}
-                            className="flex items-start gap-3 px-4 py-2.5 hover:bg-blue-50 cursor-pointer transition-colors border-b last:border-0"
-                            style={{ borderColor: '#EFF6FF' }}>
-                            <svg style={{ width: 14, height: 14, color: '#2563EB', flexShrink: 0, marginTop: 2 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                            </svg>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium text-slate-700 truncate">{item.title ?? item.key_task ?? item.description ?? '待处理事项'}</p>
-                              <p className="text-xs text-slate-400 mt-0.5">{item.confirm_status ?? item.status ?? ''}{projectNameFromRecord(item) ? ` · ${projectNameFromRecord(item)}` : ''}</p>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-
-                  {notifTotal === 0 && (
-                    <div className="px-4 py-8 text-center">
-                      <svg style={{ width: 32, height: 32, color: '#CBD5E1', margin: '0 auto 8px' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      <p className="text-xs text-slate-400">暂无待办提醒</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
           <button
             onClick={handleExport}
             disabled={exportLoading || scopeMode === 'my' || shouldBlockDashboardLoading}
@@ -557,7 +352,7 @@ export function DashboardPage() {
       </header>
 
       {/* Content */}
-      <main className="hidden min-[800px]:block flex-1 overflow-y-auto p-4 lg:p-6 space-y-5" style={{ background: '#F1F5F9' }}>
+      <main className="min-h-0 flex-1 space-y-5 overflow-y-auto bg-slate-50 p-4 pb-12 lg:p-6">
         {shouldBlockDashboardLoading && (
           <div className="rounded-2xl border bg-white p-5" style={{ borderColor: '#E9EFF6', boxShadow: '0 1px 4px rgba(15,23,42,0.06)' }}>
             <div>
@@ -589,19 +384,17 @@ export function DashboardPage() {
         )}
 
         {initialLoading && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16 }}>
-              {Array.from({ length: 5 }).map((_, i) => <SkeletonStatCard key={i} />)}
+          <div className="mx-auto max-w-[1440px] space-y-5" aria-label="正在加载管理层概览">
+            <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6">
+              <Skel width="24%" height={18} />
+              <Skel width="58%" height={12} />
+              <div className="grid gap-4 pt-3 sm:grid-cols-3">
+                {Array.from({ length: 3 }).map((_, index) => <Skel key={index} width="100%" height={42} radius={8} />)}
+              </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-              {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} style={{ background: '#fff', border: '1px solid #E9EFF6', borderRadius: 14, padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <Skel width="50%" height={13} />
-                  <Skel width="100%" height={8} radius={4} />
-                  <Skel width="70%" height={11} />
-                  <Skel width="85%" height={8} radius={4} />
-                </div>
-              ))}
+            <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6">
+              <Skel width="22%" height={18} />
+              {Array.from({ length: 4 }).map((_, index) => <Skel key={index} width="100%" height={40} radius={8} />)}
             </div>
           </div>
         )}
@@ -634,11 +427,11 @@ export function DashboardPage() {
           </div>
         )}
         <GovernanceDashboardContent
+          key={`${scopeMode}:${scopeId ?? 'all'}`}
           governance={governance}
-          projectHealthRows={projectHealthRows}
-          onOpenAction={openGovernanceAction}
-          onOpenProject={(projectId) => handleScopeChange(String(projectId))}
-          onOpenInitiative={openGovernanceInitiative}
+          projectRows={projectRows}
+          onOpenProject={(projectId) => navigate(`/home/projects/${projectId}`)}
+          onOpenIssueCenter={openIssueCenter}
         />
         </>}
       </main>

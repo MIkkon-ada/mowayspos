@@ -21,7 +21,7 @@ function MetaItem({ label, value, marker, markerTone = 'slate' }: MetaItemProps)
   </div>
 }
 
-export function KeyTaskHeader({ workspace, onSubmitUpdate, onConfirmCompletion, onReopen, onChangeRisk }: { workspace: KeyTaskWorkspace; onSubmitUpdate?: () => void; onConfirmCompletion: () => void; onReopen: () => void; onChangeRisk: () => void }) {
+export function KeyTaskHeader({ workspace, onSubmitUpdate, onAddPlan, onConfirmCompletion, onReopen, onChangeRisk }: { workspace: KeyTaskWorkspace; onSubmitUpdate?: () => void; onAddPlan?: () => void; onConfirmCompletion: () => void; onReopen: () => void; onChangeRisk: () => void }) {
   const { key_task: task, project, workstream, completion_eligibility: eligibility, permissions } = workspace
   const isCompleted = task.status === '已完成'
   const collaborators = task.collaborators.length ? task.collaborators.map((person) => person.name).join('、') : '—'
@@ -42,6 +42,7 @@ export function KeyTaskHeader({ workspace, onSubmitUpdate, onConfirmCompletion, 
 
       <div className="flex shrink-0 flex-wrap gap-2">
         {permissions.can_submit_update && <button type="button" onClick={onSubmitUpdate} className="rounded-sm bg-blue-700 px-4 py-2 text-sm font-semibold text-white shadow-sm">提交更新</button>}
+        {permissions.can_manage_execution_plans && !isCompleted && <button type="button" onClick={onAddPlan} className="rounded-sm border border-blue-200 bg-white px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50">新增计划</button>}
         {permissions.can_manage_risk && <button type="button" onClick={onChangeRisk} className="rounded-sm border border-orange-300 bg-white px-4 py-2 text-sm font-semibold text-orange-700">{task.risk_note ? '解除风险' : '标记风险'}</button>}
         {permissions.can_confirm_completion && !isCompleted && eligibility.state === 'eligible' && <button type="button" onClick={onConfirmCompletion} className="rounded-sm border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700">确认完成</button>}
         {permissions.can_operate && isCompleted && <button type="button" onClick={onReopen} className="rounded-sm border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700">重新打开</button>}

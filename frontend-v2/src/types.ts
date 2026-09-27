@@ -234,6 +234,7 @@ export type GovernanceDashboardOverview = {
     pending_coordination: number
     pending_owner_confirmation: number
   }
+  project_signals: Record<string, { pending_decisions: number; pending_coordination: number }>
   actions: GovernanceAction[]
   initiatives: GovernanceInitiative[]
 }

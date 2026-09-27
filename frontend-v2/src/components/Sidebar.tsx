@@ -29,6 +29,7 @@ type NavItem = {
 
 type SectionSeparator = {
   kind: 'separator'
+  label: string
 }
 
 type NavEntry = NavItem | SectionSeparator
@@ -49,6 +50,7 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
   const isPrivileged = !!(
     currentUser?.is_tech_admin ||
     currentUser?.is_ceo ||
+    currentUser?.can_view_all ||
     globalUserRoles.some((r) => ['owner', 'coordinator', 'project_ceo'].includes(r))
   )
   const showParticipantModules = !(
@@ -71,13 +73,13 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
     return () => clearInterval(id)
   }, [isPrivileged])
 
-  function section(items: NavItem[]): NavEntry[] {
+  function section(label: string, items: NavItem[]): NavEntry[] {
     if (items.length === 0) return []
-    return [{ kind: 'separator' as const }, ...items]
+    return [{ kind: 'separator' as const, label }, ...items]
   }
 
   const cockpitItems: NavItem[] = [
-    ...(isPrivileged ? [{ page: 'dashboard' as const, label: '驾驶舱', icon: <IconHome /> }] : []),
+    ...(isPrivileged ? [{ page: 'dashboard' as const, label: currentUser?.is_ceo || currentUser?.can_view_all || currentUser?.is_tech_admin ? '全局工作台' : '项目工作台', icon: <IconHome /> }] : []),
   ]
 
   const executionItems: NavItem[] = [
@@ -118,18 +120,16 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
   ]
 
   const navEntries: NavEntry[] = [
-    ...section(cockpitItems),
-    ...section(executionItems),
-    ...section(personalWorkItems),
-    ...section(processInputItems),
-    ...section(assetItems),
-    ...section(collaborationManagementItems),
-    ...section(systemItems),
+    ...section('工作台', cockpitItems),
+    ...section('项目工作', [...executionItems, ...personalWorkItems]),
+    ...section('协作流程', [...processInputItems, ...assetItems]),
+    ...section('组织管理', [...collaborationManagementItems, ...systemItems]),
   ]
 
   function handleNavigate(page: AppPage) {
     if (page === 'dashboard') {
-      navigate('/home/dashboard')
+      const isGlobalViewer = Boolean(currentUser?.is_ceo || currentUser?.can_view_all || currentUser?.is_tech_admin)
+      navigate(isGlobalViewer ? '/home/dashboard?scope=global' : '/home/dashboard?scope=my')
       return
     }
     onNavigate(page)
@@ -150,7 +150,12 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
       <nav className="flex-1 px-2 py-3 xl:py-2 space-y-0.5 overflow-y-auto">
         {navEntries.map((entry, idx) => {
           if ('kind' in entry) {
-            return <div key={idx} className="pt-3 xl:pt-2" />
+            return <div key={idx} className="px-2 pt-4 first:pt-1 xl:pt-4">
+              <div className="flex items-center gap-2">
+                <span className="hidden whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-slate-500 xl:block">{entry.label}</span>
+                <span className="hidden h-px flex-1 bg-white/10 xl:block" />
+              </div>
+            </div>
           }
 
           const isActive = activePage === entry.page

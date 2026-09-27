@@ -1,30 +1,29 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 
 const page = readFileSync(new URL('../src/pages/DashboardPage.tsx', import.meta.url), 'utf8')
-const mobileUrl = new URL('../src/features/dashboard/MobileDashboardContent.tsx', import.meta.url)
+const content = readFileSync(new URL('../src/features/dashboard/GovernanceDashboardContent.tsx', import.meta.url), 'utf8')
 
-test('dashboard mounts a mobile-only view below the 800px desktop breakpoint', () => {
-  assert.match(page, /MobileDashboardContent/)
-  assert.match(page, /min-\[800px\]:hidden/)
-  assert.match(page, /hidden min-\[800px\]:flex/)
+test('dashboard uses the same management overview on narrow and wide screens', () => {
+  assert.match(page, /<GovernanceDashboardContent/)
+  assert.doesNotMatch(page, /<MobileDashboardContent/)
+  assert.match(content, /grid-cols-2 sm:grid-cols-3/)
+  assert.match(content, /xl:grid-cols-/)
 })
 
-test('mobile dashboard component exists as a separate presentation unit', () => {
-  assert.equal(existsSync(mobileUrl), true)
+test('project issue counts open the existing issue center', () => {
+  assert.match(content, /onOpenIssueCenter\(project\.id, '待决策'\)/)
+  assert.match(content, /onOpenIssueCenter\(project\.id, '待协调'\)/)
+  assert.match(page, /navigate\(`\/work\/issues/)
 })
 
-test('mobile dashboard keeps an entry to the existing notification center', () => {
-  const mobile = readFileSync(mobileUrl, 'utf8')
-  assert.match(mobile, /onOpenNotifications/)
-  assert.match(mobile, /通知中心/)
-  assert.match(page, /onOpenNotifications=\{\(\) => navigate\('\/home\/notifications'\)\}/)
+test('dashboard does not duplicate the issue center or notification panel', () => {
+  assert.doesNotMatch(page, /setShowNotif/)
+  assert.doesNotMatch(content, /问题列表/)
 })
 
-test('mobile dashboard does not render project-init notices', () => {
-  const mobile = readFileSync(mobileUrl, 'utf8')
-  assert.doesNotMatch(mobile, /projectNotice/)
+test('dashboard does not render project-init notices', () => {
   assert.doesNotMatch(page, /projectNotice=\{/)
   assert.doesNotMatch(page, /actionLabel: '去填写'/)
 })

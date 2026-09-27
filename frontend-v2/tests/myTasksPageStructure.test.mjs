@@ -46,15 +46,16 @@ function task(id, projectId, status, overrides = {}) {
   }
 }
 
-test('member routes preserve projects and add the personal task center', () => {
+test('member routes keep the personal task center and send legacy project links straight to work progress', () => {
   const routes = read('src/app/routes.tsx')
   assert.match(routes, /const MyTasksPage = lazy\(/)
   assert.match(routes, /const MyTaskDetailPage = lazy\(/)
   assert.match(routes, /path="\/member"[\s\S]*?<Route index element=\{<Navigate to="\/member\/tasks" replace \/>\}/)
   assert.match(routes, /path="tasks" element=\{<MyTasksPage \/>\}/)
   assert.match(routes, /path="tasks\/:taskId" element=\{<MyTaskDetailPage \/>\}/)
-  assert.match(routes, /path="projects" element=\{<MemberProjectsPage \/>\}/)
-  assert.match(routes, /path="projects\/:projectId" element=\{<MemberProjectTasksPage \/>\}/)
+  assert.match(routes, /path="projects" element=\{<Navigate to="\/work\/tasks" replace \/>\}/)
+  assert.match(routes, /path="projects\/:projectId" element=\{<MemberProjectWorkProgressRedirect \/>\}/)
+  assert.doesNotMatch(routes, /MemberProjectsPage|MemberProjectTasksPage/)
 })
 test('home and legacy mytasks routes enter the new center', () => {
   const routes = read('src/app/routes.tsx')
@@ -216,11 +217,12 @@ test('table keeps the exact personal-task columns and no unsupported metrics', (
   assert.doesNotMatch(table, /patchSubTaskStatus|updateSubTask/)
 })
 
-test('page has no calendar shortcut and member projects use localized roles', () => {
+test('page has no calendar or redundant member-project shortcut', () => {
   const page = read('src/pages/MyTasksPage.tsx')
-  const projectsPage = read('src/pages/MemberProjectsPage.tsx')
+  const sidebar = read('src/components/Sidebar.tsx')
   assert.doesNotMatch(page, /查看日程/)
-  assert.match(projectsPage, /getProjectRoleLabel\(role\)/)
+  assert.doesNotMatch(page, /member\/projects/)
+  assert.doesNotMatch(sidebar, /memberprojects|我的项目/)
 })
 
 test('responsive CSS constrains body overflow and detail page columns', () => {

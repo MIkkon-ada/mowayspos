@@ -45,6 +45,15 @@ export type AIPolicyWrite = Pick<
   'primary_model_id' | 'fallback_model_ids' | 'timeout_seconds' | 'fallback_timeout_seconds' | 'max_attempts' | 'enabled'
 >
 
+export type AITaskExtractionModels = {
+  primary_model_name: string | null
+  fallback_model_names: string[]
+}
+
+export function getAITaskExtractionModels(): Promise<AITaskExtractionModels> {
+  return apiGet<AITaskExtractionModels>('/api/ai-config/task-extraction-models')
+}
+
 export function listAIModels(): Promise<AIModel[]> {
   return apiGet<AIModel[]>('/api/ai-config/models')
 }

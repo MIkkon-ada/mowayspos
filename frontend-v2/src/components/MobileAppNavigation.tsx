@@ -3,7 +3,7 @@ import type { AppPage } from '../types'
 import type { NavigationEntry } from '../domain/navigationModel'
 
 type Props = { activePage: AppPage; entries: NavigationEntry[]; onNavigate: (page: AppPage) => void; onChangePassword: () => void; onLogout: () => void }
-const primaryPages: AppPage[] = ['dashboard', 'table', 'confirm']
+const primaryPages: AppPage[] = ['dashboard', 'mytasks', 'table', 'confirm']
 const icon: Record<string, string> = { home: '⌂', table: '☷', confirm: '✓', voice: '◉', meeting: '▤', archive: '□', issues: '!', org: '♧', projects: '▣', bell: '◌', settings: '⚙', mytasks: '✓' }
 
 export function MobileAppNavigation({ activePage, entries, onNavigate, onChangePassword, onLogout }: Props) {
@@ -14,7 +14,13 @@ export function MobileAppNavigation({ activePage, entries, onNavigate, onChangeP
   const open = (page: AppPage) => { setMoreOpen(false); onNavigate(page) }
   return <>
     <nav className="fixed inset-x-0 bottom-0 z-40 flex h-[68px] items-center justify-around border-t border-slate-200 bg-white/95 px-2 pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_16px_rgba(15,23,42,.06)] min-[800px]:hidden" aria-label="移动主导航">
-      {primaryEntries.map((entry) => <button key={entry.page} type="button" onClick={() => open(entry.page)} className={`flex min-w-12 flex-col items-center gap-1 text-[11px] ${activePage === entry.page ? 'font-semibold text-sky-600' : 'text-slate-500'}`}><span className="text-lg leading-none">{icon[entry.icon]}</span>{entry.page === 'dashboard' ? '首页' : entry.page === 'table' ? '任务' : '确认'}</button>)}
+      {primaryEntries.map((entry) => {
+        const label = entry.page === 'dashboard' ? '首页'
+          : entry.page === 'table' ? '项目工作'
+            : entry.page === 'mytasks' ? '我的任务'
+              : entry.page === 'confirm' ? '待确认' : entry.label
+        return <button key={entry.page} type="button" onClick={() => open(entry.page)} className={`flex min-w-12 flex-col items-center gap-1 text-[11px] ${activePage === entry.page ? 'font-semibold text-sky-600' : 'text-slate-500'}`}><span className="text-lg leading-none">{icon[entry.icon]}</span>{label}</button>
+      })}
       <button type="button" onClick={() => setMoreOpen(true)} className="flex min-w-12 flex-col items-center gap-1 text-[11px] text-slate-500"><span className="text-lg leading-none">☷</span>更多</button>
     </nav>
     {moreOpen && <div className="fixed inset-0 z-50 min-[800px]:hidden" role="dialog" aria-modal="true" aria-label="更多功能">

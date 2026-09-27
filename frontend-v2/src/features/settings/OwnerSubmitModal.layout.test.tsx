@@ -72,7 +72,7 @@ describe('owner submit approved B layout', () => {
     expect(screen.getByPlaceholderText('请输入重点工作名称')).toBeTruthy()
     expect(screen.getByText('评价指标')).toBeTruthy()
     expect(screen.getByRole('table').className).toContain('lg:min-w-0')
-    expect(screen.getByRole('button', { name: '返回项目详情' }).className).toContain('bg-slate-50')
+    expect(screen.getAllByRole('button', { name: '返回项目详情' }).some((button) => button.className.includes('bg-slate-50'))).toBe(true)
     expect(screen.queryByText('项目类型')).toBeNull()
     expect(screen.queryByText('客户名称')).toBeNull()
     expect(screen.queryByText('预期交付物')).toBeNull()

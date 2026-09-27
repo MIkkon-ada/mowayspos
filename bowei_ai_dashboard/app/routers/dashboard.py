@@ -253,6 +253,7 @@ def _empty_project_overview(context: dict, label: str) -> dict:
         "latest_achievements": [],
         "governance": {
             "signals": {"pending_decisions": 0, "pending_coordination": 0, "pending_owner_confirmation": 0},
+            "project_signals": {},
             "actions": [],
             "initiatives": [],
         },
@@ -312,10 +313,29 @@ def _build_governance_payload(
     can_view_decisions: bool,
     can_view_risks: bool,
     can_view_submissions: bool,
+    project_ids_by_name: dict[str, int] | None = None,
 ) -> dict:
     """Build compact, permission-filtered executive governance signals."""
     workstream_by_id = {getattr(item, "id", None): item for item in workstreams}
     key_task_by_id = {getattr(item, "id", None): item for item in key_tasks}
+    active_project_ids = set(project_ids_by_name.values()) if project_ids_by_name is not None else None
+    project_ids_by_name = project_ids_by_name or {}
+
+    def issue_project_id(issue: object) -> int | None:
+        project_id = getattr(issue, "project_id", None)
+        if project_id:
+            return project_id
+        workstream = workstream_by_id.get(getattr(issue, "related_task_id", None))
+        if not workstream:
+            key_task = key_task_by_id.get(getattr(issue, "related_subtask_id", None))
+            workstream = workstream_by_id.get(getattr(key_task, "task_id", None)) if key_task else None
+        if workstream and getattr(workstream, "project_id", None):
+            return workstream.project_id
+        if workstream:
+            workstream_project_id = project_ids_by_name.get(_governance_text(getattr(workstream, "special_project", "")))
+            if workstream_project_id:
+                return workstream_project_id
+        return project_ids_by_name.get(_governance_text(getattr(issue, "special_project", "")))
 
     def owner_for(task_id: int | None, subtask_id: int | None) -> str:
         key_task = key_task_by_id.get(subtask_id)
@@ -328,13 +348,23 @@ def _build_governance_payload(
     decision_count = 0
     coordination_count = 0
     owner_confirmation_count = 0
+    project_signals: dict[str, dict[str, int]] = {}
+
+    def count_project_issue(project_id: int | None, kind: str) -> None:
+        if project_id is None:
+            return
+        counts = project_signals.setdefault(str(project_id), {"pending_decisions": 0, "pending_coordination": 0})
+        counts[kind] += 1
 
     if can_view_decisions:
         for issue in issues:
-            if not (bool(getattr(issue, "need_decision_by", "")) or IT.is_decision(_governance_text(getattr(issue, "issue_type", "")))):
+            if _governance_text(getattr(issue, "status", "")) != "待决策":
+                continue
+            project_id = issue_project_id(issue)
+            if active_project_ids is not None and project_id not in active_project_ids:
                 continue
             decision_count += 1
-            project_id = getattr(issue, "project_id", None)
+            count_project_issue(project_id, "pending_decisions")
             actions.append({
                 "id": f"issue:{getattr(issue, 'id', '')}",
                 "project_id": project_id,
@@ -343,7 +373,7 @@ def _build_governance_payload(
                 "accountable_owner": owner_for(getattr(issue, "related_task_id", None), getattr(issue, "related_subtask_id", None)),
                 "due_at": _governance_date(getattr(issue, "expected_resolve_time", None)),
                 "waiting_days": _governance_waiting_days(getattr(issue, "updated_at", None)),
-                "route": f"/project/{project_id}/decisions" if project_id else None,
+                "route": f"/work/issues/{getattr(issue, 'id', '')}?projectId={project_id}" if project_id else None,
                 "priority": 0 if _governance_text(getattr(issue, "priority", "")) == "高" else 1,
                 "updated_at": getattr(issue, "updated_at", None),
             })
@@ -352,8 +382,11 @@ def _build_governance_payload(
         for issue in issues:
             if _governance_text(getattr(issue, "status", "")) != "待协调":
                 continue
+            project_id = issue_project_id(issue)
+            if active_project_ids is not None and project_id not in active_project_ids:
+                continue
             coordination_count += 1
-            project_id = getattr(issue, "project_id", None)
+            count_project_issue(project_id, "pending_coordination")
             actions.append({
                 "id": f"issue:{getattr(issue, 'id', '')}",
                 "project_id": project_id,
@@ -362,7 +395,7 @@ def _build_governance_payload(
                 "accountable_owner": owner_for(getattr(issue, "related_task_id", None), getattr(issue, "related_subtask_id", None)),
                 "due_at": _governance_date(getattr(issue, "expected_resolve_time", None)),
                 "waiting_days": _governance_waiting_days(getattr(issue, "updated_at", None)),
-                "route": f"/project/{project_id}/coordinate" if project_id else None,
+                "route": f"/work/issues/{getattr(issue, 'id', '')}?projectId={project_id}" if project_id else None,
                 "priority": 0,
                 "updated_at": getattr(issue, "updated_at", None),
             })
@@ -371,20 +404,6 @@ def _build_governance_payload(
         for submission in submissions:
             status = _governance_text(getattr(submission, "confirm_status", ""))
             project_id = getattr(submission, "project_id", None)
-            if status in SS.WAITING_COORDINATOR_FEEDBACK:
-                coordination_count += 1
-                actions.append({
-                    "id": f"submission:{getattr(submission, 'id', '')}",
-                    "project_id": project_id,
-                    "kind": "coordination",
-                    "title": _governance_text(getattr(submission, "title", "")) or "待统筹反馈",
-                    "accountable_owner": owner_for(getattr(submission, "related_task_id", None), getattr(submission, "related_subtask_id", None)),
-                    "due_at": None,
-                    "waiting_days": _governance_waiting_days(getattr(submission, "created_at", None)),
-                    "route": f"/project/{project_id}/coordinate" if project_id else None,
-                    "priority": 1,
-                    "updated_at": getattr(submission, "created_at", None),
-                })
             if status in SS.PENDING_OWNER_REVIEW:
                 owner_confirmation_count += 1
                 actions.append({
@@ -469,6 +488,7 @@ def _build_governance_payload(
             "pending_coordination": coordination_count,
             "pending_owner_confirmation": owner_confirmation_count,
         },
+        "project_signals": project_signals,
         "actions": actions[:3],
         "initiatives": initiatives[:6],
     }
@@ -520,7 +540,7 @@ def _project_overview(
 
     open_issues   = [i for i in issues if (i.status or "") in ("待处理", "待协调", "待决策", "待负责人确认")]
     high_pri      = [i for i in open_issues if (i.priority or "") == "高"]
-    ceo_issues    = [i for i in issues if bool(i.need_decision_by) or IT.is_decision(i.issue_type)]
+    ceo_issues    = [i for i in issues if (i.status or "") == "待决策"]
 
     # ── Achievements ───────────────────────────────────────
     ach_q = db.query(models.Achievement).filter(
@@ -628,6 +648,7 @@ def _project_overview(
         }
 
     completion_rate = round(task_s["completed"] / task_s["total_tasks"] * 100) if task_s["total_tasks"] else 0
+    latest_task_update = max((task.updated_at for task in tasks if task.updated_at), default=None)
 
     # ── 角色队列：仪表盘右下面板按角色展示不同内容 ────────────
     if is_project_ceo and not is_owner and not is_super:
@@ -678,6 +699,7 @@ def _project_overview(
         can_view_decisions=can_see_decisions,
         can_view_risks=can_see_risks,
         can_view_submissions=can_see_submissions,
+        project_ids_by_name={proj_name: project_id} if proj_name else {},
     )
 
     return {
@@ -726,6 +748,7 @@ def _project_overview(
             "completion_rate":  completion_rate,
             "achievement_count": len(achs),
             "open_issue_count": len(open_issues),
+            "latest_update": latest_task_update.isoformat(timespec="seconds") if latest_task_update else "",
         }],
         "status_stats": {
             s: task_s.get(s, 0)
@@ -987,6 +1010,7 @@ def _global_overview(
         can_view_decisions=can_view_issue_decisions(context),
         can_view_risks=can_view_issue_risks(context),
         can_view_submissions=can_access_confirmation_center(context),
+        project_ids_by_name={project.name: project.id for project in visible_projs},
     )
 
     return {
@@ -1017,7 +1041,7 @@ def _global_overview(
             "total_issues":         len(issue_rows),
             "open_issues":          visible_open_issue_count,
             "high_priority_issues": sum(1 for i in issue_rows if (i.priority or "") == "高" and (i.status or "") in ("待处理", "待协调", "待决策", "待负责人确认")),
-            "waiting_ceo_decision": sum(1 for i in issue_rows if bool(i.need_decision_by) or IT.is_decision(i.issue_type)) if can_view_issue_decisions(context) else 0,
+            "waiting_ceo_decision": sum(1 for i in issue_rows if (i.status or "") == "待决策") if can_view_issue_decisions(context) else 0,
         },
         "recent": {
             "submissions":   [],

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..ai.contracts import AIUpstreamError
+from ..ai.contracts import AIUpstreamError, Capability
 from ..ai.repository import AIConfigurationRepository, InvalidAIModel, InvalidAIPolicy
 from ..ai.service import AIService
 from ..database import get_db
@@ -81,6 +81,41 @@ def _policy_payload(policy: models.AICapabilityPolicy) -> dict:
         "max_attempts": policy.max_attempts,
         "policy_version": policy.policy_version,
         "enabled": policy.enabled,
+    }
+
+
+@router.get("/task-extraction-models")
+def get_task_extraction_models(
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """Return only the configured model identifiers needed by the extractor UI."""
+    policy = (
+        db.query(models.AICapabilityPolicy)
+        .filter_by(capability_key=Capability.TASK_EXTRACTION)
+        .one_or_none()
+    )
+    if policy is None:
+        return {"primary_model_name": None, "fallback_model_names": []}
+
+    try:
+        fallback_model_ids = json.loads(policy.fallback_model_ids_json or "[]")
+    except (TypeError, ValueError):
+        fallback_model_ids = []
+    model_ids = [policy.primary_model_id, *fallback_model_ids]
+    configured_models = {
+        model.id: model.model_name
+        for model in db.query(models.AIModel).filter(models.AIModel.id.in_([i for i in model_ids if i])).all()
+    }
+    primary_model_name = configured_models.get(policy.primary_model_id)
+    fallback_model_names = [
+        configured_models[model_id]
+        for model_id in fallback_model_ids
+        if model_id in configured_models
+    ]
+    return {
+        "primary_model_name": primary_model_name,
+        "fallback_model_names": fallback_model_names,
     }
 
 

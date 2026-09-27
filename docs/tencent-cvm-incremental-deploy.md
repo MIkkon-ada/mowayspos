@@ -1,6 +1,6 @@
 # Tencent CVM Incremental Deployment Runbook
 
-This path is for ordinary application-code releases. GitHub Actions builds the frontend artifact from `main` and synchronizes selected files into `/opt/mowayspos/runtime` with SSH and rsync. The CVM continues to use the existing GHCR images as the Python, Alembic, Nginx, and system-dependency runtime base. The workflow does not run `docker build`, `docker pull`, or `docker login`.
+This path is for ordinary application-code releases. GitHub Actions builds the `frontend-v2` artifact from `main` and synchronizes selected files into `/opt/mowayspos/runtime` with SSH and rsync. The CVM continues to use the existing GHCR images as the Python, Alembic, Nginx, and system-dependency runtime base. The workflow does not run `docker build`, `docker pull`, or `docker login`.
 
 ## Scope
 
@@ -8,7 +8,7 @@ Use this path for:
 
 - backend Python files under `bowei_ai_dashboard/app`;
 - database migration files under `bowei_ai_dashboard/migrations`;
-- frontend source and styles processed by `npm run build`.
+- `frontend-v2` source and styles processed by `npm run build`.
 
 Do not use it for dependency lockfiles, Dockerfiles, `nginx.conf`, `docker-compose.prod.yml`, or system-runtime changes. Use `cloud-p1b2b-a-ghcr-private-publish.yml` and the existing first-deployment runbook for those changes.
 
@@ -38,6 +38,8 @@ The Action uploads the incremental Compose override to `/opt/mowayspos/docker-co
 ## Run an ordinary release
 
 The target commit must already be on remote `main`. If the last successful release SHA is known, pass it as `base_sha`; otherwise the Action uses the current commit parent:
+
+Before the first incremental release, run the read-only `cloud-cvm-readiness.yml` workflow on `main`. Inspect its container images, runtime paths, and last successful release marker. Do not assume the current commit parent is the production base when the release marker is missing.
 
 ```bash
 gh workflow run cloud-cvm-incremental-deploy.yml \

@@ -117,7 +117,7 @@ def test_frontend_dockerfile_uses_tracked_lockfile_with_npm_ci():
     dockerfile = _read("Dockerfile.frontend")
 
     assert "FROM node:24-alpine AS builder" in dockerfile
-    assert "COPY frontend/package.json frontend/package-lock.json ./" in dockerfile
+    assert "COPY frontend-v2/package.json frontend-v2/package-lock.json ./" in dockerfile
     assert "RUN npm ci" in dockerfile
     assert "npm install" not in dockerfile
 

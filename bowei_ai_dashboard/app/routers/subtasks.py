@@ -75,18 +75,24 @@ def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[d
     unconfirmed_count_by_subtask: dict[int, int] = {}
     latest_confirmed_at_by_subtask: dict[int, datetime] = {}
     if subtask_ids:
-        parent_rows = db.query(models.Task.id, models.Task.project_id, models.Task.special_project).filter(
+        parent_rows = db.query(
+            models.Task.id,
+            models.Task.project_id,
+            models.Task.special_project,
+            models.Task.status,
+        ).filter(
             models.Task.id.in_({row.task_id for row in rows})
         ).all()
-        legacy_names = {name for _, project_id, name in parent_rows if project_id is None and name}
+        legacy_names = {name for _, project_id, name, _ in parent_rows if project_id is None and name}
         projects_by_name = {
             project.name: project.id
             for project in db.query(models.Project).filter(models.Project.name.in_(legacy_names)).all()
         } if legacy_names else {}
         project_by_task = {
             task_id: project_id or projects_by_name.get(special_project)
-            for task_id, project_id, special_project in parent_rows
+            for task_id, project_id, special_project, _status in parent_rows
         }
+        status_by_task = {task_id: status for task_id, _project_id, _name, status in parent_rows}
         project_by_subtask = {row.id: project_by_task.get(row.task_id) for row in rows}
         project_ids = {project_id for project_id in project_by_task.values() if project_id is not None}
         submissions = (
@@ -200,7 +206,7 @@ def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[d
             row.due_kind == "exact"
             and row.due_date is not None
             and row.due_date < today
-            and TS.normalize(row.status) != TS.S_COMPLETED
+            and TS.normalize(row.status or status_by_task.get(row.task_id)) != TS.S_COMPLETED
         )
         payload["has_risk"] = bool((row.risk_note or "").strip())
 

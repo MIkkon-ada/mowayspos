@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Project, TaskItem, SubTaskItem } from '../../types'
 import { PlanTableViewV2 } from './PlanTableViewV2'
-import { buildPlanRows } from './planTableViewModel'
+import { buildPlanRows, summarizeWorkProgress } from './planTableViewModel'
 
 afterEach(() => { cleanup(); window.localStorage.clear() })
 const project = { id: 1, name: '项目', objectives: '项目总体目标' } as Project
@@ -19,6 +19,16 @@ describe('shared work progress table', () => {
     expect(buildPlanRows({ ...input, ownerFilter: '张三', statusFilter: '未开始' }).map(r => r.subtask?.id)).toEqual([10])
     expect(buildPlanRows({ ...input, ownerFilter: '张三', statusFilter: '已完成' })).toEqual([])
     expect(buildPlanRows({ ...input, statusFilter: '延期' })).toEqual([])
+  })
+  it('does not mark legacy child rows overdue when their parent task is completed', () => {
+    const completedTask = { ...task, status: '已完成' }
+    const legacySubtask = { ...subs[0], status: null, is_overdue: true } as unknown as SubTaskItem
+    const rows = buildPlanRows({ project, tasks: [completedTask], taskSubMap: { 1: [legacySubtask] } })
+
+    expect(rows[0].status).toBe('已完成')
+    expect(rows[0].statusMarkers.map((marker) => marker.kind)).toEqual(['completed'])
+    expect(summarizeWorkProgress(rows, []).delayed).toBe(0)
+    expect(buildPlanRows({ project, tasks: [completedTask], taskSubMap: { 1: [legacySubtask] }, quickFilter: 'overdue' })).toEqual([])
   })
   it('renders all work and task records inside one continuous table without merged group cards', () => {
     render(<PlanTableViewV2 {...input} />)

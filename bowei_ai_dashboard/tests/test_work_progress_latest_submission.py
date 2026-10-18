@@ -103,6 +103,18 @@ def test_batch_subtasks_projects_latest_confirmed_submission_and_status_facts():
     assert second["has_risk"] is False
 
 
+def test_completed_parent_prevents_overdue_for_legacy_child_without_status():
+    db = _db()
+    _seed_batch_access(db)
+    db.get(models.Task, 10).status = "已完成"
+    db.get(models.SubTask, 20).status = None
+    db.commit()
+
+    payload = list_subtasks_batch(task_ids="10", current_user="owner", db=db)["10"][0]
+
+    assert payload["is_overdue"] is False
+
+
 def test_batch_subtasks_exposes_unconfirmed_submission_state_without_progress_content():
     db = _db()
     _seed_batch_access(db)

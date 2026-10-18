@@ -1,4 +1,4 @@
-import type { Project, SubTaskItem, TaskItem } from '../../types'
+import type { IssueItem, Project, SubTaskItem, TaskItem } from '../../types'
 import { PLAN_TABLE_COLUMNS, type PlanTableColumnKey } from './planTableColumns'
 
 export const EMPTY_PLAN_CELL = '—'
@@ -95,6 +95,21 @@ export type BuildPlanRowsInput = {
   searchText?: string
   statusFilter?: string
   ownerFilter?: string
+  quickFilter?: 'all' | 'overdue' | 'risk' | 'issues'
+  issueTaskIds?: ReadonlySet<number>
+  issueSubtaskIds?: ReadonlySet<number>
+}
+
+export function summarizeWorkProgress(rows: PlanTableRow[], issues: IssueItem[]) {
+  const keyTaskRows = rows.filter((row) => row.subtask != null)
+  const uniqueRows = [...new Map(keyTaskRows.map((row) => [row.subtask!.id, row])).values()]
+  return {
+    total: uniqueRows.length,
+    completed: uniqueRows.filter((row) => row.status === '已完成').length,
+    delayed: uniqueRows.filter((row) => row.status !== '已完成' && (row.status === '延期' || row.statusMarkers.some((marker) => marker.kind === 'overdue'))).length,
+    risky: uniqueRows.filter((row) => row.statusMarkers.some((marker) => marker.kind === 'risk')).length,
+    openIssues: issues.filter((issue) => issue.status !== '已解决' && issue.status !== '已关闭').length,
+  }
 }
 
 export function clampPlanTableZoom(value: number): number {
@@ -238,6 +253,9 @@ export function buildPlanRows({
   searchText = '',
   statusFilter = '',
   ownerFilter = '',
+  quickFilter = 'all',
+  issueTaskIds = new Set<number>(),
+  issueSubtaskIds = new Set<number>(),
 }: BuildPlanRowsInput): PlanTableRow[] {
   const objective = textOrFallback(project?.objectives || project?.description, '未填写项目目标')
   const projectManagers = project?.owners?.filter(Boolean).join('、') || ''
@@ -252,6 +270,12 @@ export function buildPlanRows({
 
     const visibleSubtasks = searchedSubtasks.filter((subtask) => {
       if (ownerFilter && (subtask.assignee || task.owner || '').trim() !== ownerFilter.trim()) return false
+      if (quickFilter === 'risk' && !getPlanStatusMarkers(subtask).some((marker) => marker.kind === 'risk')) return false
+      if (quickFilter === 'overdue') {
+        const status = getPlanStatusLabel(subtask.status || task.status)
+        if (status === '已完成' || (!subtask.is_overdue && status !== '延期')) return false
+      }
+      if (quickFilter === 'issues' && !issueTaskIds.has(task.id) && !issueSubtaskIds.has(subtask.id)) return false
       if (statusFilter) {
         const status = getPlanStatusLabel(subtask.status || task.status)
         if (statusFilter === '延期') {
@@ -260,7 +284,8 @@ export function buildPlanRows({
       }
       return true
     })
-    if ((ownerFilter || statusFilter || (query && !taskMatched)) && visibleSubtasks.length === 0) return
+    const hasTaskLevelIssue = quickFilter === 'issues' && issueTaskIds.has(task.id)
+    if ((ownerFilter || statusFilter || quickFilter !== 'all' || (query && !taskMatched)) && visibleSubtasks.length === 0 && !hasTaskLevelIssue) return
 
     const taskRows: Array<SubTaskItem | null> = visibleSubtasks.length > 0 ? visibleSubtasks : [null]
     const taskPlanTime = parsePlanTimeRange(task.plan_time)

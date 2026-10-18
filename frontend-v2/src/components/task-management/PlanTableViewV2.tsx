@@ -13,6 +13,9 @@ type Props = {
   statusFilter?: string
   ownerFilter?: string
   searchText?: string
+  quickFilter?: 'all' | 'overdue' | 'risk' | 'issues'
+  issueTaskIds?: ReadonlySet<number>
+  issueSubtaskIds?: ReadonlySet<number>
   loading?: boolean
   optionalColumns?: readonly WorkProgressOptionalColumnKey[]
   onOpenSubTask?: (subtask: SubTaskItem) => void
@@ -68,10 +71,10 @@ function TaskTableRow({ row, onOpen, onEdit, onOpenAcceptance, optionalColumns }
   </tr>
 }
 
-export function PlanTableViewV2({ project, tasks, taskSubMap, searchText = '', statusFilter = '', ownerFilter = '', loading = false, optionalColumns = [], onOpenSubTask, onEditSubTask }: Props) {
+export function PlanTableViewV2({ project, tasks, taskSubMap, searchText = '', statusFilter = '', ownerFilter = '', quickFilter = 'all', issueTaskIds = new Set<number>(), issueSubtaskIds = new Set<number>(), loading = false, optionalColumns = [], onOpenSubTask, onEditSubTask }: Props) {
   const [acceptanceTask, setAcceptanceTask] = useState<TaskItem | null>(null)
   const enabledOptionalColumns = useMemo(() => WORK_PROGRESS_OPTIONAL_COLUMNS.filter((column) => optionalColumns.includes(column.key)).map((column) => column.key), [optionalColumns])
-  const rows = useMemo(() => buildPlanRows({ project, tasks, taskSubMap, searchText, statusFilter, ownerFilter }), [project, tasks, taskSubMap, searchText, statusFilter, ownerFilter])
+  const rows = useMemo(() => buildPlanRows({ project, tasks, taskSubMap, searchText, statusFilter, ownerFilter, quickFilter, issueTaskIds, issueSubtaskIds }), [project, tasks, taskSubMap, searchText, statusFilter, ownerFilter, quickFilter, issueTaskIds, issueSubtaskIds])
   const sizingRows = useMemo(() => buildPlanRows({ project, tasks, taskSubMap }), [project, tasks, taskSubMap])
   const columns = useMemo(() => [
     ...WORK_PROGRESS_VIEW_COLUMNS.slice(0, 2),

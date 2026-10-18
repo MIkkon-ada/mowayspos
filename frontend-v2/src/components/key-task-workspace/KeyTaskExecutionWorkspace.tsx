@@ -26,6 +26,10 @@ export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId }: { ke
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [riskDialogMode, setRiskDialogMode] = useState<'mark' | 'remove' | null>(null)
+  const [riskNoteDraft, setRiskNoteDraft] = useState('')
+  const [riskSaving, setRiskSaving] = useState(false)
+  const [riskError, setRiskError] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -64,18 +68,30 @@ export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId }: { ke
     await reopenKeyTask(keyTaskId, reason.trim())
     refresh()
   }
-  const changeRisk = async () => {
+  const changeRisk = () => {
     const currentNote = workspace?.key_task.risk_note.trim() || ''
-    if (currentNote) {
-      if (!window.confirm('确认解除该关键任务的风险标记？')) return
-      await setKeyTaskRisk(keyTaskId, '')
-      refresh()
+    setRiskDialogMode(currentNote ? 'remove' : 'mark')
+    setRiskNoteDraft(currentNote)
+    setRiskError('')
+  }
+  const saveRiskChange = async () => {
+    if (!riskDialogMode) return
+    const note = riskDialogMode === 'remove' ? '' : riskNoteDraft.trim()
+    if (riskDialogMode === 'mark' && !note) {
+      setRiskError('请填写风险原因')
       return
     }
-    const note = window.prompt('请填写风险原因')
-    if (!note?.trim()) return
-    await setKeyTaskRisk(keyTaskId, note.trim())
-    refresh()
+    setRiskSaving(true)
+    setRiskError('')
+    try {
+      await setKeyTaskRisk(keyTaskId, note)
+      setRiskDialogMode(null)
+      refresh()
+    } catch (reason) {
+      setRiskError(reason instanceof Error ? reason.message : '保存风险标记失败，请重试')
+    } finally {
+      setRiskSaving(false)
+    }
   }
   const markPlanCompleted = async (plan: ExecutionPlan) => {
     const actualOutput = window.prompt('请填写实际产出后标记完成', plan.actual_output || '')
@@ -105,6 +121,23 @@ export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId }: { ke
       </div>
       {(creatingPlan || editingPlan) && <ExecutionPlanCreateDrawer keyTaskId={keyTaskId} defaultAssigneeId={workspace.key_task.owner.id ?? null} members={projectMembers} plan={editingPlan} onClose={() => { setCreatingPlan(false); setEditingPlan(null) }} onCreated={refresh} />}
       <ExecutionPlanDetailDrawer open={Boolean(selectedPlan)} plan={selectedPlan} workspace={workspace} onClose={() => setSelectedPlan(null)} onSubmitUpdate={submitUpdate} onEdit={(plan) => { setSelectedPlan(null); setEditingPlan(plan) }} onMarkCompleted={(plan) => void markPlanCompleted(plan)} />
+      {riskDialogMode && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+        <section role="dialog" aria-modal="true" aria-labelledby="risk-dialog-title" className="w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl">
+          <h2 id="risk-dialog-title" className="text-lg font-semibold text-slate-900">{riskDialogMode === 'remove' ? '解除风险' : '标记风险'}</h2>
+          {riskDialogMode === 'remove'
+            ? <p className="mt-3 text-sm leading-6 text-slate-600">当前原因：{riskNoteDraft}。确认后将清除该关键任务的风险标记。</p>
+            : <div className="mt-4">
+              <label htmlFor="key-task-risk-note" className="mb-1.5 block text-sm font-medium text-slate-700">风险原因</label>
+              <textarea id="key-task-risk-note" aria-label="风险原因" value={riskNoteDraft} onChange={(event) => setRiskNoteDraft(event.target.value)} maxLength={500} rows={4} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" placeholder="说明风险情况及影响" />
+              <p className="mt-1 text-right text-xs text-slate-500">{riskNoteDraft.length}/500</p>
+            </div>}
+          {riskError && <p role="alert" className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{riskError}</p>}
+          <div className="mt-5 flex justify-end gap-2">
+            <button type="button" onClick={() => setRiskDialogMode(null)} disabled={riskSaving} className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-50">取消</button>
+            <button type="button" onClick={() => void saveRiskChange()} disabled={riskSaving || (riskDialogMode === 'mark' && !riskNoteDraft.trim())} className="rounded-md bg-blue-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{riskSaving ? '正在保存…' : riskDialogMode === 'remove' ? '确认解除风险' : '保存风险'}</button>
+          </div>
+        </section>
+      </div>}
     </main>
   )
 }

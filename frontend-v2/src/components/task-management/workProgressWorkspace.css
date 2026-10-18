@@ -135,3 +135,41 @@
   .wp-toolbar { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
   .wp-actions { margin-left: auto; }
 }
+.wp-overview { flex: 0 0 auto; padding: 14px 24px 12px; border-bottom: 1px solid #e2e8ef; background: linear-gradient(180deg, #fff 0%, #fbfcfe 100%); }
+.wp-overview-metrics { display: grid; grid-template-columns: repeat(4, minmax(100px, 132px)) minmax(220px, 1fr); gap: 10px; align-items: stretch; }
+.wp-metric { display: grid; min-height: 70px; grid-template-columns: auto 1fr auto; grid-template-rows: 22px 1fr; align-items: end; column-gap: 5px; padding: 9px 12px 8px; border: 1px solid #e5eaf0; border-radius: 8px; background: #fff; color: #344b62; text-align: left; cursor: pointer; transition: border-color .15s, box-shadow .15s, background .15s; }
+.wp-metric:hover { border-color: #afc2d5; box-shadow: 0 3px 12px #193c5b0d; }
+.wp-metric.is-active { border-color: #7ba4c8; background: #f3f8fc; box-shadow: inset 0 0 0 1px #7ba4c833; }
+.wp-metric:disabled { cursor: default; opacity: .75; }
+.wp-metric-label { grid-column: 1 / -1; align-self: start; color: #728398; font-size: 11px; font-weight: 550; white-space: nowrap; }
+.wp-metric strong { align-self: end; color: #263d54; font-size: 22px; line-height: 1; font-variant-numeric: tabular-nums; }
+.wp-metric small { align-self: end; padding-bottom: 1px; color: #8290a0; font-size: 10px; }
+.wp-metric--danger strong { color: #b44f4a; }
+.wp-metric--issue strong { color: #a66f21; font-size: 17px; }
+.wp-overview-search { display: flex; min-width: 0; flex-direction: column; justify-content: center; gap: 5px; padding-left: 4px; }
+.wp-overview-search label { color: #728398; font-size: 11px; font-weight: 550; }
+.wp-overview-search input { width: 100%; height: 36px; padding: 7px 11px; border: 1px solid #dfe6ed; border-radius: 6px; background: #fff; color: #263d54; font-size: 12px; }
+.wp-overview-search input::placeholder { color: #9aa7b4; }
+.wp-overview-search input:focus-visible { outline: 2px solid #397db7; outline-offset: 1px; }
+.wp-overview-bottom { display: flex; min-height: 34px; align-items: center; gap: 12px; padding-top: 10px; }
+.wp-quick-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.wp-quick-filters button { min-height: 27px; padding: 4px 10px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #68798c; font-size: 11px; cursor: pointer; }
+.wp-quick-filters button:hover { background: #f1f5f8; color: #344b62; }
+.wp-quick-filters button[aria-pressed="true"] { border-color: #d6e3ef; background: #eaf2f9; color: #285b86; font-weight: 650; }
+.wp-quick-filters button:disabled { cursor: not-allowed; opacity: .55; }
+.wp-reset-filters, .wp-issue-link { padding: 3px 0; border: 0; background: transparent; color: #3d719d; font-size: 11px; text-decoration: none; cursor: pointer; white-space: nowrap; }
+.wp-reset-filters:hover, .wp-issue-link:hover { color: #205681; text-decoration: underline; text-underline-offset: 2px; }
+.wp-issue-unavailable { color: #a66f21; font-size: 11px; }
+@media (max-width: 1100px) {
+  .wp-overview { padding: 12px 16px 10px; }
+  .wp-overview-metrics { grid-template-columns: repeat(4, minmax(90px, 1fr)); }
+  .wp-overview-search { grid-column: 1 / -1; padding-left: 0; }
+}
+@media (max-width: 640px) {
+  .wp-overview { padding: 10px 12px; }
+  .wp-overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+  .wp-metric { min-height: 64px; padding: 8px 10px; }
+  .wp-overview-search { grid-column: 1 / -1; }
+  .wp-overview-bottom { align-items: flex-start; flex-wrap: wrap; gap: 6px 10px; }
+  .wp-quick-filters { width: 100%; }
+}

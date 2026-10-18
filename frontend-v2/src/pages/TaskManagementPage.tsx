@@ -1,24 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { exportTasksToExcel } from '../utils/exportTasksExcel'
 import { exportPlanTableToExcel } from '../utils/exportPlanTableExcel'
 import { createTask, deleteTask, fetchTaskLogs, fetchTaskUpdates, fetchTasks, updateTask, extractTasksFromOutline, batchCreateTasks, restoreTask } from '../api/tasks'
 import type { TaskLog, TaskPayload, TaskUpdate, TaskDraft } from '../api/tasks'
 import { fetchSubTasks, fetchSubTasksBatch, createSubTask, patchSubTaskStatus, isPendingConfirmation, updateSubTask, deleteSubTask, restoreSubTask, fetchSubtaskDetail } from '../api/subtasks'
+import { fetchIssues } from '../api/issues'
 import type { SubTaskDetail, SubTaskPayload } from '../api/subtasks'
 import { createUpdate } from '../api/updates'
 import { ApiError } from '../api/client'
 import { getProject, getProjectMembers, getWorkProgressColumns, updateWorkProgressColumns } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } from '../domain/taskPermission'
-import type { TaskItem, SubTaskItem, Project, ProjectMember } from '../types'
+import type { TaskItem, SubTaskItem, Project, ProjectMember, IssueItem } from '../types'
 import { getProjectDisplayName, getProjectGroupKey, getProjectNameFromGroupKey } from '../compatibility/projectNames'
 import { getProjectById, getProjectIdFromRecord } from '../domain/projectIdentity'
 import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
 import { getKeyTaskAssigneeNames, taskHasKeyTaskAssignee } from '../domain/keyTaskAssigneeFilter'
 import { PlanTableViewV2 } from '../components/task-management/PlanTableViewV2'
-import { buildMobileTaskList } from '../components/task-management/planTableViewModel'
+import { buildMobileTaskList, buildPlanRows, summarizeWorkProgress } from '../components/task-management/planTableViewModel'
 import { WORK_PROGRESS_OPTIONAL_COLUMNS, type WorkProgressOptionalColumnKey } from '../components/task-management/workProgressColumnSizing'
+import { parseWorkProgressProjectId, updateWorkProgressProjectQuery } from '../components/task-management/workProgressProjectQuery'
 import { ChevronDownIcon } from '../components/icons/ChevronDownIcon'
 import { KeyTaskExecutionDetailView } from '../components/task-management/KeyTaskExecutionDetailView'
 import { MobileTaskList } from '../features/mobile-core-pages/MobileTaskList'
@@ -238,20 +240,22 @@ export function TaskManagementPage() {
   const [subEditMode, setSubEditMode] = useState(false)
   const [subEditDraft, setSubEditDraft] = useState<Record<string, string>>({})
   const [importOpen, setImportOpen] = useState(false)
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [search, setSearch]           = useState('')
   const [filterStatus, setFilterStatus] = useState(() => searchParams.get('status') ?? '')
   const [filterOwner, setFilterOwner] = useState('')
   const [filterPageOpen, setFilterPageOpen] = useState(false)
   const [filterDraft, setFilterDraft] = useState({ status: '', owner: '', search: '' })
+  const [quickFilter, setQuickFilter] = useState<'all' | 'overdue' | 'risk' | 'issues'>('all')
+  const [issueSnapshot, setIssueSnapshot] = useState<{ projectId: number | null; state: 'idle' | 'loading' | 'loaded' | 'error'; items: IssueItem[] }>({ projectId: null, state: 'idle', items: [] })
   const [operationsOpen, setOperationsOpen] = useState(false)
   const [columnsOpen, setColumnsOpen] = useState(false)
   const [optionalColumns, setOptionalColumns] = useState<WorkProgressOptionalColumnKey[]>([])
   const [columnsSaving, setColumnsSaving] = useState(false)
   const [projectStandardExpanded, setProjectStandardExpanded] = useState(false)
   const [showDeleted, setShowDeleted] = useState(false)
-  // viewProjectId：null=全部任务，非null=特定项目
-  const [viewProjectId, setViewProjectId] = useState<number | null>(null)
+  // URL 是推进表项目范围的唯一来源，确保刷新和前进/后退恢复同一项目。
+  const viewProjectId = parseWorkProgressProjectId(searchParams)
   const [autoSelectedTaskProjectId, setAutoSelectedTaskProjectId] = useState<number | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [planTableLoading, setPlanTableLoading] = useState(false)
@@ -297,6 +301,19 @@ export function TaskManagementPage() {
   )
 
   useEffect(() => {
+    if (effectiveTaskProjectId == null) {
+      setIssueSnapshot({ projectId: null, state: 'idle', items: [] })
+      return
+    }
+    let cancelled = false
+    setIssueSnapshot({ projectId: effectiveTaskProjectId, state: 'loading', items: [] })
+    fetchIssues(effectiveTaskProjectId)
+      .then((items) => { if (!cancelled) setIssueSnapshot({ projectId: effectiveTaskProjectId, state: 'loaded', items }) })
+      .catch(() => { if (!cancelled) setIssueSnapshot({ projectId: effectiveTaskProjectId, state: 'error', items: [] }) })
+    return () => { cancelled = true }
+  }, [effectiveTaskProjectId])
+
+  useEffect(() => {
     let cancelled = false
     setOptionalColumns([])
     setColumnsOpen(false)
@@ -322,21 +339,6 @@ export function TaskManagementPage() {
     }
   }
 
-
-  // 侧边栏切换项目时重置为全部
-  useEffect(() => {
-    setViewProjectId(null)
-  }, [currentProjectId])
-
-  useEffect(() => {
-    const rawProjectId = searchParams.get('projectId')
-    if (rawProjectId === null) {
-      setViewProjectId(null)
-      return
-    }
-    const pid = Number(rawProjectId)
-    setViewProjectId(Number.isFinite(pid) ? pid : null)
-  }, [searchParams])
 
   useEffect(() => {
     let cancelled = false
@@ -494,9 +496,7 @@ export function TaskManagementPage() {
   }, [focusRefreshVersion, expandedTasks, selectedSubTask])
 
   function handleProjectFilter(name: string) {
-    if (!name) return setViewProjectId(null)
-    const pid = Number(name)
-    setViewProjectId(Number.isFinite(pid) ? pid : null)
+    setSearchParams(updateWorkProgressProjectQuery(searchParams, name))
   }
 
   function openFilterPage() {
@@ -602,6 +602,18 @@ export function TaskManagementPage() {
   }, [focusedProject])
 
   const planTableReady = !planTableLoading && tasks.every((task) => task.id in taskSubMap)
+  const currentIssueSnapshot = issueSnapshot.projectId === effectiveTaskProjectId ? issueSnapshot : null
+  const openProjectIssues = useMemo(() => currentIssueSnapshot?.state === 'loaded'
+    ? currentIssueSnapshot.items.filter((issue) => issue.status !== '已解决' && issue.status !== '已关闭')
+    : [], [currentIssueSnapshot])
+  const issueTaskIds = useMemo(() => new Set(openProjectIssues.map((issue) => issue.related_task_id).filter((id): id is number => id != null)), [openProjectIssues])
+  const issueSubtaskIds = useMemo(() => new Set(openProjectIssues.map((issue) => issue.related_subtask_id).filter((id): id is number => id != null)), [openProjectIssues])
+  const overviewRows = useMemo(() => planTableReady
+    ? buildPlanRows({ project: focusedProject, tasks, taskSubMap })
+    : [], [focusedProject, planTableReady, taskSubMap, tasks])
+  const overview = useMemo(() => planTableReady
+    ? summarizeWorkProgress(overviewRows, openProjectIssues)
+    : null, [openProjectIssues, overviewRows, planTableReady])
   const mobilePlan = useMemo(() => buildMobileTaskList({
     project: focusedProject,
     tasks,
@@ -609,7 +621,10 @@ export function TaskManagementPage() {
     searchText: search,
     statusFilter: filterStatus,
     ownerFilter: filterOwner,
-  }), [focusedProject, tasks, taskSubMap, search, filterStatus, filterOwner])
+    quickFilter,
+    issueTaskIds,
+    issueSubtaskIds,
+  }), [focusedProject, tasks, taskSubMap, search, filterStatus, filterOwner, quickFilter, issueTaskIds, issueSubtaskIds])
 
   function assignmentMembers(projectId: number | null | undefined) {
     if (!projectId) return []
@@ -1128,6 +1143,38 @@ export function TaskManagementPage() {
         <div className="wp-standard-expanded-content">{projectStandardText}</div>
       </section>}
 
+      {!selectedSubTask && !showDeleted && effectiveTaskProjectId != null && <section className="wp-overview" aria-label="项目进度总览">
+        <div className="wp-overview-metrics">
+          <button type="button" className={`wp-metric${quickFilter === 'all' && !filterStatus ? ' is-active' : ''}`} onClick={() => { setQuickFilter('all'); setFilterStatus('') }}>
+            <span className="wp-metric-label">关键任务</span><strong>{overview ? overview.total : '…'}</strong><small>项</small>
+          </button>
+          <button type="button" className={`wp-metric${filterStatus === '已完成' ? ' is-active' : ''}`} onClick={() => { setQuickFilter('all'); setFilterStatus(filterStatus === '已完成' ? '' : '已完成') }}>
+            <span className="wp-metric-label">已完成</span><strong>{overview ? overview.completed : '…'}</strong><small>项</small>
+          </button>
+          <button type="button" className={`wp-metric wp-metric--danger${quickFilter === 'overdue' ? ' is-active' : ''}`} onClick={() => { setQuickFilter(quickFilter === 'overdue' ? 'all' : 'overdue'); setFilterStatus('') }}>
+            <span className="wp-metric-label">延期</span><strong>{overview ? overview.delayed : '…'}</strong><small>项</small>
+          </button>
+          <button type="button" className={`wp-metric wp-metric--issue${quickFilter === 'issues' ? ' is-active' : ''}`} disabled={currentIssueSnapshot?.state !== 'loaded'} onClick={() => { setQuickFilter(quickFilter === 'issues' ? 'all' : 'issues'); setFilterStatus('') }}>
+            <span className="wp-metric-label">未解决问题</span><strong>{currentIssueSnapshot?.state === 'loaded' ? openProjectIssues.length : currentIssueSnapshot?.state === 'error' ? '暂不可用' : '…'}</strong><small>{currentIssueSnapshot?.state === 'loaded' ? '项' : ''}</small>
+          </button>
+          <div className="wp-overview-search">
+            <label htmlFor="wp-quick-search">搜索重点工作、关键任务或负责人</label>
+            <input id="wp-quick-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="输入名称或负责人" />
+          </div>
+        </div>
+        <div className="wp-overview-bottom">
+          <div className="wp-quick-filters" role="group" aria-label="快速筛选">
+            <button type="button" aria-pressed={quickFilter === 'all' && !filterStatus} onClick={() => { setQuickFilter('all'); setFilterStatus('') }}>全部</button>
+            <button type="button" aria-pressed={quickFilter === 'overdue'} onClick={() => { setQuickFilter('overdue'); setFilterStatus('') }}>延期</button>
+            <button type="button" aria-pressed={quickFilter === 'risk'} onClick={() => { setQuickFilter('risk'); setFilterStatus('') }}>有风险</button>
+            <button type="button" aria-pressed={quickFilter === 'issues'} disabled={currentIssueSnapshot?.state !== 'loaded'} onClick={() => { setQuickFilter('issues'); setFilterStatus('') }}>关联未解决问题</button>
+          </div>
+          {currentIssueSnapshot?.state === 'error' && <span className="wp-issue-unavailable" role="status">问题数据加载失败，数量暂不可用。</span>}
+          {(quickFilter !== 'all' || filterStatus || filterOwner || search) && <button type="button" className="wp-reset-filters" onClick={() => { setQuickFilter('all'); setFilterStatus(''); setFilterOwner(''); setSearch('') }}>重置筛选</button>}
+          {currentIssueSnapshot?.state === 'error' && <Link className="wp-issue-link" to={`/work/issues?projectId=${effectiveTaskProjectId}`}>打开问题清单</Link>}
+        </div>
+      </section>}
+
       {/* Main */}
       {selectedSubTask ? (
         <KeyTaskExecutionDetailView
@@ -1188,6 +1235,9 @@ export function TaskManagementPage() {
                   ownerFilter={filterOwner}
                   taskSubMap={taskSubMap}
                   searchText={search}
+                  quickFilter={quickFilter}
+                  issueTaskIds={issueTaskIds}
+                  issueSubtaskIds={issueSubtaskIds}
                   loading={planTableLoading}
                   onOpenSubTask={openSubDetail}
                   onEditSubTask={isProjectActive(focusedProject) && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: focusedProject?.user_roles ?? [] }) ? openSubTaskAssignment : undefined}

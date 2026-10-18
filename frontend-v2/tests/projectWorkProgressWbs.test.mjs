@@ -141,12 +141,48 @@ test('plan rows expose project-control summaries without a WBS number column', a
   assert.equal(rows[2].workstream, '经营复盘机制')
 })
 
+test('work progress quick filters scope delayed, risky, and issue-linked key tasks', async () => {
+  const { buildPlanRows } = await loadModule(MODEL_FILE)
+  const map = {
+    ...taskSubMap,
+    11: [
+      { ...taskSubMap[11][0], has_risk: true },
+      { ...taskSubMap[11][1], status: '延期', is_overdue: true },
+    ],
+  }
+
+  assert.deepEqual(buildPlanRows({ project, tasks, taskSubMap: map, quickFilter: 'risk' }).map((row) => row.subtask?.id), [101])
+  assert.deepEqual(buildPlanRows({ project, tasks, taskSubMap: map, quickFilter: 'overdue' }).map((row) => row.subtask?.id), [102])
+  assert.deepEqual(buildPlanRows({ project, tasks, taskSubMap: map, quickFilter: 'issues', issueTaskIds: new Set([12]), issueSubtaskIds: new Set([101]) }).map((row) => row.subtask?.id), [101, undefined])
+})
+
+test('work progress overview counts key task status and only real open issues', async () => {
+  const { buildPlanRows, summarizeWorkProgress } = await loadModule(MODEL_FILE)
+  const rows = buildPlanRows({ project, tasks, taskSubMap: {
+    ...taskSubMap,
+    11: [
+      { ...taskSubMap[11][0], has_risk: true },
+      { ...taskSubMap[11][1], status: '延期', is_overdue: true },
+    ],
+  } })
+  const summary = summarizeWorkProgress(rows, [
+    { id: 1, project_id: 7, status: '待处理' },
+    { id: 2, project_id: 7, status: '待负责人确认' },
+    { id: 3, project_id: 7, status: '已解决' },
+    { id: 4, project_id: 7, status: '已关闭' },
+  ])
+
+  assert.deepEqual(summary, { total: 2, completed: 0, delayed: 1, risky: 1, openIssues: 2 })
+})
+
 test('mobile task cards reuse the plan table search and filters without duplicating parent tasks', async () => {
   const { buildMobileTaskList } = await loadModule(MODEL_FILE)
   const result = buildMobileTaskList({ project, tasks, taskSubMap, searchText: '张三' })
 
   assert.deepEqual(result.tasks.map((task) => task.id), [11])
   assert.deepEqual(result.subTasksByTaskId[11].map((subtask) => subtask.id), [101])
+  const riskFiltered = buildMobileTaskList({ project, tasks, taskSubMap, quickFilter: 'risk' })
+  assert.deepEqual(riskFiltered.subTasksByTaskId[11].map((subtask) => subtask.id), [101])
 })
 
 test('page and export use the project work progress naming and shared schema', () => {
@@ -158,6 +194,28 @@ test('page and export use the project work progress naming and shared schema', (
   assert.match(view, /buildPlanRows/)
   assert.match(exportSource, /PLAN_TABLE_COLUMNS/)
   assert.match(exportSource, /getPlanRowCellValue/)
+})
+
+test('project selector writes its selection to the URL and retains other route filters', () => {
+  const page = read('src/pages/TaskManagementPage.tsx')
+  assert.ok(/const \[searchParams, setSearchParams\] = useSearchParams\(\)/.test(page), 'page must be able to update the route query')
+  assert.ok(/parseWorkProgressProjectId\(searchParams\)/.test(page), 'project data scope must derive from the route')
+  assert.ok(/setSearchParams\(updateWorkProgressProjectQuery\(searchParams, name\)\)/.test(page), 'project selection must navigate to the selected scope')
+})
+
+test('work progress project query parses a selected project and preserves other filters on change', async () => {
+  const { parseWorkProgressProjectId, updateWorkProgressProjectQuery } = await loadModule('src/components/task-management/workProgressProjectQuery.ts')
+  const original = new URLSearchParams('projectId=2&status=延期')
+
+  assert.equal(parseWorkProgressProjectId(original), 2)
+  const selected = updateWorkProgressProjectQuery(original, '3')
+  assert.equal(parseWorkProgressProjectId(selected), 3)
+  assert.equal(selected.get('status'), '延期')
+
+  const cleared = updateWorkProgressProjectQuery(selected, '')
+  assert.equal(parseWorkProgressProjectId(cleared), null)
+  assert.equal(cleared.get('status'), '延期')
+  assert.equal(parseWorkProgressProjectId(new URLSearchParams('projectId=abc')), null)
 })
 
 test('column layout clamps resized widths and restores canonical widths', async () => {

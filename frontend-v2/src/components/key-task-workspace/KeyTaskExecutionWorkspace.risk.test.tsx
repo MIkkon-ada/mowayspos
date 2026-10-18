@@ -17,7 +17,7 @@ const api = vi.hoisted(() => ({
 vi.mock('../../api/keyTaskWorkspace', () => api)
 vi.mock('../../api/monthlyPlans', () => ({ updateMonthlyPlan: api.updateMonthlyPlan }))
 vi.mock('../../api/projects', () => ({ getProjectMembers: api.getProjectMembers }))
-vi.mock('./CurrentProgressCard', () => ({ CurrentProgressCard: () => null }))
+vi.mock('./CurrentProgressCard', () => ({ CurrentProgressCard: ({ progress }: { progress: { summary: string } | null }) => progress ? <p>{progress.summary}</p> : null }))
 vi.mock('./ExecutionPlanCreateDrawer', () => ({ ExecutionPlanCreateDrawer: () => null }))
 vi.mock('./ExecutionPlanDetailDrawer', () => ({ ExecutionPlanDetailDrawer: () => null }))
 vi.mock('./ExecutionPlanSidebar', () => ({ ExecutionPlanSidebar: () => null }))
@@ -89,5 +89,25 @@ describe('KeyTaskExecutionWorkspace risk actions', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '解除风险' })).toBeNull())
     expect(api.setKeyTaskRisk).toHaveBeenCalledWith(9, '')
     expect(onRiskChanged).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides the previous confirmed progress when the post-change refresh fails', async () => {
+    const initialWorkspace = {
+      ...workspace(),
+      latest_submission: { id: 7, summary: '此前已确认进展', next_step: '旧计划', submitter: '负责人', confirmed_at: null },
+    }
+    api.fetchKeyTaskExecutionWorkspace
+      .mockResolvedValueOnce(initialWorkspace)
+      .mockRejectedValueOnce(new Error('刷新失败：服务不可用'))
+    renderWorkspace()
+
+    expect(await screen.findByText('此前已确认进展')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '标记风险' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '风险原因' }), { target: { value: '供应商延期' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存风险' }))
+
+    expect(await screen.findByText('刷新失败：服务不可用')).toBeTruthy()
+    expect(screen.queryByText('此前已确认进展')).toBeNull()
+    expect(screen.getByRole('button', { name: '重新加载' })).toBeTruthy()
   })
 })

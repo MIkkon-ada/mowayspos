@@ -162,6 +162,82 @@ def test_meeting_change_proposal_lineage_schema_and_migration_are_declared():
     assert 'down_revision = "c4e5f6a7b8c9"' in migration.read_text(encoding="utf-8")
 
 
+def test_standard_word_draft_persists_reviewable_work_progress_proposal(db):
+    run = _run(db)
+    snapshot = json.loads(run.snapshot_json)
+    snapshot["standard_minutes"] = {"is_standard_minutes": True}
+    run.snapshot_json = json.dumps(snapshot, ensure_ascii=False)
+    run.document_text = "客户清单第二批需要创建。"
+    db.commit()
+    import app.services.project_meeting_agent_processing as processing
+
+    fact_content = "客户清单第二批需要创建"
+    normalized = {
+        "meeting_draft": {"title": "周会"},
+        "next_stage_work": [], "meeting_facts": [{
+            "fact_id": "F001", "fact_type": "action_item", "content": fact_content,
+            "meeting_evidence": [_span(run.document_text, fact_content)],
+            "validation": {"state": "ready", "errors": []},
+        }],
+        "project_matches": [{
+            "match_id": "M001", "fact_id": "F001",
+            "target": {"target_type": "key_task", "target_id": 20, "workstream_id": 10, "key_task_id": 20},
+            "confidence": 0.91, "reasons": ["客户清单标题一致"],
+            "validation": {"state": "ready", "errors": []},
+        }],
+        "project_deltas": [{
+            "delta_id": "D001", "source_fact_id": "F001", "source_match_id": "M001",
+            "delta_type": "NEW_EXECUTION_SCHEDULE", "reasoning": "本周新增执行安排",
+            "validation": {"state": "ready", "errors": []},
+        }],
+        "unmatched_items": [], "needs_confirmation": [], "prior_action_tracking": [],
+        "proposed_changes": [],
+    }
+    from app.services.project_meeting_work_progress import build_word_work_progress_preview
+    normalized["work_progress_preview"] = build_word_work_progress_preview(normalized, snapshot)
+    processing._create_review_draft(db, run, normalized, result_json=json.dumps(normalized, ensure_ascii=False))
+    db.commit()
+
+    proposal = db.query(models.MeetingChangeProposal).one()
+    assert proposal.action == "confirm_work_progress"
+    assert proposal.target_type == "subtask"
+    assert proposal.target_id == 20
+    assert json.loads(proposal.proposed_json) == {"next_step": fact_content}
+    assert json.loads(proposal.lineage_json)["source_fact_ids"] == ["F001"]
+    assert db.query(models.KeyTaskExecutionEvent).count() == 0
+
+
+def test_standard_word_draft_keeps_unlinked_fact_as_explicit_review_item(db):
+    run = _run(db)
+    snapshot = json.loads(run.snapshot_json)
+    snapshot["standard_minutes"] = {"is_standard_minutes": True}
+    run.snapshot_json = json.dumps(snapshot, ensure_ascii=False)
+    run.document_text = "整理内部知识库"
+    db.commit()
+    import app.services.project_meeting_agent_processing as processing
+    from app.services.project_meeting_work_progress import build_word_work_progress_preview
+    normalized = {
+        "meeting_draft": {"title": "周会"}, "next_stage_work": [],
+        "meeting_facts": [], "project_matches": [], "project_deltas": [],
+        "unmatched_items": [], "needs_confirmation": [{
+            "fact_id": "F001", "fact_type": "action_item", "content": run.document_text,
+            "reason": "有两个可能的关键任务", "meeting_evidence": [_span(run.document_text, run.document_text)],
+            "validation": {"state": "ready", "errors": []},
+        }],
+        "prior_action_tracking": [], "proposed_changes": [],
+    }
+    normalized["work_progress_preview"] = build_word_work_progress_preview(normalized, snapshot)
+
+    processing._create_review_draft(db, run, normalized, result_json=json.dumps(normalized, ensure_ascii=False))
+    db.commit()
+
+    proposal = db.query(models.MeetingChangeProposal).one()
+    assert proposal.action == "review_unlinked_fact"
+    assert json.loads(proposal.before_json)["fact_id"] == "F001"
+    assert json.loads(proposal.proposed_json) == {"next_step": run.document_text}
+    assert json.loads(proposal.validation_json)["state"] == "needs_review"
+
+
 def test_background_success_persists_trusted_update_lineage_and_immutable_result(db, monkeypatch):
     run = _run(db)
     import app.services.project_meeting_agent_processing as processing
@@ -307,6 +383,43 @@ def test_background_success_persists_agent_audit_then_waits_for_owner_review(db,
     assert db.query(models.MeetingChangeSet).filter_by(meeting_id=meeting.id).count() == 1
 
 
+def test_reprocessing_an_unedited_pending_draft_reuses_its_meeting(db, monkeypatch):
+    run = _run(db)
+    import app.services.project_meeting_agent_processing as processing
+
+    monkeypatch.setattr(
+        processing,
+        "run_project_meeting_agent",
+        lambda **_: MeetingAgentRunResult(
+            final=_final(), trace=[], raw_responses=["{}"], invocation_log_ids=[28],
+            events=[{"kind": "final"}], model_code="meeting-model", step_count=1,
+        ),
+    )
+    factory = sessionmaker(bind=db.get_bind())
+    process_project_meeting_agent_run(run.id, session_factory=factory)
+    db.expire_all()
+    first_meeting = db.query(models.Meeting).one()
+    source = db.get(models.MeetingDocumentSource, run.document_source_id)
+    retry = models.ProjectMeetingRun(
+        id=4,
+        project_id=run.project_id,
+        document_source_id=run.document_source_id,
+        snapshot_json=run.snapshot_json,
+        document_text=run.document_text,
+        status="queued",
+        stage="reading",
+    )
+    db.add(retry)
+    db.commit()
+
+    process_project_meeting_agent_run(retry.id, session_factory=factory)
+
+    db.expire_all()
+    assert db.query(models.Meeting).count() == 1
+    assert source.meeting_id == first_meeting.id
+    assert db.query(models.MeetingChangeSet).filter_by(meeting_id=first_meeting.id).count() == 2
+
+
 def test_background_agent_error_fails_without_fabricating_result(db, monkeypatch):
     run = _run(db)
     import app.services.project_meeting_agent_processing as processing
@@ -329,6 +442,29 @@ def test_background_agent_error_fails_without_fabricating_result(db, monkeypatch
     assert "模型未返回有效会议结构" in run.error_message
     assert json.loads(run.result_json) == {}
     assert json.loads(run.raw_responses_json) == ["not-json"]
+
+
+def test_standard_word_metadata_takes_precedence_over_upload_form_fields():
+    from app.services.project_meeting_agent_processing import _apply_meeting_input
+
+    normalized = {"meeting_draft": {
+        "title": "Word title", "meeting_date": "2026-08-03", "location": "Word room",
+        "host": "Word host", "participants": ["Word participant"],
+        "organizer": "Word organizer", "copied_to": ["Word copy"],
+    }, "meeting_info_evidence": {"title": {"evidence": []}}}
+    original = json.loads(json.dumps(normalized))
+    snapshot = {
+        "standard_minutes": {"is_standard_minutes": True},
+        "meeting_input": {
+            "title": "Form title", "meeting_date": "2026-08-04", "location": "Form room",
+            "host": "Form host", "participants": "Form participant",
+            "organizer": "Form organizer", "copied_to": "Form copy",
+        },
+    }
+
+    _apply_meeting_input(normalized, snapshot)
+
+    assert normalized == original
 
 
 def test_status_payload_exposes_stage_steps_error_and_safe_audit_summary(db):
@@ -373,6 +509,8 @@ def test_create_route_queues_background_work_without_calling_model(db, monkeypat
     tasks = BackgroundTasks()
     payload = asyncio.run(meetings.create_project_meeting_document_run(
         background_tasks=tasks, project_id=1, file=upload, current_user="owner", db=db,
+        title="Weekly meeting", meeting_date="", location="", host="",
+        participants="Alice、Bob", organizer="", copied_to="",
     ))
 
     assert payload["status"] == "queued"
@@ -381,3 +519,158 @@ def test_create_route_queues_background_work_without_calling_model(db, monkeypat
     assert db.query(models.Meeting).count() == 0
     run = db.query(models.ProjectMeetingRun).one()
     assert "requested_meeting_type" not in json.loads(run.snapshot_json)
+    assert json.loads(run.snapshot_json)["meeting_input"]["participants"] == "Alice、Bob"
+
+
+def _standard_minutes_docx_for_review() -> bytes:
+    from docx import Document
+
+    document = Document()
+    document.add_paragraph("Weekly meeting 会议纪要")
+    info = document.add_table(rows=0, cols=2)
+    for key, value in (
+        ("会议时间", "2026-07-27（周一）"),
+        ("会议地点", "会议室"),
+        ("会议类型", "项目周会"),
+        ("会议主持人", "主持人甲"),
+        ("与会者", "参会人甲、参会人乙"),
+    ):
+        cells = info.add_row().cells
+        cells[0].text = key
+        cells[1].text = value
+    document.add_paragraph("一、会议议程")
+    document.add_paragraph("1、核对本周计划")
+    document.add_paragraph("二、会议小结与决议")
+    document.add_paragraph("（一）项目进展")
+    document.add_paragraph("· 确认本周计划按节点推进")
+    document.add_paragraph("三、待办事项跟踪")
+    document.add_paragraph("（一）本周新增待办事项")
+    action_table = document.add_table(rows=1, cols=6)
+    for cell, value in zip(action_table.rows[0].cells, ["编号", "会议安排事项", "负责人", "追踪人", "完成时限", "来源/备注"]):
+        cell.text = value
+    for cell, value in zip(
+        action_table.add_row().cells,
+        ["本周-01", "提交计划清单", "负责人甲", "追踪人乙", "2026-08-03 前", "本周新增；按模板留档"],
+    ):
+        cell.text = value
+    document.add_paragraph("整理人 整理人甲")
+    document.add_paragraph("抄送 项目组成员甲")
+    output = BytesIO()
+    document.save(output)
+    return output.getvalue()
+
+
+def test_review_package_projects_stale_standard_minutes_from_word_without_persisting(db, monkeypatch, tmp_path):
+    from app.routers import meetings
+
+    run = _run(db, status="pending_review")
+    meeting = models.Meeting(
+        id=5,
+        project_id=1,
+        document_source_id=2,
+        title="Old AI title",
+        meeting_date="2026-07-27",
+        host="Old AI host",
+        participants="Old AI participant",
+        organizer="Old AI organizer",
+        copied_to="项目全体成员",
+        summary="AI paraphrase that does not exist in Word",
+        publish_status="published",
+    )
+    run.result_json = json.dumps({
+        "meeting_draft": {"title": "Old AI title", "summary": "Old AI summary"},
+        "agenda_items": [{"content": "Old AI agenda"}],
+        "decisions": [{"content": "Old AI decision"}],
+        "next_stage_work": [{"content": "Old AI action"}],
+    }, ensure_ascii=False)
+    db.add_all([meeting, models.MeetingReviewEvent(meeting_id=5, action="published")])
+    db.commit()
+
+    source_path = tmp_path / "weekly.docx"
+    source_path.write_bytes(_standard_minutes_docx_for_review())
+    monkeypatch.setattr(meetings, "_project_meeting_document_root", lambda: tmp_path)
+    monkeypatch.setattr(meetings, "download_meeting_document_path", lambda _root, _key: source_path)
+
+    payload = meetings._project_meeting_payload(run, db)
+
+    assert payload["standard_minutes"] is True
+    assert payload["meeting"]["copied_to"] == "项目组成员甲"
+    assert payload["meeting"]["participants"] == "参会人甲、参会人乙"
+    assert payload["meeting"]["summary"] == ""
+    assert payload["result"]["agenda_items"][0]["content"] == "核对本周计划"
+    assert payload["result"]["decisions"][0]["topic"] == "项目进展"
+    assert payload["result"]["decisions"][0]["content"] == "确认本周计划按节点推进"
+    assert payload["result"]["next_stage_work"][0]["code"] == "本周-01"
+    assert payload["result"]["next_stage_work"][0]["source_note"] == "本周新增；按模板留档"
+    assert json.loads(run.result_json)["agenda_items"][0]["content"] == "Old AI agenda"
+
+
+def test_review_package_keeps_human_edited_standard_meeting_result(db, monkeypatch, tmp_path):
+    from app.routers import meetings
+
+    run = _run(db, status="pending_review")
+    meeting = models.Meeting(
+        id=6,
+        project_id=1,
+        document_source_id=2,
+        title="Human edited title",
+        publish_status="draft",
+    )
+    run.result_json = json.dumps({"meeting_draft": {"title": "Human edited title"}, "agenda_items": [{"content": "Human edited agenda"}]}, ensure_ascii=False)
+    db.add_all([meeting, models.MeetingReviewEvent(meeting_id=6, action="edited")])
+    db.commit()
+
+    source_path = tmp_path / "weekly.docx"
+    source_path.write_bytes(_standard_minutes_docx_for_review())
+    monkeypatch.setattr(meetings, "_project_meeting_document_root", lambda: tmp_path)
+    monkeypatch.setattr(meetings, "download_meeting_document_path", lambda _root, _key: source_path)
+
+    payload = meetings._project_meeting_payload(run, db)
+
+    assert payload["standard_minutes"] is False
+    assert payload["meeting"]["title"] == "Human edited title"
+    assert payload["result"]["agenda_items"][0]["content"] == "Human edited agenda"
+
+
+def test_owner_review_edits_replace_stale_ai_evidence_and_persist_completed_items(db):
+    from app import schemas
+    from app.routers.meetings import _sync_project_meeting_review_result
+
+    run = _run(db)
+    ai_fact = {
+        "content": "Original decision", "owner": "", "tracker": "", "due_date": "",
+        "evidence": [{"quote": "Original decision", "char_start": 0, "char_end": 17}],
+        "validation": {"state": "ready", "errors": []},
+    }
+    result = {
+        "meeting_draft": {"participants": ["Original"], "summary": "Original summary"},
+        "meeting_info_evidence": {"participants": {"evidence": ["Original"]}},
+        "summary_evidence": {"evidence": ["Original summary"]},
+        "agenda_items": [ai_fact], "decisions": [], "completed_items": [],
+        "next_stage_work": [], "risks": [],
+    }
+    run.result_json = json.dumps(result)
+    meeting = models.Meeting(
+        id=4, project_id=1, document_source_id=2, title="Review", participants="Alice、Bob",
+        summary="Corrected summary", review_status="pending_review", publish_status="draft",
+    )
+    change_set = models.MeetingChangeSet(project_id=1, meeting_id=4, result_json=json.dumps(result))
+    db.add_all([meeting, change_set])
+    db.commit()
+
+    payload = schemas.MeetingPayload(
+        project_id=1,
+        agenda_items_json=json.dumps([{**ai_fact, "content": "Corrected decision"}]),
+        completed_items_json=json.dumps([{"content": "Confirmed progress"}]),
+        decision_items_json="[]", task_list_json="[]", risk_items_json="[]",
+    )
+    _sync_project_meeting_review_result(db, meeting, payload, {"participants": "Original", "summary": "Original summary"})
+    db.commit()
+    saved = json.loads(run.result_json)
+    assert saved["agenda_items"][0]["content"] == "Corrected decision"
+    assert saved["agenda_items"][0]["evidence"] == []
+    assert saved["agenda_items"][0]["human_edited"] is True
+    assert saved["completed_items"][0]["content"] == "Confirmed progress"
+    assert "participants" not in saved["meeting_info_evidence"]
+    assert saved["summary_evidence"]["evidence"] == []
+    assert json.loads(change_set.result_json) == saved

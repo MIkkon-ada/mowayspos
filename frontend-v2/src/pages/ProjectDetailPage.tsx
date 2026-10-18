@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getProject, getProjectMembers } from '../api/projects'
+import { getProject, getProjectMembers, approveProject, returnProject } from '../api/projects'
 import { fetchTasks } from '../api/tasks'
 import { fetchSubTasksBatch } from '../api/subtasks'
 import { useProject } from '../context/ProjectContext'
@@ -8,18 +8,22 @@ import { projectEditPath, projectOwnerSubmitPath } from '../domain/projectEntryR
 import { DetailPanel } from '../features/settings/ProjectsMgmtSection'
 import { ApprovalMaterialsWorkbenchModal } from '../features/settings/ProjectsMgmtSection'
 import type { Project, ProjectMember, TaskItem, SubTaskWithParent } from '../types'
+import { toast } from '../utils/toast'
 
 export default function ProjectDetailPage() {
   const { projectId: pidStr } = useParams<{ projectId: string }>()
   const projectId = Number(pidStr)
   const navigate = useNavigate()
-  const { currentUser } = useProject()
+  const { currentUser, reloadProjects } = useProject()
 
   const [project, setProject] = useState<Project | null>(null)
   const [members, setMembers] = useState<ProjectMember[]>([])
   const [tasks, setTasks] = useState<TaskItem[]>([])
   const [subtasks, setSubtasks] = useState<SubTaskWithParent[]>([])
   const [loading, setLoading] = useState(true)
+  const [planError, setPlanError] = useState('')
+  const [reloadVersion, setReloadVersion] = useState(0)
+  const [reviewLoading, setReviewLoading] = useState(false)
 
   // modals
   const [approvalMaterialsProject, setApprovalMaterialsProject] = useState<Project | null>(null)
@@ -33,23 +37,28 @@ export default function ProjectDetailPage() {
     setMembers([])
     setTasks([])
     setSubtasks([])
+    setPlanError('')
+    let cancelled = false
 
     async function loadProjectDetail() {
       try {
         // Only the project request determines whether this project exists. Member
         // and task data are supplementary and must not hide a valid project.
         const proj = await getProject(projectId)
+        if (cancelled) return
         setProject(proj)
 
         const [memberResult, taskResult] = await Promise.allSettled([
           getProjectMembers(projectId),
           fetchTasks(projectId),
         ])
+        if (cancelled) return
         if (memberResult.status === 'fulfilled') setMembers(memberResult.value)
-        else console.error('Failed to load project members:', memberResult.reason)
+        else setPlanError('项目成员加载失败，请重新加载审核材料')
 
         if (taskResult.status !== 'fulfilled') {
           console.error('Failed to load project tasks:', taskResult.reason)
+          setPlanError('工作计划加载失败，请重新加载审核材料')
           return
         }
 
@@ -59,6 +68,7 @@ export default function ProjectDetailPage() {
         if (taskIds.length > 0) {
           try {
             const batch = await fetchSubTasksBatch(taskIds)
+            if (cancelled) return
             const allSubs: SubTaskWithParent[] = []
             tasksData.forEach((task) => {
               const subs = batch[String(task.id)] ?? []
@@ -75,17 +85,46 @@ export default function ProjectDetailPage() {
             setSubtasks(allSubs)
           } catch (err) {
             console.error('Failed to load project subtasks:', err)
+            if (!cancelled) setPlanError('关键任务加载失败，请重新加载审核材料')
           }
         }
       } catch (err) {
         console.error('Failed to load project detail:', err)
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
 
     void loadProjectDetail()
-  }, [projectId])
+    return () => { cancelled = true }
+  }, [projectId, reloadVersion])
+
+  async function handleApprove() {
+    if (!project || reviewLoading || planError) return
+    setReviewLoading(true)
+    try {
+      const updated = await approveProject(project.id, {})
+      setProject(updated)
+      setApprovalMaterialsProject(null)
+      reloadProjects()
+      toast.success('立项审核通过，项目已进入执行阶段')
+    } catch (error: unknown) { toast.error(error instanceof Error ? error.message : '审核失败，请重试') }
+    finally { setReviewLoading(false) }
+  }
+
+  async function handleReturn(reason?: string) {
+    if (!project || reviewLoading) return
+    if (reason === undefined) { setApprovalMaterialsProject(project); return }
+    setReviewLoading(true)
+    try {
+      const updated = await returnProject(project.id, reason || undefined)
+      setProject(updated)
+      setApprovalMaterialsProject(null)
+      reloadProjects()
+      toast.success('已退回，负责人可修改原方案后重新提交')
+    } catch (error: unknown) { toast.error(error instanceof Error ? error.message : '退回失败，请重试') }
+    finally { setReviewLoading(false) }
+  }
 
   // 角色
   const roles = useMemo(() => {
@@ -151,9 +190,7 @@ export default function ProjectDetailPage() {
           onOpenApprovalMaterials={() => {
             setApprovalMaterialsProject(project)
           }}
-          onReturn={() => {
-            // TODO: return logic
-          }}
+          onReturn={() => void handleReturn()}
           onWorkProgress={() => navigate(`/work/tasks?projectId=${project.id}`)}
           onOpenCloseFlow={() => {
             setCloseFlowProjectId(project.id)
@@ -169,17 +206,14 @@ export default function ProjectDetailPage() {
           projectMembers={members}
           tasks={tasks}
           subtasks={subtasks}
-          canReview={roles.isRealProjectCeo || roles.isSuperAdmin}
-          loading={false}
-          onClose={() => setApprovalMaterialsProject(null)}
-          onApprove={() => {
-            // TODO: approve logic
-            setApprovalMaterialsProject(null)
-          }}
-          onReturn={() => {
-            // TODO: return logic
-            setApprovalMaterialsProject(null)
-          }}
+          canReview={project.status === 'pending_review' && (roles.isRealProjectCeo || roles.isSuperAdmin)}
+          loading={reviewLoading}
+          planError={planError}
+          planLoading={loading}
+          onRetry={() => setReloadVersion((value) => value + 1)}
+          onClose={() => !reviewLoading && setApprovalMaterialsProject(null)}
+          onApprove={() => void handleApprove()}
+          onReturn={(reason) => void handleReturn(reason)}
         />
       )}
     </div>

@@ -1,6 +1,17 @@
-import { apiGet, apiPost, apiPatch, apiDelete } from './client'
+import { apiGet, apiPost, apiPatch, apiDelete, apiPut } from './client'
 import type { Project, ProjectCapabilities, ProjectMember, MemberChangeRequest, ProjectCloseRequest, ProjectCloseRequestCreatePayload, ProjectCloseRequestUpdatePayload, ProjectCloseReviewPayload } from '../types'
 import type { ProjectLifecycleStatus } from '../domain/projectLifecycleStatus'
+import type { WorkProgressOptionalColumnKey } from '../components/task-management/workProgressColumnSizing'
+
+export type WorkProgressColumnConfiguration = { optional_columns: WorkProgressOptionalColumnKey[] }
+
+export function getWorkProgressColumns(projectId: number): Promise<WorkProgressColumnConfiguration> {
+  return apiGet<WorkProgressColumnConfiguration>(`/api/projects/${projectId}/work-progress-columns`)
+}
+
+export function updateWorkProgressColumns(projectId: number, optionalColumns: WorkProgressOptionalColumnKey[]): Promise<WorkProgressColumnConfiguration> {
+  return apiPatch<WorkProgressColumnConfiguration>(`/api/projects/${projectId}/work-progress-columns`, { optional_columns: optionalColumns })
+}
 
 // 当前用户可见项目：GET /api/projects[?include_archived=true]
 export function getProjects(includeArchived = false): Promise<Project[]> {
@@ -60,8 +71,10 @@ export type ProjectPatchPayload = {
   lifecycle_status?: string
 }
 
-export function createProject(payload: ProjectCreatePayload): Promise<Project> {
-  return apiPost<Project>('/api/projects', payload)
+export function createProject(payload: ProjectCreatePayload, clientRequestId?: string): Promise<Project> {
+  return apiPost<Project>('/api/projects', clientRequestId
+    ? { ...payload, client_request_id: clientRequestId }
+    : payload)
 }
 
 export function patchProject(projectId: number, payload: ProjectPatchPayload): Promise<Project> {
@@ -83,8 +96,10 @@ export function deleteProject(projectId: number, confirmName: string, confirmPhr
   return apiDelete(`/api/projects/${projectId}`, { confirm_name: confirmName, confirm_phrase: confirmPhrase })
 }
 
-export function createProjectCloseRequest(projectId: number, payload: ProjectCloseRequestCreatePayload): Promise<ProjectCloseRequest> {
-  return apiPost<ProjectCloseRequest>(`/api/projects/${projectId}/close-requests`, payload)
+export function createProjectCloseRequest(projectId: number, payload: ProjectCloseRequestCreatePayload, clientRequestId?: string): Promise<ProjectCloseRequest> {
+  return apiPost<ProjectCloseRequest>(`/api/projects/${projectId}/close-requests`, clientRequestId
+    ? { ...payload, client_request_id: clientRequestId }
+    : payload)
 }
 export function getProjectCloseRequests(projectId: number, status?: string): Promise<ProjectCloseRequest[]> {
   const query = status ? `?status=${encodeURIComponent(status)}` : ''
@@ -121,9 +136,13 @@ export type ProjectProfilePayload = {
   end_date?: string
   description?: string
   work_progress_draft?: ProjectWorkProgressTaskDraft[]
+  replace_plan?: boolean
+  ai_run_id?: number
 }
 
 export type ProjectWorkProgressSubTaskDraft = {
+  id?: number
+  subtask_id?: number
   title: string
   evaluation_standard?: string
   assignee?: string
@@ -135,6 +154,8 @@ export type ProjectWorkProgressSubTaskDraft = {
 }
 
 export type ProjectWorkProgressTaskDraft = {
+  id?: number
+  task_id?: number
   title: string
   description?: string
   goal?: string
@@ -152,6 +173,21 @@ export function ownerSubmitProfile(
   payload: ProjectProfilePayload,
 ): Promise<Project & { submitted_for_review: boolean }> {
   return apiPost(`/api/projects/${projectId}/owner-submit`, payload)
+}
+
+export type OwnerPlanDraftResponse = {
+  draft: ProjectProfilePayload | null
+  existing_plan: ProjectWorkProgressTaskDraft[]
+  saved_at: string | null
+  return_reason: string
+}
+
+export function getOwnerPlanDraft(projectId: number): Promise<OwnerPlanDraftResponse> {
+  return apiGet(`/api/projects/${projectId}/owner-plan-draft`)
+}
+
+export function saveOwnerPlanDraft(projectId: number, payload: ProjectProfilePayload): Promise<{ saved_at: string }> {
+  return apiPut(`/api/projects/${projectId}/owner-plan-draft`, payload)
 }
 
 export function dispatchProject(projectId: number): Promise<{ ok: boolean; notified_to: number; status: ProjectLifecycleStatus }> {
@@ -204,8 +240,10 @@ export type BatchImportResult = {
   skipped_rows: number
 }
 
-export function batchImportProjects(rows: BatchImportRow[]): Promise<BatchImportResult> {
-  return apiPost<BatchImportResult>('/api/projects/batch-import', { rows })
+export function batchImportProjects(rows: BatchImportRow[], clientRequestId?: string): Promise<BatchImportResult> {
+  return apiPost<BatchImportResult>('/api/projects/batch-import', clientRequestId
+    ? { rows, client_request_id: clientRequestId }
+    : { rows })
 }
 
 // ── 4A：项目成员管理（super_admin）──────────────────────────

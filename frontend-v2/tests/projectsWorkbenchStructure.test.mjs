@@ -10,7 +10,7 @@ const sourcePaths = [
 const source = sourcePaths.map((file) => fs.readFileSync(path.resolve(process.cwd(), file), 'utf8')).join('\n')
 
 for (const label of [
-  '项目管理',
+  '项目中心',
   '管理项目从立项、启动到执行与归档',
   '待我处理',
   '全部项目',

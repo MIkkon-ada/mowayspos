@@ -18,7 +18,7 @@ test('project meeting review workspace exposes the meeting review contract', () 
   assert.match(source, /projectName|projectCode/)
   assert.match(source, /meetingDraft/)
   assert.match(source, /项目会议纪要审核工作台/)
-  assert.match(source, /负责人审核/)
+  assert.match(source, /会议纪要审核工作台/)
 })
 
 test('workspace renders evidence and selectable execution-schedule changes', () => {
@@ -45,7 +45,7 @@ test('workspace requires a return reason and separates publishing from writeback
   assert.match(source, /退回原因/)
   assert.match(source, /onReturn/)
   assert.match(source, /returnReason\.trim\(\)/)
-  assert.match(source, /下载会议纪要/)
+  assert.match(source, /下载 Word/)
   assert.match(source, /onDownload/)
   assert.match(source, /value=\{returnReason\}/)
 })

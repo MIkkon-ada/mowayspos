@@ -25,7 +25,7 @@ class FakeAdapters:
         self.vision_calls = []
         self.vision_timeouts = []
 
-    def complete_chat(self, model, api_key, prompt, *, timeout_seconds, response_format=None):
+    def complete_chat(self, model, api_key, prompt, *, timeout_seconds, response_format=None, on_metadata=None):
         self.chat_calls.append(model.id)
         self.chat_timeouts.append(timeout_seconds)
         self.chat_response_formats.append(response_format)

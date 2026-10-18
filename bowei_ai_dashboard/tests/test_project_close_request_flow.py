@@ -171,6 +171,39 @@ def test_stale_active_project_cannot_create_duplicate_pending_request(tmp_path):
     assert session_a.query(models.ProjectCloseRequest).filter_by(status="pending").count() == 1
 
 
+def test_same_project_close_create_request_returns_original_after_project_enters_pending_close():
+    db = _db()
+    payload_data = {**_payload().model_dump(), "client_request_id": "close-request-retry-001"}
+    payload = schemas.ProjectCloseRequestCreatePayload.model_validate(payload_data)
+
+    first = create_project_close_request(1, payload, current_user="owner", db=db)
+    retry = create_project_close_request(1, payload, current_user="owner", db=db)
+
+    assert retry["id"] == first["id"]
+    assert retry["status"] == "pending"
+    assert db.query(models.ProjectCloseRequest).count() == 1
+    assert db.query(models.Notification).filter_by(type="project_close_requested").count() == 1
+
+
+def test_reusing_project_close_request_key_with_changed_material_conflicts_with_key_error():
+    db = _db()
+    first_payload = schemas.ProjectCloseRequestCreatePayload.model_validate({
+        **_payload().model_dump(),
+        "client_request_id": "close-request-retry-002",
+    })
+    changed_payload = schemas.ProjectCloseRequestCreatePayload.model_validate({
+        **_payload("Different summary").model_dump(),
+        "client_request_id": "close-request-retry-002",
+    })
+    create_project_close_request(1, first_payload, current_user="owner", db=db)
+
+    with pytest.raises(HTTPException, match="different project close request") as exc:
+        create_project_close_request(1, changed_payload, current_user="owner", db=db)
+
+    assert exc.value.status_code == 409
+    assert db.query(models.ProjectCloseRequest).count() == 1
+
+
 def test_complete_create_edit_cancel_reject_and_approve_history_flow():
     db = _db()
 

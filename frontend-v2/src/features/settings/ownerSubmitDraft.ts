@@ -505,6 +505,8 @@ export function toSubmitDraft(tasks: ProjectInitCurrentDraft): SubmitTaskDraft[]
   return tasks.map((task) => {
     const record = task as DraftRecord
     return {
+      ...(record.id != null ? { id: record.id } : {}),
+      ...(record.task_id != null ? { task_id: record.task_id } : {}),
       title: String(record.title ?? '').trim(),
       description: String(record.description ?? '').trim(),
       goal: String(record.goal ?? record.description ?? '').trim(),
@@ -515,6 +517,8 @@ export function toSubmitDraft(tasks: ProjectInitCurrentDraft): SubmitTaskDraft[]
       plan_start: String(record.plan_start ?? ''),
       plan_end: String(record.plan_end ?? ''),
       subtasks: (Array.isArray(record.subtasks) ? record.subtasks : []).map((subtask: DraftRecord) => ({
+        ...(subtask.id != null ? { id: subtask.id } : {}),
+        ...(subtask.subtask_id != null ? { subtask_id: subtask.subtask_id } : {}),
         title: String(subtask.title ?? '').trim(),
         evaluation_standard: String(subtask.evaluation_standard ?? '').trim(),
         assignee: String(subtask.assignee ?? '').trim(),

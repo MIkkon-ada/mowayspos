@@ -8,7 +8,7 @@ import os
 import tempfile
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from app import models
 from app.ai.contracts import AIUpstreamError, classify_retryable_error
@@ -25,6 +25,7 @@ class ChatAdapter(Protocol):
         *,
         timeout_seconds: int,
         response_format: dict[str, str] | None = None,
+        on_metadata: Callable[[dict[str, Any]], None] | None = None,
     ) -> str: ...
 
 
@@ -79,6 +80,7 @@ class OpenAICompatibleChatAdapter:
         *,
         timeout_seconds: int,
         response_format: dict[str, str] | None = None,
+        on_metadata: Callable[[dict[str, Any]], None] | None = None,
     ) -> str:
         try:
             from openai import APIConnectionError, APITimeoutError, OpenAI
@@ -105,7 +107,15 @@ class OpenAICompatibleChatAdapter:
             if response_format == {"type": "json_object"}:
                 request["response_format"] = response_format
             response = client.chat.completions.create(**request)
-            return str(response.choices[0].message.content or "")
+            choice = response.choices[0]
+            if on_metadata is not None:
+                usage = getattr(response, "usage", None)
+                on_metadata({
+                    "finish_reason": getattr(choice, "finish_reason", None),
+                    "prompt_tokens": getattr(usage, "prompt_tokens", None),
+                    "completion_tokens": getattr(usage, "completion_tokens", None),
+                })
+            return str(choice.message.content or "")
         except APITimeoutError as exc:
             raise AIUpstreamError("AI_UPSTREAM_TIMEOUT", retryable=True) from exc
         except APIConnectionError as exc:
@@ -183,6 +193,7 @@ class AnthropicChatAdapter:
         *,
         timeout_seconds: int,
         response_format: dict[str, str] | None = None,
+        on_metadata: Callable[[dict[str, Any]], None] | None = None,
     ) -> str:
         try:
             from anthropic import Anthropic
@@ -196,6 +207,13 @@ class AnthropicChatAdapter:
                 max_tokens=4096,
                 messages=messages,
             )
+            if on_metadata is not None:
+                usage = getattr(response, "usage", None)
+                on_metadata({
+                    "finish_reason": getattr(response, "stop_reason", None),
+                    "prompt_tokens": getattr(usage, "input_tokens", None),
+                    "completion_tokens": getattr(usage, "output_tokens", None),
+                })
             return "".join(
                 block.text for block in response.content if getattr(block, "type", "") == "text"
             )
@@ -316,8 +334,11 @@ class DefaultAIAdapters:
         *,
         timeout_seconds: int,
         response_format: dict[str, str] | None = None,
+        on_metadata: Callable[[dict[str, Any]], None] | None = None,
     ) -> str:
         options = {"response_format": response_format} if response_format is not None else {}
+        if on_metadata is not None:
+            options["on_metadata"] = on_metadata
         if model.provider == "anthropic":
             return self._anthropic.complete(model, api_key, prompt, timeout_seconds=timeout_seconds, **options)
         if model.provider in {"deepseek", "dashscope", "glm"}:

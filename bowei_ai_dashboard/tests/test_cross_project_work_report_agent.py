@@ -304,8 +304,9 @@ def test_voice_context_route_keeps_member_scope_and_supports_no_project_id():
     root = Path(__file__).resolve().parents[1]
     source = (root / "app" / "routers" / "updates.py").read_text(encoding="utf-8")
     assert "project_id: int | None = None" in source
-    assert "models.SubTask.assignee == display_name" in source
-    assert "models.Task.owner == display_name" in source
+    assert "id_column=models.SubTask.assignee_id" in source
+    assert "id_column=models.Task.owner_id" in source
+    assert "person_identity_scope(" in source
     assert 'd["project_name"]' in source
     assert 'd["subtask_id"]' in source
     assert "Never trust a client-supplied cross-project candidate pool" in source

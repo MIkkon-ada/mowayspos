@@ -11,6 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import and_, or_, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
@@ -59,6 +60,7 @@ from ..services.project_meeting_minutes import (
     validate_execution_schedule_proposal as validate_project_schedule_proposal,
 )
 from ..services.project_meeting_agent_processing import (
+    apply_standard_meeting_minutes,
     process_project_meeting_agent_run,
     project_meeting_run_status_payload,
 )
@@ -70,7 +72,11 @@ from ..services.meeting_document_storage import (
 from ..services.meeting_minutes_export import build_meeting_minutes_docx
 from ..services.meeting_revisions import append_meeting_revision
 from ..services.meeting_traceability import normalize_action_items
+from ..services.key_task_execution import record_execution_event
+from ..services.person_identity import person_identity_scope, unique_active_person_id_for_name
+from ..services.request_fingerprint import request_payload_fingerprint
 from ..services.meeting_document_text import MeetingDocumentTextError, extract_meeting_document_text
+from ..services.standard_meeting_minutes import parse_standard_meeting_minutes
 from ..services.meeting_skill_clarification import (
     BlockingClarificationsError,
     append_input_snapshot,
@@ -306,6 +312,21 @@ def _require_global_read_scope(context: dict) -> None:
         raise HTTPException(403, "permission denied")
 
 
+def _meeting_create_retry_result(
+    db: Session,
+    request_id: str,
+    payload_hash: str,
+) -> dict | None:
+    existing = db.query(models.Meeting).filter(
+        models.Meeting.client_request_id == request_id
+    ).first()
+    if existing is None:
+        return None
+    if existing.request_payload_hash != payload_hash:
+        raise HTTPException(409, "client_request_id was already used for a different meeting request")
+    return crud.to_dict(existing)
+
+
 def _require_workflow_action(
     context: dict,
     project_id: int | None,
@@ -425,11 +446,26 @@ def create_meeting(
         raise HTTPException(422, "project_id is required")
 
     _require_workflow_action(context, payload.project_id, A_MEETING_CREATE, db)
+    account = db.query(models.Account).filter(models.Account.username == current_user).first()
+    request_payload_hash = None
+    if payload.client_request_id:
+        actor_key = (
+            f"person:{context['person_id']}"
+            if context.get("person_id") is not None
+            else f"account:{context.get('account_username') or current_user}"
+        )
+        request_payload_hash = request_payload_fingerprint({
+            "actor": actor_key,
+            "payload": payload.model_dump(exclude={"client_request_id"}),
+        })
+        existing_result = _meeting_create_retry_result(db, payload.client_request_id, request_payload_hash)
+        if existing_result is not None:
+            return existing_result
+
     require_project_business_writable(payload.project_id, db)
     _require_skill_run_ready(payload.skill_run_id, payload.project_id, db)
     project = db.get(models.Project, payload.project_id)
 
-    account = db.query(models.Account).filter(models.Account.username == current_user).first()
     change_set = None
     if payload.analysis_id is not None:
         change_set = db.get(models.MeetingChangeSet, payload.analysis_id)
@@ -451,17 +487,36 @@ def create_meeting(
     data = {
         k: v
         for k, v in payload.model_dump().items()
-        if k not in {"project_id", "analysis_id", "related_special_project", "skill_run_id"}
+        if k not in {
+            "project_id",
+            "analysis_id",
+            "related_special_project",
+            "skill_run_id",
+            "client_request_id",
+            # Review-only material is retained in the project-meeting run result,
+            # not in the legacy Meeting table contract.
+            "completed_items_json",
+        }
     }
     row = models.Meeting(**data)
     row.project_id = payload.project_id
     row.creator_person_id = account.person_id if account else None
+    row.client_request_id = payload.client_request_id
+    row.request_payload_hash = request_payload_hash
     if payload.related_special_project:
         row.related_special_project = payload.related_special_project
     elif project_name:
         row.related_special_project = project_name
     db.add(row)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        if payload.client_request_id:
+            existing_result = _meeting_create_retry_result(db, payload.client_request_id, request_payload_hash or "")
+            if existing_result is not None:
+                return existing_result
+        raise
     if change_set is not None:
         claimed_count = (
             db.query(models.MeetingChangeSet)
@@ -795,14 +850,64 @@ def _project_meeting_document_root() -> Path:
     return root.resolve()
 
 
+def _word_action_rows_changed(result: dict) -> bool:
+    preview = result.get("work_progress_preview")
+    if not isinstance(preview, dict) or not isinstance(preview.get("action_rows"), list):
+        return False
+
+    current = result.get("next_stage_work")
+    if not isinstance(current, list):
+        return True
+
+    fields = ("code", "content", "owner", "tracker", "due_date")
+
+    def signatures(rows: list) -> list[tuple[str, ...]]:
+        return sorted(
+            tuple(str(row.get(field) or "").strip() for field in fields)
+            for row in rows if isinstance(row, dict)
+        )
+
+    return signatures(preview["action_rows"]) != signatures(current)
+
+
 def _project_meeting_payload(run: models.ProjectMeetingRun, db: Session) -> dict:
     source = db.get(models.MeetingDocumentSource, run.document_source_id)
     meeting = db.query(models.Meeting).filter(models.Meeting.document_source_id == run.document_source_id).first()
     change_set = (
-        db.query(models.MeetingChangeSet).filter_by(meeting_id=meeting.id).first()
+        db.query(models.MeetingChangeSet).filter_by(meeting_id=meeting.id)
+        .order_by(models.MeetingChangeSet.id.desc()).first()
         if meeting else None
     )
     result = _json_value(run.result_json, {})
+    snapshot = _json_value(run.snapshot_json, {})
+    standard = snapshot.get("standard_minutes") if isinstance(snapshot.get("standard_minutes"), dict) else None
+    has_human_edits = bool(
+        meeting
+        and db.query(models.MeetingReviewEvent.id)
+        .filter_by(meeting_id=meeting.id, action="edited")
+        .first()
+    )
+    if meeting and not has_human_edits and source:
+        if not (isinstance(standard, dict) and standard.get("is_standard_minutes")):
+            try:
+                path = download_meeting_document_path(_project_meeting_document_root(), source.storage_key)
+                parsed = parse_standard_meeting_minutes(source.original_name, path.read_bytes())
+                if parsed.get("is_standard_minutes"):
+                    standard = parsed
+                    snapshot["standard_minutes"] = parsed
+            except (MeetingDocumentStorageError, OSError) as exc:
+                logger.info("Could not project standard meeting source for meeting %s: %s", meeting.id, exc)
+        if isinstance(standard, dict) and standard.get("is_standard_minutes"):
+            apply_standard_meeting_minutes(result, snapshot, run.document_text or "")
+            result_meeting = crud.to_dict(meeting)
+            for field in ("title", "meeting_date", "location", "meeting_type", "host", "organizer", "participants", "copied_to"):
+                result_meeting[field] = standard.get(field) or ""
+            result_meeting["summary"] = ""
+            meeting_payload = result_meeting
+        else:
+            meeting_payload = crud.to_dict(meeting) if meeting else None
+    else:
+        meeting_payload = crud.to_dict(meeting) if meeting else None
     return {
         "id": run.id,
         "project_id": run.project_id,
@@ -819,9 +924,11 @@ def _project_meeting_payload(run: models.ProjectMeetingRun, db: Session) -> dict
             "content_hash": source.content_hash if source else "",
         },
         "meeting_id": meeting.id if meeting else None,
-        "meeting": crud.to_dict(meeting) if meeting else None,
-        "snapshot": _json_value(run.snapshot_json, {}),
+        "meeting": meeting_payload,
+        "snapshot": snapshot,
         "result": result,
+        "work_progress_stale": _word_action_rows_changed(result),
+        "standard_minutes": bool(isinstance(standard, dict) and standard.get("is_standard_minutes") and not has_human_edits),
         "review_package": _meeting_change_set_payload(change_set, db) if change_set else None,
     }
 
@@ -877,6 +984,13 @@ async def create_project_meeting_document_run(
     background_tasks: BackgroundTasks,
     project_id: int = Form(...),
     file: UploadFile = File(...),
+    title: str = Form(""),
+    meeting_date: str = Form(""),
+    location: str = Form(""),
+    host: str = Form(""),
+    participants: str = Form(""),
+    organizer: str = Form(""),
+    copied_to: str = Form(""),
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
@@ -893,6 +1007,18 @@ async def create_project_meeting_document_run(
 
     account = db.query(models.Account).filter_by(username=current_user).first()
     snapshot = build_project_meeting_snapshot(project_id, db)
+    standard_minutes = parse_standard_meeting_minutes(file.filename or "", content)
+    if standard_minutes.get("is_standard_minutes"):
+        snapshot["standard_minutes"] = standard_minutes
+    snapshot["meeting_input"] = {
+        "title": title.strip(),
+        "meeting_date": meeting_date.strip(),
+        "location": location.strip(),
+        "host": host.strip(),
+        "participants": participants.strip(),
+        "organizer": organizer.strip(),
+        "copied_to": copied_to.strip(),
+    }
     source = models.MeetingDocumentSource(
         project_id=project_id,
         original_name=saved["original_name"],
@@ -974,7 +1100,20 @@ def export_project_meeting_minutes(meeting_id: int, current_user: str = Depends(
     current_user = require_login(current_user, db)
     meeting = _meeting_for_read(meeting_id, current_user, db)
     source = db.get(models.MeetingDocumentSource, meeting.document_source_id) if meeting.document_source_id else None
-    content = build_meeting_minutes_docx(meeting, source_name=source.original_name if source else "")
+    run = (
+        db.query(models.ProjectMeetingRun)
+        .filter_by(document_source_id=meeting.document_source_id)
+        .order_by(models.ProjectMeetingRun.id.desc())
+        .first()
+        if meeting.document_source_id else None
+    )
+    result = _json_value(run.result_json, {}) if run else {}
+    completed_items = result.get("completed_items") if isinstance(result, dict) else None
+    content = build_meeting_minutes_docx(
+        meeting,
+        source_name=source.original_name if source else "",
+        completed_items=completed_items if isinstance(completed_items, list) else None,
+    )
     filename = f"{(meeting.title or '项目会议纪要').strip()}-会议纪要.docx"
     return Response(
         content=content,
@@ -1002,27 +1141,82 @@ def _execute_project_meeting_schedule_changes(
         db.query(models.ProjectMeetingRun)
         .filter(models.ProjectMeetingRun.document_source_id == meeting.document_source_id)
         .order_by(models.ProjectMeetingRun.id.desc())
+        .with_for_update()
+        .populate_existing()
         .first()
     )
-    change_set = db.query(models.MeetingChangeSet).filter_by(meeting_id=meeting.id).first()
+    change_set = (db.query(models.MeetingChangeSet).filter_by(meeting_id=meeting.id)
+                  .order_by(models.MeetingChangeSet.id.desc())
+                  .with_for_update().populate_existing().first())
     if not run or not change_set:
         raise HTTPException(404, "project meeting review package not found")
     if not proposal_ids:
         return []
+    if len(proposal_ids) != len(set(proposal_ids)):
+        raise HTTPException(409, "duplicate proposal ids are not allowed")
     proposals = (
         db.query(models.MeetingChangeProposal)
         .filter(
             models.MeetingChangeProposal.change_set_id == change_set.id,
             models.MeetingChangeProposal.id.in_(proposal_ids),
         )
+        .with_for_update()
+        .populate_existing()
         .all()
     )
     if len(proposals) != len(set(proposal_ids)):
         raise HTTPException(409, "selected proposal does not belong to meeting")
+    progress_targets = [proposal.target_id for proposal in proposals if proposal.action == "confirm_work_progress"]
+    if progress_targets and _word_action_rows_changed(_json_value(run.result_json, {})):
+        raise HTTPException(409, "会议待办已修改，原 Word 匹配建议已过期；请仅发布纪要，重新上传分析后再同步推进表")
+    if len(progress_targets) != len(set(progress_targets)):
+        raise HTTPException(409, "multiple work progress proposals target the same key task")
     snapshot = _json_value(run.snapshot_json, {})
     for proposal in proposals:
         if proposal.execution_status != "pending":
             raise HTTPException(409, "selected proposal is not pending")
+        if proposal.action == "confirm_work_progress":
+            subtask = db.get(models.SubTask, proposal.target_id)
+            parent = db.get(models.Task, subtask.task_id) if subtask else None
+            if not subtask or subtask.is_deleted or not parent or parent.project_id != meeting.project_id or parent.is_deleted:
+                raise HTTPException(409, "work progress target is stale or outside this project")
+            if proposal.parent_subtask_id != subtask.id or proposal.parent_workstream_id != parent.id:
+                raise HTTPException(409, "work progress target hierarchy changed")
+            frozen = next((key_task for workstream in snapshot.get("workstreams", [])
+                           if isinstance(workstream, dict) and workstream.get("id") == parent.id
+                           for key_task in workstream.get("key_tasks", [])
+                           if isinstance(key_task, dict) and key_task.get("id") == subtask.id), None)
+            if frozen is None:
+                raise HTTPException(409, "work progress target is not in the analyzed project snapshot")
+            proposed = _json_value(proposal.proposed_json, {})
+            if not proposed or set(proposed) - {"progress_summary", "next_step"} or any(
+                not isinstance(value, str) or not value.strip() for value in proposed.values()
+            ):
+                raise HTTPException(409, "work progress proposal contains unsupported or empty fields")
+            if _json_value(proposal.validation_json, {}).get("state") != "ready":
+                raise HTTPException(409, "work progress proposal has unresolved validation errors")
+            evidence = _json_value(proposal.evidence_json, [])
+            if not evidence or any(
+                not isinstance(span, dict)
+                or not isinstance(span.get("quote"), str)
+                or not isinstance(span.get("char_start"), int)
+                or not isinstance(span.get("char_end"), int)
+                or run.document_text[span["char_start"]:span["char_end"]] != span["quote"]
+                for span in evidence
+            ):
+                raise HTTPException(409, "work progress evidence no longer matches the Word source")
+            latest_event = (
+                db.query(models.KeyTaskExecutionEvent)
+                .filter(models.KeyTaskExecutionEvent.key_task_id == subtask.id,
+                        models.KeyTaskExecutionEvent.authority == "confirmed",
+                        models.KeyTaskExecutionEvent.affects_current_progress.is_(True))
+                .order_by(models.KeyTaskExecutionEvent.effective_at.desc(), models.KeyTaskExecutionEvent.id.desc())
+                .first()
+            )
+            before = _json_value(proposal.before_json, {})
+            if (latest_event.id if latest_event else None) != before.get("event_id"):
+                raise HTTPException(409, "work progress changed after Word analysis; please analyze the current baseline again")
+            continue
         target = {"project_id": meeting.project_id}
         if proposal.target_id is not None:
             target["execution_schedule_id"] = proposal.target_id
@@ -1054,12 +1248,54 @@ def _execute_project_meeting_schedule_changes(
             }
             if current != before:
                 raise HTTPException(409, "execution schedule target changed after analysis")
+    claimed = (db.query(models.MeetingChangeProposal)
+               .filter(models.MeetingChangeProposal.id.in_(proposal_ids),
+                       models.MeetingChangeProposal.change_set_id == change_set.id,
+                       models.MeetingChangeProposal.execution_status == "pending")
+               .update({models.MeetingChangeProposal.execution_status: "executing"},
+                       synchronize_session=False))
+    if claimed != len(proposals):
+        raise HTTPException(409, "selected proposal is already being executed or has been executed")
     account = db.query(models.Account).filter_by(username=actor).first()
     executed: list[models.MeetingChangeProposal] = []
     from datetime import date
     for proposal in proposals:
         proposed = _json_value(proposal.proposed_json, {})
-        if proposal.action == "update_execution_schedule":
+        if proposal.action == "confirm_work_progress":
+            before = _json_value(proposal.before_json, {})
+            confirmed_at = utc_now()
+            source_fact_ids = _json_value(proposal.lineage_json, {}).get("source_fact_ids", [])
+            analyzed = _json_value(run.result_json, {})
+            word_action_rows = (
+                analyzed.get("work_progress_preview", {}).get("action_rows", [])
+                if isinstance(analyzed.get("work_progress_preview"), dict) else []
+            )
+            action_items = [
+                {key: item.get(key, "") for key in ("fact_id", "code", "content", "owner", "tracker", "due_date")}
+                for item in word_action_rows
+                if isinstance(item, dict) and item.get("fact_id") in source_fact_ids
+            ]
+            event = record_execution_event(
+                db,
+                project_id=meeting.project_id,
+                key_task_id=proposal.target_id,
+                event_type="meeting_confirmation",
+                source_type="meeting_work_progress",
+                source_id=proposal.id,
+                dedupe_key=f"meeting_work_progress:{proposal.id}:confirmed",
+                actor_person_id=account.person_id if account else None,
+                actor_name=actor,
+                occurred_at=meeting.created_at or confirmed_at,
+                confirmed_at=confirmed_at,
+                effective_at=confirmed_at,
+                affects_current_progress=True,
+                progress_summary=proposed.get("progress_summary", before.get("progress_summary") or ""),
+                next_step=proposed.get("next_step", before.get("next_step") or ""),
+                display_payload={"meeting_id": meeting.id, "meeting_title": meeting.title,
+                                 "source_fact_ids": source_fact_ids, "action_items": action_items},
+            )
+            row = event
+        elif proposal.action == "update_execution_schedule":
             row = db.get(models.ExecutionSchedule, proposal.target_id)
             for field, value in proposed.items():
                 if field in {"start_date", "due_date"} and value:
@@ -1090,6 +1326,173 @@ def _execute_project_meeting_schedule_changes(
     return executed
 
 
+@router.post("/{meeting_id}/fact-review")
+def review_unlinked_meeting_facts(
+    meeting_id: int,
+    payload: schemas.ProjectMeetingFactResolutionPayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    current_user = require_login(current_user, db)
+    meeting = _meeting_for_read(meeting_id, current_user, db)
+    if not meeting.project_id or not meeting.document_source_id:
+        raise HTTPException(409, "meeting is not awaiting fact review")
+    project_id = meeting.project_id
+    project = (db.query(models.Project).filter(models.Project.id == project_id)
+               .with_for_update().populate_existing().first())
+    if not project:
+        raise HTTPException(404, "project not found")
+    meeting = (db.query(models.Meeting).filter(models.Meeting.id == meeting_id)
+               .with_for_update().populate_existing().first())
+    if (not meeting or meeting.project_id != project_id or not meeting.document_source_id
+            or meeting.review_status not in {"pending_review", "returned"}):
+        raise HTTPException(409, "meeting is not awaiting fact review")
+    context = get_user_context_from_db(current_user, db)
+    _require_workflow_action(context, meeting.project_id, A_MEETING_PUBLISH, db)
+    change_set = (db.query(models.MeetingChangeSet).filter_by(meeting_id=meeting.id)
+                  .order_by(models.MeetingChangeSet.id.desc())
+                  .with_for_update().populate_existing().first())
+    run = (db.query(models.ProjectMeetingRun)
+           .filter_by(document_source_id=meeting.document_source_id)
+           .order_by(models.ProjectMeetingRun.id.desc())
+           .with_for_update().populate_existing().first())
+    if not change_set or not run:
+        raise HTTPException(404, "project meeting review package not found")
+    proposals = (db.query(models.MeetingChangeProposal)
+                 .filter(models.MeetingChangeProposal.change_set_id == change_set.id,
+                         models.MeetingChangeProposal.id.in_(payload.proposal_ids))
+                 .with_for_update().populate_existing()
+                 .all())
+    if len(proposals) != len(payload.proposal_ids) or any(
+        proposal.action != "review_unlinked_fact" or proposal.execution_status != "pending"
+        for proposal in proposals
+    ):
+        raise HTTPException(409, "selected facts are not awaiting review")
+    result = _json_value(run.result_json, {})
+    if payload.decision == "link_task" and _word_action_rows_changed(result):
+        raise HTTPException(409, "会议待办已修改，原 Word 匹配建议已过期；请重新上传分析后再关联任务")
+    preview = result.get("work_progress_preview") if isinstance(result.get("work_progress_preview"), dict) else {}
+    source_ids = {item.get("fact_id") for item in preview.get("unlinked_facts", []) if isinstance(item, dict)}
+    if not preview:
+        source_ids = {item.get("fact_id") for group in ("unmatched_items", "needs_confirmation")
+                      for item in result.get(group, []) if isinstance(item, dict)}
+    if any(_json_value(proposal.before_json, {}).get("fact_id") not in source_ids for proposal in proposals):
+        raise HTTPException(409, "review fact is not in the analyzed Word result")
+
+    target = None
+    parent = None
+    if payload.decision == "link_task":
+        target = (db.query(models.SubTask).filter(models.SubTask.id == payload.key_task_id)
+                  .with_for_update().populate_existing().first())
+        parent = db.get(models.Task, target.task_id) if target else None
+        snapshot = _json_value(run.snapshot_json, {})
+        frozen_target = any(
+            isinstance(workstream, dict) and workstream.get("id") == (parent.id if parent else None)
+            and any(isinstance(key_task, dict) and key_task.get("id") == payload.key_task_id
+                    for key_task in workstream.get("key_tasks", []))
+            for workstream in snapshot.get("workstreams", [])
+        )
+        if not target or target.is_deleted or not parent or parent.is_deleted or parent.project_id != meeting.project_id or not frozen_target:
+            raise HTTPException(409, "selected key task is not in the analyzed project")
+
+    account = db.query(models.Account).filter_by(username=current_user).first()
+    merge_target = None
+    if target is not None:
+        existing_progress = (db.query(models.MeetingChangeProposal)
+                             .filter_by(change_set_id=change_set.id, action="confirm_work_progress",
+                                        target_id=target.id, execution_status="pending")
+                             .order_by(models.MeetingChangeProposal.id.asc())
+                             .with_for_update().populate_existing().all())
+        if len(existing_progress) > 1:
+            raise HTTPException(409, "multiple pending progress suggestions target the same key task")
+        if existing_progress:
+            merge_target = existing_progress[0]
+            if _json_value(merge_target.validation_json, {}).get("state") != "ready":
+                raise HTTPException(409, "existing progress suggestion needs correction before linking more facts")
+    for proposal in proposals:
+        lineage = _json_value(proposal.lineage_json, {})
+        lineage["review_decision"] = payload.decision
+        lineage["reviewer_person_id"] = account.person_id if account else None
+        if payload.decision == "minutes_only":
+            proposal.execution_status = "ignored"
+            proposal.validation_json = json.dumps({"state": "ready", "errors": []}, ensure_ascii=False)
+        else:
+            proposed = _json_value(proposal.proposed_json, {})
+            if proposed:
+                evidence = _json_value(proposal.evidence_json, [])
+                if not evidence or any(
+                    not isinstance(span, dict)
+                    or not isinstance(span.get("quote"), str)
+                    or not isinstance(span.get("char_start"), int)
+                    or not isinstance(span.get("char_end"), int)
+                    or run.document_text[span["char_start"]:span["char_end"]] != span["quote"]
+                    for span in evidence
+                ):
+                    raise HTTPException(409, "review fact evidence does not match the Word source")
+                if merge_target is not None:
+                    combined = _json_value(merge_target.proposed_json, {})
+                    for field, value in proposed.items():
+                        if field not in {"progress_summary", "next_step"} or not isinstance(value, str) or not value.strip():
+                            raise HTTPException(409, "linked fact contains an unsupported progress field")
+                        values = combined.get(field, "").split("\n")
+                        if value not in values:
+                            combined[field] = "\n".join(filter(None, (combined.get(field), value)))
+                    combined_evidence = _json_value(merge_target.evidence_json, [])
+                    seen = {(span.get("quote"), span.get("char_start"), span.get("char_end"))
+                            for span in combined_evidence if isinstance(span, dict)}
+                    for span in evidence:
+                        key = (span["quote"], span["char_start"], span["char_end"])
+                        if key not in seen:
+                            combined_evidence.append(span)
+                            seen.add(key)
+                    merged_lineage = _json_value(merge_target.lineage_json, {})
+                    merged_lineage["source_fact_ids"] = list(dict.fromkeys(
+                        [*merged_lineage.get("source_fact_ids", []), *lineage.get("source_fact_ids", [])]
+                    ))
+                    merged_lineage["related_facts"] = [
+                        *merged_lineage.get("related_facts", []), *lineage.get("related_facts", [])
+                    ]
+                    merge_target.proposed_json = json.dumps(combined, ensure_ascii=False)
+                    merge_target.evidence_json = json.dumps(combined_evidence, ensure_ascii=False)
+                    merge_target.lineage_json = json.dumps(merged_lineage, ensure_ascii=False)
+                    proposal.execution_status = "ignored"
+                    proposal.result_target_id = target.id
+                    lineage["merged_into_proposal_id"] = merge_target.id
+                else:
+                    latest_event = (db.query(models.KeyTaskExecutionEvent)
+                                    .filter(models.KeyTaskExecutionEvent.key_task_id == target.id,
+                                            models.KeyTaskExecutionEvent.authority == "confirmed",
+                                            models.KeyTaskExecutionEvent.affects_current_progress.is_(True))
+                                    .order_by(models.KeyTaskExecutionEvent.effective_at.desc(), models.KeyTaskExecutionEvent.id.desc())
+                                    .first())
+                    proposal.action = "confirm_work_progress"
+                    proposal.target_type = "subtask"
+                    proposal.target_id = target.id
+                    proposal.parent_workstream_id = parent.id
+                    proposal.parent_subtask_id = target.id
+                    proposal.before_json = json.dumps({
+                        "event_id": latest_event.id if latest_event else None,
+                        "progress_summary": latest_event.progress_summary if latest_event else "",
+                        "next_step": latest_event.next_step if latest_event else "",
+                    }, ensure_ascii=False)
+                    proposal.validation_json = json.dumps({"state": "ready", "errors": []}, ensure_ascii=False)
+                    lineage["baseline_event_id"] = latest_event.id if latest_event else None
+                    merge_target = proposal
+            else:
+                proposal.execution_status = "ignored"
+                proposal.result_target_id = target.id
+            lineage["linked_key_task_id"] = target.id
+        proposal.lineage_json = json.dumps(lineage, ensure_ascii=False)
+    db.add(models.MeetingReviewEvent(
+        meeting_id=meeting.id, action="fact_reviewed",
+        actor_person_id=account.person_id if account else None,
+        reason=payload.decision,
+        selected_proposal_ids_json=json.dumps(payload.proposal_ids),
+    ))
+    db.commit()
+    return _meeting_change_set_payload(change_set, db)
+
+
 @router.post("/{meeting_id}/review")
 def review_project_meeting(
     meeting_id: int,
@@ -1101,14 +1504,39 @@ def review_project_meeting(
     meeting = _meeting_for_read(meeting_id, current_user, db)
     if not meeting.project_id or not meeting.document_source_id:
         raise HTTPException(409, "only project document meetings support this review flow")
+    project_id = meeting.project_id
+    project = (db.query(models.Project)
+               .filter(models.Project.id == project_id)
+               .with_for_update()
+               .populate_existing()
+               .first())
+    if not project:
+        raise HTTPException(404, "project not found")
+    meeting = (db.query(models.Meeting)
+               .filter(models.Meeting.id == meeting_id)
+               .with_for_update()
+               .populate_existing()
+               .first())
+    if not meeting or meeting.project_id != project_id or not meeting.document_source_id:
+        raise HTTPException(409, "meeting changed while review was being prepared")
     context = get_user_context_from_db(current_user, db)
     review_action = (
         A_MEETING_APPLY_CHANGES
-        if payload.action == "apply_changes"
+        if payload.action in {"apply_changes", "approve_and_apply"}
         else A_MEETING_PUBLISH
     )
     _require_workflow_action(context, meeting.project_id, review_action, db)
+    if payload.action == "approve_and_apply":
+        _require_workflow_action(context, meeting.project_id, A_MEETING_PUBLISH, db)
     account = db.query(models.Account).filter_by(username=current_user).first()
+    if payload.action in {"publish", "approve_and_apply"}:
+        change_set = (db.query(models.MeetingChangeSet).filter_by(meeting_id=meeting.id)
+                      .order_by(models.MeetingChangeSet.id.desc()).first())
+        pending_unlinked = (db.query(models.MeetingChangeProposal)
+                            .filter(models.MeetingChangeProposal.change_set_id == change_set.id,
+                                    models.MeetingChangeProposal.action == "review_unlinked_fact",
+                                    models.MeetingChangeProposal.execution_status == "pending")
+                            .all()) if change_set else []
     if payload.action == "return":
         if meeting.review_status not in {"pending_review", "returned"}:
             raise HTTPException(409, "meeting is not awaiting owner review")
@@ -1121,9 +1549,22 @@ def review_project_meeting(
             reason=payload.reason,
             selected_proposal_ids_json="[]",
         ))
-    elif payload.action == "publish":
+    elif payload.action in {"publish", "approve_and_apply"}:
         if meeting.review_status not in {"pending_review", "returned"}:
             raise HTTPException(409, "meeting is not awaiting owner review")
+        if payload.action == "approve_and_apply":
+            try:
+                _execute_project_meeting_schedule_changes(meeting, payload.proposal_ids, current_user, db)
+            except Exception:
+                db.rollback()
+                raise
+        for proposal in pending_unlinked:
+            lineage = _json_value(proposal.lineage_json, {})
+            lineage["review_decision"] = "minutes_only_on_publish"
+            lineage["reviewer_person_id"] = account.person_id if account else None
+            proposal.lineage_json = json.dumps(lineage, ensure_ascii=False)
+            proposal.execution_status = "ignored"
+            proposal.validation_json = json.dumps({"state": "ready", "errors": []}, ensure_ascii=False)
         meeting.review_status = "approved"
         meeting.publish_status = "published"
         meeting.review_version = (meeting.review_version or 0) + 1
@@ -1133,6 +1574,13 @@ def review_project_meeting(
             actor_person_id=account.person_id if account else None,
             selected_proposal_ids_json="[]",
         ))
+        if payload.action == "approve_and_apply":
+            db.add(models.MeetingReviewEvent(
+                meeting_id=meeting.id,
+                action="changes_applied",
+                actor_person_id=account.person_id if account else None,
+                selected_proposal_ids_json=json.dumps(payload.proposal_ids),
+            ))
     else:
         if meeting.review_status != "approved" or meeting.publish_status != "published":
             raise HTTPException(409, "meeting must be published before applying changes")
@@ -1327,6 +1775,30 @@ def _progress_baseline_index(baseline: dict) -> dict[int, tuple[int | None, dict
     return index
 
 
+def _progress_target_snapshot(
+    task: models.Task,
+    subtask: models.SubTask,
+) -> dict[str, Any]:
+    def iso(value):
+        return value.isoformat() if value is not None else None
+
+    return {
+        "task": {
+            "id": task.id,
+            "updated_at": iso(task.updated_at),
+            "status": task.status or "",
+            "is_deleted": bool(task.is_deleted),
+        },
+        "subtask": {
+            "id": subtask.id,
+            "task_id": subtask.task_id,
+            "updated_at": iso(subtask.updated_at),
+            "status": subtask.status or "",
+            "is_deleted": bool(subtask.is_deleted),
+        },
+    }
+
+
 def _progress_status_to_task_status(status: str) -> str | None:
     return {
         "completed": TS.S_COMPLETED,
@@ -1350,6 +1822,8 @@ async def analyze_progress_review(
     if project_id is None:
         raise HTTPException(409, "progress review requires a project")
     require_project_access(current_user, project_id, db)
+    analyzed_transcript = meeting.transcript_text or ""
+    analysis_transcript_sha256 = hashlib.sha256(analyzed_transcript.encode("utf-8")).hexdigest()
 
     baseline_run = latest_approved_baseline_run(project_id, db)
     if not baseline_run or not baseline_run.approved_snapshot_json:
@@ -1360,7 +1834,7 @@ async def analyze_progress_review(
         raise HTTPException(409, str(exc)) from exc
 
     member_names = _project_member_names(project_id, db)
-    reports = parse_named_reports(meeting.transcript_text or "", member_names)
+    reports = parse_named_reports(analyzed_transcript, member_names)
     if not reports:
         raise HTTPException(422, "transcript must contain named reports in 姓名：内容 format")
 
@@ -1369,7 +1843,7 @@ async def analyze_progress_review(
         result = await asyncio.to_thread(
             _do_analyze,
             db,
-            meeting.transcript_text or "",
+            analyzed_transcript,
             prompt,
             resource_id=row_id,
         )
@@ -1378,7 +1852,35 @@ async def analyze_progress_review(
         raise HTTPException(502, f"progress review analysis failed: {exc}") from exc
 
     candidates = result if isinstance(result, list) else result.get("reviews") or []
-    normalized = normalize_review_candidates(candidates, meeting.transcript_text or "", member_names)
+    normalized = normalize_review_candidates(candidates, analyzed_transcript, member_names)
+
+    # Serialize review creation with confirmations and lifecycle transitions. AI work
+    # happens before acquiring these locks; re-read its source before persisting.
+    project = (
+        db.query(models.Project)
+        .filter(models.Project.id == project_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if not project:
+        raise HTTPException(409, "progress review project no longer exists")
+    require_project_business_writable(project_id, db)
+    meeting = (
+        db.query(models.Meeting)
+        .filter(models.Meeting.id == row_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if not meeting or meeting.project_id != project_id:
+        raise HTTPException(409, "progress review meeting changed during analysis")
+    if (meeting.transcript_text or "") != analyzed_transcript:
+        raise HTTPException(409, "meeting transcript changed during progress analysis")
+    current_baseline_run = latest_approved_baseline_run(project_id, db)
+    if not current_baseline_run or current_baseline_run.id != baseline_run.id:
+        raise HTTPException(409, "approved kickoff baseline changed during progress analysis")
+
     baseline_index = _progress_baseline_index(baseline)
     analysis_version = next_analysis_version(row_id, db)
 
@@ -1388,6 +1890,8 @@ async def analyze_progress_review(
             models.MeetingProgressReview.meeting_id == row_id,
             models.MeetingProgressReview.review_status == "pending",
         )
+        .with_for_update()
+        .populate_existing()
         .all()
     ):
         previous.review_status = "ignored"
@@ -1404,6 +1908,35 @@ async def analyze_progress_review(
         validation = json.loads(candidate.get("validation_json") or "[]")
         if not isinstance(subtask_id, int) or subtask_id not in baseline_index:
             validation.append("baseline_subtask_id is not in the approved kickoff baseline")
+        target_at_analysis = None
+        if isinstance(subtask_id, int) and subtask_id in baseline_index:
+            live_subtask = (
+                db.query(models.SubTask)
+                .filter(models.SubTask.id == subtask_id)
+                .with_for_update()
+                .populate_existing()
+                .first()
+            )
+            live_task = (
+                db.query(models.Task)
+                .filter(models.Task.id == task_id)
+                .with_for_update()
+                .populate_existing()
+                .first()
+                if task_id is not None
+                else None
+            )
+            if (
+                not live_subtask
+                or bool(live_subtask.is_deleted)
+                or not live_task
+                or bool(live_task.is_deleted)
+                or live_task.project_id != project_id
+                or live_subtask.task_id != live_task.id
+            ):
+                validation.append("analysis target is no longer active in this project")
+            else:
+                target_at_analysis = _progress_target_snapshot(live_task, live_subtask)
         row = models.MeetingProgressReview(
             project_id=project_id,
             meeting_id=row_id,
@@ -1412,7 +1945,12 @@ async def analyze_progress_review(
             baseline_subtask_id=subtask_id if isinstance(subtask_id, int) else None,
             member_name=str(candidate.get("member_name") or ""),
             baseline_snapshot_json=json.dumps(
-                {"task": task_snapshot, "subtask": subtask_snapshot},
+                {
+                    "task": task_snapshot,
+                    "subtask": subtask_snapshot,
+                    "analysis_transcript_sha256": analysis_transcript_sha256,
+                    "target_at_analysis": target_at_analysis,
+                },
                 ensure_ascii=False,
             ),
             report_text=str(candidate.get("report_text") or ""),
@@ -1502,14 +2040,59 @@ def confirm_progress_review(
     current_user = require_login(current_user, db)
     context = get_user_context_from_db(current_user, db)
     meeting = db.get(models.Meeting, row_id)
-    review = db.get(models.MeetingProgressReview, review_id)
-    if not meeting or not review or review.meeting_id != row_id:
+    if not meeting:
         raise HTTPException(404, "progress review not found")
     project_id = _meeting_project_id_or_raise(meeting, context, db)
     if project_id is not None:
         _require_workflow_action(context, project_id, A_MEETING_PROGRESS_REVIEW, db)
+        project = (
+            db.query(models.Project)
+            .filter(models.Project.id == project_id)
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
+        if not project:
+            raise HTTPException(409, "progress review project no longer exists")
+        require_project_business_writable(project_id, db)
+        meeting = (
+            db.query(models.Meeting)
+            .filter(models.Meeting.id == row_id)
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
+        if not meeting or _meeting_project_id_or_raise(meeting, context, db) != project_id:
+            raise HTTPException(409, "progress review meeting changed")
+
+    review = (
+        db.query(models.MeetingProgressReview)
+        .filter(
+            models.MeetingProgressReview.id == review_id,
+            models.MeetingProgressReview.meeting_id == row_id,
+        )
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if not review:
+        raise HTTPException(404, "progress review not found")
+    if review.project_id != project_id:
+        raise HTTPException(409, "progress review does not belong to meeting project")
     if review.review_status != "pending":
         raise HTTPException(409, "progress review is not pending")
+    try:
+        analysis_snapshot = json.loads(review.baseline_snapshot_json or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(409, "progress review source snapshot is invalid; re-analyze the meeting") from exc
+    expected_transcript_sha256 = (
+        analysis_snapshot.get("analysis_transcript_sha256")
+        if isinstance(analysis_snapshot, dict)
+        else None
+    )
+    current_transcript_sha256 = hashlib.sha256((meeting.transcript_text or "").encode("utf-8")).hexdigest()
+    if not expected_transcript_sha256 or expected_transcript_sha256 != current_transcript_sha256:
+        raise HTTPException(409, "meeting transcript changed or has no analysis snapshot; re-analyze the meeting")
 
     if payload.status is not None:
         review.status = payload.status
@@ -1518,11 +2101,41 @@ def confirm_progress_review(
     review.review_comment = payload.review_comment.strip()
 
     task_updated = False
-    subtask = db.get(models.SubTask, review.baseline_subtask_id) if review.baseline_subtask_id else None
-    parent = db.get(models.Task, subtask.task_id) if subtask else None
+    subtask = (
+        db.query(models.SubTask)
+        .filter(models.SubTask.id == review.baseline_subtask_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+        if review.baseline_subtask_id
+        else None
+    )
+    parent = (
+        db.query(models.Task)
+        .filter(models.Task.id == subtask.task_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+        if subtask
+        else None
+    )
     before_status = subtask.status if subtask else None
-    if review.baseline_subtask_id and (not subtask or not parent or parent.project_id != project_id):
+    if review.baseline_subtask_id and (
+        not subtask
+        or bool(subtask.is_deleted)
+        or not parent
+        or bool(parent.is_deleted)
+        or parent.project_id != project_id
+        or (review.baseline_task_id is not None and parent.id != review.baseline_task_id)
+    ):
         raise HTTPException(409, "review target subtask is not part of this project")
+    if review.baseline_subtask_id:
+        expected_target_snapshot = analysis_snapshot.get("target_at_analysis")
+        if (
+            not isinstance(expected_target_snapshot, dict)
+            or _progress_target_snapshot(parent, subtask) != expected_target_snapshot
+        ):
+            raise HTTPException(409, "review target changed after analysis; re-analyze the meeting")
 
     if subtask:
         before = crud.to_dict(subtask)
@@ -1660,6 +2273,7 @@ def get_meeting_change_set(
     change_set = (
         db.query(models.MeetingChangeSet)
         .filter_by(meeting_id=row.id)
+        .order_by(models.MeetingChangeSet.id.desc())
         .first()
     )
     if not change_set:
@@ -1680,6 +2294,7 @@ def patch_meeting_change_proposal(
     change_set = (
         db.query(models.MeetingChangeSet)
         .filter_by(meeting_id=meeting.id)
+        .order_by(models.MeetingChangeSet.id.desc())
         .first()
     )
     if not change_set:
@@ -1764,6 +2379,7 @@ def execute_reviewed_meeting_change_set(
     change_set = (
         db.query(models.MeetingChangeSet)
         .filter_by(meeting_id=meeting.id)
+        .order_by(models.MeetingChangeSet.id.desc())
         .first()
     )
     return _meeting_change_set_payload(change_set, db)
@@ -1778,6 +2394,87 @@ def get_meeting(
     current_user = require_login(current_user, db)
     row = _meeting_for_read(row_id, current_user, db)
     return crud.to_dict(row)
+
+
+def _review_fact_signature(item: dict, fields: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(str(item.get(key) or "").strip() for key in fields)
+
+
+def _review_fact_rows(
+    raw: str,
+    previous: list,
+    fields: tuple[str, ...] = ("content", "code", "topic", "owner", "tracker", "due_date", "source_note"),
+) -> list[dict]:
+    try:
+        submitted = json.loads(raw or "[]")
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "会议事项格式不正确") from exc
+    if not isinstance(submitted, list) or len(submitted) > 200:
+        raise HTTPException(422, "会议事项必须是列表，且不能超过 200 条")
+    unchanged: dict[tuple[str, ...], list[dict]] = {}
+    for item in previous:
+        if isinstance(item, dict):
+            unchanged.setdefault(_review_fact_signature(item, fields), []).append(item)
+    normalized = []
+    for item in submitted:
+        if not isinstance(item, dict):
+            raise HTTPException(422, "会议事项内容不正确")
+        values = {key: str(item.get(key) or "").strip() for key in fields}
+        if not values["content"] or any(len(value) > (2000 if key in {"content", "progress_note"} else 500 if key == "source_note" else 200) for key, value in values.items()):
+            raise HTTPException(422, "会议事项内容为空或过长")
+        matches = unchanged.get(_review_fact_signature(values, fields), [])
+        if matches:
+            normalized.append(matches.pop(0))
+        else:
+            normalized.append({
+                **values,
+                "evidence": [],
+                "validation": {"state": "ready", "errors": []},
+                "needs_confirmation": False,
+                "human_edited": True,
+            })
+    return normalized
+
+
+def _sync_project_meeting_review_result(db: Session, meeting: models.Meeting, payload: schemas.MeetingPayload, before: dict) -> None:
+    run = (
+        db.query(models.ProjectMeetingRun)
+        .filter(models.ProjectMeetingRun.document_source_id == meeting.document_source_id)
+        .order_by(models.ProjectMeetingRun.id.desc())
+        .first()
+    )
+    if run is None:
+        raise HTTPException(409, "会议审核草稿不存在")
+    result = _json_value(run.result_json, {})
+    for result_key, raw in (
+        ("agenda_items", payload.agenda_items_json),
+        ("decisions", payload.decision_items_json),
+        ("next_stage_work", payload.task_list_json),
+        ("risks", payload.risk_items_json),
+        ("completed_items", payload.completed_items_json),
+        ("prior_action_tracking", payload.prior_action_items_json),
+    ):
+        if raw is not None:
+            fields = ("content", "code", "owner", "status", "progress_note") if result_key == "prior_action_tracking" else ("content", "code", "topic", "owner", "tracker", "due_date", "source_note")
+            result[result_key] = _review_fact_rows(raw, result.get(result_key) or [], fields)
+    draft = result.get("meeting_draft") if isinstance(result.get("meeting_draft"), dict) else {}
+    evidence = result.get("meeting_info_evidence") if isinstance(result.get("meeting_info_evidence"), dict) else {}
+    for field in ("title", "meeting_date", "meeting_type", "location", "host", "participants", "organizer", "copied_to"):
+        value = getattr(meeting, field) or ""
+        draft[field] = [name.strip() for name in value.replace("，", "、").split("、") if name.strip()] if field in {"participants", "copied_to"} else value
+        if value != (before.get(field) or ""):
+            evidence.pop(field, None)
+    draft["summary"] = meeting.summary or ""
+    if draft["summary"] != (before.get("summary") or ""):
+        result["summary_evidence"] = {"evidence": [], "validation": {"state": "ready", "errors": []}}
+    result["meeting_draft"] = draft
+    result["meeting_info_evidence"] = evidence
+    updated = json.dumps(result, ensure_ascii=False)
+    run.result_json = updated
+    change_set = (db.query(models.MeetingChangeSet).filter_by(meeting_id=meeting.id)
+                  .order_by(models.MeetingChangeSet.id.desc()).first())
+    if change_set is not None:
+        change_set.result_json = updated
 
 
 @router.put("/{row_id}")
@@ -1804,10 +2501,12 @@ def update_meeting(
 
     require_project_business_writable(project_id, db)
     before = crud.to_dict(row)
+    if row.document_source_id and row.publish_status == "published":
+        raise HTTPException(409, "已发布会议纪要不可修改")
     update_data = {
         k: v
         for k, v in payload.model_dump().items()
-        if k not in {"project_id", "related_special_project"}
+        if k not in {"project_id", "related_special_project", "completed_items_json", "client_request_id"}
     }
     if context.get("is_tech_admin") and payload.project_id is not None:
         row.project_id = payload.project_id
@@ -1820,7 +2519,15 @@ def update_meeting(
         saved_by=current_user,
         preserve_legacy=True,
     )
-    crud.log(db, current_user, "meeting_update", "meeting", row.id, before, payload.model_dump())
+    if row.document_source_id:
+        _sync_project_meeting_review_result(db, row, payload, before)
+        account = db.query(models.Account).filter_by(username=current_user).first()
+        db.add(models.MeetingReviewEvent(
+            meeting_id=row.id,
+            action="edited",
+            actor_person_id=account.person_id if account else None,
+        ))
+    crud.log(db, current_user, "meeting_update", "meeting", row.id, before, payload.model_dump(exclude={"client_request_id"}))
     db.commit()
     return crud.to_dict(row)
 
@@ -2170,11 +2877,24 @@ def _fetch_member_context(member_name: str, project_id: int, db: Session) -> dic
     from sqlalchemy import or_
     from .. import models as m
 
+    person_id = unique_active_person_id_for_name(db, member_name)
+    if person_id is None:
+        return {"name": member_name, "tasks": [], "last_next_steps": []}
+
     tasks = (
         db.query(m.Task)
         .filter(
             m.Task.project_id == project_id,
-            or_(m.Task.owner == member_name, m.Task.collaborators.contains(member_name)),
+            or_(
+                person_identity_scope(
+                    db,
+                    person_id=person_id,
+                    person_name=member_name,
+                    id_column=m.Task.owner_id,
+                    name_column=m.Task.owner,
+                ),
+                m.Task.collaborators.contains(member_name),
+            ),
             m.Task.status.notin_(["已完成"]),
         )
         .order_by(m.Task.plan_time)
@@ -2186,7 +2906,13 @@ def _fetch_member_context(member_name: str, project_id: int, db: Session) -> dic
         db.query(m.UpdateSubmission)
         .filter(
             m.UpdateSubmission.project_id == project_id,
-            m.UpdateSubmission.submitter == member_name,
+            person_identity_scope(
+                db,
+                person_id=person_id,
+                person_name=member_name,
+                id_column=m.UpdateSubmission.submitter_id,
+                name_column=m.UpdateSubmission.submitter,
+            ),
         )
         .order_by(m.UpdateSubmission.created_at.desc())
         .first()

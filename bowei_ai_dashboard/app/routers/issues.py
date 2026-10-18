@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import and_, or_, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
@@ -27,10 +28,15 @@ from ..permissions import (
 )
 from ..time_utils import utc_now
 
-from ..services.notify import person_id_for_name as _pid_for_name
 from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
 from ..services.key_task_execution import record_execution_event
+from ..services.person_identity import (
+    person_identity_matches,
+    person_identity_scope,
+    unique_active_person_id_for_name,
+)
+from ..services.request_fingerprint import request_payload_fingerprint
 
 router = APIRouter(prefix="/api/issues", tags=["issues"])
 _CLOSED_STATUSES = {"已关闭", "已决策", "已解决", "关闭"}
@@ -51,6 +57,21 @@ def _issue_write_project_id(row: models.Issue, context: dict, db: Session) -> in
     if context.get("is_tech_admin"):
         return None
     raise HTTPException(403, "permission denied")
+
+
+def _issue_create_retry_result(
+    db: Session,
+    request_id: str,
+    request_payload_hash: str,
+) -> dict | None:
+    existing = db.query(models.Issue).filter(models.Issue.client_request_id == request_id).first()
+    if existing is None:
+        return None
+    if not existing.request_payload_hash:
+        raise HTTPException(409, "该请求对应旧版问题，无法核对内容；请先检查问题列表")
+    if existing.request_payload_hash != request_payload_hash:
+        raise HTTPException(409, "该请求标识已用于不同内容或提交人，请刷新后重新提交")
+    return crud.to_dict(existing)
 
 
 def _row_project_id(row: models.Issue, db: Session) -> int | None:
@@ -129,15 +150,105 @@ def _get_project_name(project_id: int, db: Session) -> str | None:
         return None
 
 
-def _is_issue_related_to_user(row: models.Issue, username: str, person_name: str) -> bool:
-    """普通成员是否与该问题相关（reporter / owner / helper）。"""
-    return (
-        (row.reporter or "") == username
-        or (row.owner or "") == username
-        or (row.helper or "") == username
-        or bool(person_name) and (row.owner or "") == person_name
-        or bool(person_name) and (row.helper or "") == person_name
+def _is_issue_related_to_user(
+    row: models.Issue,
+    username: str,
+    person_id: int | None,
+    person_name: str,
+    db: Session,
+) -> bool:
+    """普通成员是否与该问题相关；人员姓名仅在唯一匹配时兼容旧数据。"""
+    if (row.reporter or "") == username:
+        return True
+    owner_matches = person_identity_matches(
+        db,
+        person_id=person_id,
+        person_name=person_name,
+        stored_person_id=row.owner_id,
+        stored_name=row.owner,
+        account_username=username,
     )
+    helper_matches = person_identity_matches(
+        db,
+        person_id=person_id,
+        person_name=person_name,
+        stored_person_id=getattr(row, "helper_person_id", None),
+        stored_name=row.helper,
+        account_username=username,
+    )
+    return bool(person_id is not None and (owner_matches or helper_matches))
+
+def _issue_visibility_filter(
+    db: Session,
+    *,
+    username: str,
+    person_id: int | None,
+    person_name: str,
+):
+    """Build the ordinary-member issue scope from stable identity plus safe legacy rows."""
+    clauses = [models.Issue.reporter == username]
+    if person_id is not None:
+        clauses.extend(
+            [
+                person_identity_scope(
+                    db,
+                    person_id=person_id,
+                    person_name=person_name,
+                    id_column=models.Issue.owner_id,
+                    name_column=models.Issue.owner,
+                    account_username=username,
+                ),
+                person_identity_scope(
+                    db,
+                    person_id=person_id,
+                    person_name=person_name,
+                    id_column=models.Issue.helper_person_id,
+                    name_column=models.Issue.helper,
+                    account_username=username,
+                ),
+            ]
+            )
+    return or_(*clauses)
+
+
+def _person_name_for_id(db: Session, person_id: int | None) -> str | None:
+    if person_id is None:
+        return None
+    row = (
+        db.query(models.Person)
+        .filter(models.Person.id == person_id, models.Person.is_active.is_(True))
+        .first()
+    )
+    return row.name if row else None
+
+
+def _resolve_issue_person(
+    db: Session,
+    *,
+    person_id: int | None,
+    name: str | None,
+    field_label: str,
+) -> tuple[int | None, str]:
+    if person_id is not None:
+        canonical_name = _person_name_for_id(db, person_id)
+        if canonical_name is None:
+            raise HTTPException(422, f"{field_label} must refer to an active person")
+        return person_id, canonical_name
+    display_name = (name or "").strip()
+    if not display_name:
+        return None, ""
+    matched_id = unique_active_person_id_for_name(db, display_name)
+    if matched_id is not None:
+        return matched_id, display_name
+    matches = (
+        db.query(models.Person.id)
+        .filter(models.Person.name == display_name, models.Person.is_active.is_(True))
+        .limit(2)
+        .all()
+    )
+    if len(matches) > 1:
+        raise HTTPException(422, f"{field_label} name is ambiguous; supply its person ID")
+    return (int(matches[0][0]) if matches else None), display_name
 
 
 # ── 业务辅助 ──────────────────────────────────────────────────
@@ -207,12 +318,11 @@ def list_issues(
         if not _can_view_project_all_issues(context, effective_project_id, db):
             current_person_name = context.get("name") or ""
             q = q.filter(
-                or_(
-                    models.Issue.reporter == current_user,
-                    models.Issue.owner == current_user,
-                    models.Issue.helper == current_user,
-                    models.Issue.owner == current_person_name,
-                    models.Issue.helper == current_person_name,
+                _issue_visibility_filter(
+                    db,
+                    username=current_user,
+                    person_id=context.get("person_id"),
+                    person_name=current_person_name,
                 )
             )
 
@@ -243,15 +353,31 @@ def create_issue(
     if project_id is None:
         raise HTTPException(422, "project_id is required")
     require_project_access(current_user, project_id, db)
-    require_project_business_writable(project_id, db)
 
     normalized_type = IT.normalize(payload.issue_type)
     if normalized_type == IT.TYPE_DECISION and not can_view_issue_decisions(context):
         raise HTTPException(403, "permission denied")
 
+    data = payload.model_dump(exclude={"project_id", "client_request_id"})
+    request_payload_hash = None
+    if payload.client_request_id:
+        actor_key = (
+            f"person:{context['person_id']}"
+            if context.get("person_id") is not None
+            else f"account:{context.get('account_username') or current_user}"
+        )
+        request_payload_hash = request_payload_fingerprint({
+            "actor": actor_key,
+            "project_id": project_id,
+            "payload": data,
+        })
+        existing_result = _issue_create_retry_result(db, payload.client_request_id, request_payload_hash)
+        if existing_result is not None:
+            return existing_result
+
+    require_project_business_writable(project_id, db)
     crud.validate_subtask_link(db, project_id, payload.related_task_id, payload.related_subtask_id)
 
-    data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
     row = models.Issue(**data)
     row.issue_type = _storage_issue_type(normalized_type)
     row.source_type = ST.normalize(payload.source_type or "人工录入")
@@ -262,7 +388,17 @@ def create_issue(
         normalized_status = IF.STATUS_PENDING_DECISION if IT.is_decision(normalized_type) else IF.STATUS_PENDING
     row.status = normalized_status
     row.project_id = project_id
-    row.owner_id = _pid_for_name(row.owner or "", db)
+    row.client_request_id = payload.client_request_id
+    row.request_payload_hash = request_payload_hash
+    row.owner_id, row.owner = _resolve_issue_person(
+        db, person_id=payload.owner_id, name=row.owner, field_label="owner"
+    )
+    row.helper_person_id, row.helper = _resolve_issue_person(
+        db,
+        person_id=payload.helper_person_id,
+        name=row.helper,
+        field_label="helper",
+    )
     if not row.special_project:
         row.special_project = resolve_project_context(
             db,
@@ -272,7 +408,15 @@ def create_issue(
     _sync_issue_closed_at(row)
     row.reporter = current_user
     db.add(row)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        if payload.client_request_id:
+            existing_result = _issue_create_retry_result(db, payload.client_request_id, request_payload_hash or "")
+            if existing_result is not None:
+                return existing_result
+        raise
     crud.log(db, current_user, "issue_create", "issue", row.id, {}, crud.to_dict(row))
     if row.related_subtask_id is not None:
         account = db.query(models.Account).filter(models.Account.username == current_user).first()
@@ -349,7 +493,14 @@ def get_issue(
         # N4-P2-L: 普通成员只能看与自己相关的问题
         if not _can_view_project_all_issues(context, project_id, db):
             current_person_name = context.get("name") or ""
-            if not _is_issue_related_to_user(row, current_user, current_person_name):
+            person_id = context.get("person_id")
+            if not _is_issue_related_to_user(
+                row,
+                current_user,
+                person_id,
+                current_person_name,
+                db,
+            ):
                 raise HTTPException(403, "permission denied")
     elif not (context.get("is_tech_admin") or context.get("is_ceo")):
         raise HTTPException(403, "permission denied")
@@ -386,7 +537,7 @@ def update_issue(
     crud.validate_subtask_link(db, project_id, payload.related_task_id if payload.related_task_id is not None else row.related_task_id, payload.related_subtask_id)
 
     before = crud.to_dict(row)
-    update_data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
+    update_data = payload.model_dump(exclude={"project_id", "client_request_id"})
     if "issue_type" in update_data and update_data["issue_type"]:
         update_data["issue_type"] = _storage_issue_type(update_data["issue_type"])
     if "status" in update_data and update_data["status"]:
@@ -394,10 +545,19 @@ def update_issue(
     if "source_type" in update_data:
         update_data["source_type"] = ST.normalize(update_data["source_type"] or "人工录入")
     crud.update_model(row, update_data)
-    row.owner_id = _pid_for_name(row.owner or "", db)
+    row.owner_id, row.owner = _resolve_issue_person(
+        db, person_id=payload.owner_id, name=row.owner, field_label="owner"
+    )
+    row.helper_person_id, row.helper = _resolve_issue_person(
+        db,
+        person_id=payload.helper_person_id,
+        name=row.helper,
+        field_label="helper",
+    )
     _sync_issue_closed_at(row)
     row.edit_count = (row.edit_count or 0) + 1
-    crud.log(db, current_user, "issue_update", "issue", row.id, before, payload.model_dump(), project_id=project_id)
+    crud.log(db, current_user, "issue_update", "issue", row.id, before,
+             payload.model_dump(exclude={"client_request_id"}), project_id=project_id)
     event_project_id = row.project_id or project_id
     if row.related_subtask_id is not None and event_project_id is not None:
         account = db.query(models.Account).filter(models.Account.username == current_user).first()
@@ -597,7 +757,12 @@ def assign_helper(
         )
     require_project_business_writable(project_id, db)
     before = crud.to_dict(row)
-    row.helper = payload.helper
+    row.helper_person_id, row.helper = _resolve_issue_person(
+        db,
+        person_id=payload.helper_person_id,
+        name=payload.helper,
+        field_label="helper",
+    )
     # N4-P2-M: 指定协助人后自动进入“待协调”
     if (payload.helper or "").strip():
         row.status = IF.STATUS_COORDINATING

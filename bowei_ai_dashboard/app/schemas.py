@@ -100,6 +100,7 @@ class UserSubtaskContext(BaseModel):
 
 
 class ExtractRequest(BaseModel):
+    client_request_id: str | None = Field(default=None, min_length=8, max_length=64)
     project_id: int | None = None
     report_scope: str | None = None
     special_project: str | None = None
@@ -151,6 +152,7 @@ class CloseRequest(BaseModel):
 
 class AssignHelperRequest(BaseModel):
     helper: str
+    helper_person_id: int | None = None
 
 
 class RequestCeoRequest(BaseModel):
@@ -174,12 +176,14 @@ class TaskPayload(BaseModel):
     problem_note: str = ""
     achievement_links: str = ""
     source_type: str = Field("人工录入", max_length=40)
+    client_request_id: str | None = Field(default=None, min_length=8, max_length=64)
 
 # alias：TaskPayload 即 WorkstreamPayload
 WorkstreamPayload = TaskPayload
 
 
 class AchievementSubmissionPayload(BaseModel):
+    client_request_id: str | None = Field(default=None, min_length=8, max_length=64)
     project_id: int
     related_task_id: int
     name: str = Field(..., max_length=200)
@@ -196,6 +200,7 @@ class AchievementSubmissionRejectRequest(BaseModel):
 
 
 class AchievementPayload(BaseModel):
+    client_request_id: str | None = Field(default=None, min_length=8, max_length=64)
     project_id: int | None = None
     name: str = Field(..., max_length=200)
     achievement_type: str = Field("方案", max_length=40)
@@ -212,11 +217,14 @@ class AchievementPayload(BaseModel):
 
 
 class IssuePayload(BaseModel):
+    client_request_id: str | None = Field(default=None, min_length=8, max_length=64)
     project_id: int | None = None
     issue_type: str = Field("问题", max_length=40)
     description: str
     owner: str = Field("", max_length=50)
+    owner_id: int | None = None
     helper: str = Field("", max_length=100)
+    helper_person_id: int | None = None
     priority: str = Field("中", max_length=10)
     status: str = Field("待处理", max_length=20)
     need_decision_by: str = Field("", max_length=50)
@@ -309,6 +317,7 @@ class MemberChangeReviewPayload(BaseModel):
 
 
 class ProjectCreatePayload(BaseModel):
+    client_request_id: str | None = Field(default=None, min_length=8, max_length=64)
     name: str = Field(..., max_length=100)
     code: str = Field("", max_length=50)
     description: str = ""
@@ -343,6 +352,7 @@ class BatchImportRow(BaseModel):
 
 
 class ProjectBatchImportPayload(BaseModel):
+    client_request_id: str | None = Field(default=None, min_length=8, max_length=64)
     rows: list[BatchImportRow]
 
 
@@ -359,6 +369,17 @@ class ProjectPatchPayload(BaseModel):
     objectives: str | None = None
     expected_outcomes: str | None = None
     lifecycle_status: str | None = None
+
+
+class WorkProgressColumnsPayload(BaseModel):
+    optional_columns: list[Literal["expectedOutcome", "goal", "boweiRole"]] = Field(default_factory=list)
+
+    @field_validator("optional_columns")
+    @classmethod
+    def validate_unique_columns(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("optional columns must be unique")
+        return value
 
 
 class ProjectDeletePayload(BaseModel):
@@ -384,6 +405,7 @@ class ProjectCloseResidualItem(BaseModel):
 
 
 class ProjectCloseRequestCreatePayload(BaseModel):
+    client_request_id: str | None = Field(default=None, min_length=8, max_length=64)
     summary: str
     objective_result: str
     unfinished_items: list[ProjectCloseResidualItem]
@@ -429,6 +451,8 @@ class ProjectCloseReviewPayload(BaseModel):
 
 
 class ProjectWorkProgressSubTaskDraft(BaseModel):
+    id: int | None = Field(default=None, gt=0)
+    subtask_id: int | None = Field(default=None, gt=0)
     title: str = Field("", max_length=200)
     evaluation_standard: str = ""
     assignee: str = Field("", max_length=50)
@@ -440,6 +464,8 @@ class ProjectWorkProgressSubTaskDraft(BaseModel):
 
 
 class ProjectWorkProgressTaskDraft(BaseModel):
+    id: int | None = Field(default=None, gt=0)
+    task_id: int | None = Field(default=None, gt=0)
     title: str = Field("", max_length=200)
     # `description` remains the legacy displayed-goal field used by older
     # clients and stored drafts.
@@ -502,9 +528,12 @@ class ProjectProfilePayload(BaseModel):
     end_date: str | None = None
     description: str | None = None
     work_progress_draft: list[ProjectWorkProgressTaskDraft] = Field(default_factory=list)
+    replace_plan: bool = False
+    ai_run_id: int | None = Field(default=None, gt=0)
 
 
 class MeetingPayload(BaseModel):
+    client_request_id: str | None = Field(default=None, min_length=8, max_length=64)
     project_id: int | None = None
     analysis_id: int | None = None
     related_special_project: str = ""
@@ -517,6 +546,7 @@ class MeetingPayload(BaseModel):
     organizer: str = ""
     copied_to: str = ""
     agenda_items_json: str = "[]"
+    completed_items_json: str | None = None  # Review-only; stored with the Agent result.
     prior_action_items_json: str = "[]"
     source_mode: str = "ai_analysis"
     transcript_text: str = ""
@@ -529,7 +559,7 @@ class MeetingPayload(BaseModel):
 
 
 class ProjectMeetingReviewPayload(BaseModel):
-    action: Literal["publish", "apply_changes", "return"]
+    action: Literal["publish", "apply_changes", "approve_and_apply", "return"]
     reason: str = ""
     proposal_ids: list[int] = Field(default_factory=list)
 
@@ -542,10 +572,26 @@ class ProjectMeetingReviewPayload(BaseModel):
             raise ValueError("proposal_ids must contain positive integers")
         if len(set(self.proposal_ids)) != len(self.proposal_ids):
             raise ValueError("proposal_ids must be unique")
-        if self.action == "apply_changes" and not self.proposal_ids:
+        if self.action in {"apply_changes", "approve_and_apply"} and not self.proposal_ids:
             raise ValueError("proposal_ids are required when applying changes")
         if self.action in {"publish", "return"} and self.proposal_ids:
             raise ValueError("proposal_ids are only allowed when applying changes")
+        return self
+
+
+class ProjectMeetingFactResolutionPayload(BaseModel):
+    decision: Literal["minutes_only", "link_task"]
+    proposal_ids: list[int] = Field(min_length=1)
+    key_task_id: int | None = None
+
+    @model_validator(mode="after")
+    def validate_resolution(self):
+        if any(isinstance(item, bool) or item <= 0 for item in self.proposal_ids) or len(set(self.proposal_ids)) != len(self.proposal_ids):
+            raise ValueError("proposal_ids must contain unique positive integers")
+        if self.decision == "link_task" and (len(self.proposal_ids) != 1 or not isinstance(self.key_task_id, int) or self.key_task_id <= 0):
+            raise ValueError("link_task requires one proposal_id and a positive key_task_id")
+        if self.decision == "minutes_only" and self.key_task_id is not None:
+            raise ValueError("minutes_only must not include key_task_id")
         return self
 
 
@@ -924,6 +970,9 @@ class SubTaskPayload(BaseModel):
     due_reference_date: date | None = None
     status: str = Field("未开始", max_length=20)
     completion_criteria: str = ""
+    expected_outcome: str = ""
+    goal: str = ""
+    bowei_role: str = ""
     notes: str = ""
 
     @model_validator(mode="after")
@@ -982,6 +1031,7 @@ class TaskDraft(BaseModel):
 class TaskBatchCreateRequest(BaseModel):
     project_id: int
     tasks: list[TaskDraft]
+    client_request_id: str | None = Field(default=None, min_length=8, max_length=64)
 
 
 class SubTaskDraftItem(BaseModel):

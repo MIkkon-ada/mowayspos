@@ -2,6 +2,8 @@
 
 > **供自动化执行者使用：** 必须使用 `executing-plans` 工作流逐项实施。本计划使用复选框（`- [ ]`）跟踪进度。
 
+> **生命周期范围提示（2026-10-08）：** 本计划记录早期 `pending_kickoff` 强制门槛的验收方案；当前启动会 Agent 仍是单独会议/提案审核能力，但不再负责常规项目从待审核切换到进行中。项目生命周期现行口径见 [`../../PROJECT_LIFECYCLE_AND_PERMISSIONS.md`](../../PROJECT_LIFECYCLE_AND_PERMISSIONS.md)。
+
 **目标：** 通过生命周期回归测试、浏览器验收和仅包含会议相关文件的独立交付，完成启动会确认 Agent 的改造收尾。
 
 **架构：** 保留现有基于 `Meeting` 的普通会议纪要流程；状态为 `pending_kickoff` 的项目则进入 `KickoffAgentRun` 与 `KickoffChangeProposal` 审核流程。回归测试直接覆盖服务与路由边界；浏览器验收覆盖渲染后的工作台及其状态流转。

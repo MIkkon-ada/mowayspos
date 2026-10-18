@@ -16,7 +16,7 @@ export function ExecutionPlanSidebar({ plans, summary, canManage, onAdd, onOpen 
         <h2 className="text-base font-bold text-slate-900">任务计划</h2>
         {summary.total > 0 && <p className="mt-1 text-xs text-slate-500">{summary.total} 项 · 已完成 {summary.completed} · 进行中 {summary.in_progress}</p>}
       </div>
-      {plans.length > 0 && canManage && <button type="button" onClick={onAdd} className="shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50">新增计划</button>}
+      {canManage && <button type="button" onClick={onAdd} className="shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50">新增计划</button>}
     </div>
     {plans.length === 0 ? <p className="mt-3 rounded-lg bg-slate-50 px-3 py-3 text-sm leading-6 text-slate-500">暂无任务计划。后续安排添加后会显示在这里。</p> : <ol className="mt-3 space-y-2">
       {plans.map((plan) => {

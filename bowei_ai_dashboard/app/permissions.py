@@ -341,10 +341,12 @@ def get_user_context(name: str) -> dict:
 
 def get_user_context_from_db(name: str, db) -> dict:
     if name in SYSTEM_ACCOUNTS:
-        return _build_context(
+        context = _build_context(
             name, ROLE_SUPER_ADMIN, _get_project_areas_from_db(db),
             is_admin=True, person_id=None, project_member_roles=None,
         )
+        context["account_username"] = name
+        return context
 
     person_id_val: int | None = None
     system_role = ROLE_NORMAL
@@ -366,17 +368,18 @@ def get_user_context_from_db(name: str, db) -> dict:
             system_role = normalize_system_role(account_row[3]) or ROLE_NORMAL
             is_admin = bool(account_row[1]) or bool(account_row[4])
         else:
-            row = db.execute(
-            text(
-                "SELECT id, system_role, COALESCE(is_admin, FALSE) "
-                "FROM people WHERE name=:name AND is_active IS TRUE"
-            ),
-            {"name": name},
-            ).fetchone()
-            if row:
+            name_rows = db.execute(
+                text(
+                    "SELECT id, system_role, COALESCE(is_admin, FALSE) "
+                    "FROM people WHERE name=:name AND is_active IS TRUE LIMIT 2"
+                ),
+                {"name": name},
+            ).fetchall()
+            if len(name_rows) == 1:
+                row = name_rows[0]
                 person_id_val = int(row[0])
-                system_role   = normalize_system_role(row[1]) or ROLE_NORMAL
-                is_admin      = bool(row[2])
+                system_role = normalize_system_role(row[1]) or ROLE_NORMAL
+                is_admin = bool(row[2])
         # 兜底：normalize 无法识别的值降级为普通成员
         if not system_role:
             system_role = ROLE_NORMAL
@@ -394,11 +397,13 @@ def get_user_context_from_db(name: str, db) -> dict:
         roles_map = _get_project_roles_from_members(person_id_val, db)
         project_member_roles = roles_map if roles_map else None
 
-    return _build_context(
+    context = _build_context(
         display_name, system_role, project_areas, is_admin,
         person_id=person_id_val,
         project_member_roles=project_member_roles,
     )
+    context["account_username"] = name
+    return context
 
 
 # ── 权限判断函数（context-based，保持旧接口兼容）─────────────────
@@ -431,21 +436,37 @@ def extract_submission_project(data: dict) -> str:
     return (data.get("special_project") or (data.get("task") or {}).get("special_project") or "").strip()
 
 
-def can_view_submission(ctx: dict, data: dict, submitter: str = "") -> bool:
+def can_view_submission(
+    ctx: dict,
+    data: dict,
+    submitter: str = "",
+    *,
+    submitter_id: int | None = None,
+) -> bool:
     project = extract_submission_project(data)
     if project and can_view_project(ctx, project):
         return True
-    return bool(submitter and submitter == ctx["name"])
+    if submitter_id is not None:
+        return ctx.get("person_id") is not None and submitter_id == ctx.get("person_id")
+    return bool(submitter and submitter in ctx.get("legacy_identity_values", set()))
 
 
-def can_view_submission_in_confirmation(ctx: dict, data: dict, submitter: str = "") -> bool:
+def can_view_submission_in_confirmation(
+    ctx: dict,
+    data: dict,
+    submitter: str = "",
+    *,
+    submitter_id: int | None = None,
+) -> bool:
     """AI 确认中心可见：全局管理员、该专项的负责人或统筹人、提交人本人。"""
     if ctx["can_view_all"]:
         return True
     project = extract_submission_project(data)
     if project and ctx["project_roles"].get(project) in (PROJECT_ROLE_OWNER, PROJECT_ROLE_COORDINATOR):
         return True
-    return bool(submitter and submitter == ctx["name"])
+    if submitter_id is not None:
+        return ctx.get("person_id") is not None and submitter_id == ctx.get("person_id")
+    return bool(submitter and submitter in ctx.get("legacy_identity_values", set()))
 
 
 def can_confirm_submission(ctx: dict, data: dict) -> bool:
@@ -508,11 +529,11 @@ def get_person_id(person_name: str, db) -> int | None:
     if not person_name or not person_name.strip():
         return None
     try:
-        row = db.execute(
-            text("SELECT id FROM people WHERE name = :name AND is_active IS TRUE"),
+        rows = db.execute(
+            text("SELECT id FROM people WHERE name = :name AND is_active IS TRUE LIMIT 2"),
             {"name": person_name.strip()},
-        ).fetchone()
-        return int(row[0]) if row else None
+        ).fetchall()
+        return int(rows[0][0]) if len(rows) == 1 else None
     except Exception:
         return None
 
@@ -837,6 +858,8 @@ def can_view_submission_in_confirmation_by_project(
     project_id: int | None,
     submitter: str,
     db,
+    *,
+    submitter_id: int | None = None,
 ) -> bool:
     """
     AI 确认中心可见性（id-based）。
@@ -846,7 +869,15 @@ def can_view_submission_in_confirmation_by_project(
     """
     if ctx["can_view_all"]:
         return True
-    if submitter and submitter == ctx["name"]:
+    from .services.person_identity import person_identity_matches
+    if person_identity_matches(
+        db,
+        person_id=ctx.get("person_id"),
+        person_name=ctx.get("name"),
+        stored_person_id=submitter_id,
+        stored_name=submitter,
+        account_username=ctx.get("account_username"),
+    ):
         return True
     if project_id is None:
         return False

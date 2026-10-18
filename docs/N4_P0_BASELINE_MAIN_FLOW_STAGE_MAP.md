@@ -1,5 +1,7 @@
 # Moways-SOP 主流程阶段基准表
 
+> **历史基准提示（2026-10-08）：** 本文记录 N4-P0 阶段的流程基准草案；其中“审核后进入 `pending_kickoff`”以及与当前代码相反的状态断言已经过时。当前实现、角色/状态前置条件见 [`PROJECT_LIFECYCLE_AND_PERMISSIONS.md`](PROJECT_LIFECYCLE_AND_PERMISSIONS.md)。保留本文作为历史决策背景，不要据此实现新迁移。
+
 > 本文档是 N4-P0-BASELINE-MAIN-FLOW-STAGE-MAP 的流程基准产物。  
 > 目标是先固定“从项目创建到归档”的主流程阶段边界，作为后续 Codex 修改指令的判断依据。本文只基于当前代码事实与已确认业务口径梳理，不修改业务代码。
 

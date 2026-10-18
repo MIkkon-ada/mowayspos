@@ -27,6 +27,7 @@ from ..permissions import (
     require_project_access,
 )
 from ..services.project_resolution import resolve_project_context
+from ..services.person_identity import person_identity_scope
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -506,6 +507,7 @@ def _project_overview(
     status_filter: str | None,
     month_filter: str | None,
     db: Session,
+    current_user: str | None = None,
 ) -> dict:
     roles     = _effective_roles(context, project_id, proj_name, db)
     is_super  = "super_admin" in roles
@@ -523,7 +525,16 @@ def _project_overview(
     )
     if is_member:
         # member 只看自己负责的任务
-        task_q = task_q.filter(models.Task.owner == context["name"])
+        task_q = task_q.filter(
+            person_identity_scope(
+                db,
+                person_id=context.get("person_id"),
+                person_name=context.get("name"),
+                id_column=models.Task.owner_id,
+                name_column=models.Task.owner,
+                account_username=current_user,
+            )
+        )
     if owner_filter:
         task_q = task_q.filter(models.Task.owner == owner_filter)
     if status_filter:
@@ -536,6 +547,36 @@ def _project_overview(
     issue_q = db.query(models.Issue).filter(
         _proj_or_filter(models.Issue, project_id, proj_name)
     )
+    if is_member:
+        person_id = context.get("person_id")
+        person_name = context.get("name") or ""
+        issue_visibility = [
+            person_identity_scope(
+                db,
+                person_id=person_id,
+                person_name=person_name,
+                id_column=models.Issue.owner_id,
+                name_column=models.Issue.owner,
+                account_username=current_user,
+            ),
+            person_identity_scope(
+                db,
+                person_id=person_id,
+                person_name=person_name,
+                id_column=models.Issue.helper_person_id,
+                name_column=models.Issue.helper,
+                account_username=current_user,
+            ),
+        ]
+        if current_user:
+            issue_visibility.extend(
+                [
+                    models.Issue.reporter == current_user,
+                ]
+            )
+        issue_q = issue_q.filter(
+            or_(*issue_visibility)
+        )
     issues = issue_q.order_by(models.Issue.updated_at.desc()).all()
 
     open_issues   = [i for i in issues if (i.status or "") in ("待处理", "待协调", "待决策", "待负责人确认")]
@@ -554,7 +595,16 @@ def _project_overview(
     ).order_by(models.UpdateSubmission.created_at.desc())
 
     if is_member:
-        sub_q = sub_q.filter(models.UpdateSubmission.submitter == context["name"])
+        sub_q = sub_q.filter(
+            person_identity_scope(
+                db,
+                person_id=context.get("person_id"),
+                person_name=context.get("name"),
+                id_column=models.UpdateSubmission.submitter_id,
+                name_column=models.UpdateSubmission.submitter,
+                account_username=current_user,
+            )
+        )
     elif is_coord and not is_owner and not is_super:
         # coordinator 只看转交给自己的待统筹反馈事项
         sub_q = sub_q.filter(
@@ -802,7 +852,14 @@ def _global_role_queue(context: dict, db: Session) -> dict:
     else:
         queue_type = "in_progress"
         q = db.query(models.UpdateSubmission).filter(
-            models.UpdateSubmission.submitter == context["name"],
+            person_identity_scope(
+                db,
+                person_id=context.get("person_id"),
+                person_name=context.get("name"),
+                id_column=models.UpdateSubmission.submitter_id,
+                name_column=models.UpdateSubmission.submitter,
+                account_username=current_user,
+            ),
             ~models.UpdateSubmission.confirm_status.in_(SS.ALL_TERMINAL),
         )
 
@@ -1096,7 +1153,16 @@ def overview(
         require_project_access(current_user, effective_project_id, db)
         # 查项目名（用于旧数据 OR 过滤和 project_cards 展示）
         proj_name = resolve_project_context(db, project_id=effective_project_id)["project_name"] or proj_name_label
-        return _project_overview(context, effective_project_id, proj_name, owner, status, month, db)
+        return _project_overview(
+            context,
+            effective_project_id,
+            proj_name,
+            owner,
+            status,
+            month,
+            db,
+            current_user=current_user,
+        )
 
     # ── 全局模式（无 project_id / special_project）────────
     # 完全保留原有行为，保证旧前端不受影响

@@ -9,6 +9,7 @@ from app.database import Base
 from app.main import app
 from app.routers import key_tasks
 from app.routers.subtasks import list_subtasks_batch
+from app.services.key_task_execution import record_execution_event
 
 
 def _db():
@@ -100,6 +101,29 @@ def test_batch_subtasks_projects_latest_confirmed_submission_and_status_facts():
     }
     assert second["is_overdue"] is False
     assert second["has_risk"] is False
+
+
+def test_batch_subtasks_exposes_reviewed_meeting_progress_as_current_progress():
+    db = _db()
+    _seed_batch_access(db)
+    moment = datetime(2026, 10, 8, 10, 0)
+    record_execution_event(
+        db, project_id=1, key_task_id=20, event_type="meeting_confirmation",
+        source_type="meeting_work_progress", source_id=55,
+        dedupe_key="meeting_work_progress:55:confirmed", actor_name="负责人",
+        occurred_at=moment, confirmed_at=moment, effective_at=moment,
+        affects_current_progress=True, progress_summary="第一批已经完成",
+        next_step="继续第二批整理",
+    )
+    db.commit()
+
+    first = list_subtasks_batch(task_ids="10", current_user="owner", db=db)["10"][0]
+
+    assert first["latest_confirmed_progress"] == {
+        "summary": "第一批已经完成", "next_step": "继续第二批整理",
+        "source_label": "会议纪要", "confirmed_at": "2026-10-08T10:00:00", "actor": "负责人",
+        "action_items": [],
+    }
 
 
 def test_assignee_can_set_and_clear_key_task_risk():

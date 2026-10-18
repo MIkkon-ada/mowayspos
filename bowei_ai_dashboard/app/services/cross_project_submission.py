@@ -15,6 +15,7 @@ from ..domain import submission_status as SS
 from ..permissions import get_user_context_from_db
 from .notify import person_id_for_account, project_strict_owner_ids, send
 from .policy import can_submit_to_project
+from .request_fingerprint import request_payload_fingerprint
 
 
 def _existing_result(batch: models.UpdateSubmissionBatch, db: Session) -> dict:
@@ -25,6 +26,15 @@ def _existing_result(batch: models.UpdateSubmissionBatch, db: Session) -> dict:
         .all()
     )
     return {"batch": batch, "submissions": children, "idempotent": True}
+
+
+def _request_payload_hash(payload: schemas.BatchUpdateRequest) -> str:
+    return request_payload_fingerprint({
+        "source_type": ST.normalize(payload.source_type),
+        "title": payload.title or "工作汇报",
+        "transcript_text": payload.transcript_text,
+        "human_result": payload.human_result,
+    })
 
 
 def _card_project(card: dict, index: int, db: Session) -> tuple[int, models.Task, models.SubTask]:
@@ -64,6 +74,7 @@ def create_submission_batch(
     submitter_id = person_id_for_account(current_user, db) or context.get("person_id")
     if not submitter_id:
         raise HTTPException(401, "无法识别当前提交人")
+    request_payload_hash = _request_payload_hash(payload)
     existing = (
         db.query(models.UpdateSubmissionBatch)
         .filter(models.UpdateSubmissionBatch.client_request_id == payload.client_request_id)
@@ -72,6 +83,10 @@ def create_submission_batch(
     if existing:
         if existing.submitter_id != submitter_id:
             raise HTTPException(409, "该请求标识已被其他提交使用")
+        if not existing.request_payload_hash:
+            raise HTTPException(409, "该请求对应旧版提交，无法核对内容；请先检查我的汇报记录")
+        if existing.request_payload_hash != request_payload_hash:
+            raise HTTPException(409, "该请求标识已用于不同内容，请刷新汇报后重新提交")
         return _existing_result(existing, db)
 
     submitter = (context.get("name") or current_user).strip()
@@ -102,6 +117,7 @@ def create_submission_batch(
     source_type = ST.normalize(payload.source_type)
     batch = models.UpdateSubmissionBatch(
         client_request_id=payload.client_request_id,
+        request_payload_hash=request_payload_hash,
         submitter=submitter,
         submitter_id=submitter_id,
         source_type=source_type,

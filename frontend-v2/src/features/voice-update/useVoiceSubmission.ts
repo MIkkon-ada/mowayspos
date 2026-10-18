@@ -1,19 +1,19 @@
 import { useRef, useState } from 'react'
 import { createUpdate, createUpdateBatch } from '../../api/updates'
 import { createDrafts } from '../../api/subtaskDrafts'
-import type { Project } from '../../types'
+import type { CurrentUser, Project } from '../../types'
 import type { KeyTaskIssue, TaskReport, UserSubtaskContext } from '../../api/updates'
 import type { ProposedSubTask } from '../../api/subtaskDrafts'
 import { bindProgressReportsToTask, type CardEdit, type Phase, type VoiceReportScope } from './voiceUpdateResultTypes'
 import { buildVoiceUpdateHumanResult } from '../../domain/voiceUpdateFlow'
-import { DRAFT_KEY } from './useVoiceDraft'
+import { getVoiceDraftStorageKey } from './useVoiceDraft'
 
 type UseVoiceSubmissionArgs = {
   reportScope: VoiceReportScope
   selectedProjectId: number | null
   selectedSubtaskId: number | null
   selectedTaskContext: UserSubtaskContext | null
-  currentUser: { name?: string } | null
+  currentUser: CurrentUser | null
   text: string
   mode: 'voice' | 'upload' | 'text' | 'document'
   result: Record<string, unknown> | null
@@ -52,7 +52,7 @@ export function useVoiceSubmission({
   const [submittedAt, setSubmittedAt] = useState('')
   const [submittedSubmissionId, setSubmittedSubmissionId] = useState<number | null>(null)
   const submitLock = useRef(false)
-  const batchRequestId = useRef<string | null>(null)
+  const submissionRequestId = useRef<string | null>(null)
 
   async function handleSubmitFinal() {
     if (submitLock.current) return
@@ -149,9 +149,12 @@ export function useVoiceSubmission({
         keyTaskIssues,
       })
       const sourceType = mode === 'voice' ? '语音更新' : mode === 'document' ? '文档解析' : '文字更新'
+      submissionRequestId.current ||= globalThis.crypto?.randomUUID?.()
+        ?? `report-${Date.now()}-${Math.random().toString(36).slice(2)}`
       let submissionId: number | null = null
       if (reportScope === 'task') {
         const { submission } = await createUpdate({
+          client_request_id: submissionRequestId.current,
           project_id: projectId,
           source_type: sourceType,
           transcript_text: content,
@@ -160,17 +163,14 @@ export function useVoiceSubmission({
         })
         submissionId = submission?.id ?? null
       } else {
-        batchRequestId.current ||= globalThis.crypto?.randomUUID?.()
-          ?? `report-${Date.now()}-${Math.random().toString(36).slice(2)}`
         const batchResult = await createUpdateBatch({
-          client_request_id: batchRequestId.current,
+          client_request_id: submissionRequestId.current,
           source_type: sourceType,
           title: '工作汇报',
           transcript_text: content,
           human_result: mergedHumanResult,
         })
         submissionId = batchResult.submissions[0]?.id ?? null
-        batchRequestId.current = null
       }
 
       const newTaskReports = taskReports.filter((r) => r.type === 'new_task') as Extract<TaskReport, { type: 'new_task' }>[]
@@ -204,8 +204,12 @@ export function useVoiceSubmission({
           .toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
           .replace(/\//g, '-'),
       )
-      localStorage.removeItem(DRAFT_KEY)
+      const draftStorageKey = reportScope === 'all' || selectedProjectId !== null
+        ? getVoiceDraftStorageKey(currentUser, reportScope === 'all' ? null : selectedProjectId)
+        : null
+      if (draftStorageKey) localStorage.removeItem(draftStorageKey)
       await refreshHistory()
+      submissionRequestId.current = null
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '提交失败，请重试')
       setPhase('extracted')

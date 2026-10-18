@@ -30,8 +30,8 @@ test('ordinary members enter the personal task center after login', async () => 
 })
 test('project owners enter project management after login', async () => {
   const { getPostLoginDestination } = await loadAuthFlow()
-  assert.equal(getPostLoginDestination(member, [{ id: 4, user_roles: ['owner'] }], null), '/home/projects')
-  assert.equal(getPostLoginDestination({ ...member, owned_projects: ['Draft project'] }, [], null), '/home/projects')
+  assert.equal(getPostLoginDestination(member, [{ id: 4, user_roles: ['owner'] }], null), '/home/dashboard?scope=my')
+  assert.equal(getPostLoginDestination({ ...member, owned_projects: ['Draft project'] }, [], null), '/home/dashboard?scope=my')
 })
 
 test('external auth returns to the shared home route resolver', () => {

@@ -5,12 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const api = vi.hoisted(() => ({
   fetchPeople: vi.fn(),
   ownerSubmitProfile: vi.fn(),
+  getOwnerPlanDraft: vi.fn(),
+  saveOwnerPlanDraft: vi.fn(),
 }))
 
 vi.mock('../../api/people', () => ({ fetchPeople: api.fetchPeople }))
 vi.mock('../../api/projects', async () => ({
   ...(await vi.importActual<typeof import('../../api/projects')>('../../api/projects')),
   ownerSubmitProfile: api.ownerSubmitProfile,
+  getOwnerPlanDraft: api.getOwnerPlanDraft,
+  saveOwnerPlanDraft: api.saveOwnerPlanDraft,
 }))
 vi.mock('./OwnerSubmitAiPanel', () => ({ OwnerSubmitAiPanel: () => null }))
 
@@ -40,6 +44,8 @@ const project = {
 describe('owner submit approved B layout', () => {
   beforeEach(() => {
     api.fetchPeople.mockResolvedValue([])
+    api.getOwnerPlanDraft.mockResolvedValue({ draft: null, existing_plan: [], saved_at: null, return_reason: '' })
+    api.saveOwnerPlanDraft.mockResolvedValue({ saved_at: '2026-10-12T00:00:00Z' })
   })
 
   afterEach(() => {
@@ -62,8 +68,8 @@ describe('owner submit approved B layout', () => {
     expect(screen.getByText('P-TEST1')).toBeTruthy()
     expect(screen.getByText('工作推进方案')).toBeTruthy()
     expect(screen.getAllByText('未命名重点工作').length).toBe(2)
-    expect(screen.getByText('目标')).toBeTruthy()
-    expect(screen.getByText('验收标准 / 关键成果')).toBeTruthy()
+    expect(screen.getByText('重点工作目标')).toBeTruthy()
+    expect(screen.getByText('重点工作验收标准 / 关键成果')).toBeTruthy()
     expect(screen.getByText('推进流程')).toBeTruthy()
     expect(screen.getByTestId('owner-submit-goal-result').getAttribute('data-layout')).toBe('stacked')
     expect(screen.getByRole('button', { name: '编辑重点工作名称' })).toBeTruthy()
@@ -72,7 +78,7 @@ describe('owner submit approved B layout', () => {
     expect(screen.getByPlaceholderText('请输入重点工作名称')).toBeTruthy()
     expect(screen.getByText('评价指标')).toBeTruthy()
     expect(screen.getByRole('table').className).toContain('lg:min-w-0')
-    expect(screen.getByRole('button', { name: '返回项目详情' }).className).toContain('bg-slate-50')
+    expect(screen.getByTestId('owner-submit-workbench-footer').querySelector('button')?.className).toContain('bg-white')
     expect(screen.queryByText('项目类型')).toBeNull()
     expect(screen.queryByText('客户名称')).toBeNull()
     expect(screen.queryByText('预期交付物')).toBeNull()
@@ -133,7 +139,7 @@ describe('owner submit approved B layout', () => {
     expect(screen.getByText('项目已提交审核，当前只能查看，需审核退回后才能继续完善。')).toBeTruthy()
     expect((screen.getByRole('button', { name: 'AI 分析文件 / AI 草稿' }) as HTMLButtonElement).disabled).toBe(true)
     expect((screen.getByRole('button', { name: '+ 新增重点工作' }) as HTMLButtonElement).disabled).toBe(true)
-    expect((screen.getByRole('button', { name: '提交立项审核' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: '提交计划，送企业教练审核' }) as HTMLButtonElement).disabled).toBe(true)
     expect((screen.getByPlaceholderText('例如：任务名称') as HTMLInputElement).matches(':disabled')).toBe(true)
   })
 })

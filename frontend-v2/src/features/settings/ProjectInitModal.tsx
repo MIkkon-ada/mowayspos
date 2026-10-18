@@ -5,6 +5,7 @@ import type { Person } from '../../types'
 import { getProjectRoleLabel } from '../../domain/roleLabels'
 import { getPickerPosition } from './projectPickerPosition.js'
 import { OwnerSubmitAiPanel } from './OwnerSubmitAiPanel'
+import { ChevronDownIcon } from '../../components/icons/ChevronDownIcon'
 
 export type TeamMap = {
   owner: number[]
@@ -144,17 +145,18 @@ export function ProjectInitModal({
 
   return createPortal(
     <div
-      className="project-init-workbench fixed inset-0 z-50 flex items-center justify-end bg-slate-900/35 p-4 pl-16 xl:pl-44"
+      className="project-init-workbench initiation-create fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4"
       onClick={() => { if (!creating) closeModal() }}
     >
       <div
-        className="flex max-h-[92vh] w-full max-w-none flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+        className="initiation-create-dialog flex max-h-[92vh] w-full max-w-[1180px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+        role="dialog" aria-modal="true" aria-label={mode === 'edit' ? '编辑项目' : '新建项目草稿'}
         onClick={(event) => event.stopPropagation()}
       >
         <header className="flex shrink-0 items-center justify-between border-b border-slate-200 px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-lg text-white">＋</div>
-            <h1 className="text-xl font-semibold tracking-tight text-slate-900">{mode === 'edit' ? '编辑项目' : '项目立项'}</h1>
+            <div className="initiation-create-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M4 7h6l2 3h8v10H4zM4 7V4h7l2 3h7v3" /></svg></div>
+            <div><p className="initiation-eyebrow">项目立项</p><h1 className="text-xl font-semibold tracking-tight text-slate-900">{mode === 'edit' ? '编辑项目' : '新建项目草稿'}</h1></div>
           </div>
           <div className="flex items-center gap-2">
             {mode === 'edit' && projectId && allowProfileImport && <button type="button" onClick={() => setShowProfileImport((open) => !open)} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-bold text-violet-700 hover:bg-violet-100">{showProfileImport ? '收起 AI 分析' : 'AI 分析立项资料'}</button>}
@@ -162,16 +164,17 @@ export function ProjectInitModal({
           </div>
         </header>
 
-        <main className="project-init-workbench-columns grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-3">
+        <ol className="initiation-steps" aria-label="立项流程">{['建立项目草稿', '下发负责人', '完善工作计划', '企业教练审核'].map((label, index) => <li key={label} aria-current={index === 0 ? 'step' : undefined}><span>{String(index + 1).padStart(2, '0')}</span>{label}</li>)}</ol>
+        <main className="project-init-workbench-columns grid min-h-0 flex-1 grid-cols-1 overflow-y-auto">
           {showProfileImport && projectId && <section className="border-b border-slate-200 bg-slate-50 p-6 lg:col-span-3"><OwnerSubmitAiPanel projectId={projectId} currentDraft={[]} currentProjectProfile={form} showWorkProgress={false} onApplyDraft={() => undefined} onApplyProfile={async (values) => { setForm((previous) => ({ ...previous, ...values })); setShowProfileImport(false) }} onClose={() => setShowProfileImport(false)} /></section>}
-          <section className="border-b border-slate-200 px-6 py-5 lg:border-b-0 lg:border-r">
+          <div className="initiation-form-body"><section className="initiation-basics border-b border-slate-200 px-6 py-5">
             <h2 className="mb-5 text-base font-semibold text-slate-800">1. 基本信息</h2>
             <div className="space-y-4">
               <label className="block text-xs font-semibold text-slate-600">项目类型 <span className="text-red-500">*</span>
-                <select value={form.project_type} onChange={(event) => setForm((prev) => ({ ...prev, project_type: event.target.value, client_name: event.target.value === '博维内部项目' ? '' : prev.client_name }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm font-normal text-slate-700 outline-none focus:border-blue-500">
+                <div className="initiation-type-picker relative mt-1.5"><select value={form.project_type} onChange={(event) => setForm((prev) => ({ ...prev, project_type: event.target.value, client_name: event.target.value === '博维内部项目' ? '' : prev.client_name }))} className="h-9 w-full appearance-none rounded-md border border-slate-300 bg-white px-2.5 pr-8 text-sm font-normal text-slate-700 outline-none focus:border-blue-500">
                   <option value="博维内部项目">博维内部项目</option>
                   <option value="博维-客户项目">博维-客户项目</option>
-                </select>
+                </select><ChevronDownIcon className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /></div>
               </label>
               <label className="block text-xs font-semibold text-slate-600">项目名称 <span className="text-red-500">*</span>
                 <input autoFocus value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 px-2.5 text-sm font-normal text-slate-700 outline-none focus:border-blue-500" />
@@ -179,8 +182,8 @@ export function ProjectInitModal({
               <div className="grid grid-cols-2 gap-3">
                 <label className="block text-xs font-semibold text-slate-600">开始日期 <span className="text-red-500">*</span><input type="date" value={form.start_date} onChange={(event) => setForm((prev) => ({ ...prev, start_date: event.target.value }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 px-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500" /></label>
                 <div className="text-xs font-semibold text-slate-600">
-                  <label className="block">结束日期</label>
-                  <input type="date" value={form.end_date} disabled={endDatePending} onChange={(event) => setForm((prev) => ({ ...prev, end_date: event.target.value }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 px-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400" />
+                  <label className="block" htmlFor="initiation-project-end">结束日期</label>
+                  <input id="initiation-project-end" type="date" value={form.end_date} disabled={endDatePending} onChange={(event) => setForm((prev) => ({ ...prev, end_date: event.target.value }))} className="mt-1.5 h-9 w-full rounded-md border border-slate-300 px-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400" />
                   <button type="button" aria-pressed={endDatePending} onClick={toggleEndDatePending} className={`mt-2 flex w-full items-center justify-center gap-1.5 text-[11px] font-semibold transition-colors ${endDatePending ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
                     <span aria-hidden="true" className={`flex h-3.5 w-3.5 items-center justify-center rounded-full border ${endDatePending ? 'border-blue-600 bg-blue-600' : 'border-slate-300 bg-white'}`}>
                       {endDatePending && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
@@ -198,22 +201,23 @@ export function ProjectInitModal({
             </div>
           </section>
 
-          <section className="border-b border-slate-200 px-6 py-5 lg:border-b-0 lg:border-r">
-            <h2 className="mb-5 text-base font-semibold text-slate-800">2. 战略背景与目标</h2>
+          <section className="initiation-objectives px-6 py-5">
+            <h2 className="mb-5 text-base font-semibold text-slate-800">2. 项目目标与验收要求</h2>
             <div className="space-y-4">
               <label className="block text-xs font-semibold text-slate-600">项目背景<textarea value={form.background} onChange={(event) => setForm((prev) => ({ ...prev, background: event.target.value }))} className="mt-1.5 h-24 w-full resize-none rounded-md border border-slate-300 px-2.5 py-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500" /></label>
               <label className="block text-xs font-semibold text-slate-600">项目目标 <span className="text-red-500">*</span><textarea value={form.objectives} onChange={(event) => setForm((prev) => ({ ...prev, objectives: event.target.value }))} className="mt-1.5 h-24 w-full resize-none rounded-md border border-slate-300 px-2.5 py-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500" /></label>
               <label className="block text-xs font-semibold text-slate-600">预期交付物 <span className="text-red-500">*</span><textarea value={form.expected_outcomes} onChange={(event) => setForm((prev) => ({ ...prev, expected_outcomes: event.target.value }))} className="mt-1.5 h-24 w-full resize-none rounded-md border border-slate-300 px-2.5 py-2 text-sm font-normal text-slate-700 outline-none focus:border-blue-500" /></label>
             </div>
-          </section>
+          </section></div>
 
-          <section className="px-6 py-5">
+          <section className="initiation-team px-6 py-5">
             <h2 className="mb-5 text-base font-semibold text-slate-800">3. 团队配置</h2>
+            <p className="initiation-team-intro">明确谁来推进、谁来审核。人员可兼任多个角色。</p>
             <div className="space-y-4">
               {roleOrder.map((role) => {
                 const selectedPeople = people.filter((person) => team[role].includes(person.id))
                 return (
-                  <div key={role}>
+                  <div key={role} className="initiation-team-role">
                     <div className="mb-1.5 flex items-center justify-between"><span className="text-xs font-semibold text-slate-600">{ROLE_LABELS[role]} {REQUIRED_TEAM_ROLES.includes(role) ? <span className="text-red-500">*</span> : null}</span><button type="button" onClick={(event) => setPicker({ role, anchorEl: event.currentTarget })} className="text-lg leading-none text-blue-600 hover:text-blue-800" aria-label={`添加${ROLE_LABELS[role]}`}>＋</button></div>
                     {selectedPeople.length > 0 ? (
                       <div className="flex min-h-10 flex-wrap items-start gap-1.5">
@@ -224,7 +228,7 @@ export function ProjectInitModal({
                           </div>
                         ))}
                       </div>
-                    ) : <div className="flex h-10 items-center justify-center border border-dashed border-slate-300 text-xs text-slate-400">未配置</div>}
+                    ) : <button type="button" onClick={(event) => setPicker({ role, anchorEl: event.currentTarget })} className="initiation-team-empty" aria-label={`选择${ROLE_LABELS[role]}`}>选择{ROLE_LABELS[role]}</button>}
                   </div>
                 )
               })}
@@ -232,9 +236,10 @@ export function ProjectInitModal({
           </section>
         </main>
 
-        <footer className="flex shrink-0 justify-end gap-2 border-t border-slate-200 px-6 py-3">
+        <footer className="initiation-create-footer flex shrink-0 justify-end gap-2 border-t border-slate-200 px-6 py-3">
+          <p>保存后进入草稿，检查完成再下发给负责人。</p>
           <button type="button" onClick={closeModal} disabled={creating} className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">取消</button>
-          <button type="button" onClick={onSubmit} disabled={creating || !form.name.trim() || (form.project_type === '博维-客户项目' && !form.client_name.trim())} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{creating ? (mode === 'edit' ? '保存中…' : '创建中…') : mode === 'edit' ? '保存修改' : '确认立项'} →</button>
+          <button type="button" onClick={onSubmit} disabled={creating || !form.name.trim() || (form.project_type === '博维-客户项目' && !form.client_name.trim())} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{creating ? (mode === 'edit' ? '保存中…' : '创建中…') : mode === 'edit' ? '保存修改' : '保存项目草稿'}</button>
         </footer>
         {picker && (
           <ProjectPeoplePickerPopover
@@ -272,7 +277,7 @@ export function ProjectInitModal({
               </svg>
             </div>
             <div>
-              <div className="text-lg font-bold text-gray-900 tracking-tight">{mode === 'edit' ? '编辑项目' : '项目立项'}</div>
+              <div className="text-lg font-bold text-gray-900 tracking-tight">{mode === 'edit' ? '编辑项目' : '新建项目草稿'}</div>
               <div className="mt-0.5 text-xs font-medium text-gray-500">
                 {mode === 'edit' ? '修改基础信息和团队配置后保存。' : '填写完整后创建项目，立项人会自动记录为当前登录用户'}
               </div>
@@ -508,7 +513,7 @@ export function ProjectInitModal({
             disabled={creating || !form.name.trim() || (form.project_type === '博维-客户项目' && !form.client_name.trim())}
             className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 px-7 py-2.5 text-sm font-bold text-white shadow-lg shadow-blue-500/30 transition-all hover:from-blue-500 hover:to-blue-600 hover:shadow-xl hover:shadow-blue-500/40 disabled:opacity-50 active:scale-[0.98]"
           >
-            <span>{creating ? (mode === 'edit' ? '保存中...' : '创建中...') : mode === 'edit' ? '保存修改' : '确认立项'}</span>
+            <span>{creating ? (mode === 'edit' ? '保存中...' : '创建中...') : mode === 'edit' ? '保存修改' : '保存项目草稿'}</span>
             {!creating && (
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />

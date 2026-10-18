@@ -13,7 +13,7 @@ test('shared key task workspace remains available from work progress and persona
   const page = read('src/pages/TaskManagementPage.tsx')
 
   assert.match(workspace, /CurrentProgressCard/)
-  assert.match(workspace, /ExecutionPlanTable/)
+  assert.match(workspace, /ExecutionPlanSidebar/)
   assert.match(workspace, /ExecutionTimeline/)
   assert.match(personal, /KeyTaskExecutionWorkspace/)
   assert.match(management, /KeyTaskExecutionWorkspace/)
@@ -49,6 +49,12 @@ test('key task header does not present a placeholder more-actions menu', () => {
   assert.doesNotMatch(header, /尚无有效任务计划；不会自动完成。/)
 })
 
+test('key-task workspace uses the shared SVG chevron for its back control', () => {
+  const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
+  assert.match(workspace, /ChevronDownIcon/)
+  assert.doesNotMatch(workspace, /← 返回/)
+})
+
 test('workspace keeps its history scrollable inside the fixed application shell', () => {
   const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
 
@@ -75,7 +81,7 @@ test('execution plan table has the compact approved columns and row action', () 
 test('workspace renders execution state before historical state', () => {
   const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
   const currentIndex = workspace.indexOf('<CurrentProgressCard')
-  const planIndex = workspace.indexOf('<ExecutionPlanTable')
+  const planIndex = workspace.indexOf('<ExecutionPlanSidebar')
   const achievementIndex = workspace.indexOf('<AchievementList')
   const issueIndex = workspace.indexOf('<IssueList')
   const timelineIndex = workspace.indexOf('<ExecutionTimeline')
@@ -109,8 +115,9 @@ test('current progress and timeline use authoritative workspace DTOs', () => {
 
   assert.match(api, /effective_at/)
   assert.match(api, /affects_current_progress/)
-  assert.match(current, /当前进展/)
-  assert.match(current, /下一步/)
+  assert.match(api, /latest_submission:/)
+  assert.match(current, /最新提交/)
+  assert.match(current, /下一步计划/)
   for (const label of ['推进记录', '全部', '工作提交', '会议纪要', '成果', '问题', '计划变更']) {
     assert.match(timeline, new RegExp(label))
   }
@@ -157,30 +164,28 @@ test('execution plan drawer reuses DetailDrawer and keeps actions outside table'
 test('workspace uses the approved reference card hierarchy and empty states', () => {
   const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
   const header = read('src/components/key-task-workspace/KeyTaskHeader.tsx')
-  const plan = read('src/components/key-task-workspace/ExecutionPlanTable.tsx')
+  const plan = read('src/components/key-task-workspace/ExecutionPlanSidebar.tsx')
   const current = read('src/components/key-task-workspace/CurrentProgressCard.tsx')
   const achievements = read('src/components/key-task-workspace/AchievementList.tsx')
   const issues = read('src/components/key-task-workspace/IssueList.tsx')
   const timeline = read('src/components/key-task-workspace/ExecutionTimeline.tsx')
-  const context = read('src/components/key-task-workspace/KeyTaskContextCard.tsx')
+  const requirement = read('src/components/key-task-workspace/KeyTaskRequirementCard.tsx')
 
-  assert.match(workspace, /md:grid-cols-2/)
+  assert.match(workspace, /xl:grid-cols-\[minmax\(0,1fr\)_320px\]/)
   assert.match(header, /bg-white/)
-  assert.match(plan, /添加计划/)
-  assert.match(current, /暂无已确认的有效推进事实/)
-  assert.match(achievements, /暂无关联成果/)
-  assert.match(issues, /暂无关联问题或风险/)
-  assert.match(timeline, /暂无已确认的推进记录/)
-  assert.match(context, /所属关系/)
+  assert.match(plan, /暂无任务计划/)
+  assert.match(current, /还没有已确认的工作提交/)
+  assert.match(achievements, /还没有已关联的成果文件/)
+  assert.match(issues, /if \(items\.length === 0\) return null/)
+  assert.match(timeline, /还没有可显示的记录/)
+  assert.match(requirement, /任务完成标准|完成标准/)
 })
 
 test('empty execution plan state exposes an add-plan button only to plan managers', () => {
-  const plan = read('src/components/key-task-workspace/ExecutionPlanTable.tsx')
+  const plan = read('src/components/key-task-workspace/ExecutionPlanSidebar.tsx')
 
-  assert.match(plan, /添加计划/)
-  assert.match(plan, /onAdd/)
-  assert.match(plan, /canManage/)
-  assert.match(plan, /<button[^>]*onClick=\{onAdd\}[^>]*>添加计划<\/button>/)
+  assert.match(plan, /暂无任务计划/)
+  assert.match(plan, /canManage && <button[^>]*onClick=\{onAdd\}[^>]*>新增计划<\/button>/)
 })
 
 test('workspace wires task-plan creation to the current key task permissions and refresh', () => {

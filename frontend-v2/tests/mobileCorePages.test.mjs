@@ -4,14 +4,17 @@ import { readFile } from 'node:fs/promises'
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
 
-test('four core pages isolate mobile content below the 800px breakpoint', async () => {
-  const pages = await Promise.all([
+test('four core pages render mobile views and retain their desktop layouts', async () => {
+  const [task, confirm, meeting, issues] = await Promise.all([
     read('src/pages/TaskManagementPage.tsx'),
     read('src/pages/ConfirmPage.tsx'),
     read('src/pages/MeetingPage.tsx'),
     read('src/pages/IssuesPage.tsx'),
   ])
-  for (const source of pages) {
+  assert.match(task, /<MobileTaskList/)
+  assert.match(task, /min-\[800px\]:hidden/)
+  assert.match(task, /hidden min-\[800px\]:(?:block|flex)/)
+  for (const source of [confirm, meeting, issues]) {
     assert.match(source, /min-\[800px\]:hidden/)
     assert.match(source, /hidden min-\[800px\]:block|hidden min-\[800px\]:flex/)
   }
@@ -39,6 +42,8 @@ test('core pages delegate mobile cards to existing detail routes and callbacks',
   ])
   assert.match(task, /<MobileTaskList/)
   assert.match(task, /onOpenSubTask=\{openSubDetail\}/)
+  assert.match(task, /tasks=\{[^}]+\}/)
+  assert.match(task, /subTasksByTaskId=\{mobilePlan\.subTasksByTaskId\}/)
   assert.match(confirm, /<MobileConfirmationStream/)
   assert.match(confirm, /handleTaskCardDecision/)
   assert.match(meeting, /<MobileMeetingTimeline/)

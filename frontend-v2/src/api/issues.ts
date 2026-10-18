@@ -19,15 +19,19 @@ export function createIssue(payload: {
   issue_type?: string
   description: string
   owner?: string
+  owner_id?: number | null
   helper?: string
+  helper_person_id?: number | null
   priority?: string
   status?: string
   source_type?: string
   expected_resolve_time?: string
   related_task_id?: number | null
   related_subtask_id?: number | null
-}): Promise<IssueItem> {
-  return apiPost<IssueItem>('/api/issues', payload)
+}, clientRequestId?: string): Promise<IssueItem> {
+  return apiPost<IssueItem>('/api/issues', clientRequestId
+    ? { ...payload, client_request_id: clientRequestId }
+    : payload)
 }
 
 export function deleteIssue(id: number): Promise<unknown> {
@@ -48,8 +52,11 @@ export function closeIssue(id: number, reason?: string, handlerReply?: string): 
   })
 }
 
-export function assignIssueHelper(id: number, helper: string): Promise<IssueItem> {
-  return apiPatch<IssueItem>(`/api/issues/${id}/assign-helper`, { helper })
+export function assignIssueHelper(id: number, helper: string, helperPersonId?: number): Promise<IssueItem> {
+  return apiPatch<IssueItem>(`/api/issues/${id}/assign-helper`, {
+    helper,
+    ...(helperPersonId == null ? {} : { helper_person_id: helperPersonId }),
+  })
 }
 
 export function requestIssueCeo(id: number, needDecisionBy: string, note?: string): Promise<IssueItem> {

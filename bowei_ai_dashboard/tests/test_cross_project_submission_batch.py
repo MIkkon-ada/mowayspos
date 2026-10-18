@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import asyncio
+from datetime import timedelta
 
 import pytest
 from fastapi import HTTPException
@@ -10,6 +12,17 @@ from sqlalchemy.orm import sessionmaker
 from app import models, schemas
 from app.database import Base
 from app.services.cross_project_submission import create_submission_batch
+from app.time_utils import utc_now
+
+
+def _single_update_payload(request_id="single-request", transcript="单项目汇报", human_result=None):
+    return schemas.ExtractRequest(
+        client_request_id=request_id,
+        project_id=1,
+        source_type="文字更新",
+        transcript_text=transcript,
+        human_result=human_result or {"task_reports": [{"type": "progress", "completed": transcript}]},
+    )
 
 
 def _session():
@@ -120,6 +133,94 @@ def test_idempotent_request_returns_existing_batch_without_duplicate_rows_or_not
     assert db.query(models.UpdateSubmissionBatch).count() == 1
     assert db.query(models.UpdateSubmission).count() == 2
     assert db.query(models.Notification).count() == notification_count == 2
+
+
+def test_reusing_idempotency_key_with_changed_payload_returns_conflict():
+    db = _session(); _seed(db)
+    create_submission_batch(_payload("same-key"), current_user="admin", db=db)
+    db.commit()
+
+    changed = _payload("same-key")
+    changed.transcript_text = "这是修改后的汇报内容"
+    with pytest.raises(HTTPException) as exc:
+        create_submission_batch(changed, current_user="admin", db=db)
+
+    assert exc.value.status_code == 409
+    assert db.query(models.UpdateSubmissionBatch).count() == 1
+    assert db.query(models.UpdateSubmission).count() == 2
+
+
+def test_reusing_idempotency_key_with_changed_reviewed_cards_returns_conflict():
+    db = _session(); _seed(db)
+    create_submission_batch(_payload("same-card-key"), current_user="admin", db=db)
+    db.commit()
+
+    changed = _payload("same-card-key")
+    changed.human_result["task_reports"][0]["completed"] = "新增的复核内容"
+    with pytest.raises(HTTPException) as exc:
+        create_submission_batch(changed, current_user="admin", db=db)
+
+    assert exc.value.status_code == 409
+    assert db.query(models.UpdateSubmissionBatch).count() == 1
+
+
+def test_legacy_batch_without_payload_hash_is_not_replayed_as_verified():
+    db = _session(); _seed(db)
+    create_submission_batch(_payload("legacy-key"), current_user="admin", db=db)
+    db.commit()
+    batch = db.query(models.UpdateSubmissionBatch).one()
+    batch.request_payload_hash = None
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        create_submission_batch(_payload("legacy-key"), current_user="admin", db=db)
+
+    assert exc.value.status_code == 409
+    assert db.query(models.UpdateSubmissionBatch).count() == 1
+
+
+def test_single_project_request_id_replays_existing_submission_after_dedupe_window():
+    from app.routers.updates import create_update
+
+    db = _session(); _seed(db)
+    payload = _single_update_payload()
+    first = asyncio.run(create_update(payload, current_user="admin", db=db))
+    row = db.get(models.UpdateSubmission, first["submission"]["id"])
+    row.created_at = utc_now() - timedelta(minutes=5)
+    db.commit()
+
+    second = asyncio.run(create_update(payload, current_user="admin", db=db))
+
+    assert second["submission"]["id"] == first["submission"]["id"]
+    assert second["idempotent"] is True
+    assert db.query(models.UpdateSubmission).filter_by(client_request_id="single-request").count() == 1
+
+
+def test_single_project_request_id_rejects_changed_payload():
+    from app.routers.updates import create_update
+
+    db = _session(); _seed(db)
+    asyncio.run(create_update(_single_update_payload(), current_user="admin", db=db))
+
+    changed = _single_update_payload(transcript="不同内容")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(create_update(changed, current_user="admin", db=db))
+
+    assert exc.value.status_code == 409
+    assert db.query(models.UpdateSubmission).filter_by(client_request_id="single-request").count() == 1
+
+
+def test_single_project_request_id_cannot_return_another_submitters_submission():
+    from app.routers.updates import create_update
+
+    db = _session(); _seed(db)
+    asyncio.run(create_update(_single_update_payload(), current_user="admin", db=db))
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(create_update(_single_update_payload(), current_user="member", db=db))
+
+    assert exc.value.status_code == 409
+    assert db.query(models.UpdateSubmission).filter_by(client_request_id="single-request").count() == 1
 
 
 def test_idempotency_key_cannot_replay_another_submitters_batch():

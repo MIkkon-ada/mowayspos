@@ -9,7 +9,7 @@ from .. import crud, models, schemas
 from ..database import get_db
 from ..domain import source_type as ST
 from ..domain import submission_status as SS
-from sqlalchemy import and_ as sql_and, or_ as sql_or
+from sqlalchemy import or_ as sql_or
 
 from ..permissions import (
     PROJECT_ROLE_COORDINATOR,
@@ -28,11 +28,13 @@ from ..permissions import (
 )
 from ..time_utils import utc_now
 from ..services.policy import can_submit_to_project as _can_submit_to_project
+from ..services.person_identity import person_identity_matches, person_identity_scope
 from ..services.extractor import _extract_json_blob, extract_update
 from ..services.work_report_agent import extract_work_report_agent
 from ..ai.contracts import AIInvocationContext, Capability
 from ..ai.service import AIService
 from ..services.cross_project_submission import create_submission_batch, serialize_batch_result
+from ..services.request_fingerprint import request_payload_fingerprint
 from ..services.notify import person_id_for_account as _pid_for_account, send as _notify
 from ..services.project_resolution import resolve_project_context
 from ..services.work_report_document_text import (
@@ -55,49 +57,51 @@ def _update_human_result(row: models.UpdateSubmission) -> dict:
 
 def _can_view_update(context: dict, row: models.UpdateSubmission) -> bool:
     human = _update_human_result(row)
-    return can_view_submission(context, human, row.submitter or "")
-
-
-def _unique_active_person_id_for_name(db: Session, name: str) -> int | None:
-    rows = (
-        db.query(models.Person.id)
-        .filter(models.Person.name == name, models.Person.is_active.is_(True))
-        .limit(2)
-        .all()
+    return can_view_submission(
+        context, human, row.submitter or "", submitter_id=row.submitter_id
     )
-    return rows[0][0] if len(rows) == 1 else None
 
 
 def _submitter_identity_filter(db: Session, context: dict, current_user: str):
-    """Match new submissions by person_id and legacy rows by stored strings."""
-    conditions = []
-    person_id = context.get("person_id")
-    if person_id is not None:
-        conditions.append(models.UpdateSubmission.submitter_id == person_id)
+    """Match submissions by person ID; ambiguous legacy strings never broaden access."""
+    return person_identity_scope(
+        db,
+        person_id=context.get("person_id"),
+        person_name=context.get("name"),
+        id_column=models.UpdateSubmission.submitter_id,
+        name_column=models.UpdateSubmission.submitter,
+        account_username=current_user,
+    )
 
-    current_user = (current_user or "").strip()
-    if current_user:
-        conditions.append(
-            sql_and(
-                models.UpdateSubmission.submitter_id.is_(None),
-                models.UpdateSubmission.submitter == current_user,
-            )
-        )
 
-    context_name = (context.get("name") or "").strip()
-    if (
-        person_id is not None
-        and context_name
-        and context_name != current_user
-        and _unique_active_person_id_for_name(db, context_name) == person_id
-    ):
-        conditions.append(
-            sql_and(
-                models.UpdateSubmission.submitter_id.is_(None),
-                models.UpdateSubmission.submitter == context_name,
-            )
+def _find_recent_duplicate_submission(
+    db: Session,
+    *,
+    context: dict,
+    current_user: str,
+    transcript_text: str,
+    source_type_key: str,
+    cutoff,
+):
+    person_id = _pid_for_account(current_user, db) or context.get("person_id")
+    submitter_scope = person_identity_scope(
+        db,
+        person_id=person_id,
+        person_name=context.get("name"),
+        id_column=models.UpdateSubmission.submitter_id,
+        name_column=models.UpdateSubmission.submitter,
+        account_username=current_user,
+    )
+    return (
+        db.query(models.UpdateSubmission)
+        .filter(
+            submitter_scope,
+            models.UpdateSubmission.transcript_text == (transcript_text or ""),
+            models.UpdateSubmission.source_type.in_(ST.aliases_for(source_type_key)),
+            models.UpdateSubmission.created_at >= cutoff,
         )
-    return sql_or(*conditions)
+        .first()
+    )
 
 
 def _project_owner_person_ids(project_id: int, db: Session) -> list[int]:
@@ -245,8 +249,22 @@ def get_voice_context(
     if not is_project_manager:
         q = q.filter(
             sql_or(
-                models.SubTask.assignee == display_name,
-                models.Task.owner == display_name,
+                person_identity_scope(
+                    db,
+                    person_id=person_id,
+                    person_name=display_name,
+                    id_column=models.SubTask.assignee_id,
+                    name_column=models.SubTask.assignee,
+                    account_username=current_user,
+                ),
+                person_identity_scope(
+                    db,
+                    person_id=person_id,
+                    person_name=display_name,
+                    id_column=models.Task.owner_id,
+                    name_column=models.Task.owner,
+                    account_username=current_user,
+                ),
             )
         )
 
@@ -256,7 +274,14 @@ def get_voice_context(
     for subtask, task in rows:
         if is_project_manager:
             relation = user_project_role or "coordinator"
-        elif task.owner == display_name:
+        elif person_identity_matches(
+            db,
+            person_id=person_id,
+            person_name=display_name,
+            stored_person_id=task.owner_id,
+            stored_name=task.owner,
+            account_username=current_user,
+        ):
             relation = "task_owner"
         else:
             relation = "subtask_assignee"
@@ -368,7 +393,7 @@ async def create_update(
 ):
     current_user = require_login(current_user, db)
     context = get_user_context_from_db(current_user, db)
-    submitter = payload.submitter or current_user
+    submitter = context.get("name") or current_user
     project_id = payload.project_id
     source_type_raw = payload.source_type or "人工录入"
     source_type_key = ST.normalize(source_type_raw)
@@ -418,13 +443,43 @@ async def create_update(
     for pid in card_project_ids:
         require_project_not_archived(pid, db)
 
+    submitter_id = _pid_for_account(current_user, db) or context.get("person_id")
+    request_payload_hash = None
+    if payload.client_request_id:
+        request_payload_hash = request_payload_fingerprint({
+            "project_id": project_id,
+            "source_type": source_type_key,
+            "title": payload.title or "工作汇报",
+            "transcript_text": payload.transcript_text,
+            "special_project": payload.special_project,
+            "llm_provider": payload.llm_provider,
+            "human_result": payload.human_result or payload.edited_suggestion,
+        })
+        existing = db.query(models.UpdateSubmission).filter(
+            models.UpdateSubmission.client_request_id == payload.client_request_id
+        ).first()
+        if existing:
+            if existing.submitter_id != submitter_id:
+                raise HTTPException(409, "该请求标识已被其他提交使用")
+            if not existing.request_payload_hash:
+                raise HTTPException(409, "该请求对应旧版提交，无法核对内容；请先检查我的汇报记录")
+            if existing.request_payload_hash != request_payload_hash:
+                raise HTTPException(409, "该请求标识已用于不同内容，请刷新汇报后重新提交")
+            return {
+                "submission": crud.to_dict(existing),
+                "suggestion": json.loads(existing.ai_result_json or "{}"),
+                "idempotent": True,
+            }
+
     cutoff = utc_now() - timedelta(seconds=60)
-    dup = db.query(models.UpdateSubmission).filter(
-        models.UpdateSubmission.submitter == (submitter or ""),
-        models.UpdateSubmission.transcript_text == (payload.transcript_text or ""),
-        models.UpdateSubmission.source_type.in_(ST.aliases_for(source_type_key)),
-        models.UpdateSubmission.created_at >= cutoff,
-    ).first()
+    dup = _find_recent_duplicate_submission(
+        db,
+        context=context,
+        current_user=current_user,
+        transcript_text=payload.transcript_text,
+        source_type_key=source_type_key,
+        cutoff=cutoff,
+    )
     if dup:
         dup_provider = json.loads(dup.ai_result_json or "{}").get("engine", "rules")
         current_provider = payload.llm_provider or "rules"
@@ -456,8 +511,9 @@ async def create_update(
         if not human_result.get("special_project"):
             human_result["special_project"] = proj_name
 
-    submitter_id = _pid_for_account(current_user, db) or context.get("person_id") or get_person_id(submitter, db)
     row = models.UpdateSubmission(
+        client_request_id=payload.client_request_id,
+        request_payload_hash=request_payload_hash,
         project_id=project_id,
         source_type=source_type_key,
         submitter=submitter or "",
@@ -611,7 +667,14 @@ def delete_update(
         if not context.get("is_tech_admin"):
             raise HTTPException(403, "permission denied")
     else:
-        if row.submitter == current_user:
+        if person_identity_matches(
+            db,
+            person_id=context.get("person_id"),
+            person_name=context.get("name"),
+            stored_person_id=row.submitter_id,
+            stored_name=row.submitter,
+            account_username=current_user,
+        ):
             pass
         elif context.get("is_tech_admin"):
             pass

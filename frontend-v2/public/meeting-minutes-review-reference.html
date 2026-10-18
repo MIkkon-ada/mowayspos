@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>会议纪要审核工作台 · 参考页</title>
+  <style>
+    :root {
+      --ink: #172638;
+      --muted: #728197;
+      --line: #dfe7ef;
+      --paper: #fffefa;
+      --canvas: #edf2f5;
+      --navy: #202f79;
+      --cyan: #168ea9;
+      --gold: #d99943;
+      --gold-soft: #fff4df;
+      --red: #c9534a;
+      --green: #2b8467;
+      --shadow: 0 18px 50px rgba(25, 52, 72, .10);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--canvas);
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      letter-spacing: .01em;
+    }
+    button, input, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .app-shell { min-height: 100vh; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      min-height: 76px;
+      padding: 14px clamp(20px, 4vw, 62px);
+      background: rgba(255, 254, 250, .94);
+      border-bottom: 1px solid rgba(223, 231, 239, .95);
+      backdrop-filter: blur(16px);
+    }
+    .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+    .brand-logo { display: block; width: 118px; height: 40px; object-fit: contain; object-position: left center; mix-blend-mode: multiply; }
+    .brand-copy { padding-left: 14px; border-left: 1px solid #d8dee9; }
+    .brand-copy strong { display: block; color: var(--navy); font-size: 15px; letter-spacing: .05em; }
+    .brand-copy span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+    .top-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
+    .status {
+      display: inline-flex; align-items: center; gap: 7px; padding: 7px 11px;
+      color: #9b671f; background: var(--gold-soft); border: 1px solid #f1d59d;
+      border-radius: 999px; font-size: 12px; font-weight: 700;
+    }
+    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--gold); }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      min-height: 38px; padding: 0 14px; border-radius: 9px; border: 1px solid var(--line);
+      color: var(--ink); background: #fff; font-size: 12px; font-weight: 700;
+      transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+    }
+    .btn:hover { transform: translateY(-1px); border-color: #9fc7d0; box-shadow: 0 6px 18px rgba(25, 52, 72, .10); }
+    .btn.primary { color: white; background: var(--navy); border-color: var(--navy); }
+    .btn.accent { color: white; background: var(--cyan); border-color: var(--cyan); }
+    .btn.ghost { color: var(--cyan); background: transparent; border-color: #b8d9de; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 22px; width: min(1440px, calc(100% - 40px)); margin: 26px auto 110px; }
+    .paper { overflow: hidden; background: var(--paper); border: 1px solid #e2e7e7; border-radius: 18px; box-shadow: var(--shadow); }
+    .paper-head { padding: 45px clamp(28px, 6vw, 82px) 30px; text-align: center; border-bottom: 1px solid var(--line); }
+    .paper-kicker { color: var(--cyan); font-size: 11px; font-weight: 800; letter-spacing: .18em; }
+    .paper-kicker::before { content: "MOWAYS  ·  博维咨询"; display: block; margin-bottom: 12px; color: var(--navy); font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: .08em; }
+    h1 { margin: 14px 0 8px; color: var(--navy); font-family: "Songti SC", "SimSun", "STSong", serif; font-size: clamp(26px, 3vw, 40px); line-height: 1.18; letter-spacing: -.02em; }
+    .paper-subtitle { color: var(--muted); font-family: "Songti SC", "SimSun", "STSong", serif; font-size: 13px; }
+    .paper-body { padding: 28px clamp(24px, 5vw, 70px) 54px; }
+    .meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+    .meta-item { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+    .meta-item:nth-child(odd) { border-right: 1px solid var(--line); }
+    .meta-item:nth-last-child(-n+2) { border-bottom: 0; }
+    .meta-label { color: var(--muted); font-size: 12px; }
+    .meta-value { color: var(--ink); font-size: 13px; line-height: 1.6; }
+    .section { margin-top: 34px; }
+    .section-title { display: flex; align-items: center; gap: 10px; margin: 0 0 17px; color: var(--navy); font-family: "Songti SC", "SimSun", "STSong", serif; font-size: 20px; }
+    .section-title::before { content: ""; width: 4px; height: 22px; background: var(--cyan); border-radius: 5px; }
+    .agenda { display: grid; gap: 1px; padding: 0; margin: 0; list-style: none; counter-reset: agenda; }
+    .agenda li { display: grid; grid-template-columns: 34px 1fr; gap: 10px; padding: 12px 0; border-bottom: 1px dashed #dfe7ef; font-family: "Songti SC", "SimSun", "STSong", serif; font-size: 15px; line-height: 1.6; }
+    .agenda li::before { counter-increment: agenda; content: counter(agenda, decimal-leading-zero); color: var(--cyan); font-family: ui-monospace, monospace; font-size: 12px; font-weight: 700; padding-top: 3px; }
+    .summary { margin: 0 0 18px; color: #536478; font-size: 13px; line-height: 1.9; }
+    .topic { padding: 18px 20px 14px; margin-top: 13px; background: #f7faf9; border-left: 3px solid #98c8c2; border-radius: 0 10px 10px 0; }
+    .topic h3 { margin: 0 0 8px; color: var(--navy); font-size: 14px; }
+    .topic p { margin: 8px 0; color: #465a6c; font-family: "Songti SC", "SimSun", "STSong", serif; font-size: 14px; line-height: 1.75; }
+    .topic p::before { content: "·"; margin-right: 8px; color: var(--cyan); font-weight: 900; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+    table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 12px; }
+    th { padding: 12px 13px; color: white; background: var(--navy); text-align: left; font-size: 11px; letter-spacing: .04em; }
+    td { padding: 13px; color: #405568; border-top: 1px solid var(--line); vertical-align: top; line-height: 1.6; }
+    tr:nth-child(even) td { background: #fbfcfc; }
+    .code { color: var(--cyan); font-family: ui-monospace, monospace; font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .todo { color: var(--red); font-weight: 700; }
+    .footer-note { display: flex; justify-content: space-between; gap: 20px; padding-top: 24px; margin-top: 34px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    .rail { display: grid; align-content: start; gap: 14px; }
+    .rail-card { padding: 18px; background: rgba(255, 254, 250, .94); border: 1px solid var(--line); border-radius: 15px; box-shadow: 0 8px 24px rgba(25, 52, 72, .06); }
+    .rail-card h2 { margin: 0; color: var(--navy); font-size: 14px; }
+    .rail-card > p { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+    .metric-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 15px; }
+    .metric { padding: 10px 6px; text-align: center; background: #f5f8f8; border-radius: 9px; }
+    .metric strong { display: block; color: var(--navy); font-family: "Songti SC", "SimSun", "STSong", serif; font-size: 20px; }
+    .metric span { color: var(--muted); font-size: 10px; }
+    .alert { display: flex; gap: 10px; padding: 12px; margin-top: 14px; background: #fff7ed; border: 1px solid #f2d4b1; border-radius: 10px; color: #8f5e30; font-size: 12px; line-height: 1.6; }
+    .alert svg { flex: 0 0 auto; margin-top: 2px; }
+    details { margin-top: 13px; border-top: 1px solid #edf1f3; padding-top: 12px; }
+    summary { display: flex; align-items: center; gap: 7px; color: var(--cyan); cursor: pointer; font-size: 12px; font-weight: 700; list-style: none; }
+    summary::-webkit-details-marker { display: none; }
+    summary svg { transition: transform .2s; }
+    details[open] summary svg { transform: rotate(90deg); }
+    .evidence { padding: 10px 11px; margin-top: 10px; color: #657589; background: #f8fafb; border-radius: 8px; font-size: 11px; line-height: 1.7; }
+    .proposal { display: grid; gap: 9px; padding: 12px 0; border-top: 1px solid #edf1f3; }
+    .proposal:first-of-type { margin-top: 14px; }
+    .proposal-title { display: flex; justify-content: space-between; gap: 10px; color: var(--ink); font-size: 12px; font-weight: 700; }
+    .proposal small { color: var(--muted); line-height: 1.6; }
+    .proposal .tag { color: var(--green); background: #eaf6f1; border-radius: 999px; padding: 3px 7px; font-size: 10px; white-space: nowrap; }
+    .bottom-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px clamp(20px, 4vw, 62px); background: rgba(23, 38, 56, .96); color: white; box-shadow: 0 -8px 28px rgba(23, 38, 56, .16); backdrop-filter: blur(12px); }
+    .bottom-bar p { margin: 0; color: #cbd8e0; font-size: 12px; }
+    .bottom-actions { display: flex; gap: 9px; }
+    .bottom-bar .btn { min-height: 36px; color: white; background: transparent; border-color: #5f7789; }
+    .bottom-bar .btn.primary { color: var(--navy); background: #f6ce8e; border-color: #f6ce8e; }
+    .toast { position: fixed; right: 22px; bottom: 78px; z-index: 30; padding: 12px 15px; color: white; background: var(--green); border-radius: 9px; box-shadow: var(--shadow); font-size: 12px; opacity: 0; transform: translateY(12px); pointer-events: none; transition: .25s ease; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      .rail { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+      .rail-card:first-child { grid-column: 1 / -1; }
+    }
+    @media (max-width: 640px) {
+      .topbar { align-items: flex-start; flex-direction: column; gap: 13px; }
+      .top-actions { width: 100%; justify-content: flex-start; }
+      .layout { width: calc(100% - 22px); margin: 12px auto 105px; }
+      .paper-head { padding: 32px 20px 24px; }
+      .paper-body { padding: 22px 16px 40px; }
+      .meta-grid { grid-template-columns: 1fr; }
+      .meta-item, .meta-item:nth-child(odd), .meta-item:nth-last-child(-n+2) { border-right: 0; border-bottom: 1px solid var(--line); }
+      .meta-item:last-child { border-bottom: 0; }
+      .rail { grid-template-columns: 1fr; }
+      .footer-note { flex-direction: column; }
+      .bottom-bar { align-items: stretch; flex-direction: column; gap: 8px; padding: 10px 14px; }
+      .bottom-actions { width: 100%; }
+      .bottom-actions .btn { flex: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-logo" src="/moways-logo.png" alt="MOWAYS 博维咨询" />
+        <div class="brand-copy"><strong>会议纪要审核工作台</strong><span>AI 整理 · 人工核对 · 正式留档</span></div>
+      </div>
+      <div class="top-actions">
+        <span class="status" id="statusLabel">待审核草稿</span>
+        <button class="btn" type="button" onclick="showToast('已打开下载预览')">下载 Word</button>
+        <button class="btn ghost" type="button" onclick="toggleEdit()" id="editButton">进入编辑</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <article class="paper">
+        <header class="paper-head">
+          <div class="paper-kicker">内部留档 · 项目会议纪要</div>
+          <h1>博维管理咨询 AI升级与项目管理周会</h1>
+          <div class="paper-subtitle">2026 年 7 月 27 日　|　AI 升级与项目管理专题（第一次会议）</div>
+        </header>
+        <div class="paper-body">
+          <section class="meta-grid" aria-label="会议信息">
+            <div class="meta-item"><span class="meta-label">会议日期</span><span class="meta-value">2026-07-27</span></div>
+            <div class="meta-item"><span class="meta-label">会议地点</span><span class="meta-value">线下会议室 + 腾讯会议（线上）</span></div>
+            <div class="meta-item"><span class="meta-label">主持人</span><span class="meta-value">杨宇帆</span></div>
+            <div class="meta-item"><span class="meta-label">参会人员</span><span class="meta-value">刘万超、邹奇敏、温会林、郭熠彬、许明良、吴肖、袁金玉、杨宇帆</span></div>
+          </section>
+
+          <section class="section">
+            <h2 class="section-title">一、会议议程</h2>
+            <ol class="agenda">
+              <li>梳理项目经理工作流程，明确八大核心模块与关键节点</li>
+              <li>讨论内部知识库与中转系统搭建方案，确定三层架构与权限管理机制</li>
+              <li>规划 AI 技能（Skill）开发方向，明确聚焦顾问作业场景的分步开发策略</li>
+              <li>介绍新项目管理平台功能，部署上线与后续使用计划</li>
+            </ol>
+          </section>
+
+          <section class="section">
+            <h2 class="section-title">二、会议讨论与结论</h2>
+            <p class="summary">本次会议梳理项目经理工作流程，明确知识库与 AI 技能建设方向，并同步新项目管理平台的上线安排。</p>
+            <div class="topic"><h3>（一）项目经理工作流程</h3><p>项目启动先进行内部启动会，再与客户确认总计划，之后进行计划分解。</p><p>方案编制主要由项目顾问负责，项目经理统筹进度，不承担方案编制主体责任。</p></div>
+            <div class="topic"><h3>（二）内部知识库与中转系统</h3><p>搭建独立的内部知识库，作为文件出入库和权限管理的中转平台。</p><p>知识库架构分为公司库、项目库和个人库三层，公司库与项目库为建设重点。</p></div>
+            <div class="topic"><h3>（三）AI 技能开发方向</h3><p>AI 技能开发基于真实工作场景，聚焦顾问作业特别是战略、人力资源分析等场景。</p><p>先梳理 21 个场景，再从中选择 10 个核心场景开发和测试。</p></div>
+          </section>
+
+          <section class="section">
+            <h2 class="section-title">三、会议行动项</h2>
+            <h3 style="margin:0 0 12px;color:var(--navy);font-size:14px">（一）本周待办事项</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>编号</th><th>会议安排事项</th><th>负责人</th><th>追踪人</th><th>完成时限</th><th>来源 / 备注</th></tr></thead>
+                <tbody>
+                  <tr><td class="code">本周-01</td><td>完成项目经理工作流程的梳理与优化并定稿，涵盖八大核心模块及关键节点</td><td>温会林</td><td class="todo">待确认</td><td>2026-08-03 前</td><td>会议决议</td></tr>
+                  <tr><td class="code">本周-02</td><td>梳理流程中可结合 AI 的环节，启动相关 AI 功能开发</td><td>温会林</td><td class="todo">待确认</td><td class="todo">待确认</td><td>会议决议</td></tr>
+                  <tr><td class="code">本周-03</td><td>使用历史文件测试中转系统调用效果</td><td>郭熠彬</td><td>杨宇帆</td><td>2026-07-27 前</td><td>会议决议</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <div class="footer-note"><span>整理人：吴肖</span><span>抄送：项目全体成员</span></div>
+        </div>
+      </article>
+
+      <aside class="rail" aria-label="AI审核侧栏">
+        <section class="rail-card">
+          <h2>审核概览</h2><p>先看纪要，再处理需要人工确认的内容。</p>
+          <div class="metric-row"><div class="metric"><strong>4</strong><span>会议议程</span></div><div class="metric"><strong>8</strong><span>行动项</span></div><div class="metric"><strong>1</strong><span>待确认</span></div></div>
+          <div class="alert"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5M12 17h.01"/></svg><span>有 8 条待办暂未安全匹配到项目计划，发布纪要不影响项目计划。</span></div>
+        </section>
+
+        <section class="rail-card">
+          <h2>待确认问题</h2><p>只有负责人确认后，才进入项目变更流程。</p>
+          <details open><summary><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 5 7 7-7 7"/></svg>本周待办与计划节点匹配</summary><div class="evidence">无法将本周-01 至本周-08 与项目计划中的具体节点安全匹配。请确认对应关系。</div></details>
+        </section>
+
+        <section class="rail-card">
+          <h2>原文依据</h2><p>证据默认收起，避免打断纪要阅读。</p>
+          <details><summary><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 5 7 7-7 7"/></svg>会议地点</summary><div class="evidence">“线下会议室+腾讯会议（线上）”</div></details>
+          <details><summary><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 5 7 7-7 7"/></svg>行动项 本周-01</summary><div class="evidence">“完成项目经理工作流程的梳理与优化并定稿，涵盖八大核心模块及关键节点”</div></details>
+        </section>
+
+        <section class="rail-card">
+          <h2>项目变更建议</h2><p>发布后可单独选择回填，不与发布纪要绑定。</p>
+          <div class="proposal"><div class="proposal-title"><span>新增执行安排建议</span><span class="tag">待确认</span></div><small>匹配：项目管理平台 / 流程优化<br/>建议：补充一条 2026-08-03 前的执行排期</small><button class="btn ghost" type="button" onclick="showToast('建议已加入待处理清单')">查看建议</button></div>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="bottom-bar"><p id="bottomHint">当前为草稿，修改后请先保存，再发布。</p><div class="bottom-actions"><button class="btn" type="button" onclick="showToast('修改已保存（参考交互）')">保存修改</button><button class="btn primary" type="button" onclick="publish()">发布会议纪要</button></div></footer>
+    <div class="toast" id="toast" role="status"></div>
+  </div>
+  <script>
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('show');
+      window.clearTimeout(window.__toastTimer);
+      window.__toastTimer = window.setTimeout(() => toast.classList.remove('show'), 2200);
+    }
+    function publish() {
+      document.getElementById('statusLabel').textContent = '已发布';
+      document.getElementById('statusLabel').style.color = '#216d57';
+      document.getElementById('statusLabel').style.background = '#eaf6f1';
+      document.getElementById('statusLabel').style.borderColor = '#b8dfd0';
+      document.getElementById('bottomHint').textContent = '纪要已发布；项目计划变更仍需单独回填。';
+      showToast('会议纪要已发布（参考交互）');
+    }
+    function toggleEdit() {
+      const button = document.getElementById('editButton');
+      button.textContent = button.textContent === '进入编辑' ? '退出编辑' : '进入编辑';
+      showToast(button.textContent === '退出编辑' ? '已进入单项编辑模式' : '已退出编辑模式');
+    }
+  </script>
+</body>
+</html>

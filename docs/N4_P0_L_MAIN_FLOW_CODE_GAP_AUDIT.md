@@ -1,5 +1,7 @@
 # N4-P0-L 主流程代码差异审计报告
 
+> **审计时点提示（2026-10-08）：** 以下代码结论属于原审计分支的历史快照，不代表当前工作区。本文所列“审核后进入 `pending_kickoff`”等判断与当前实现不一致；请以 [`PROJECT_LIFECYCLE_AND_PERMISSIONS.md`](PROJECT_LIFECYCLE_AND_PERMISSIONS.md) 和其引用的当前行为测试为准。
+
 > 审计分支：`n4-p0-j-active-project-key-task-assignment`  
 > 审计基准：`docs/N4_P0_BASELINE_MAIN_FLOW_STAGE_MAP.md`  
 > 审计原则：本文所有“当前代码事实”均来自当前分支源码，不直接采用对话判断作为结论。无法从源码确认的内容明确标注“未能从当前代码确认”。本轮只审计，不修复。

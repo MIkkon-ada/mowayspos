@@ -116,3 +116,12 @@ test('keeps manifest output, package commands, and ExcelJS imports as source con
   assert.match(planExport, /await\s+import\(['"]exceljs['"]\)/)
   assert.match(taskExport, /await\s+import\(['"]exceljs['"]\)/)
 })
+
+test('compresses the V2 stylesheets with production nginx', () => {
+  const nginxConfig = readFileSync(new URL('../../nginx.conf', import.meta.url), 'utf8')
+
+  assert.match(nginxConfig, /gzip\s+on;/)
+  assert.match(nginxConfig, /gzip_vary\s+on;/)
+  assert.match(nginxConfig, /gzip_types[^;]*text\/css/)
+  assert.match(nginxConfig, /gzip_types[^;]*application\/javascript/)
+})

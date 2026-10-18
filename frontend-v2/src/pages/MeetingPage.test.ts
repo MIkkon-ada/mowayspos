@@ -17,8 +17,10 @@ describe('meeting list column layout', () => {
     const source = fs.readFileSync('src/pages/MeetingPage.tsx', 'utf8')
 
     expect(source).toContain("action: 'publish'")
+    expect(source).toContain("action: 'approve_and_apply'")
     expect(source).toContain("action: 'apply_changes'")
-    expect(source).toContain('会议纪要已发布，项目计划尚未变更')
+    expect(source).toContain('会议纪要已发布，未勾选的会议事项保留在纪要中')
+    expect(source).toContain('会议纪要已发布，选中的推进表建议已同步')
     expect(source).toContain('已回填选中的执行安排变更')
   })
 

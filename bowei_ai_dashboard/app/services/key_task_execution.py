@@ -15,6 +15,7 @@ from ..time_utils import utc_now
 SOURCE_LABELS = {
     "update_submission": "个人提交",
     "meeting_progress_review": "会议确认",
+    "meeting_work_progress": "会议纪要",
     "key_task": "人工更新",
     "execution_schedule": "计划变更",
     "achievement": "成果",

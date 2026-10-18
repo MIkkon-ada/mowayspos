@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ownerSubmitProfile } from '../../api/projects'
+import { ownerSubmitProfile, getOwnerPlanDraft, saveOwnerPlanDraft } from '../../api/projects'
 import { applyInitAnalysisRun } from '../../api/projectInitAi'
 import { fetchPeople } from '../../api/people'
 import type { ProjectWorkProgressTaskDraft } from '../../api/projects'
@@ -10,11 +10,14 @@ import { canEditProjectInit, getProjectInitEditNotice, getProjectStatusBadge } f
 import { OwnerSubmitAiPanel, type ProjectInitAiDecision } from './OwnerSubmitAiPanel'
 import type { ProjectInitAiDraft, ProjectInitCurrentDraft } from '../../api/projectInitAi'
 import { buildAiMergePreview, toCurrentDraft, toSubmitDraft, type OwnerSubmitAiDecision as DraftDecision, type OwnerSubmitMergePreview } from './ownerSubmitDraft'
+import { ProjectPlanPreview } from './ProjectPlanPreview'
+import { ChevronDownIcon } from '../../components/icons/ChevronDownIcon'
 
 type Props = {
   project: Project
   onClose: () => void
   onSuccess?: (result: Project & { submitted_for_review: boolean }) => void
+  draftStorageKey?: string
 }
 
 type LocalSubTaskDraft = {
@@ -128,12 +131,20 @@ function parsePeriodValue(value: string): ParsedPeriod {
   return { start: text, end: '' }
 }
 
-function toPayloadDraft(tasks: LocalTaskDraft[]): ProjectWorkProgressTaskDraft[] {
+function toPayloadDraft(tasks: LocalTaskDraft[], includeBlank = false): ProjectWorkProgressTaskDraft[] {
+  if (includeBlank) return tasks.map((task) => ({
+    id: task.id, task_id: task.task_id, title: task.title, description: task.description, goal: task.goal,
+    acceptance_criteria: task.acceptance_criteria, process: task.process, owner: task.owner, helper: task.helper,
+    plan_start: task.plan_start, plan_end: task.plan_end,
+    subtasks: task.subtasks.map((subtask) => ({ id: subtask.id, subtask_id: subtask.subtask_id, title: subtask.title,
+      evaluation_standard: subtask.evaluation_standard, assignee: subtask.assignee, assignee_id: subtask.assigneeId || undefined,
+      helper: subtask.helper, helper_ids: subtask.helperIds, plan_start: subtask.plan_start, plan_end: subtask.plan_end })),
+  }))
   return tasks
     .map((task) => ({
       ...(task.id !== undefined ? { id: task.id } : {}),
       ...(task.task_id !== undefined ? { task_id: task.task_id } : {}),
-      title: task.title.trim(),
+      title: includeBlank ? task.title : task.title.trim(),
       description: task.description.trim(),
       goal: task.goal.trim() || task.description.trim(),
       acceptance_criteria: task.acceptance_criteria.trim(),
@@ -146,7 +157,7 @@ function toPayloadDraft(tasks: LocalTaskDraft[]): ProjectWorkProgressTaskDraft[]
         .map((subtask) => ({
           ...(subtask.id !== undefined ? { id: subtask.id } : {}),
           ...(subtask.subtask_id !== undefined ? { subtask_id: subtask.subtask_id } : {}),
-          title: subtask.title.trim(),
+          title: includeBlank ? subtask.title : subtask.title.trim(),
           evaluation_standard: subtask.evaluation_standard.trim(),
           assignee: subtask.assignee.trim(),
           assignee_id: subtask.assigneeId || undefined,
@@ -155,9 +166,9 @@ function toPayloadDraft(tasks: LocalTaskDraft[]): ProjectWorkProgressTaskDraft[]
           plan_start: subtask.plan_start,
           plan_end: subtask.plan_end,
         }))
-        .filter((subtask) => subtask.title),
+        .filter((subtask) => includeBlank || subtask.title),
     }))
-    .filter((task) => task.title)
+    .filter((task) => includeBlank || task.title)
 }
 
 type PickerMenuPosition = {
@@ -254,18 +265,7 @@ function AssigneePicker({
         className={`owner-submit-picker-trigger ${selected || hasPendingRawName ? 'owner-submit-picker-filled' : 'owner-submit-picker-empty'} flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-left text-xs font-semibold text-slate-700 outline-none transition-colors hover:border-blue-300 hover:bg-white focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60`}
       >
         <span className="truncate">{selected?.name ?? (hasPendingRawName ? <>待自动添加：{rawName.trim()}</> : '请选择负责人')}</span>
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={`owner-submit-picker-chevron shrink-0 h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`}
-        >
-          <path d="m4 6 4 4 4-4" />
-        </svg>
+        <ChevronDownIcon className={`owner-submit-picker-chevron shrink-0 h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {hasPendingRawName && <p className="mt-1 text-[10px] leading-4 text-slate-500">将在提交时自动添加或匹配人员</p>}
       {open && menuPosition && createPortal(
@@ -377,18 +377,7 @@ function HelperPicker({
         <span className="min-w-0 truncate">
           {selectedPeople.length > 0 ? selectedPeople.map((person) => person.name).join('、') : (hasPendingRawName ? <>待自动添加：{rawName.trim()}</> : '请选择协助人')}
         </span>
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={`owner-submit-picker-chevron shrink-0 h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`}
-        >
-          <path d="m4 6 4 4 4-4" />
-        </svg>
+        <ChevronDownIcon className={`owner-submit-picker-chevron shrink-0 h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {hasPendingRawName && <p className="mt-1 text-[10px] leading-4 text-slate-500">将在提交时自动添加或匹配人员</p>}
       {open && menuPosition && createPortal(
@@ -445,7 +434,7 @@ function HelperPicker({
   )
 }
 
-export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
+export function OwnerSubmitWorkbench({ project, onClose, onSuccess, draftStorageKey }: Props) {
   const projectStatus = getProjectStatusBadge(project)
   const canEditProject = canEditProjectInit(project)
   const projectEditNotice = getProjectInitEditNotice(project)
@@ -472,6 +461,98 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
   const workstreamTitleRefs = useRef<Array<HTMLButtonElement | HTMLInputElement | null>>([])
   const subtaskTitleRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const subtaskAssigneeRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const [draftLoading, setDraftLoading] = useState(true)
+  const [draftError, setDraftError] = useState('')
+  const [draftReload, setDraftReload] = useState(0)
+  const [savingDraft, setSavingDraft] = useState(false)
+  const [savedFingerprint, setSavedFingerprint] = useState('')
+  const [savedAt, setSavedAt] = useState<string | null>(null)
+  const savedAtRef = useRef<string | null>(null)
+  const [returnReason, setReturnReason] = useState('')
+  const [previewPlan, setPreviewPlan] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const dirty = !draftLoading && !draftError && JSON.stringify(draftTasks) !== savedFingerprint
+
+  useEffect(() => {
+    let cancelled = false
+    setDraftLoading(true)
+    setDraftError('')
+    if (!canEditProject) { setDraftLoading(false); return }
+    getOwnerPlanDraft(project.id).then((record) => {
+      if (cancelled) return
+      let payload = record.draft
+      let recoveredLocal = false
+      if (draftStorageKey) {
+        try {
+          const cached = JSON.parse(localStorage.getItem(draftStorageKey) || 'null')
+          if (cached?.status === project.status && cached.baseSavedAt === record.saved_at) {
+            payload = cached.payload
+            recoveredLocal = true
+          }
+        } catch { /* A broken local cache cannot replace the server plan. */ }
+      }
+      const normalized = applyMergedDraftToForm(toCurrentDraft(payload?.work_progress_draft ?? record.existing_plan))
+      setSavedFingerprint(recoveredLocal ? '' : JSON.stringify(normalized))
+      savedAiRunIdRef.current = payload?.ai_run_id ?? null
+      savedAtRef.current = record.saved_at
+      setSavedAt(record.saved_at)
+      setReturnReason(record.return_reason)
+    }).catch((error: unknown) => {
+      if (!cancelled) setDraftError(error instanceof Error ? error.message : '方案加载失败')
+    }).finally(() => { if (!cancelled) setDraftLoading(false) })
+    return () => { cancelled = true }
+  }, [project.id, canEditProject, draftReload, draftStorageKey])
+
+  useEffect(() => {
+    if (!dirty || !draftStorageKey) return
+    try {
+      localStorage.setItem(draftStorageKey, JSON.stringify({ status: project.status, baseSavedAt: savedAtRef.current,
+        payload: { work_progress_draft: toPayloadDraft(draftTasks, true), ai_run_id: savedAiRunIdRef.current ?? undefined } }))
+    } catch { /* Server save remains available when local storage is full. */ }
+  }, [draftTasks, dirty, draftStorageKey, project.status])
+
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (dirty) { event.preventDefault(); event.returnValue = '' } }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
+
+  useEffect(() => {
+    if (!dirty || savingDraft || fillLoading || !canEditProject || saveError) return
+    const timeout = window.setTimeout(() => { void handleSaveDraft(true) }, 1500)
+    return () => window.clearTimeout(timeout)
+  }, [draftTasks, dirty, savingDraft, fillLoading, canEditProject, saveError])
+
+  async function handleSaveDraft(quiet = false): Promise<boolean> {
+    if (draftLoading || draftError || savingDraft || fillLoading || !canEditProject) return false
+    const snapshot = draftTasksRef.current
+    setSavingDraft(true)
+    setSaveError('')
+    try {
+      const result = await saveOwnerPlanDraft(project.id, { work_progress_draft: toPayloadDraft(snapshot, true),
+        ai_run_id: savedAiRunIdRef.current ?? undefined })
+      setSavedFingerprint(JSON.stringify(snapshot))
+      setSavedAt(result.saved_at)
+      savedAtRef.current = result.saved_at
+      if (draftStorageKey) {
+        try {
+          if (JSON.stringify(draftTasksRef.current) === JSON.stringify(snapshot)) localStorage.removeItem(draftStorageKey)
+          else localStorage.setItem(draftStorageKey, JSON.stringify({ status: project.status, baseSavedAt: result.saved_at,
+            payload: { work_progress_draft: toPayloadDraft(draftTasksRef.current, true), ai_run_id: savedAiRunIdRef.current ?? undefined } }))
+        } catch { /* Optional offline cache. */ }
+      }
+      if (!quiet) toast.success('草稿已保存，可稍后继续填写；尚未提交审核')
+      return true
+    } catch (error: unknown) {
+      setSaveError(error instanceof Error ? error.message : '草稿保存失败，请重试')
+      return false
+    } finally { setSavingDraft(false) }
+  }
+
+  async function handleClose() {
+    if (dirty && !(await handleSaveDraft())) return
+    onClose()
+  }
 
   useEffect(() => {
     draftTasksRef.current = draftTasks
@@ -698,6 +779,8 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
       : -1
     setSelectedTaskIndex(nextSelectedIndex >= 0 ? nextSelectedIndex : (firstNewTaskIndex >= 0 ? firstNewTaskIndex : 0))
     setDraftTasks(normalizedTasks)
+    draftTasksRef.current = normalizedTasks
+    return normalizedTasks
   }
 
   function handleAiDraft(draft: ProjectInitAiDraft, decisions: ProjectInitAiDecision[], runId: number) {
@@ -765,6 +848,7 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
 
   async function handleSubmit() {
     if (!project?.id) return
+    if (draftLoading || draftError || savingDraft) return
     if (peopleLoading) {
       toast.error('人员列表加载中，请稍候')
       return
@@ -834,8 +918,13 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
     try {
       const result = await ownerSubmitProfile(project.id, {
         work_progress_draft: workProgressDraft,
+        replace_plan: true,
       })
       submittedResultRef.current = result
+      setSavedFingerprint(JSON.stringify(draftTasksRef.current))
+      if (draftStorageKey) {
+        try { localStorage.removeItem(draftStorageKey) } catch { /* Optional offline cache. */ }
+      }
       const auditRunId = savedAiRunIdRef.current
       if (auditRunId) {
         try {
@@ -873,53 +962,49 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
     const memberCount = project.member_counts?.member ?? project.member_counts?.members ?? 0
 
     return (
-      <section className="owner-submit-workbench-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#f7f9fc] text-slate-900 owner-submit-reference-layout" data-testid="owner-submit-workbench" data-reference-style="project-import-v3">
+      <section className="owner-submit-workbench-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#f7f9fc] text-slate-900 owner-submit-reference-layout initiation-studio" data-testid="owner-submit-workbench" data-reference-style="project-import-v3">
         <header className="owner-submit-workbench-header flex min-h-[88px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-8 py-4 owner-submit-reference-header" data-testid="owner-submit-workbench-header">
-          <div className="min-w-0">
+          <div className="min-w-0"><p className="initiation-eyebrow">项目立项 / 负责人工作区</p>
             <div className="flex min-w-0 flex-wrap items-center gap-2.5">
               <h2 className="truncate text-2xl font-bold tracking-[-0.02em] text-slate-900">{isReturnedForChanges ? '修改项目计划' : '完善项目计划'} — {project.name}</h2>
               <span className={`owner-submit-reference-status rounded-full border px-2.5 py-1 text-[11px] font-bold ${canEditProject ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>{projectStatus.label}</span>
             </div>
             <p className="mt-1 text-xs text-slate-500">{isReturnedForChanges ? '请根据审核意见修改，提交后由企业教练重新审核。' : '项目负责人补齐重点工作与关键任务后提交，由企业教练审核；审核通过后项目进入执行。'}</p>
           </div>
-          <button type="button" onClick={onClose} disabled={fillLoading} className="ml-4 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50" aria-label="返回项目详情">
+          <button type="button" onClick={() => void handleClose()} disabled={fillLoading || savingDraft} className="ml-4 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50" aria-label="返回项目详情">
             <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
             返回项目详情
           </button>
         </header>
 
+        {draftLoading && <div role="status" className="border-b border-blue-100 bg-blue-50 px-6 py-3 text-sm text-blue-800">正在恢复工作计划…</div>}
+        {draftError && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border-b border-red-100 bg-red-50 px-6 py-3 text-sm text-red-800"><span>工作计划加载失败：{draftError}。请先重新加载，避免覆盖已有方案。</span><button type="button" onClick={() => setDraftReload((value) => value + 1)} className="rounded-md border border-red-200 bg-white px-3 py-2">重新加载方案</button></div>}
+        {returnReason && <div role="status" className="border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-900"><strong>审核退回意见：</strong><span>{returnReason}</span></div>}
+        {saveError && <div role="alert" className="border-b border-red-100 bg-red-50 px-6 py-3 text-sm text-red-800">草稿未保存到服务器：{saveError}。请点击保存草稿重试。</div>}
         <main className="owner-submit-workbench-main min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-slate-50 pb-[88px]" data-testid="owner-submit-workbench-main">
-          <div className="owner-submit-workbench-columns flex w-full flex-col gap-6 px-8 py-6 lg:flex-row">
-            <aside className="owner-submit-left-pane self-start lg:sticky lg:top-4 lg:w-[360px] lg:shrink-0">
-              <section className="owner-submit-project-summary owner-submit-project-summary-display owner-submit-core-card rounded-2xl border border-slate-200 bg-white px-5 py-4 sm:px-6 owner-submit-reference-overview" data-layout="compact" data-testid="owner-submit-project-summary">
-                <h3 className="text-xl font-bold text-slate-900">项目概览</h3>
-                <div className="mt-4 space-y-1">
-                  <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">项目编号</span><p className="min-w-0 font-semibold text-slate-800">{project.code || '未填写'}</p></div>
-                  <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">项目名称</span><p className="min-w-0 font-semibold text-slate-900">{project.name}</p></div>
-                  <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">项目状态</span><div className="flex min-w-0 items-center gap-2 font-semibold text-slate-700"><span className={`h-2 w-2 shrink-0 rounded-full ${canEditProject ? 'bg-blue-500' : 'bg-amber-500'}`} />{projectStatus.label}</div></div>
-                  <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">项目周期</span><div className="flex min-w-0 items-start gap-2 font-semibold text-slate-700"><svg aria-hidden="true" viewBox="0 0 24 24" className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></svg><span className="min-w-0 break-words">{composeProjectPeriod(project.start_date, project.end_date) || '未设置'}</span></div></div>
-                  <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">项目目标</span><p className="min-w-0 whitespace-pre-wrap leading-5 text-slate-600">{project.objectives?.trim() || '未填写'}</p></div>
-                  <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">项目背景</span><p className="min-w-0 whitespace-pre-wrap leading-5 text-slate-600">{project.background?.trim() || '未填写'}</p></div>
-                  <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">补充说明</span><p className="min-w-0 whitespace-pre-wrap leading-5 text-slate-600">{project.expected_outcomes?.trim() || '未填写'}</p></div>
-                  <div className="owner-submit-project-info-row grid grid-cols-[130px_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm"><span className="pt-0.5 text-slate-400">项目说明</span><p className="min-w-0 whitespace-pre-wrap leading-5 text-slate-600">{project.description?.trim() || '未填写'}</p></div>
+          <div className="owner-submit-workbench-columns initiation-plan-layout flex w-full flex-col gap-6 px-8 py-6">
+            <aside className="owner-submit-left-pane initiation-project-overview w-full">
+              <section className="owner-submit-project-summary owner-submit-project-summary-display owner-submit-core-card owner-submit-reference-overview rounded-xl border border-slate-200 bg-white px-5 py-4" data-layout="compact" data-testid="owner-submit-project-summary">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-slate-700">项目概览</h3><span className="text-xs text-slate-500">项目信息由管理者配置 · 负责人完善以下工作计划</span></div>
+                <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="owner-submit-project-info-row"><span className="text-xs text-slate-500">项目名称</span><p className="mt-1 font-semibold text-slate-900">{project.name}</p></div>
+                  <div className="owner-submit-project-info-row"><span className="text-xs text-slate-500">项目编号</span><p className="mt-1 text-sm text-slate-700">{project.code || '未填写'}</p></div>
+                  <div className="owner-submit-project-info-row"><span className="text-xs text-slate-500">项目周期</span><p className="mt-1 text-sm text-slate-700">{composeProjectPeriod(project.start_date, project.end_date) || '待定'}</p></div>
+                  <div className="owner-submit-project-info-row"><span className="text-xs text-slate-500">项目状态</span><p className="mt-1 text-sm text-slate-700">{projectStatus.label}</p></div>
                 </div>
-                <div className="mt-3 border-t border-slate-100 pt-3">
-                  <span className="block text-sm font-bold text-slate-700">项目角色</span>
-                  <div className="mt-2 space-y-1">
-                    {[['负责人', projectOwner], ['统筹人', projectCoordinator], ['企业教练', projectCoach], ['成员', `${memberCount} 人`]].map(([label, value]) => <div key={label} className="owner-submit-project-role-row grid min-h-10 grid-cols-[130px_minmax(0,1fr)] items-center gap-3 rounded-lg px-0 py-1.5 text-sm transition-colors hover:bg-slate-50"><span className="text-slate-500">{label}</span><span className="min-w-0 text-slate-700">{value}</span></div>)}
-                  </div>
-                </div>
+                <div className="mt-4 border-t border-slate-100 pt-3"><span className="text-xs text-slate-500">项目目标</span><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">{project.objectives?.trim() || '未填写'}</p></div>
+                <details className="group mt-3"><summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-blue-700 [&::-webkit-details-marker]:hidden">项目背景与项目角色<ChevronDownIcon className="h-3.5 w-3.5 transition-transform group-open:rotate-180" /></summary><div className="mt-3 grid gap-3 text-sm sm:grid-cols-2"><p className="whitespace-pre-wrap text-slate-600">项目背景：{project.background?.trim() || '未填写'}</p><p className="whitespace-pre-wrap text-slate-600">补充说明：{project.expected_outcomes?.trim() || '未填写'}</p><p className="whitespace-pre-wrap text-slate-600">项目说明：{project.description?.trim() || '未填写'}</p>{[['负责人', projectOwner], ['统筹人', projectCoordinator], ['企业教练', projectCoach], ['成员', `${memberCount} 人`]].map(([label, value]) => <div key={label} className="owner-submit-project-role-row flex gap-3 text-sm"><span className="text-slate-500">{label}</span><span className="text-slate-700">{value}</span></div>)}</div></details>
               </section>
             </aside>
 
-            <fieldset disabled={!canEditProject || fillLoading} className="min-w-0 flex-1 border-0 p-0">
+            <fieldset disabled={!canEditProject || fillLoading || draftLoading || Boolean(draftError)} className="min-w-0 flex-1 border-0 p-0">
             <section className="owner-submit-plan-section owner-submit-right-pane min-w-0 flex-1">
               <div className="owner-submit-workplan-heading mb-4 flex flex-wrap items-center justify-between gap-3">
                 <h3 className="text-xl font-bold text-slate-900">工作推进方案</h3>
-                <div className="flex shrink-0 flex-wrap gap-2"><button type="button" onClick={() => { setShowAiPanel((current) => !current); setAiError('') }} disabled={fillLoading || !canEditProject} className="owner-submit-reference-ai-toggle flex h-9 items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3.5 text-xs font-bold text-violet-700 transition-colors hover:border-violet-300 hover:bg-violet-100 disabled:opacity-50">{showAiPanel ? '收起 AI 草稿' : 'AI 分析文件 / AI 草稿'}</button><button type="button" onClick={addTaskDraft} disabled={!canEditProject || fillLoading} className="owner-submit-primary-add flex h-9 items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3.5 text-xs font-bold text-blue-700 transition-colors hover:border-blue-300 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50">+ 新增重点工作</button></div>
+                <div className="flex shrink-0 flex-wrap gap-2"><button type="button" onClick={() => setPreviewPlan((value) => !value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">{previewPlan ? '返回编辑' : '预览完整方案'}</button><button type="button" onClick={() => { setShowAiPanel((current) => !current); setAiError('') }} disabled={fillLoading || !canEditProject} className="owner-submit-reference-ai-toggle flex h-9 items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3.5 text-xs font-bold text-violet-700 transition-colors hover:border-violet-300 hover:bg-violet-100 disabled:opacity-50">{showAiPanel ? '收起 AI 草稿' : 'AI 分析文件 / AI 草稿'}</button><button type="button" onClick={addTaskDraft} disabled={!canEditProject || fillLoading} className="owner-submit-primary-add flex h-9 items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3.5 text-xs font-bold text-blue-700 transition-colors hover:border-blue-300 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50">+ 新增重点工作</button></div>
               </div>
               {!canEditProject && <div role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800">{projectEditNotice}</div>}
-              <section className="owner-submit-progress-summary mb-4" aria-label="计划填写情况">
+              <section className="owner-submit-progress-summary initiation-progress mb-4" aria-label="计划填写情况">
                 <div><strong>{draftTasks.filter((item) => item.title.trim()).length}</strong><span>项重点工作</span></div>
                 <div><strong>{draftTasks.reduce((total, item) => total + item.subtasks.filter((subtask) => subtask.title.trim()).length, 0)}</strong><span>项关键任务</span></div>
                 <div><strong>{draftTasks.reduce((total, item) => total + item.subtasks.filter((subtask) => subtask.title.trim() && !subtask.assigneeId && !subtask.assignee.trim()).length, 0)}</strong><span>项待指定负责人</span></div>
@@ -931,18 +1016,19 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
               {aiError && <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><p>{aiError}</p>{aiAuditPendingRunId && <button type="button" onClick={() => void retryAiApplyAudit()} disabled={aiAuditRetrying} className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50">{aiAuditRetrying ? '正在补记审计…' : '重试补记 AI 审计'}</button>}</div>}
               {aiPreview && <section className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4" aria-label="AI 草稿合并预览" data-testid="owner-submit-ai-preview"><div className="flex flex-wrap items-start justify-between gap-3"><div><h4 className="text-sm font-bold text-emerald-900">请确认 AI 草稿合并</h4><p className="mt-1 text-xs text-emerald-800">将新增 {aiPreview.addedTaskCount} 项重点工作，检测到 {aiPreview.changeCount} 项字段或结构变化；现有非空内容不会被覆盖。</p></div><div className="flex gap-2"><button type="button" onClick={cancelAiPreview} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100">取消</button><button type="button" onClick={confirmAiPreview} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700">确认合并到表单</button></div></div>{aiPreview.warnings.length > 0 && <div role="alert" className="mt-3 space-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><p className="font-semibold">仍有 {aiPreview.warningCount} 条待确认提示：</p>{aiPreview.warnings.slice(0, 8).map((warning) => <p key={warning}>{warning}</p>)}</div>}</section>}
 
-              {task && <div className="owner-submit-b-split h-auto min-h-0 overflow-hidden rounded-2xl border border-slate-200 bg-white" data-testid="owner-submit-b-split"><div className="flex h-auto min-h-0 flex-col lg:flex-row">
-                <nav className="owner-submit-reference-task-nav w-full shrink-0 border-b border-slate-200 bg-white p-3 lg:w-[228px] lg:border-b-0 lg:border-r" aria-label="重点工作列表" data-testid="owner-submit-task-nav"><div className="space-y-1">{draftTasks.map((item, index) => <button key={index} type="button" onClick={() => { setSelectedTaskIndex(index); setEditingTitleIndex(null) }} aria-current={index === selectedTaskIndex ? 'true' : undefined} className={`flex w-full items-start rounded-xl px-3 py-3 text-left transition-colors ${index === selectedTaskIndex ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-slate-50'}`}><span className="min-w-0 truncate text-sm font-semibold">{item.title.trim() || '未命名重点工作'}</span></button>)}</div></nav>
+              {previewPlan && <ProjectPlanPreview tasks={toPayloadDraft(draftTasks, true)} />}
+              {!previewPlan && task && <div className="owner-submit-b-split h-auto min-h-0 overflow-hidden rounded-2xl border border-slate-200 bg-white" data-testid="owner-submit-b-split"><div className="flex h-auto min-h-0 flex-col lg:flex-row">
+                <nav className="owner-submit-reference-task-nav w-full shrink-0 border-b border-slate-200 bg-white p-3 lg:w-[228px] lg:border-b-0 lg:border-r" aria-label="重点工作列表" data-testid="owner-submit-task-nav"><p className="initiation-directory-label">工作目录</p><div className="space-y-1">{draftTasks.map((item, index) => <button key={index} type="button" onClick={() => { setSelectedTaskIndex(index); setEditingTitleIndex(null) }} aria-label={item.title.trim() || '未命名重点工作'} aria-current={index === selectedTaskIndex ? 'true' : undefined} className={`flex w-full items-start rounded-xl px-3 py-3 text-left transition-colors ${index === selectedTaskIndex ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-slate-50'}`}><span className="initiation-directory-index" aria-hidden="true">{index + 1}</span><span className="min-w-0 flex-1 text-sm font-semibold">{item.title.trim() || '未命名重点工作'}</span><span className="initiation-directory-count" aria-hidden="true">{item.subtasks.filter((sub) => sub.title.trim()).length}</span></button>)}</div></nav>
                 <div className="owner-submit-reference-detail min-w-0 flex-1 p-5 sm:p-6" data-testid="owner-submit-detail-pane">
                   <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4"><div className="flex min-w-0 flex-1 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-sm font-bold text-blue-700">{String(selectedTaskIndex + 1).padStart(2, '0')}</div><div className="min-w-0 flex-1">{editingTitleIndex === selectedTaskIndex ? <><label className="sr-only">重点工作名称</label><input ref={(node) => { workstreamTitleRefs.current[selectedTaskIndex] = node }} autoFocus value={task.title} onChange={(e) => updateTaskDraft(selectedTaskIndex, 'title', e.target.value)} onBlur={() => setEditingTitleIndex(null)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }} placeholder="请输入重点工作名称" className="h-8 w-full min-w-0 border-0 bg-transparent px-0 text-xl font-bold text-slate-900 outline-none placeholder:text-slate-400 focus:ring-0" /></> : <button ref={(node) => { workstreamTitleRefs.current[selectedTaskIndex] = node }} type="button" onClick={() => setEditingTitleIndex(selectedTaskIndex)} className={`owner-submit-title-display w-full rounded-lg px-0 text-left text-xl font-semibold ${task.title.trim() ? 'owner-submit-title-filled' : 'owner-submit-title-empty'}`} aria-label="编辑重点工作名称">{task.title.trim() || '未命名重点工作'}</button>}</div></div><details className="relative shrink-0"><summary aria-label={`重点工作 ${selectedTaskIndex + 1} 更多操作`} className="owner-submit-more-menu-trigger flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg text-lg hover:bg-slate-100">···</summary><div className="absolute right-0 top-9 z-20 w-32 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"><button type="button" onClick={() => removeTaskDraft(selectedTaskIndex)} disabled={draftTasks.length <= 1} className="w-full rounded-md px-2.5 py-2 text-left text-xs text-slate-500 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30">删除重点工作</button></div></details></div>
                   <div className="owner-submit-goal-result mt-4 space-y-2.5" data-layout="stacked" data-testid="owner-submit-goal-result">
-                    <div><label className="block text-sm font-bold text-slate-700">重点工作目标</label><p className="owner-submit-field-help">描述这项重点工作要达到的结果；项目整体目标见左侧项目概览。</p><input value={task.goal || task.description} onChange={(e) => updateTaskDraft(selectedTaskIndex, 'goal', e.target.value)} placeholder="例如：完成客户需求梳理并确认实施范围" className="owner-submit-goal-result-input mt-1 h-9 w-full border-0 bg-transparent px-0 py-0 text-base leading-7 text-slate-700 outline-none placeholder:text-slate-400 focus:ring-0" /></div>
+                    <div><label className="block text-sm font-bold text-slate-700">重点工作目标</label><p className="owner-submit-field-help">描述这项重点工作要达到的结果；项目整体目标见上方项目概览。</p><textarea rows={3} aria-label="重点工作目标" value={task.goal || task.description} onChange={(e) => updateTaskDraft(selectedTaskIndex, 'goal', e.target.value)} placeholder="例如：完成客户需求梳理并确认实施范围" className="owner-submit-goal-result-input mt-1 h-9 w-full border-0 bg-transparent px-0 py-0 text-base leading-7 text-slate-700 outline-none placeholder:text-slate-400 focus:ring-0" /></div>
                     <div><label className="block text-sm font-bold text-slate-700">重点工作验收标准 / 关键成果</label><p className="owner-submit-field-help">填写可核对的成果或完成条件，便于企业教练审核和后续验收。</p><textarea value={task.acceptance_criteria} onChange={(e) => updateTaskDraft(selectedTaskIndex, 'acceptance_criteria', e.target.value)} placeholder="例如：需求清单经客户确认，范围和交付边界明确" rows={2} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-700 outline-none placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100" /></div>
                     <div><label className="block text-sm font-bold text-slate-700">推进流程</label><p className="owner-submit-field-help">列出完成重点工作的主要阶段。</p><textarea value={task.process} onChange={(e) => updateTaskDraft(selectedTaskIndex, 'process', e.target.value)} placeholder="例如：准备 → 执行 → 复盘" rows={2} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-700 outline-none placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100" /></div>
                   </div>
                   <div className="mt-2 inline-flex max-w-full flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600"><svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></svg>重点工作计划时间：{taskPeriod}</div>
                   <div className="mt-4 flex items-center justify-between gap-3"><div><h4 className="text-base font-bold text-slate-800">关键任务</h4><p className="owner-submit-field-help">把重点工作拆成可执行任务，并为每项任务指定负责人。</p></div><button type="button" data-owner-submit-add-subtask onClick={() => addSubTaskDraft(selectedTaskIndex)} className="text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline">+ 新增关键任务</button></div>
-                  <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200 lg:overflow-x-hidden"><table className="owner-submit-subtask-table table-fixed min-w-[680px] w-full lg:min-w-0 border-separate border-spacing-0 text-left text-sm"><thead><tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold tracking-wide text-slate-500"><th className="w-[27%] py-2.5 pl-3 pr-2">关键任务</th><th className="w-[14%] px-2 py-2.5">负责人</th><th className="w-[16%] px-2 py-2.5">协助人</th><th className="w-[15%] px-2 py-2.5">时间段</th><th className="w-[23%] px-2 py-2.5">评价指标</th><th className="w-[5%] px-2 py-2.5">操作</th></tr></thead><tbody className="divide-y divide-slate-100">{task.subtasks.map((subtask, subIndex) => <tr key={subIndex} className="group hover:bg-blue-50/40"><td className="py-1.5 pl-3 pr-2"><div className="flex items-center gap-2"><span className="owner-submit-subtask-drag-handle shrink-0" aria-hidden="true"><svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor"><circle cx="5" cy="3" r="1"/><circle cx="11" cy="3" r="1"/><circle cx="5" cy="8" r="1"/><circle cx="11" cy="8" r="1"/><circle cx="5" cy="13" r="1"/><circle cx="11" cy="13" r="1"/></svg></span><input ref={(node) => { subtaskTitleRefs.current[`${selectedTaskIndex}-${subIndex}`] = node }} value={subtask.title} onChange={(e) => updateSubTaskDraft(selectedTaskIndex, subIndex, 'title', e.target.value)} placeholder="例如：任务名称" className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100" /></div></td><td className="px-2 py-1.5 align-top"><AssigneePicker people={people} value={subtask.assigneeId} rawName={subtask.assignee} disabled={peopleLoading || Boolean(peopleError)} buttonRef={(node) => { subtaskAssigneeRefs.current[`${selectedTaskIndex}-${subIndex}`] = node }} onChange={(value) => updateSubTaskAssignee(selectedTaskIndex, subIndex, value)} /></td><td className="px-2 py-1.5 align-top"><HelperPicker people={people} value={subtask.helperIds} excludedId={subtask.assigneeId} rawName={subtask.helper} disabled={peopleLoading || Boolean(peopleError)} onChange={(personId) => toggleSubTaskHelper(selectedTaskIndex, subIndex, personId)} /></td><td className="px-2 py-1.5"><div className="relative"><svg aria-hidden="true" viewBox="0 0 24 24" className="owner-submit-date-icon pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></svg><input value={composeTaskPeriod(subtask.plan_start, subtask.plan_end)} onChange={(e) => updateSubTaskPeriod(selectedTaskIndex, subIndex, e.target.value)} placeholder="7.1 - 7.5" className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 py-0 pl-8 pr-2.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100" /></div></td><td className="px-2 py-1.5"><input value={subtask.evaluation_standard} onChange={(e) => updateSubTaskDraft(selectedTaskIndex, subIndex, 'evaluation_standard', e.target.value)} placeholder="判断这项任务是否完成的依据" aria-label="关键任务评价指标" className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100" /></td><td className="px-2 py-1.5 text-right"><button type="button" aria-label="删除关键任务" onClick={() => removeSubTaskDraft(selectedTaskIndex, subIndex)} disabled={task.subtasks.length <= 1} className="owner-submit-subtask-delete-icon inline-flex h-8 w-8 items-center justify-center rounded-lg hover:bg-red-50 disabled:cursor-not-allowed"><svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 7h16M10 11v6M14 11v6M9 7V4h6v3M6 7l1 13h10l1-13" /></svg></button></td></tr>)}</tbody></table></div>
+                  <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200 lg:overflow-x-hidden"><table className="owner-submit-subtask-table initiation-task-cards table-fixed min-w-[680px] w-full lg:min-w-0 border-separate border-spacing-0 text-left text-sm"><thead><tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold tracking-wide text-slate-500"><th className="w-[27%] py-2.5 pl-3 pr-2">关键任务</th><th className="w-[14%] px-2 py-2.5">负责人</th><th className="w-[16%] px-2 py-2.5">协助人</th><th className="w-[15%] px-2 py-2.5">时间段</th><th className="w-[23%] px-2 py-2.5">评价指标</th><th className="w-[5%] px-2 py-2.5">操作</th></tr></thead><tbody className="divide-y divide-slate-100">{task.subtasks.map((subtask, subIndex) => <tr key={subIndex} className="group hover:bg-blue-50/40"><td className="py-1.5 pl-3 pr-2"><div className="flex items-center gap-2"><span className="owner-submit-subtask-drag-handle shrink-0" aria-hidden="true"><svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor"><circle cx="5" cy="3" r="1"/><circle cx="11" cy="3" r="1"/><circle cx="5" cy="8" r="1"/><circle cx="11" cy="8" r="1"/><circle cx="5" cy="13" r="1"/><circle cx="11" cy="13" r="1"/></svg></span><input aria-label={`关键任务 ${subIndex + 1} 名称`} ref={(node) => { subtaskTitleRefs.current[`${selectedTaskIndex}-${subIndex}`] = node }} value={subtask.title} onChange={(e) => updateSubTaskDraft(selectedTaskIndex, subIndex, 'title', e.target.value)} placeholder="例如：任务名称" className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100" /></div></td><td className="px-2 py-1.5 align-top"><AssigneePicker people={people} value={subtask.assigneeId} rawName={subtask.assignee} disabled={peopleLoading || Boolean(peopleError)} buttonRef={(node) => { subtaskAssigneeRefs.current[`${selectedTaskIndex}-${subIndex}`] = node }} onChange={(value) => updateSubTaskAssignee(selectedTaskIndex, subIndex, value)} /></td><td className="px-2 py-1.5 align-top"><HelperPicker people={people} value={subtask.helperIds} excludedId={subtask.assigneeId} rawName={subtask.helper} disabled={peopleLoading || Boolean(peopleError)} onChange={(personId) => toggleSubTaskHelper(selectedTaskIndex, subIndex, personId)} /></td><td className="px-2 py-1.5"><div className="space-y-1.5"><input aria-label={`关键任务 ${subIndex + 1} 开始日期`} type={!subtask.plan_start || /^\d{4}-\d{2}-\d{2}$/.test(subtask.plan_start) ? 'date' : 'text'} value={subtask.plan_start} onChange={(e) => updateSubTaskDraft(selectedTaskIndex, subIndex, 'plan_start', e.target.value)} className="h-9 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700" /><input aria-label={`关键任务 ${subIndex + 1} 结束日期`} type={!subtask.plan_end || /^\d{4}-\d{2}-\d{2}$/.test(subtask.plan_end) ? 'date' : 'text'} value={subtask.plan_end} min={/^\d{4}-\d{2}-\d{2}$/.test(subtask.plan_start) ? subtask.plan_start : undefined} onChange={(e) => updateSubTaskDraft(selectedTaskIndex, subIndex, 'plan_end', e.target.value)} className="h-9 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700" /></div></td><td className="px-2 py-1.5"><textarea rows={2} value={subtask.evaluation_standard} onChange={(e) => updateSubTaskDraft(selectedTaskIndex, subIndex, 'evaluation_standard', e.target.value)} placeholder="判断这项任务是否完成的依据" aria-label="关键任务评价指标" className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100" /></td><td className="px-2 py-1.5 text-right"><button type="button" aria-label="删除关键任务" onClick={() => removeSubTaskDraft(selectedTaskIndex, subIndex)} disabled={task.subtasks.length <= 1} className="owner-submit-subtask-delete-icon inline-flex h-8 w-8 items-center justify-center rounded-lg hover:bg-red-50 disabled:cursor-not-allowed"><svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 7h16M10 11v6M14 11v6M9 7V4h6v3M6 7l1 13h10l1-13" /></svg></button></td></tr>)}</tbody></table></div>
                 </div>
               </div></div>}
             </section>
@@ -950,7 +1036,11 @@ export function OwnerSubmitWorkbench({ project, onClose, onSuccess }: Props) {
           </div>
         </main>
 
-        <footer className="owner-submit-workbench-footer owner-submit-reference-footer sticky bottom-0 z-10 flex min-h-[72px] shrink-0 items-center justify-between border-t border-slate-200 bg-white/95 px-8 py-3 shadow-[0_-8px_20px_rgba(15,23,42,0.06)] backdrop-blur" data-testid="owner-submit-workbench-footer"><button type="button" onClick={onClose} disabled={fillLoading} className="h-10 rounded-xl border border-slate-200 bg-white px-5 text-sm font-bold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50">返回项目详情</button><button type="button" onClick={handleSubmit} disabled={fillLoading || !canEditProject || peopleLoading || Boolean(peopleError)} className="owner-submit-reference-submit h-10 rounded-xl bg-orange-600 px-8 py-2 text-sm font-bold text-white shadow-[0_6px_16px_rgba(234,88,12,0.22)] transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50">{fillLoading ? '提交中…' : isReturnedForChanges ? '重新提交计划审核' : '提交计划，送企业教练审核'}</button></footer>
+        <footer className="owner-submit-workbench-footer owner-submit-reference-footer sticky bottom-0 z-10 flex min-h-[72px] shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-6 py-3" data-testid="owner-submit-workbench-footer">
+          <button type="button" onClick={() => void handleClose()} disabled={fillLoading || savingDraft} className="h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-slate-600">返回项目详情</button>
+          <span role="status" className="text-xs text-slate-500">{savingDraft ? '正在保存草稿…' : dirty ? '有未保存的修改' : savedAt ? '草稿已保存，尚未提交审核' : '填写工作计划后提交企业教练审核'}</span>
+          <div className="flex gap-2"><button type="button" onClick={() => void handleSaveDraft()} disabled={draftLoading || Boolean(draftError) || savingDraft || fillLoading || !canEditProject} className="h-10 rounded-lg border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-700">保存草稿</button><button type="button" onClick={handleSubmit} disabled={fillLoading || savingDraft || draftLoading || Boolean(draftError) || !canEditProject || peopleLoading || Boolean(peopleError)} className="owner-submit-reference-submit h-10 rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white disabled:opacity-50">{fillLoading ? '提交中…' : isReturnedForChanges ? '重新提交计划审核' : '提交计划，送企业教练审核'}</button></div>
+        </footer>
       </section>
     )
   }

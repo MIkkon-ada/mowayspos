@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app import database, models
+from app.routers.updates import get_voice_context
 from app.services.asr_context import _bounded_lines, build_work_report_asr_context
 
 
@@ -418,6 +419,39 @@ def test_same_name_member_cannot_impersonate_id_bound_assignee(
         )
 
     assert exc_info.value.status_code == 403
+
+
+def test_voice_context_does_not_mix_id_bound_tasks_for_same_name_members(
+    isolated_db: Session,
+):
+    first = _person_with_account(isolated_db, name="同名语音成员", username="voice-first")
+    second = _person_with_account(isolated_db, name="同名语音成员", username="voice-second")
+    project = _active_project(isolated_db, "语音身份隔离项目")
+    isolated_db.add_all(
+        [
+            models.ProjectMember(project_id=project.id, person_id=first.id, person_name_snapshot=first.name, role="member"),
+            models.ProjectMember(project_id=project.id, person_id=second.id, person_name_snapshot=second.name, role="member"),
+        ]
+    )
+    task_one = models.Task(project_id=project.id, key_task="成员一工作", owner="其他负责人", is_deleted=False)
+    task_two = models.Task(project_id=project.id, key_task="成员二工作", owner="其他负责人", is_deleted=False)
+    isolated_db.add_all([task_one, task_two])
+    isolated_db.flush()
+    isolated_db.add_all(
+        [
+            models.SubTask(task_id=task_one.id, title="成员一关键任务", assignee=first.name, assignee_id=first.id, is_deleted=False),
+            models.SubTask(task_id=task_two.id, title="成员二关键任务", assignee=second.name, assignee_id=second.id, is_deleted=False),
+        ]
+    )
+    isolated_db.commit()
+
+    result = get_voice_context(
+        project_id=project.id,
+        current_user="voice-first",
+        db=isolated_db,
+    )
+
+    assert [row["subtask_title"] for row in result] == ["成员一关键任务"]
 
 
 def test_legacy_null_assignment_ids_fall_back_to_name(isolated_db: Session):

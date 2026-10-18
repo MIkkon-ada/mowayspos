@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
@@ -249,7 +251,24 @@ def test_meeting_approval_writeback_creates_confirmed_execution_event():
         baseline_run_id=40,
         baseline_subtask_id=key_task.id,
         member_name="负责人",
-        baseline_snapshot_json="{}",
+        baseline_snapshot_json=json.dumps({
+            "analysis_transcript_sha256": hashlib.sha256(meeting.transcript_text.encode("utf-8")).hexdigest(),
+            "target_at_analysis": {
+                "task": {
+                    "id": _workstream.id,
+                    "updated_at": _workstream.updated_at.isoformat() if _workstream.updated_at else None,
+                    "status": _workstream.status or "",
+                    "is_deleted": bool(_workstream.is_deleted),
+                },
+                "subtask": {
+                    "id": key_task.id,
+                    "task_id": key_task.task_id,
+                    "updated_at": key_task.updated_at.isoformat() if key_task.updated_at else None,
+                    "status": key_task.status or "",
+                    "is_deleted": bool(key_task.is_deleted),
+                },
+            },
+        }),
         report_text="模块清单初稿已完成",
         status="in_progress",
         evidence_quote="负责人：模块清单初稿已完成",
@@ -417,6 +436,7 @@ def test_workspace_api_returns_one_contract_without_percentages():
         "project",
         "workstream",
         "current_progress",
+        "latest_submission",
         "completion_eligibility",
         "plan_summary",
         "execution_plans",
@@ -426,6 +446,7 @@ def test_workspace_api_returns_one_contract_without_percentages():
         "permissions",
     }
     assert result["current_progress"] is None
+    assert result["latest_submission"] is None
     assert result["plan_summary"] == {
         "total": 0,
         "completed": 0,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 from typing import Any
 
 
@@ -55,9 +56,22 @@ class ProjectMeetingAgentTools:
             return True
         if normalized in text:
             return True
-        tokens = {part for part in normalized.replace("_", " ").split() if part}
-        value_tokens = {part for part in text.replace("_", " ").split() if part}
-        return bool(tokens & value_tokens)
+
+        def keywords(value: str) -> set[str]:
+            tokens = set(re.findall(r"[a-z0-9]+", value.casefold()))
+            for run in re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]+", value):
+                if len(run) <= 2:
+                    tokens.add(run)
+                else:
+                    tokens.update(run[index:index + 2] for index in range(len(run) - 1))
+            return tokens - {
+                "会议", "项目", "工作", "计划", "进展", "事项", "情况", "本周", "上周",
+                "推进", "相关", "内容", "安排", "管理", "系统", "继续", "进行", "完成",
+            }
+
+        shared = keywords(normalized) & keywords(text)
+        # One coincidental Chinese bigram is too weak to select a plan node.
+        return len(shared) >= 2 or any(token in shared and len(token) >= 3 for token in re.findall(r"[a-z0-9]+", normalized))
 
     def _search_plan_nodes(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if set(arguments) != {"project_id", "queries"}:

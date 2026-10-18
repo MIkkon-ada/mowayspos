@@ -50,7 +50,7 @@ class SequencedChatAdapters:
     def __init__(self, responses: dict[str, str]) -> None:
         self.responses = responses
 
-    def complete_chat(self, model, _api_key, _prompt, *, timeout_seconds, response_format=None):
+    def complete_chat(self, model, _api_key, _prompt, *, timeout_seconds, response_format=None, on_metadata=None):
         assert timeout_seconds == (30 if model.code == "primary" else 25)
         assert response_format == {"type": "json_object"}
         return self.responses[model.code]
@@ -70,7 +70,7 @@ def project_init_service():
 
     def factory(llm):
         class Adapter:
-            def complete_chat(self, _model, _key, prompt, *, timeout_seconds, response_format=None):
+            def complete_chat(self, _model, _key, prompt, *, timeout_seconds, response_format=None, on_metadata=None):
                 assert response_format == {"type": "json_object"}
                 return llm(prompt, "injected")
         return AIService(db, adapters=Adapter(), cipher_key=TEST_FERNET_KEY)
@@ -266,7 +266,7 @@ def test_semantic_workbook_uses_deterministic_projection_when_all_models_fail():
         )
 
         class FailingAdapter:
-            def complete_chat(self, _model, _api_key, _prompt, *, timeout_seconds, response_format=None):
+            def complete_chat(self, _model, _api_key, _prompt, *, timeout_seconds, response_format=None, on_metadata=None):
                 raise AIUpstreamError("AI_UPSTREAM_TIMEOUT", retryable=True)
 
         result = generate_project_init_draft(

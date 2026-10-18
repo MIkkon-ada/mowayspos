@@ -24,7 +24,12 @@ function extractCode(body: unknown): string {
   return typeof code === 'string' && code.trim() ? code.trim() : 'API_ERROR'
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' }
   let payload: BodyInit | undefined
 
@@ -33,34 +38,57 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     payload = JSON.stringify(body)
   }
 
-  const response = await fetch(path, {
-    method,
-    credentials: 'include',
-    headers,
-    body: payload,
-  })
+  const controller = new AbortController()
+  const onAbort = () => controller.abort()
+  let timedOut = false
+  if (options.signal?.aborted) throw new DOMException('The request was aborted', 'AbortError')
+  options.signal?.addEventListener('abort', onAbort, { once: true })
+  const timeoutId = options.timeoutMs && options.timeoutMs > 0
+    ? globalThis.setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, options.timeoutMs)
+    : undefined
 
-  let parsed: unknown = null
-  const text = await response.text()
-  if (text) {
-    try {
-      parsed = JSON.parse(text)
-    } catch {
-      parsed = text
-    }
-  }
+  try {
+    const response = await fetch(path, {
+      method,
+      credentials: 'include',
+      headers,
+      body: payload,
+      signal: controller.signal,
+    })
 
-  if (!response.ok) {
-    const message = extractMessage(parsed) || `请求失败：${response.status}`
-    if (response.status === 401 && !path.startsWith('/api/auth/login')) {
-      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-        window.location.replace('/login?reason=session_expired')
+    let parsed: unknown = null
+    const text = await response.text()
+    if (text) {
+      try {
+        parsed = JSON.parse(text)
+      } catch {
+        parsed = text
       }
     }
-    throw new ApiError(response.status, message, parsed)
-  }
 
-  return parsed as T
+    if (!response.ok) {
+      const message = extractMessage(parsed) || `请求失败：${response.status}`
+      if (response.status === 401 && !path.startsWith('/api/auth/login')) {
+        if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+          window.location.replace('/login?reason=session_expired')
+        }
+      }
+      throw new ApiError(response.status, message, parsed)
+    }
+
+    return parsed as T
+  } catch (error) {
+    if (timedOut) {
+      throw new ApiError(0, '请求超时，请稍后重试', { code: 'TIMEOUT_ERROR' })
+    }
+    throw error
+  } finally {
+    if (timeoutId !== undefined) globalThis.clearTimeout(timeoutId)
+    options.signal?.removeEventListener('abort', onAbort)
+  }
 }
 
 function extractMessage(body: unknown): string {
@@ -79,8 +107,14 @@ function extractMessage(body: unknown): string {
   return ''
 }
 
-export function apiGet<T>(path: string): Promise<T> {
-  return request<T>('GET', path)
+export function apiGet<T>(
+  path: string,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<T> {
+  return request<T>('GET', path, undefined, {
+    ...options,
+    timeoutMs: options?.timeoutMs ?? 30_000,
+  })
 }
 
 export function apiPost<T>(path: string, body?: unknown): Promise<T> {

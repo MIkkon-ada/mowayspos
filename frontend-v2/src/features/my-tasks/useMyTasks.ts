@@ -1,68 +1,64 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fetchSubtasksByAssignee } from '../../api/subtasks'
+import { useCallback, useEffect, useState } from 'react'
+import { fetchMyTasks } from '../../api/subtasks'
 import { useProject } from '../../context/ProjectContext'
-import { isProjectActive } from '../../domain/projectLifecycleStatus'
 import type { Project } from '../../types'
-import { mergeMyTaskProjectResults, type MyTaskRow } from './myTasksViewModel'
+import { buildMyTaskRows, type MyTaskRow } from './myTasksViewModel'
+
+type MyTaskProject = Pick<Project, 'id' | 'name'>
 
 export function useMyTasks() {
-  const { currentUser, projects } = useProject()
-  const activeProjects = useMemo(() => projects.filter(isProjectActive), [projects])
+  const { currentUser } = useProject()
   const [rows, setRows] = useState<MyTaskRow[]>([])
-  const [successProjects, setSuccessProjects] = useState<Project[]>([])
-  const [failedProjects, setFailedProjects] = useState<Project[]>([])
+  const [activeProjects, setActiveProjects] = useState<MyTaskProject[]>([])
+  const [ambiguousAssignmentCount, setAmbiguousAssignmentCount] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
   const [refreshVersion, setRefreshVersion] = useState(0)
 
   const refresh = useCallback(() => setRefreshVersion((version) => version + 1), [])
 
   useEffect(() => {
-    let cancelled = false
-    const assignee = currentUser?.name?.trim()
-    if (!currentUser || !assignee) {
-      setRows([])
-      setSuccessProjects([])
-      setFailedProjects([])
-      setLoading(false)
-      return () => { cancelled = true }
-    }
-    if (activeProjects.length === 0) {
-      setRows([])
-      setSuccessProjects([])
-      setFailedProjects([])
-      setLastRefreshedAt(new Date())
-      setLoading(false)
-      return () => { cancelled = true }
-    }
+    const handleFocus = () => refresh()
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
+  }, [refresh])
 
+  useEffect(() => {
+    let cancelled = false
+    const controller = new AbortController()
     setLoading(true)
-    Promise.allSettled(
-      activeProjects.map((project) => fetchSubtasksByAssignee(currentUser.name, project.id)),
-    ).then((results) => {
+    setError(false)
+    fetchMyTasks(controller.signal).then((result) => {
       if (cancelled) return
-      const merged = mergeMyTaskProjectResults(activeProjects, results, assignee)
-      const successIds = new Set(merged.successProjectIds)
-      const failedIds = new Set(merged.failedProjectIds)
-      setRows(merged.rows)
-      setSuccessProjects(activeProjects.filter((project) => successIds.has(project.id)))
-      setFailedProjects(activeProjects.filter((project) => failedIds.has(project.id)))
+      setActiveProjects(result.projects)
+      setRows(buildMyTaskRows(result.tasks, result.projects))
+      setAmbiguousAssignmentCount(result.ambiguous_assignment_count)
       setLastRefreshedAt(new Date())
+    }).catch(() => {
+      if (cancelled) return
+      setRows([])
+      setActiveProjects([])
+      setAmbiguousAssignmentCount(0)
+      setError(true)
     }).finally(() => {
       if (!cancelled) setLoading(false)
     })
 
-    return () => { cancelled = true }
-  }, [activeProjects, currentUser?.name, refreshVersion])
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [currentUser?.account_id, currentUser?.person_id, currentUser?.username, refreshVersion])
 
   return {
     rows,
     activeProjects,
-    successProjects,
-    failedProjects,
+    failedProjects: [] as MyTaskProject[],
     loading,
-    error: !loading && activeProjects.length > 0 && successProjects.length === 0 && failedProjects.length === activeProjects.length,
-    partialError: successProjects.length > 0 && failedProjects.length > 0,
+    error,
+    partialError: false,
+    ambiguousAssignmentCount,
     lastRefreshedAt,
     refresh,
   }

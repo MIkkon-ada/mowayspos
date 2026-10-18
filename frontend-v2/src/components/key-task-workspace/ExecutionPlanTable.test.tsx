@@ -42,5 +42,8 @@ describe('ExecutionPlanTable', () => {
 
     fireEvent.click(screen.getByRole('button', { name: `查看任务计划：${plan.title}` }))
     expect(onOpen).toHaveBeenCalledWith(plan)
+    const detailButton = screen.getByRole('button', { name: `查看任务计划：${plan.title}` })
+    expect(detailButton.querySelector('svg')).not.toBeNull()
+    expect(detailButton.textContent).not.toContain('›')
   })
 })

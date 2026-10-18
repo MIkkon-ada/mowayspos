@@ -9,7 +9,8 @@ const source = fs.readFileSync(path.resolve(here, '../src/features/settings/Proj
 
 test('project init exposes an end-date pending control below the date input', () => {
   assert.match(source, /const \[endDatePending, setEndDatePending\] = useState\(false\)/)
-  assert.match(source, /<label className="block">结束日期<\/label>/)
+  assert.match(source, /<label className="block" htmlFor="initiation-project-end">结束日期<\/label>/)
+  assert.match(source, /id="initiation-project-end"/)
   assert.match(source, /disabled=\{endDatePending\}/)
   assert.match(source, /aria-pressed=\{endDatePending\}[\s\S]{0,700}暂不填写/)
   assert.match(source, /setForm\(\(prev\) => \(\{ \.\.\.prev, end_date: '' \}\)\)/)

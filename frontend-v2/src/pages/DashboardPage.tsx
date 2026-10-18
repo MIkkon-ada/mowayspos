@@ -13,6 +13,7 @@ import { Skel } from '../components/Skeleton'
 import { ChevronDownIcon } from '../components/icons/ChevronDownIcon'
 import { GovernanceDashboardContent, type ProjectOverviewRow } from '../features/dashboard/GovernanceDashboardContent'
 import { aggregateGovernanceOverviews, emptyGovernance } from '../features/dashboard/governanceDashboard'
+import { useWindowFocusVersion } from '../utils/useWindowFocusVersion'
 
 type DashboardScope = 'global' | 'my' | 'project'
 
@@ -84,6 +85,7 @@ function aggregateDashboardOverviews(projects: Project[], overviews: DashboardOv
 
 export function DashboardPage() {
   const { projects, currentUser, reloadProjects } = useProject()
+  const focusRefreshVersion = useWindowFocusVersion()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
@@ -219,7 +221,7 @@ export function DashboardPage() {
       })
       .finally(() => { if (!cancelledRef.cancelled) setLoading(false) })
     return () => { cancelledRef.cancelled = true }
-  }, [scopeMode, scopeId, shouldBlockDashboardLoading, projects])
+  }, [scopeMode, scopeId, shouldBlockDashboardLoading, projects, focusRefreshVersion, currentUser?.account_id, currentUser?.person_id, currentUser?.username])
 
   async function handleExport() {
     if (scopeMode === 'my') {

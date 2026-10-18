@@ -121,7 +121,9 @@ export function ProjectOwnerSubmitPage() {
   return (
     <div className="owner-submit-page-shell flex min-h-0 flex-1 flex-col overflow-hidden bg-[#F1F5F9]">
       <OwnerSubmitWorkbench
+        key={project.id}
         project={project}
+        draftStorageKey={`owner-plan:${currentUser?.person_id ?? currentUser?.account_id ?? currentUser?.username}:${project.id}`}
         onClose={goToProjectDetail}
         onSuccess={goToProjectDetail}
       />

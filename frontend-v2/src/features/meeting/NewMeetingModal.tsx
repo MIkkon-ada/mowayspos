@@ -16,11 +16,14 @@ import {
   type MeetingAnalyzeResult,
 } from '../../api/meetings'
 import { getProjectMembers } from '../../api/projects'
-import type { MeetingItem, ProjectMember } from '../../types'
+import { fetchPeople } from '../../api/people'
+import { ChevronDownIcon } from '../../components/icons/ChevronDownIcon'
+import type { MeetingItem, Person, ProjectMember } from '../../types'
 import { ErrorBar, Field, JsonListSection, SectionTitle } from './meetingShared'
 import { ReportsSection } from './MeetingReportsSection'
 import { MeetingChangeSetReviewModal } from './MeetingChangeSetReviewModal'
 import { acceptedDocumentTypes } from '../../config/aiDocumentFormats'
+import { pendingMeetingRunStorageKey } from './pendingMeetingRunStorage'
 
 type ModalStep = 'input' | 'analyzing' | 'clarifying' | 'review'
 
@@ -120,11 +123,13 @@ function StandardMinutesReview({ form }: { form: ReviewForm }) {
 
 export function NewMeetingModal({
   projectId,
+  accountKey,
   editItem,
   onClose,
   onCreated,
 }: {
   projectId: number
+  accountKey: string
   editItem?: MeetingItem
   onClose: () => void
   onCreated: (m: MeetingItem) => void
@@ -144,9 +149,21 @@ export function NewMeetingModal({
   const [skillRun, setSkillRun] = useState<MeetingSkillRun | null>(null)
   const [clarificationValues, setClarificationValues] = useState<Record<number, string>>({})
   const [documentUploading, setDocumentUploading] = useState(false)
+  const storageKey = pendingMeetingRunStorageKey(projectId, accountKey)
+  const [pendingRunId, setPendingRunId] = useState<number | null>(() => {
+    const stored = Number(window.sessionStorage.getItem(storageKey))
+    return Number.isInteger(stored) && stored > 0 ? stored : null
+  })
   const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
+  const [people, setPeople] = useState<Person[]>([])
   const [membersLoadFailed, setMembersLoadFailed] = useState(false)
+  const [peopleLoadFailed, setPeopleLoadFailed] = useState(false)
+  const [participantSearch, setParticipantSearch] = useState('')
+  const [participantPickerOpen, setParticipantPickerOpen] = useState(false)
+  const participantPickerRef = useRef<HTMLDivElement>(null)
   const documentRef = useRef<HTMLInputElement>(null)
+  const activeRef = useRef(true)
+  const createRequestIdsRef = useRef(new Map<string, string>())
   const [form, setForm] = useState<ReviewForm>(() => {
     if (editItem) {
       return {
@@ -189,11 +206,40 @@ export function NewMeetingModal({
     }
   }, [projectId])
 
+  useEffect(() => {
+    activeRef.current = true
+    return () => { activeRef.current = false }
+  }, [])
+
+  useEffect(() => {
+    const stored = Number(window.sessionStorage.getItem(storageKey))
+    setPendingRunId(Number.isInteger(stored) && stored > 0 ? stored : null)
+  }, [storageKey])
+
+  useEffect(() => {
+    let active = true
+    void fetchPeople()
+      .then((items) => { if (active) { setPeople(items); setPeopleLoadFailed(false) } })
+      .catch(() => { if (active) { setPeople([]); setPeopleLoadFailed(true) } })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    if (!participantPickerOpen) return
+    const handlePointerDown = (event: MouseEvent) => {
+      if (event.target instanceof Node && !participantPickerRef.current?.contains(event.target)) {
+        setParticipantPickerOpen(false)
+        setParticipantSearch('')
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [participantPickerOpen])
+
   const analysisText = useMemo(
     () => combineAnalysisSources({ documentText }),
     [documentText],
   )
-  const sourceCount = Number(Boolean(documentText.trim()))
   const skillReferenceFiles = useMemo(() => [
     ...(documentText.trim() ? [{ source_id: `document:${documentName || 'uploaded'}`, kind: documentReferenceKind, filename: documentName }] : []),
   ], [documentName, documentReferenceKind, documentText])
@@ -261,41 +307,79 @@ export function NewMeetingModal({
     setStep('review')
   }
 
-  async function handleAnalyze() {
-    if (!documentText.trim() || !documentName) {
-      setError('请先上传一份会议纪要 Word 文档')
-      return
-    }
+  function rememberRun(runId: number) {
+    window.sessionStorage.setItem(storageKey, String(runId))
+    setPendingRunId(runId)
+  }
+
+  function clearRun() {
+    window.sessionStorage.removeItem(storageKey)
+    setPendingRunId(null)
+  }
+
+  async function followDocumentRun(runId: number) {
     setError('')
     setStep('analyzing')
-    setStatusMsg('正在结合项目工作推进表分析会议纪要，并生成待审核草稿…')
+    setStatusMsg('正在结合项目工作推进表分析会议文件…')
     try {
-      if (!documentFile) {
-        setError('请重新选择会议纪要 Word 文档')
-        setStep('input')
-        return
-      }
-      const run = await createProjectMeetingDocumentRun(projectId, documentFile)
-      setStatusMsg(`Agent 正在分析（${run.stage || 'reading'}）…`)
-      const status = await pollProjectMeetingDocumentRun(run.id, {
+      const status = await pollProjectMeetingDocumentRun(runId, {
+        shouldContinue: () => activeRef.current,
         onStatus: (next) => {
-          setStatusMsg(`Agent 正在${next.stage || next.status}，已完成 ${next.step_count} 步项目上下文查询…`)
+          if (activeRef.current) setStatusMsg(`AI 正在处理会议文件（${next.stage || next.status}）…`)
         },
       })
+      if (!activeRef.current) return
       if (status.status === 'failed') {
+        clearRun()
         setError(`会议纪要 Agent 分析失败${status.error_code ? `（${status.error_code}）` : ''}：${status.error_message || '请检查模型配置后重试'}`)
         setStep('input')
         return
       }
-      const completedRun = await fetchProjectMeetingDocumentRun(run.id)
+      const completedRun = await fetchProjectMeetingDocumentRun(runId)
+      if (!activeRef.current) return
       if (!completedRun.meeting) {
         setError('会议纪要 Agent 已完成，但未生成可审核的会议草稿')
         setStep('input')
         return
       }
+      clearRun()
       onCreated(completedRun.meeting)
     } catch (cause: unknown) {
-      setError(`会议纪要分析失败：${cause instanceof Error ? cause.message : String(cause)}`)
+      if (!activeRef.current) return
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setError(message.includes('超时')
+        ? 'AI 仍可能在后台处理。请使用“查看上次分析”继续查询，避免重复生成纪要。'
+        : `暂时无法查询分析结果：${message}。可稍后查看上次分析。`)
+      setStep('input')
+    }
+  }
+
+  async function handleAnalyze() {
+    if (pendingRunId) {
+      await followDocumentRun(pendingRunId)
+      return
+    }
+    if (!documentText.trim() || !documentName || !documentFile) {
+      setError('请先上传一份会议文件')
+      return
+    }
+    setError('')
+    setStep('analyzing')
+    setStatusMsg('正在提交会议文件…')
+    try {
+      const run = await createProjectMeetingDocumentRun(projectId, documentFile, {
+        title: form.title,
+        meeting_date: form.meeting_date,
+        location: form.location,
+        host: form.host,
+        participants: form.participants,
+        organizer: form.organizer,
+        copied_to: form.copied_to,
+      })
+      rememberRun(run.id)
+      await followDocumentRun(run.id)
+    } catch (cause: unknown) {
+      setError(`提交会议文件失败：${cause instanceof Error ? cause.message : String(cause)}`)
       setStep('input')
     }
   }
@@ -378,9 +462,18 @@ export function NewMeetingModal({
     try {
       const { confirmed_items_json, reports_json: _reportsJson, ...meetingForm } = form
       const payload = { project_id: projectId, ...meetingForm, risk_items_json: confirmed_items_json, skill_run_id: skillRun?.id, analysis_id: analysisId }
+      let requestId: string | undefined
+      if (!isEdit) {
+        const fingerprint = JSON.stringify({ accountKey, projectId, payload })
+        requestId = createRequestIdsRef.current.get(fingerprint)
+        if (!requestId) {
+          requestId = globalThis.crypto?.randomUUID?.() ?? `meeting-${Date.now()}-${Math.random().toString(36).slice(2)}`
+          createRequestIdsRef.current.set(fingerprint, requestId)
+        }
+      }
       const item = isEdit && editItem
         ? await updateMeeting(editItem.id, payload)
-        : await createMeeting(payload)
+        : await createMeeting(payload, requestId)
       if (isEdit || analysisId === null) {
         onCreated(item)
       } else {
@@ -395,17 +488,30 @@ export function NewMeetingModal({
   }
 
   const steps = [
-    { key: 'input' as ModalStep, label: '会议设置与材料' },
-    { key: 'analyzing' as ModalStep, label: 'AI 生成草稿' },
-    { key: 'clarifying' as ModalStep, label: '确认待核事实' },
-    { key: 'review' as ModalStep, label: '确认保存' },
+    { key: 'input' as ModalStep, label: '填写与上传' },
+    { key: 'analyzing' as ModalStep, label: 'AI 整理' },
+    { key: 'review' as ModalStep, label: '核对草稿' },
   ]
-  const currentIdx = isEdit ? 2 : steps.findIndex((item) => item.key === step)
-  const memberNames = Array.from(new Set(
-    projectMembers
-      .map((member) => member.person_name_snapshot.trim())
-      .filter(Boolean),
-  ))
+  const currentIdx = isEdit || step === 'review' || step === 'clarifying' ? 2 : steps.findIndex((item) => item.key === step)
+  const peopleById = new Map(people.map((person) => [person.id, person]))
+  const projectPeople = projectMembers
+    .map((member) => peopleById.get(member.person_id))
+    .filter((person): person is Person => Boolean(person && person.name.trim()) && person?.is_active !== false)
+  const memberNames = Array.from(new Set([
+    ...projectPeople.map((person) => person.name.trim()),
+    ...form.participants.split(/[、,，]/).map((name) => name.trim()).filter(Boolean),
+  ]))
+    .filter((name) => name.toLocaleLowerCase() !== 'moways')
+  const selectedParticipants = form.participants.split(/[、,，]/).map((name) => name.trim()).filter((name) => name && name.toLocaleLowerCase() !== 'moways')
+  const availableParticipants = memberNames.filter((name) => !selectedParticipants.includes(name))
+  const filteredParticipants = availableParticipants.filter((name) => name.toLocaleLowerCase().includes(participantSearch.trim().toLocaleLowerCase()))
+  const participantListMessage = membersLoadFailed || peopleLoadFailed
+    ? '人员名单加载失败，请刷新后重试'
+    : memberNames.length
+      ? participantSearch.trim() ? '没有找到匹配人员' : '当前项目成员已全部添加'
+      : '当前项目暂无可选成员'
+
+  const updateParticipants = (nextNames: string[]) => setField('participants', nextNames.join('、'))
 
   const singleMemberField = (
     label: '主持人' | '整理人',
@@ -475,6 +581,10 @@ export function NewMeetingModal({
             <main className="meeting-workbench-main min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
           {step === 'input' && (
             <div className="mx-auto max-w-[1280px] space-y-8 px-5 py-7 pb-32 lg:px-7">
+              {pendingRunId && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                <span>上次会议文件已提交，分析任务可能仍在运行。</span>
+                <div className="flex items-center gap-3"><button type="button" onClick={() => void followDocumentRun(pendingRunId)} className="font-semibold text-sky-700 hover:text-sky-900">查看上次分析</button><button type="button" onClick={clearRun} className="text-amber-800 hover:text-amber-950">开始新会议</button></div>
+              </div>}
               <section className="meeting-new-information-card rounded-2xl border border-slate-300 bg-white p-6 shadow-sm">
                 <SectionTitle>会议信息</SectionTitle>
                 <div className="mt-5 grid gap-x-5 gap-y-4 lg:grid-cols-3">
@@ -485,7 +595,57 @@ export function NewMeetingModal({
                   </div>
                   <Field label="会议地点" value={form.location} onChange={(value) => setField('location', value)} placeholder="线上会议或具体地点" />
                   {singleMemberField('主持人', 'host', '请选择主持人')}
-                  <Field label="参会人员" value={form.participants} onChange={(value) => setField('participants', value)} placeholder="可选，多人用顿号或逗号分隔" />
+                  <div ref={participantPickerRef} className="relative">
+                    <label className="mb-1 block text-xs font-semibold text-slate-700">参会人员</label>
+                    <div
+                      className={`min-h-[42px] w-full rounded-md border bg-white px-2.5 py-1.5 transition ${participantPickerOpen ? 'border-sky-500 ring-2 ring-sky-100' : 'border-slate-300 hover:border-slate-400'} ${membersLoadFailed || peopleLoadFailed ? 'cursor-not-allowed bg-slate-50' : ''}`}
+                      onClick={() => { if (!membersLoadFailed && !peopleLoadFailed) setParticipantPickerOpen(true) }}
+                    >
+                      <div className="flex min-h-7 flex-wrap items-center gap-1.5 pr-7">
+                        {selectedParticipants.map((name) => (
+                          <span key={name} className="inline-flex items-center gap-1 rounded-md bg-sky-50 py-1 pl-2 pr-1 text-xs font-medium text-sky-800 ring-1 ring-inset ring-sky-100">
+                            {name}
+                            <button
+                              type="button"
+                              aria-label={`移除参会人员${name}`}
+                              onClick={(event) => { event.stopPropagation(); updateParticipants(selectedParticipants.filter((item) => item !== name)) }}
+                              className="inline-flex h-4 w-4 items-center justify-center rounded text-sky-700 hover:bg-sky-100 hover:text-sky-950 focus:outline-none focus:ring-2 focus:ring-sky-400"
+                            >×</button>
+                          </span>
+                        ))}
+                        <input
+                          aria-label="搜索参会人员"
+                          role="combobox"
+                          aria-expanded={participantPickerOpen}
+                          aria-controls="meeting-participant-options"
+                          aria-autocomplete="list"
+                          value={participantSearch}
+                          onFocus={() => setParticipantPickerOpen(true)}
+                          onChange={(event) => { setParticipantSearch(event.target.value); setParticipantPickerOpen(true) }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' && filteredParticipants[0]) {
+                              event.preventDefault()
+                              updateParticipants([...selectedParticipants, filteredParticipants[0]])
+                              setParticipantSearch('')
+                            } else if (event.key === 'Backspace' && !participantSearch && selectedParticipants.length) {
+                              updateParticipants(selectedParticipants.slice(0, -1))
+                            } else if (event.key === 'Escape') {
+                              setParticipantPickerOpen(false)
+                              setParticipantSearch('')
+                            }
+                          }}
+                          disabled={membersLoadFailed || peopleLoadFailed}
+                          placeholder={selectedParticipants.length ? '继续搜索姓名…' : '搜索并添加参会人员'}
+                          className="min-w-[120px] flex-1 border-0 bg-transparent py-1 text-sm text-slate-700 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed"
+                        />
+                      </div>
+                      <span className="pointer-events-none absolute right-3 top-[34px] text-slate-400"><ChevronDownIcon className={`h-4 w-4 transition-transform ${participantPickerOpen ? 'rotate-180' : ''}`} /></span>
+                    </div>
+                    {participantPickerOpen && !membersLoadFailed && !peopleLoadFailed && <div className="absolute z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-lg" role="listbox" id="meeting-participant-options" aria-label="可选参会人员">
+                      {filteredParticipants.length ? filteredParticipants.map((name) => <button key={name} type="button" role="option" aria-selected="false" onMouseDown={(event) => event.preventDefault()} onClick={() => { updateParticipants([...selectedParticipants, name]); setParticipantSearch('') }} className="flex w-full items-center rounded-md px-3 py-2 text-left text-sm text-slate-700 hover:bg-sky-50 hover:text-sky-800 focus:bg-sky-50 focus:outline-none">{name}</button>) : <p className="px-3 py-2.5 text-sm text-slate-400">{participantListMessage}</p>}
+                    </div>}
+                    <p className="mt-1 text-xs text-slate-400">输入姓名搜索，点击即可添加；已选人员可点击标签上的 × 移除</p>
+                  </div>
                   {singleMemberField('整理人', 'organizer', '请选择整理人')}
                   <div className="lg:col-span-3">
                     <Field label="抄送" value={form.copied_to} onChange={(value) => setField('copied_to', value)} placeholder="项目全体成员" />
@@ -494,15 +654,14 @@ export function NewMeetingModal({
               </section>
 
               <section className="meeting-new-material-card rounded-2xl border border-slate-300 bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between">
+                <div>
                   <div>
                     <SectionTitle>会议材料</SectionTitle>
-                    <p className="mt-1 text-sm text-slate-400">材料可以同时添加，AI 会合并分析；暂不支持 PDF。</p>
+                    <p className="mt-1 text-sm text-slate-500">上传一份会议文件；如有多份资料，请先合并到同一文件。暂不支持 PDF。</p>
                   </div>
-                  <span className="text-sm text-slate-400">已添加 {sourceCount} 份材料</span>
                 </div>
-                <div className="mt-5 grid gap-4 lg:grid-cols-3">
-                  <div className="rounded-xl border border-dashed border-sky-200 bg-sky-50/50 p-4">
+                <div className="mt-5">
+                  <div className="max-w-xl rounded-xl border border-dashed border-sky-200 bg-sky-50/50 p-4">
                     <div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-slate-800">上传会议纪要文件</h3><p className="mt-1 text-xs leading-5 text-slate-500">会议纪要支持 Word、TXT、Excel（.docx、.txt、.xlsx）；本流程只读取文档内容。</p></div><SourceStatus text={documentText} emptyLabel="未上传" /></div>
                     {documentName && <p className="mt-3 truncate text-xs text-slate-600">{documentName}</p>}
                     <button type="button" onClick={() => documentRef.current?.click()} disabled={documentUploading} className="mt-4 rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50">{documentUploading ? '读取中…' : documentText ? '更换文档' : '选择文件'}</button>
@@ -519,7 +678,7 @@ export function NewMeetingModal({
             <div className="mx-auto flex max-w-[1180px] flex-col items-center py-28 text-center">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-sky-100 text-2xl text-sky-600 animate-pulse">✦</div>
               <h2 className="mt-5 text-lg font-semibold text-slate-800">{statusMsg}</h2>
-              <p className="mt-2 text-sm text-slate-400">已汇总 {sourceCount} 份材料，请稍候。</p>
+              <p className="mt-2 text-sm text-slate-400">后台正在处理会议文件，请稍候。</p>
             </div>
           )}
 
@@ -585,7 +744,7 @@ export function NewMeetingModal({
         {step !== 'analyzing' && step !== 'clarifying' && (
           <footer className="meeting-new-footer flex shrink-0 items-center justify-between border-t border-slate-200 bg-white px-5 py-4 shadow-[0_-6px_18px_rgba(15,23,42,0.04)] lg:px-7">
             {step === 'review' ? <button onClick={() => (isEdit ? onClose() : setStep('input'))} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">{isEdit ? '取消' : '返回修改'}</button> : <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">取消</button>}
-            {step === 'input' ? <button onClick={() => void handleAnalyze()} disabled={!analysisText.trim() || documentUploading} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40">AI 生成草稿</button> : <button onClick={() => void handleSave()} disabled={saving} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">{saving ? '保存中…' : isEdit ? '保存修改' : '保存草稿'}</button>}
+            {step === 'input' ? <button onClick={() => void handleAnalyze()} disabled={(!pendingRunId && !analysisText.trim()) || documentUploading} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-40">{pendingRunId ? '查看上次分析' : 'AI 生成草稿'}</button> : <button onClick={() => void handleSave()} disabled={saving} className="rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">{saving ? '保存中…' : isEdit ? '保存修改' : '保存草稿'}</button>}
           </footer>
         )}
       </div>

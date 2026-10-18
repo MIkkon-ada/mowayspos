@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import type { AppPage, CurrentUser } from '../types'
 import { useProject } from '../context/ProjectContext'
 import { NotificationBell } from './NotificationBell'
-import { getConfirmationCounts } from '../api/confirmations'
+import { CONFIRMATION_COUNTS_INVALIDATED_EVENT, getConfirmationCounts } from '../api/confirmations'
 import { isProjectActive } from '../domain/projectLifecycleStatus'
 import { getProjectRoleLabel } from '../domain/roleLabels'
 import { systemRoleLabel } from '../domain/roles'
@@ -62,16 +62,26 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
   const [confirmBadge, setConfirmBadge] = useState(0)
 
   useEffect(() => {
-    if (!isPrivileged) return
+    let cancelled = false
+    setConfirmBadge(0)
+    if (!isPrivileged) return () => { cancelled = true }
     function poll() {
       getConfirmationCounts()
-        .then((counts) => setConfirmBadge((counts['待审核'] ?? 0) + (counts.coordinator_total ?? 0) + (counts.ceo_total ?? counts.ceo ?? 0)))
+        .then((counts) => {
+          if (cancelled) return
+          setConfirmBadge((counts['待审核'] ?? 0) + (counts.coordinator_total ?? 0) + (counts.ceo_total ?? counts.ceo ?? 0))
+        })
         .catch(() => {})
     }
     poll()
     const id = setInterval(poll, 30_000)
-    return () => clearInterval(id)
-  }, [isPrivileged])
+    window.addEventListener(CONFIRMATION_COUNTS_INVALIDATED_EVENT, poll)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+      window.removeEventListener(CONFIRMATION_COUNTS_INVALIDATED_EVENT, poll)
+    }
+  }, [isPrivileged, currentUser?.account_id, currentUser?.person_id, currentUser?.username])
 
   function section(label: string, items: NavItem[]): NavEntry[] {
     if (items.length === 0) return []

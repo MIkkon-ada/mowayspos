@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
+import hashlib
 from uuid import uuid4
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
@@ -23,6 +25,7 @@ from ..ai.service import AIService
 from ..services.notify import person_id_for_name as _pid_for_name, send as _notify, person_name_for_account
 from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
+from ..services.request_fingerprint import request_payload_fingerprint
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])  # endpoint 不变；业务语义：Workstream/重点工作 CRUD
 
@@ -71,6 +74,21 @@ def _check_batch_write(context: dict, project_id: int | None, proj_name: str, db
             return
 
     raise HTTPException(403, "permission denied - only project owner or tech admin can batch import tasks")
+
+
+def _task_create_retry_result(
+    db: Session,
+    request_id: str,
+    request_payload_hash: str,
+) -> dict | None:
+    existing = db.query(models.Task).filter(models.Task.client_request_id == request_id).first()
+    if existing is None:
+        return None
+    if not existing.request_payload_hash:
+        raise HTTPException(409, "该请求对应旧版重点工作，无法核对内容；请先检查工作推进表")
+    if existing.request_payload_hash != request_payload_hash:
+        raise HTTPException(409, "该请求标识已用于不同内容或提交人，请刷新后重新保存")
+    return crud.to_dict(existing)
 
 
 def _check_trash_access(context: dict, project_id: int | None, proj_name: str, db: Session) -> None:
@@ -271,20 +289,46 @@ def create_task(
     _check_write(context, effective_project_id, proj_name, db)
     require_project_business_writable(effective_project_id, db)
 
-    data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
+    data = payload.model_dump(exclude={"project_id", "client_request_id"})
+    request_payload_hash = None
+    if payload.client_request_id:
+        actor_key = (
+            f"person:{context['person_id']}"
+            if context.get("person_id") is not None
+            else f"account:{context.get('account_username') or current_user}"
+        )
+        request_payload_hash = request_payload_fingerprint({
+            "actor": actor_key,
+            "project_id": effective_project_id,
+            "payload": data,
+        })
+        existing_result = _task_create_retry_result(db, payload.client_request_id, request_payload_hash)
+        if existing_result is not None:
+            return existing_result
+
     row = models.Task(**data)
     row.source_type = ST.normalize(row.source_type or "人工录入")
     row.project_id = effective_project_id
+    row.client_request_id = payload.client_request_id
+    row.request_payload_hash = request_payload_hash
     row.owner_id = _pid_for_name(row.owner or "", db)
     if effective_project_id is not None:
         # Keep special_project as a display mirror of the resolved project, never a competing owner key.
         row.special_project = resolution["project_name"] or proj_name
     elif not row.special_project:
         row.special_project = payload.special_project or ""
-    db.add(row)
-    db.flush()
-    crud.log(db, current_user, "task_create", "task", row.id, {}, crud.to_dict(row))
-    db.commit()
+    try:
+        db.add(row)
+        db.flush()
+        crud.log(db, current_user, "task_create", "task", row.id, {}, crud.to_dict(row))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if payload.client_request_id:
+            existing_result = _task_create_retry_result(db, payload.client_request_id, request_payload_hash or "")
+            if existing_result is not None:
+                return existing_result
+        raise
     db.refresh(row)
     return crud.to_dict(row)
 
@@ -353,7 +397,7 @@ def update_task(
         _assert_can_complete_from_subtasks(row, db)
 
     before = crud.to_dict(row)
-    update_data = {k: v for k, v in payload.model_dump().items() if k != "project_id"}
+    update_data = payload.model_dump(exclude={"project_id", "client_request_id"})
     if "status" in update_data:
         update_data["status"] = TS.normalize(update_data["status"])
     if "source_type" in update_data:
@@ -382,7 +426,7 @@ def update_task(
                 project_id=effective_pid,
             )
 
-    crud.log(db, current_user, action, "task", row.id, before, payload.model_dump(), project_id=effective_pid)
+    crud.log(db, current_user, action, "task", row.id, before, payload.model_dump(exclude={"client_request_id"}), project_id=effective_pid)
     db.commit()
     return crud.to_dict(row)
 
@@ -614,28 +658,76 @@ def batch_create(
     _check_batch_write(context, payload.project_id, canonical_project_name, db)
     require_project_business_writable(payload.project_id, db)
 
-    created = []
-    for draft in payload.tasks:
-        if not draft.key_task.strip():
-            continue
-        row = models.Task(
-            project_id=payload.project_id,
-            special_project=canonical_project_name,
-            key_task=draft.key_task,
-            owner=draft.owner,
-            owner_id=_pid_for_name(draft.owner or "", db),
-            coordinator=draft.coordinator,
-            collaborators=draft.collaborators,
-            plan_time=draft.plan_time,
-            status=draft.status or "未开始",
-            key_achievement=draft.key_achievement,
-            completion_standard=draft.completion_standard,
-            source_type=ST.normalize("大纲导入"),
+    drafts = [draft for draft in payload.tasks if draft.key_task.strip()]
+    batch_request_ids: list[str] = []
+    batch_payload_hash: str | None = None
+    if payload.client_request_id:
+        actor_key = (
+            f"person:{context['person_id']}"
+            if context.get("person_id") is not None
+            else f"account:{context.get('account_username') or current_user}"
         )
-        db.add(row)
-        db.flush()
-        crud.log(db, current_user, "大纲导入任务", "task", row.id, {}, crud.to_dict(row),
-                 project_id=payload.project_id)
-        created.append(crud.to_dict(row))
-    db.commit()
+        batch_payload_hash = request_payload_fingerprint({
+            "actor": actor_key,
+            "project_id": payload.project_id,
+            "tasks": [draft.model_dump() for draft in drafts],
+        })
+        batch_request_ids = [
+            "b" + hashlib.sha256(f"{payload.client_request_id}:{index}".encode("utf-8")).hexdigest()[:63]
+            for index in range(len(drafts))
+        ]
+
+        existing = (
+            db.query(models.Task)
+            .filter(models.Task.client_request_id.in_(batch_request_ids))
+            .all()
+            if batch_request_ids else []
+        )
+        if existing:
+            existing_by_request_id = {row.client_request_id: row for row in existing}
+            if len(existing_by_request_id) != len(batch_request_ids):
+                raise HTTPException(409, "该批量请求只找到部分任务，请先检查工作推进表")
+            if any(row.request_payload_hash != batch_payload_hash for row in existing):
+                raise HTTPException(409, "该请求标识已用于不同内容或提交人，请刷新后重新导入")
+            return [crud.to_dict(existing_by_request_id[request_id]) for request_id in batch_request_ids]
+
+    created = []
+    try:
+        for index, draft in enumerate(drafts):
+            row = models.Task(
+                project_id=payload.project_id,
+                special_project=canonical_project_name,
+                key_task=draft.key_task,
+                owner=draft.owner,
+                owner_id=_pid_for_name(draft.owner or "", db),
+                coordinator=draft.coordinator,
+                collaborators=draft.collaborators,
+                plan_time=draft.plan_time,
+                status=draft.status or "未开始",
+                key_achievement=draft.key_achievement,
+                completion_standard=draft.completion_standard,
+                source_type=ST.normalize("大纲导入"),
+                client_request_id=batch_request_ids[index] if payload.client_request_id else None,
+                request_payload_hash=batch_payload_hash,
+            )
+            db.add(row)
+            db.flush()
+            crud.log(db, current_user, "大纲导入任务", "task", row.id, {}, crud.to_dict(row),
+                     project_id=payload.project_id)
+            created.append(crud.to_dict(row))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if payload.client_request_id and batch_request_ids:
+            existing = (
+                db.query(models.Task)
+                .filter(models.Task.client_request_id.in_(batch_request_ids))
+                .all()
+            )
+            existing_by_request_id = {row.client_request_id: row for row in existing}
+            if len(existing_by_request_id) == len(batch_request_ids) and all(
+                row.request_payload_hash == batch_payload_hash for row in existing
+            ):
+                return [crud.to_dict(existing_by_request_id[request_id]) for request_id in batch_request_ids]
+        raise
     return created

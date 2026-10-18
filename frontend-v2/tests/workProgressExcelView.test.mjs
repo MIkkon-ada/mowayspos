@@ -107,7 +107,6 @@ test('the executable view model exposes the shared project work progress columns
   assert.deepEqual(PLAN_TABLE_BUSINESS_HEADERS, [
     '重点工作',
     '关键任务',
-    '交付成果',
     '验收标准',
     '负责人',
     '计划时间',
@@ -248,7 +247,7 @@ test('plan mode loads subtasks before search projection and disables incomplete 
   // Search text passed to plan table
   assert.match(page, /searchText=\{search\}/)
   // Export disabled until all subtasks are loaded
-  assert.match(page, /exportDisabled=\{!planTableReady\}/)
+  assert.match(page, /disabled=\{!planTableReady \|\| !focusedProject\}/)
   // Loading indicator shown while fetching subtasks (in TaskManagementPage)
   assert.match(page, /关键任务加载中[.]{1,3}/)
   // Subtask detail opened via callback from parent page
@@ -284,20 +283,22 @@ test('key work create modal uses the compact two-column grouped form layout', ()
 
 test('archived plan rendering remains read-only and other global layouts stay out of scope', () => {
   const source = read(VIEW_FILE)
-  // V2 has no inline destructive CRUD action buttons for delete/archive/restore.
-  // Note: "编辑" may appear in readonly hint text — that is acceptable
-  assert.doesNotMatch(source, /删除|归档|恢复/)
+  // The plan table has no row-level delete, archive, or restore controls.
+  assert.doesNotMatch(source, /aria-label="(?:删除|归档|恢复)[^"]*"/)
+  assert.doesNotMatch(source, /role="menuitem"[^>]*>\s*(?:删除|归档|恢复)/)
   assert.equal(exists('src/components/Sidebar.tsx'), true)
   assert.equal(exists('src/layouts/ProjectLayout.tsx'), true)
 })
 
 test('work progress header keeps only the plan table without losing operations', () => {
   const page = read(PAGE_FILE)
-  assert.match(page, /work-progress-title-group/)
+  assert.match(page, /aria-label="切换项目"/)
   assert.match(page, /工作推进表/)
   assert.doesNotMatch(page, /执行详情/)
-  assert.match(page, /plan-execution-actions/)
-  assert.match(page, /handleExport\(\)/)
+  assert.match(page, /aria-haspopup="menu"/)
+  assert.match(page, /导出 Excel/)
+  assert.match(page, /handlePlanExport\(\)/)
+  assert.match(page, /新增重点工作/)
   assert.match(page, /导入大纲/)
   assert.match(page, /回收站/)
   assert.doesNotMatch(page, /min-w-\[260px\]/)
@@ -305,21 +306,12 @@ test('work progress header keeps only the plan table without losing operations',
 
 test('key task execution detail combines subtasks with the execution timeline', () => {
   const detail = read(DETAIL_FILE)
+  const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
   assert.match(detail, /KeyTaskExecutionWorkspace/)
   assert.match(detail, /keyTaskId=\{subTask\.id\}/)
   assert.doesNotMatch(detail, /KeyTaskSubtasksWorkspace/)
-  return
-  assert.match(detail, /KeyTaskSubtasksWorkspace/)
-  assert.match(detail, /KeyTaskExecutionTimeline/)
-  assert.match(detail, /buildWorkReportEntryUrl/)
-  assert.match(detail, /负责人/)
-  assert.match(detail, /协作人/)
-  assert.match(detail, /开始时间/)
-  assert.match(detail, /状态/)
-  assert.doesNotMatch(detail, /ExecutionScheduleTimeline/)
-  assert.doesNotMatch(detail, /MonthlyPlanWorkspace/)
-  assert.doesNotMatch(detail, /function Step\(/)
-  assert.doesNotMatch(detail, /function Line\(/)
+  assert.match(workspace, /ExecutionTimeline/)
+  assert.match(workspace, /ExecutionPlanSidebar/)
 })
 
 test('key-task base editor lives in the execution workbench instead of a table modal', () => {

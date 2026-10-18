@@ -38,6 +38,10 @@ def _pick(row: dict[str, Any], *keys: str) -> str:
     return "—"
 
 
+def _pending(value: str) -> str:
+    return "待确认" if value == "—" else value
+
+
 def _action_rows(value: str | None) -> list[tuple[str, str, str, str, str, str]]:
     rows: list[tuple[str, str, str, str, str, str]] = []
     for index, item in enumerate(_json_list(value), start=1):
@@ -46,10 +50,10 @@ def _action_rows(value: str | None) -> list[tuple[str, str, str, str, str, str]]
         rows.append((
             code if code != "—" else f"本周-{index:02d}",
             _pick(row, "会议安排事项", "事项", "task", "title", "content"),
-            _pick(row, "负责人", "owner", "member"),
-            _pick(row, "追踪人", "tracker"),
-            _pick(row, "完成时限", "完成时间", "due_date", "dueDate", "deadline"),
-            _pick(row, "来源/备注", "来源", "备注", "source", "note"),
+            _pending(_pick(row, "负责人", "owner", "member")),
+            _pending(_pick(row, "追踪人", "tracker")),
+            _pending(_pick(row, "完成时限", "完成时间", "due_date", "dueDate", "deadline")),
+            _pending(_pick(row, "来源/备注", "来源", "备注", "source_note", "source", "note")),
         ))
     return rows
 
@@ -59,6 +63,15 @@ def _set_cell_shading(cell, fill: str) -> None:
     shading = OxmlElement("w:shd")
     shading.set(qn("w:fill"), fill)
     tc_pr.append(shading)
+
+
+def _set_table_widths(table, widths_cm: tuple[float, ...]) -> None:
+    table.autofit = False
+    for column, width in zip(table.columns, widths_cm):
+        column.width = Cm(width)
+    for row in table.rows:
+        for cell, width in zip(row.cells, widths_cm):
+            cell.width = Cm(width)
 
 
 def _set_cell_text(cell, text: str, *, bold: bool = False, color: str | None = None) -> None:
@@ -82,21 +95,61 @@ def _add_heading(document: Document, text: str) -> None:
     run.font.size = Pt(12)
 
 
+def _add_subheading(document: Document, text: str) -> None:
+    paragraph = document.add_paragraph()
+    paragraph.paragraph_format.space_before = Pt(8)
+    paragraph.paragraph_format.space_after = Pt(3)
+    run = paragraph.add_run(text)
+    run.bold = True
+    run.font.size = Pt(10.5)
+
+
 def _decision_sections(value: str | None, fallback: str | None) -> list[tuple[str, list[str]]]:
     sections: list[tuple[str, list[str]]] = []
     for index, item in enumerate(_json_list(value), start=1):
         if isinstance(item, dict):
-            title = str(item.get("title") or item.get("heading") or item.get("topic") or f"会议事项 {index}").strip()
+            title = str(item.get("title") or item.get("heading") or item.get("topic") or "会议讨论与结论").strip()
             raw_bullets = item.get("bullets") or item.get("points") or item.get("items") or item.get("content")
             bullets = [str(part).strip() for part in raw_bullets] if isinstance(raw_bullets, list) else [_text(raw_bullets)]
         else:
-            title, bullets = _text(item), []
+            title, bullets = "会议讨论与结论", [_text(item)]
         bullets = [bullet for bullet in bullets if bullet]
         if title or bullets:
-            sections.append((title, bullets))
+            if sections and sections[-1][0] == title:
+                sections[-1][1].extend(bullets)
+            else:
+                sections.append((title, bullets))
     if not sections and (fallback or "").strip():
         sections.append(("会议小结", [(fallback or "").strip()]))
     return sections
+
+
+def _tracking_rows(value: str | None) -> list[tuple[str, str, str, str, str]]:
+    rows = []
+    for index, item in enumerate(_json_list(value), start=1):
+        if not isinstance(item, dict):
+            continue
+        rows.append((
+            _pick(item, "编号", "code") if _pick(item, "编号", "code") != "—" else f"追踪-{index:02d}",
+            _pick(item, "上周事项", "content", "task"),
+            _pick(item, "负责人", "owner"),
+            _pick(item, "状态", "status"),
+            _pick(item, "本周进展/说明", "progress_note", "progress"),
+        ))
+    return rows
+
+
+def _add_tracking_table(document: Document, rows: list[tuple[str, str, str, str, str]]) -> None:
+    table = document.add_table(rows=1, cols=5)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.style = "Table Grid"
+    for cell, label in zip(table.rows[0].cells, ("编号", "上周事项", "负责人", "状态", "本周进展/说明")):
+        _set_cell_text(cell, label, bold=True, color="FFFFFF")
+        _set_cell_shading(cell, "1F4E79")
+    for values in rows:
+        for cell, value in zip(table.add_row().cells, values):
+            _set_cell_text(cell, value)
+    _set_table_widths(table, (0.9, 5.0, 2.2, 1.6, 6.5))
 
 
 def _add_fact_list(document: Document, values: list[Any]) -> None:
@@ -125,7 +178,6 @@ def _add_metadata_table(document: Document, meeting: models.Meeting) -> None:
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.style = "Table Grid"
     for label, value in (
-        ("所属项目", meeting.related_special_project or "—"),
         ("会议时间", meeting.meeting_date or "—"),
         ("会议地点", meeting.location or "—"),
         ("会议类型", meeting.meeting_type or "—"),
@@ -136,6 +188,7 @@ def _add_metadata_table(document: Document, meeting: models.Meeting) -> None:
         _set_cell_text(cells[0], label, bold=True, color="1F4E79")
         _set_cell_text(cells[1], value)
         _set_cell_shading(cells[0], "EAF2F8")
+    _set_table_widths(table, (2.5, 13.7))
 
 
 def _add_action_table(document: Document, rows: list[tuple[str, str, str, str, str, str]]) -> None:
@@ -149,13 +202,10 @@ def _add_action_table(document: Document, rows: list[tuple[str, str, str, str, s
     for values in rows or [("—", "暂无明确待办事项", "—", "—", "—", "—")]:
         for cell, value in zip(table.add_row().cells, values):
             _set_cell_text(cell, value)
+    _set_table_widths(table, (0.9, 6.1, 1.8, 1.8, 2.0, 3.6))
 
 
-def _has_structured_action_fields(rows: list[tuple[str, str, str, str, str, str]]) -> bool:
-    return any(value != "—" for row in rows for value in row[2:5])
-
-
-def build_meeting_minutes_docx(meeting: models.Meeting, *, source_name: str = "") -> bytes:
+def build_meeting_minutes_docx(meeting: models.Meeting, *, source_name: str = "", completed_items: list[Any] | None = None) -> bytes:
     """Produce the published minutes; source_name is retained for API compatibility."""
     document = Document()
     _configure_document(document)
@@ -163,7 +213,8 @@ def build_meeting_minutes_docx(meeting: models.Meeting, *, source_name: str = ""
     title = document.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     title.paragraph_format.space_after = Pt(3)
-    run = title.add_run(meeting.title or "项目会议纪要")
+    meeting_title = (meeting.title or "项目").strip()
+    run = title.add_run(meeting_title if "会议纪要" in meeting_title else f"{meeting_title} 会议纪要")
     run.bold = True
     run.font.size = Pt(18)
     subtitle = document.add_paragraph()
@@ -186,8 +237,10 @@ def build_meeting_minutes_docx(meeting: models.Meeting, *, source_name: str = ""
     else:
         document.add_paragraph("暂无明确会议议程")
 
-    _add_heading(document, "二、会议小结与决议")
-    sections = _decision_sections(meeting.decision_items_json, meeting.summary)
+    _add_heading(document, "二、会议讨论与结论")
+    if (meeting.summary or "").strip():
+        document.add_paragraph(meeting.summary.strip())
+    sections = _decision_sections(meeting.decision_items_json, None)
     for index, (section_title, bullets) in enumerate(sections, start=1):
         paragraph = document.add_paragraph()
         paragraph.paragraph_format.space_before = Pt(5)
@@ -195,19 +248,24 @@ def build_meeting_minutes_docx(meeting: models.Meeting, *, source_name: str = ""
         heading.bold = True
         heading.font.size = Pt(10.5)
         _add_fact_list(document, bullets)
-    if not sections:
+    if not sections and not (meeting.summary or "").strip():
         document.add_paragraph("暂无会议小结与决议")
 
-    _add_heading(document, "三、待办事项跟踪")
+    if completed_items:
+        _add_subheading(document, "本周已确认进展")
+        _add_fact_list(document, completed_items)
+
+    _add_heading(document, "三、会议行动项")
+    _add_subheading(document, "（一）本周待办事项")
     action_rows = _action_rows(meeting.task_list_json)
-    if action_rows and not _has_structured_action_fields(action_rows):
-        document.add_paragraph("历史纪要未保留结构化负责人和期限，以下按原文待办列示。")
-        _add_fact_list(document, [row[1] for row in action_rows])
-    else:
-        _add_action_table(document, action_rows)
+    _add_action_table(document, action_rows)
+    tracking_rows = _tracking_rows(meeting.prior_action_items_json)
+    if tracking_rows:
+        _add_subheading(document, "（二）上周待办追踪")
+        _add_tracking_table(document, tracking_rows)
     risks = _json_list(meeting.risk_items_json)
     if risks:
-        _add_heading(document, "四、风险与待确认")
+        _add_subheading(document, "风险与待确认")
         _add_fact_list(document, risks)
 
     footer = document.add_table(rows=1, cols=4)
@@ -217,6 +275,7 @@ def build_meeting_minutes_docx(meeting: models.Meeting, *, source_name: str = ""
         _set_cell_text(cell, value, bold=bold, color="1F4E79" if bold else None)
         if bold:
             _set_cell_shading(cell, "EAF2F8")
+    _set_table_widths(footer, (2.0, 6.1, 2.0, 6.1))
 
     output = BytesIO()
     document.save(output)

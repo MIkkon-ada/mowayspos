@@ -4,6 +4,7 @@ import test from 'node:test'
 
 const issuesSource = readFileSync(new URL('../src/pages/IssuesPage.tsx', import.meta.url), 'utf8')
 const tasksSource = readFileSync(new URL('../src/pages/TaskManagementPage.tsx', import.meta.url), 'utf8')
+const tasksCss = readFileSync(new URL('../src/components/task-management/workProgressWorkspace.css', import.meta.url), 'utf8')
 
 const classTokens = (tag) => tag.match(/className="([^"]+)"/)?.[1].split(/\s+/) ?? []
 
@@ -39,15 +40,16 @@ test('every Issues page wide table scrolls locally and keeps a readable minimum 
   assert.equal(localTableWrappers.length, 4)
 })
 
-test('Task Management top header wraps while retaining local horizontal overflow', () => {
+test('Task Management header wraps controls while the table owns horizontal scrolling', () => {
   const header = tasksSource.match(/<header className="[^"]+"/)?.[0]
   assert.ok(header)
   const tokens = classTokens(header)
-  for (const required of ['min-h-14', 'flex-wrap', 'px-4', 'py-2', 'lg:px-6', 'overflow-x-auto']) {
+  for (const required of ['min-h-14', 'flex-wrap', 'px-4', 'py-2', 'lg:px-6']) {
     assert.ok(tokens.includes(required), `task header is missing ${required}: ${header}`)
   }
   assert.ok(!tokens.includes('h-14'))
   assert.match(tasksSource, /className="flex-1 min-w-0 min-h-0 flex overflow-hidden"/)
+  assert.match(tasksCss, /\.wp-table-scroll[^\n]*overflow: auto/)
 })
 
 test('Task Management detail pane overlays below lg and returns to the split layout above lg', () => {

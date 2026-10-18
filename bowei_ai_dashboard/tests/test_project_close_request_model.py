@@ -28,6 +28,8 @@ EXPECTED_COLUMNS = {
     "updated_at",
     "reviewed_at",
     "cancelled_at",
+    "client_request_id",
+    "request_payload_hash",
 }
 
 
@@ -107,6 +109,11 @@ def test_project_close_request_model_has_exact_table_contract():
     assert ("requester_person_id",) in indexed
     assert ("reviewer_person_id",) in indexed
     assert ("status",) in indexed
+    assert ("client_request_id",) in indexed
+
+    client_request_id = models.ProjectCloseRequest.__table__.c.client_request_id
+    assert client_request_id.unique is True
+    assert client_request_id.info["api_exclude"] is True
 
 
 def test_project_close_request_defaults_and_timestamps_are_registered():

@@ -10,6 +10,9 @@ export type PlanTableColumnKey =
   | 'risk'
   | 'latestProgress'
   | 'nextStep'
+  | 'expectedOutcome'
+  | 'goal'
+  | 'boweiRole'
 
 export type PlanTableColumnGroupKey = 'structure' | 'planning' | 'tracking'
 
@@ -32,6 +35,12 @@ export const PLAN_TABLE_COLUMNS: readonly PlanTableColumn[] = [
   { key: 'risk', label: '风险/问题', group: 'tracking', priority: 'medium', width: 110, exportOrder: 7 },
   { key: 'latestProgress', label: '最新进展', group: 'tracking', priority: 'medium', width: 260, exportOrder: 8 },
   { key: 'nextStep', label: '下一步', group: 'tracking', priority: 'high', width: 220, exportOrder: 9 },
+]
+
+export const PLAN_TABLE_OPTIONAL_COLUMNS: readonly PlanTableColumn[] = [
+  { key: 'expectedOutcome', label: '预期成果', group: 'planning', priority: 'medium', width: 240, exportOrder: 10 },
+  { key: 'goal', label: '目标', group: 'planning', priority: 'medium', width: 240, exportOrder: 11 },
+  { key: 'boweiRole', label: '博维角色', group: 'planning', priority: 'medium', width: 220, exportOrder: 12 },
 ]
 
 export type PlanTableColumnGroup = {
@@ -61,7 +70,7 @@ export function getPlanTableColumnGroups(
 }
 
 export function getPlanTableColumn(key: PlanTableColumnKey): PlanTableColumn {
-  const column = PLAN_TABLE_COLUMNS.find((item) => item.key === key)
+  const column = [...PLAN_TABLE_COLUMNS, ...PLAN_TABLE_OPTIONAL_COLUMNS].find((item) => item.key === key)
   if (!column) throw new Error(`Unknown project work progress column: ${key}`)
   return column
 }
@@ -87,5 +96,8 @@ export function getPlanRowCellValue(row: PlanTableRow, key: PlanTableColumnKey):
       return [meta, submission.summary].filter(Boolean).join('\n') || row.latestProgress
     }
     case 'nextStep': return row.nextStep
+    case 'expectedOutcome': return row.subtask?.expected_outcome?.trim() || '—'
+    case 'goal': return row.subtask?.goal?.trim() || '—'
+    case 'boweiRole': return row.subtask?.bowei_role?.trim() || '—'
   }
 }

@@ -112,7 +112,7 @@ def can_view_in_center(
 ) -> bool:
     proj_id = project_id_of(row)
     return can_view_submission_in_confirmation_by_project(
-        context, proj_id, row.submitter or "", db
+        context, proj_id, row.submitter or "", db, submitter_id=row.submitter_id
     )
 
 
@@ -144,7 +144,15 @@ def role_allows_pending_view(
         return submission_status(row) in SS.WAITING_COORDINATOR_FEEDBACK
     if "project_ceo" in roles:
         return submission_status(row) in SS.WAITING_CEO_DECISION
-    return (row.submitter or "") == context.get("name", "")
+    from .person_identity import person_identity_matches
+    return person_identity_matches(
+        db,
+        person_id=context.get("person_id"),
+        person_name=context.get("name"),
+        stored_person_id=row.submitter_id,
+        stored_name=row.submitter,
+        account_username=context.get("account_username"),
+    )
 
 
 # ── Batch-mode helpers (eliminate N+1 in list endpoints) ──────
@@ -155,7 +163,16 @@ def preload_user_project_roles(context: dict, db) -> dict[int, set[str]]:
     在行循环中替代 get_all_project_roles，消除 N+1 查询。
     """
     from sqlalchemy import text as _t
+    from .person_identity import legacy_person_identity_values
     person_id = context.get("person_id")
+    legacy_values = legacy_person_identity_values(
+        db,
+        person_id=person_id,
+        person_name=context.get("name"),
+        account_username=context.get("account_username"),
+    )
+    context["legacy_identity_values"] = legacy_values
+    context["legacy_name_is_unique"] = context.get("name") in legacy_values
     result: dict[int, set[str]] = {}
     if person_id:
         rows = db.execute(
@@ -178,11 +195,19 @@ def can_view_batch(
     submitter: str | None,
     project_id: int | None,
     cache: dict[int, set[str]],
+    *,
+    submitter_id: int | None = None,
 ) -> bool:
     """无 DB 查询的行级可见性检查（配合 preload_user_project_roles 使用）。"""
     if context["can_view_all"]:
         return True
-    if submitter == context.get("name", ""):
+    person_id = context.get("person_id")
+    if submitter_id is not None and person_id is not None and submitter_id == person_id:
+        return True
+    if (
+        submitter_id is None
+        and submitter in context.get("legacy_identity_values", set())
+    ):
         return True
     if context.get("is_ceo"):
         return True
@@ -197,6 +222,8 @@ def role_allows_batch(
     project_id: int | None,
     raw_status: str | None,
     cache: dict[int, set[str]],
+    *,
+    submitter_id: int | None = None,
 ) -> bool:
     """无 DB 查询的角色过滤（配合 preload_user_project_roles 使用）。"""
     from ..domain import submission_status as SS
@@ -212,7 +239,10 @@ def role_allows_batch(
         return norm in SS.WAITING_COORDINATOR_FEEDBACK
     if "project_ceo" in roles:
         return norm in SS.WAITING_CEO_DECISION
-    return (submitter or "") == context.get("name", "")
+    person_id = context.get("person_id")
+    if submitter_id is not None:
+        return person_id is not None and submitter_id == person_id
+    return (submitter or "") in context.get("legacy_identity_values", set())
 
 
 # ── Project-level capability checks (no row needed) ───────────

@@ -19,15 +19,12 @@ from ..permissions import ROLE_CEO
 # ── person_id 解析工具 ─────────────────────────────────────────
 
 def person_id_for_name(name: str, db: Session) -> int | None:
-    """person.name → person.id（精确匹配，活跃人员）。"""
+    """person.name → person.id only when the active name is unambiguous."""
     if not name or not name.strip():
         return None
     try:
-        row = db.execute(
-            text("SELECT id FROM people WHERE name=:n AND is_active IS TRUE"),
-            {"n": name.strip()},
-        ).fetchone()
-        return int(row[0]) if row else None
+        from .person_identity import unique_active_person_id_for_name
+        return unique_active_person_id_for_name(db, name)
     except Exception:
         return None
 

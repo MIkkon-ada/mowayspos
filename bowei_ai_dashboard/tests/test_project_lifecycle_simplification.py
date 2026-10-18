@@ -49,6 +49,74 @@ def test_approval_enters_active_without_pending_kickoff_gate():
     assert project.is_active is True
 
 
+@pytest.mark.parametrize("lifecycle", ["draft", "dispatched", "returned", "active", "archived"])
+@pytest.mark.parametrize("action", ["approve", "return"])
+def test_start_review_actions_reject_projects_not_pending_review(action, lifecycle):
+    db = _db(lifecycle)
+
+    with pytest.raises(HTTPException) as exc_info:
+        if action == "approve":
+            projects.approve_project(1, current_user="coach", db=db)
+        else:
+            projects.return_project(1, current_user="coach", reason="补充", db=db)
+
+    assert exc_info.value.status_code == 409
+    assert db.get(models.Project, 1).status == lifecycle
+    assert db.query(models.OperationLog).filter(models.OperationLog.action.in_(["approve_project", "return_project"])).count() == 0
+    assert db.query(models.Notification).filter(models.Notification.type.in_(["project_kickoff", "project_returned"])).count() == 0
+
+
+@pytest.mark.parametrize("action", ["approve", "return"])
+def test_start_review_transition_locks_project_before_check_and_write(action, monkeypatch):
+    db = _db("pending_review")
+    executed_statements = []
+    execute = db.execute
+
+    def record_execute(statement, *args, **kwargs):
+        executed_statements.append(statement)
+        return execute(statement, *args, **kwargs)
+
+    monkeypatch.setattr(db, "execute", record_execute)
+    if action == "approve":
+        projects.approve_project(1, current_user="coach", db=db)
+    else:
+        projects.return_project(1, current_user="coach", db=db)
+
+    assert any(getattr(statement, "_for_update_arg", None) is not None for statement in executed_statements)
+
+
+@pytest.mark.parametrize("field", ["status", "lifecycle_status"])
+@pytest.mark.parametrize("target", ["dispatched", "pending_review", "returned", "active"])
+def test_project_metadata_patch_cannot_bypass_lifecycle_actions(field, target):
+    db = _db("draft")
+
+    with pytest.raises(HTTPException) as exc_info:
+        projects.update_project(
+            1,
+            schemas.ProjectPatchPayload(**{field: target}),
+            current_user="company_ceo",
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert db.get(models.Project, 1).status == "draft"
+
+
+def test_project_metadata_patch_rejects_conflicting_legacy_lifecycle_fields():
+    db = _db("draft")
+
+    with pytest.raises(HTTPException) as exc_info:
+        projects.update_project(
+            1,
+            schemas.ProjectPatchPayload(status="draft", lifecycle_status="active"),
+            current_user="company_ceo",
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert db.get(models.Project, 1).status == "draft"
+
+
 def test_dispatch_changes_draft_to_dispatched_and_notifies_owner():
     db = _db("draft")
     _set_dispatch_base_info(db)

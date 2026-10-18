@@ -74,82 +74,99 @@ def _rebuild_person_duties(db: Session):
 
 def _sync_person_assignments(
     db: Session,
+    person_id: int,
     person_name: str,
     coordinated_projects: list[str],
     owned_projects: list[str],
     collaborated_projects: list[str],
 ):
     projects = db.query(models.Project).all()
-    for project in projects:
-        if project.coordinator == person_name:
-            project.coordinator = ""
+    person = db.get(models.Person, person_id)
+    if not person:
+        raise HTTPException(404, "person not found")
+    name_match_count = db.query(models.Person.id).filter(
+        models.Person.name == person_name,
+    ).limit(2).count()
+    if name_match_count <= 1:
+        for project in projects:
+            if project.coordinator == person_name:
+                project.coordinator = ""
 
-        owners = [name for name in _split_names(project.owners) if name != person_name]
-        collaborators = [name for name in _split_names(project.collaborators) if name != person_name]
+            owners = [name for name in _split_names(project.owners) if name != person_name]
+            collaborators = [name for name in _split_names(project.collaborators) if name != person_name]
 
-        if project.name in coordinated_projects:
-            project.coordinator = person_name
-        if project.name in owned_projects:
-            owners.append(person_name)
-        if project.name in collaborated_projects:
-            collaborators.append(person_name)
+            if project.name in coordinated_projects:
+                project.coordinator = person_name
+            if project.name in owned_projects:
+                owners.append(person_name)
+            if project.name in collaborated_projects:
+                collaborators.append(person_name)
 
-        project.owners = _join_names(owners)
-        project.collaborators = _join_names(collaborators)
+            project.owners = _join_names(owners)
+            project.collaborators = _join_names(collaborators)
 
     # 同步到 project_members 正式表（解决旧字段有记录但 project_members 缺失的问题）
-    person = db.query(models.Person).filter(models.Person.name == person_name).first()
-    if person:
-        managed_roles = ["coordinator", "owner", "member"]
-        db.query(models.ProjectMember).filter(
-            models.ProjectMember.person_id == person.id,
-            models.ProjectMember.role.in_(managed_roles),
-        ).delete(synchronize_session=False)
+    managed_roles = ["coordinator", "owner", "member"]
+    db.query(models.ProjectMember).filter(
+        models.ProjectMember.person_id == person.id,
+        models.ProjectMember.role.in_(managed_roles),
+    ).delete(synchronize_session=False)
 
-        for project in projects:
-            entries: list[tuple[str, str]] = []
-            if project.name in coordinated_projects:
-                entries.append(("coordinator", person_name))
-            if project.name in owned_projects:
-                entries.append(("owner", person_name))
-            if project.name in collaborated_projects:
-                entries.append(("member", person_name))
-            for role, snapshot in entries:
-                db.add(models.ProjectMember(
-                    project_id=project.id,
-                    person_id=person.id,
-                    person_name_snapshot=snapshot,
-                    role=role,
-                ))
+    for project in projects:
+        entries: list[tuple[str, str]] = []
+        if project.name in coordinated_projects:
+            entries.append(("coordinator", person_name))
+        if project.name in owned_projects:
+            entries.append(("owner", person_name))
+        if project.name in collaborated_projects:
+            entries.append(("member", person_name))
+        for role, snapshot in entries:
+            db.add(models.ProjectMember(
+                project_id=project.id,
+                person_id=person.id,
+                person_name_snapshot=snapshot,
+                role=role,
+            ))
 
     _rebuild_person_duties(db)
 
 
-def _detach_person_from_projects(db: Session, person_name: str):
+def _detach_person_from_projects(db: Session, person_id: int):
+    person = db.get(models.Person, person_id)
+    if not person:
+        return
+    person_name = person.name
     projects = db.query(models.Project).all()
-    for project in projects:
-        if project.coordinator == person_name:
-            project.coordinator = ""
-        project.owners = _join_names([name for name in _split_names(project.owners) if name != person_name])
-        project.collaborators = _join_names([name for name in _split_names(project.collaborators) if name != person_name])
+    name_match_count = db.query(models.Person.id).filter(
+        models.Person.name == person_name,
+    ).limit(2).count()
+    if name_match_count <= 1:
+        for project in projects:
+            if project.coordinator == person_name:
+                project.coordinator = ""
+            project.owners = _join_names([name for name in _split_names(project.owners) if name != person_name])
+            project.collaborators = _join_names([name for name in _split_names(project.collaborators) if name != person_name])
 
     # 同步清理 project_members 表
-    person = db.query(models.Person).filter(models.Person.name == person_name).first()
-    if person:
-        db.query(models.ProjectMember).filter(
-            models.ProjectMember.person_id == person.id,
-        ).delete(synchronize_session=False)
+    db.query(models.ProjectMember).filter(
+        models.ProjectMember.person_id == person.id,
+    ).delete(synchronize_session=False)
 
     _rebuild_person_duties(db)
 
 
 def _rename_person_in_projects(db: Session, person_id: int, old_name: str, new_name: str):
     """Keep existing project memberships when a narrow profile update renames a person."""
-    for project in db.query(models.Project).all():
-        if project.coordinator == old_name:
-            project.coordinator = new_name
-        project.owners = _join_names([new_name if name == old_name else name for name in _split_names(project.owners)])
-        project.collaborators = _join_names([new_name if name == old_name else name for name in _split_names(project.collaborators)])
+    old_name_still_exists = db.query(models.Person.id).filter(
+        models.Person.name == old_name,
+        models.Person.id != person_id,
+    ).first()
+    if not old_name_still_exists:
+        for project in db.query(models.Project).all():
+            if project.coordinator == old_name:
+                project.coordinator = new_name
+            project.owners = _join_names([new_name if name == old_name else name for name in _split_names(project.owners)])
+            project.collaborators = _join_names([new_name if name == old_name else name for name in _split_names(project.collaborators)])
     db.query(models.ProjectMember).filter(
         models.ProjectMember.person_id == person_id,
         models.ProjectMember.person_name_snapshot == old_name,
@@ -409,7 +426,7 @@ def create_person(
     db.add(row)
     db.flush()
     _sync_person_admin_mirrors(db, row)
-    _sync_person_assignments(db, row.name, coordinated, owned, collaborated)
+    _sync_person_assignments(db, row.id, row.name, coordinated, owned, collaborated)
     crud.log(db, current_user, "create", "person", row.id, after=crud.to_dict(row))
     db.commit()
     db.refresh(row)
@@ -445,7 +462,7 @@ def update_person(
     assignment_fields = {"coordinated_projects", "owned_projects", "collaborated_projects"}
     has_assignment_update = bool(assignment_fields & explicit_fields)
     if has_assignment_update:
-        _detach_person_from_projects(db, old_name)
+        _detach_person_from_projects(db, row.id)
     row.name = new_name
     if "role" in explicit_fields:
         row.role = payload.role
@@ -478,7 +495,7 @@ def update_person(
     _sync_person_admin_mirrors(db, row)
     if has_assignment_update:
         coordinated, owned, collaborated = _payload_project_sets(payload)
-        _sync_person_assignments(db, row.name, coordinated, owned, collaborated)
+        _sync_person_assignments(db, row.id, row.name, coordinated, owned, collaborated)
     elif old_name != row.name:
         _rename_person_in_projects(db, row.id, old_name, row.name)
     crud.log(db, current_user, "update", "person", row.id, before=before, after=crud.to_dict(row))
@@ -523,7 +540,7 @@ def delete_person(
     if bound_members:
         raise HTTPException(409, "该人员存在于项目成员中，请先从项目成员移除")
     before = crud.to_dict(row)
-    _detach_person_from_projects(db, row.name)
+    _detach_person_from_projects(db, row.id)
     db.delete(row)
     crud.log(db, current_user, "delete", "person", row_id, before=before)
     db.commit()

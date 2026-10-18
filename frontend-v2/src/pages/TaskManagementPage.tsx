@@ -8,7 +8,7 @@ import { fetchSubTasks, fetchSubTasksBatch, createSubTask, patchSubTaskStatus, i
 import type { SubTaskDetail, SubTaskPayload } from '../api/subtasks'
 import { createUpdate } from '../api/updates'
 import { ApiError } from '../api/client'
-import { getProject, getProjectMembers } from '../api/projects'
+import { getProject, getProjectMembers, getWorkProgressColumns, updateWorkProgressColumns } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } from '../domain/taskPermission'
 import type { TaskItem, SubTaskItem, Project, ProjectMember } from '../types'
@@ -17,9 +17,13 @@ import { getProjectById, getProjectIdFromRecord } from '../domain/projectIdentit
 import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
 import { getKeyTaskAssigneeNames, taskHasKeyTaskAssignee } from '../domain/keyTaskAssigneeFilter'
 import { PlanTableViewV2 } from '../components/task-management/PlanTableViewV2'
+import { buildMobileTaskList } from '../components/task-management/planTableViewModel'
+import { WORK_PROGRESS_OPTIONAL_COLUMNS, type WorkProgressOptionalColumnKey } from '../components/task-management/workProgressColumnSizing'
 import { ChevronDownIcon } from '../components/icons/ChevronDownIcon'
 import { KeyTaskExecutionDetailView } from '../components/task-management/KeyTaskExecutionDetailView'
+import { MobileTaskList } from '../features/mobile-core-pages/MobileTaskList'
 import { toast } from '../utils/toast'
+import { useWindowFocusVersion } from '../utils/useWindowFocusVersion'
 
 const NOT_STARTED = new Set(['未开始', 'not_started', 'notstarted'])
 const IN_PROGRESS  = new Set(['推进中', '进行中', 'in_progress'])
@@ -208,6 +212,7 @@ function OwnerCell({ name }: { name?: string }) {
 
 export function TaskManagementPage() {
   const { currentProjectId, projects, currentUser, currentProjectRoles } = useProject()
+  const focusRefreshVersion = useWindowFocusVersion()
   const [tasks, setTasks]             = useState<TaskItem[]>([])
   const [loading, setLoading]         = useState(false)
   const [selectedTask, setSelectedTask] = useState<TaskItem | null>(null)
@@ -240,6 +245,9 @@ export function TaskManagementPage() {
   const [filterPageOpen, setFilterPageOpen] = useState(false)
   const [filterDraft, setFilterDraft] = useState({ status: '', owner: '', search: '' })
   const [operationsOpen, setOperationsOpen] = useState(false)
+  const [columnsOpen, setColumnsOpen] = useState(false)
+  const [optionalColumns, setOptionalColumns] = useState<WorkProgressOptionalColumnKey[]>([])
+  const [columnsSaving, setColumnsSaving] = useState(false)
   const [projectStandardExpanded, setProjectStandardExpanded] = useState(false)
   const [showDeleted, setShowDeleted] = useState(false)
   // viewProjectId：null=全部任务，非null=特定项目
@@ -253,6 +261,7 @@ export function TaskManagementPage() {
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null)
   const [resolvedProjectDetail, setResolvedProjectDetail] = useState<Project | null>(null)
   const [formDefaultProjectId, setFormDefaultProjectId] = useState<number | null>(null)
+  const taskCreateAttemptRef = useRef<{ fingerprint: string; requestId: string } | null>(null)
   const effectiveTaskProjectId = viewProjectId ?? currentProjectId ?? autoSelectedTaskProjectId
   const projectFromContext = useMemo(
     () => projects.find((project) => project.id === effectiveTaskProjectId) ?? null,
@@ -286,6 +295,32 @@ export function TaskManagementPage() {
   const canManageTrash = currentUser?.is_tech_admin || resolvedTaskProjects.some((p) =>
     canManageProjectTrash({ isTechAdmin: false, projectRoles: p.user_roles ?? [] }),
   )
+
+  useEffect(() => {
+    let cancelled = false
+    setOptionalColumns([])
+    setColumnsOpen(false)
+    if (effectiveTaskProjectId != null) {
+      getWorkProgressColumns(effectiveTaskProjectId)
+        .then((config) => { if (!cancelled) setOptionalColumns(config.optional_columns) })
+        .catch(() => { if (!cancelled) toast.error('读取项目扩展列失败') })
+    }
+    return () => { cancelled = true }
+  }, [effectiveTaskProjectId])
+
+  async function toggleOptionalColumn(key: WorkProgressOptionalColumnKey) {
+    if (effectiveTaskProjectId == null || columnsSaving) return
+    const next = optionalColumns.includes(key) ? optionalColumns.filter((item) => item !== key) : [...optionalColumns, key]
+    setColumnsSaving(true)
+    try {
+      const saved = await updateWorkProgressColumns(effectiveTaskProjectId, next)
+      setOptionalColumns(saved.optional_columns)
+    } catch {
+      toast.error('保存项目扩展列失败，请重试')
+    } finally {
+      setColumnsSaving(false)
+    }
+  }
 
 
   // 侧边栏切换项目时重置为全部
@@ -376,6 +411,11 @@ export function TaskManagementPage() {
         if (cancelled) return
         const loaded = Array.isArray(d) ? d : []
         setTasks(loaded)
+        if (focusRefreshVersion > 0) {
+          setSelectedTask((current) => current
+            ? loaded.find((task) => task.id === current.id) ?? null
+            : null)
+        }
         // Auto-open task when navigated from 我的工作台
         if (openTaskId && !openTaskHandled.current) {
           const target = loaded.find(t => String(t.id) === openTaskId)
@@ -395,7 +435,7 @@ export function TaskManagementPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [effectiveTaskProjectId, showDeleted, canManageTrash, searchParams])
+  }, [effectiveTaskProjectId, showDeleted, canManageTrash, searchParams, focusRefreshVersion, currentUser?.account_id, currentUser?.person_id, currentUser?.username])
 
   // 专项下拉选项来自全部可见项目，而非已加载任务
 
@@ -428,6 +468,30 @@ export function TaskManagementPage() {
       return { active, deleted }
     })
   }
+
+  const handledFocusRefreshVersion = useRef(0)
+  useEffect(() => {
+    if (focusRefreshVersion === 0 || handledFocusRefreshVersion.current === focusRefreshVersion) return
+    handledFocusRefreshVersion.current = focusRefreshVersion
+    let cancelled = false
+    for (const taskId of expandedTasks) {
+      fetchSubTasks(taskId, false)
+        .then((rows) => {
+          if (!cancelled) setTaskSubMap((previous) => ({ ...previous, [taskId]: rows }))
+        })
+        .catch(() => {})
+    }
+    if (selectedSubTask) {
+      fetchSubtaskDetail(selectedSubTask.id)
+        .then((detail) => {
+          if (!cancelled) {
+            setSelectedSubTask((current) => current?.id === detail.id ? detail : current)
+          }
+        })
+        .catch(() => {})
+    }
+    return () => { cancelled = true }
+  }, [focusRefreshVersion, expandedTasks, selectedSubTask])
 
   function handleProjectFilter(name: string) {
     if (!name) return setViewProjectId(null)
@@ -538,6 +602,14 @@ export function TaskManagementPage() {
   }, [focusedProject])
 
   const planTableReady = !planTableLoading && tasks.every((task) => task.id in taskSubMap)
+  const mobilePlan = useMemo(() => buildMobileTaskList({
+    project: focusedProject,
+    tasks,
+    taskSubMap,
+    searchText: search,
+    statusFilter: filterStatus,
+    ownerFilter: filterOwner,
+  }), [focusedProject, tasks, taskSubMap, search, filterStatus, filterOwner])
 
   function assignmentMembers(projectId: number | null | undefined) {
     if (!projectId) return []
@@ -888,10 +960,12 @@ export function TaskManagementPage() {
       searchText: search,
       statusFilter: filterStatus,
       ownerFilter: filterOwner,
+      optionalColumns,
     })
   }
 
   function openTaskCreateForProject(projectId?: number | null) {
+    taskCreateAttemptRef.current = null
     setFormDefaultProjectId(projectId ?? effectiveTaskProjectId ?? null)
     setFormTask(null)
     setFormOpen(true)
@@ -904,10 +978,23 @@ export function TaskManagementPage() {
       return
     }
     const finalPayload = { ...payload, project_id: pid }
+    let createRequestId: string | undefined
+    if (!formTask) {
+      const fingerprint = JSON.stringify(finalPayload)
+      if (taskCreateAttemptRef.current?.fingerprint !== fingerprint) {
+        const requestId = globalThis.crypto?.randomUUID?.()
+          ?? `task-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        taskCreateAttemptRef.current = { fingerprint, requestId }
+      }
+      createRequestId = taskCreateAttemptRef.current.requestId
+    }
     const req = formTask
       ? updateTask(formTask.id, finalPayload)
-      : createTask(finalPayload)
+      : createTask(finalPayload, createRequestId)
     req.then(() => {
+      if (createRequestId && taskCreateAttemptRef.current?.requestId === createRequestId) {
+        taskCreateAttemptRef.current = null
+      }
       setFormOpen(false)
       setFormTask(null)
       setFormDefaultProjectId(null)
@@ -927,7 +1014,7 @@ export function TaskManagementPage() {
           projectMembersByProject={projectMembersByProject}
           onLoadProjectMembers={ensureProjectMembersLoaded}
           onSave={handleFormSave}
-          onClose={() => { setFormOpen(false); setFormTask(null); setFormDefaultProjectId(null) }}
+          onClose={() => { taskCreateAttemptRef.current = null; setFormOpen(false); setFormTask(null); setFormDefaultProjectId(null) }}
         />
       )}
       {importOpen && effectiveTaskProjectId && (
@@ -973,7 +1060,7 @@ export function TaskManagementPage() {
       )}
 
       {/* Compact project header: project selection stays visible; other filters open in a small panel. */}
-      {!selectedSubTask && <header className="work-progress-page-header min-h-14 px-4 py-2 lg:px-6 gap-3 flex items-center flex-shrink-0 min-w-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
+      {!selectedSubTask && <header className="work-progress-page-header min-h-14 px-4 py-2 lg:px-6 gap-3 flex flex-wrap items-center flex-shrink-0 min-w-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
         {!showDeleted && projectStandardText && <button type="button" className="wp-standard-toggle" aria-expanded={projectStandardExpanded} onClick={() => setProjectStandardExpanded((expanded) => !expanded)}>
           <span>项目总体标准</span><span>{projectStandardExpanded ? '收起' : '展开'}</span>
         </button>}
@@ -989,6 +1076,17 @@ export function TaskManagementPage() {
           <span><ChevronDownIcon className="wp-project-picker-icon" /></span>
         </div>
         <div className="wp-header-controls">
+          {!showDeleted && effectiveTaskProjectId != null && <div className="wp-filter-anchor">
+            <button type="button" className="wp-header-button" aria-haspopup="dialog" aria-expanded={columnsOpen} onClick={() => setColumnsOpen((open) => !open)}>字段{optionalColumns.length > 0 ? <span className="wp-filter-count">+{optionalColumns.length}</span> : null}</button>
+            {columnsOpen && <div className="wp-columns-popover" role="dialog" aria-label="工作推进表扩展字段">
+              <strong>项目扩展列</strong>
+              <p>按关键任务填写，项目内成员均可查看。</p>
+              {WORK_PROGRESS_OPTIONAL_COLUMNS.map((column) => <label key={column.key} className="wp-columns-choice">
+                <input type="checkbox" checked={optionalColumns.includes(column.key)} disabled={columnsSaving} onChange={() => void toggleOptionalColumn(column.key)} />
+                <span>{column.label}</span>
+              </label>)}
+            </div>}
+          </div>}
           <div className="wp-filter-anchor">
             <button type="button" className="wp-header-button" onClick={() => { if (filterPageOpen) setFilterPageOpen(false); else openFilterPage() }} aria-haspopup="dialog" aria-expanded={filterPageOpen}>
               筛选{(filterStatus || filterOwner || search) ? <span className="wp-filter-count">{[filterStatus, filterOwner, search].filter(Boolean).length}</span> : null}
@@ -1045,8 +1143,22 @@ export function TaskManagementPage() {
         />
       ) : (
       <div className="flex-1 min-w-0 min-h-0 flex overflow-hidden" style={{ background: '#F8FAFC' }}>
+        {!showDeleted && <div className="min-[800px]:hidden min-w-0 flex-1 overflow-y-auto bg-slate-50">
+          {hasNoTaskProjects ? (
+            <div className="px-4 py-10 text-center text-sm text-slate-500">{TASK_PROJECT_CONTEXT_EMPTY_MESSAGE}</div>
+          ) : requiresProjectSelection ? (
+            <div className="px-4 py-10 text-center text-sm text-slate-500">{TASK_PROJECT_CONTEXT_REQUIRED_MESSAGE}</div>
+          ) : (
+            <MobileTaskList
+              tasks={mobilePlan.tasks}
+              subTasksByTaskId={mobilePlan.subTasksByTaskId}
+              loading={!planTableReady}
+              onOpenSubTask={openSubDetail}
+            />
+          )}
+        </div>}
         <div
-          className={showDeleted ? 'flex-1 overflow-y-auto' : 'work-progress-plan-shell flex-1 min-w-0 overflow-hidden flex flex-col'}
+          className={showDeleted ? 'flex-1 overflow-y-auto' : 'hidden min-[800px]:flex work-progress-plan-shell flex-1 min-w-0 overflow-hidden flex-col'}
           style={showDeleted
             ? { background: '#F1F5F9', padding: '16px 20px 20px', paddingRight: 20 }
             : { background: '#F8FAFC' }}
@@ -1071,12 +1183,14 @@ export function TaskManagementPage() {
                 <PlanTableViewV2
                   project={focusedProject}
                   tasks={tasks}
+                  optionalColumns={optionalColumns}
                   statusFilter={filterStatus}
                   ownerFilter={filterOwner}
                   taskSubMap={taskSubMap}
                   searchText={search}
                   loading={planTableLoading}
                   onOpenSubTask={openSubDetail}
+                  onEditSubTask={isProjectActive(focusedProject) && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: focusedProject?.user_roles ?? [] }) ? openSubTaskAssignment : undefined}
                 />
               </div>
             </>
@@ -1776,6 +1890,7 @@ function OutlineImportModal({ defaultProjectId, projects, onCreated, onClose }: 
   const [provider, setProvider] = useState<string | null>(null)
   const [providerLabel, setProviderLabel] = useState('')
   const [noEngine, setNoEngine] = useState(false)
+  const batchCreateAttemptRef = useRef(new Map<string, string>())
 
   useEffect(() => {
     setProvider('capability')
@@ -1815,9 +1930,18 @@ function OutlineImportModal({ defaultProjectId, projects, onCreated, onClose }: 
   async function handleCreate() {
     const valid = drafts.filter((d) => d.key_task.trim())
     if (!valid.length) return
+    const fingerprint = JSON.stringify({ project_id: selectedProjectId, tasks: valid })
+    let requestId = batchCreateAttemptRef.current.get(fingerprint)
+    if (!requestId) {
+      requestId = globalThis.crypto?.randomUUID?.() ?? `outline-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      batchCreateAttemptRef.current.set(fingerprint, requestId)
+    }
     setCreating(true)
     try {
-      const created = await batchCreateTasks({ project_id: selectedProjectId, tasks: valid })
+      const created = await batchCreateTasks(
+        { project_id: selectedProjectId, tasks: valid },
+        requestId,
+      )
       onCreated(created)
     } catch {
       toast.error('批量创建失败，请重试')
@@ -2028,6 +2152,9 @@ function SubTaskAssignmentModal({ taskId, projectId, editingSubTask, projectMemb
   const [planTime, setPlanTime] = useState(editingSubTask?.plan_time ?? '')
   const [status, setStatus] = useState(editingSubTask?.status ?? '未开始')
   const [criteria, setCriteria] = useState(editingSubTask?.completion_criteria ?? '')
+  const [expectedOutcome, setExpectedOutcome] = useState(editingSubTask?.expected_outcome ?? '')
+  const [goal, setGoal] = useState(editingSubTask?.goal ?? '')
+  const [boweiRole, setBoweiRole] = useState(editingSubTask?.bowei_role ?? '')
   const [notes, setNotes] = useState(parsedNotes.noteText)
   const [saving, setSaving] = useState(false)
 
@@ -2044,8 +2171,17 @@ function SubTaskAssignmentModal({ taskId, projectId, editingSubTask, projectMemb
       title: title.trim(),
       assignee: assignee.trim(),
       plan_time: planTime.trim(),
+      collaborator_ids: editingSubTask?.collaborator_ids ?? [],
+      start_date: editingSubTask?.start_date ?? null,
+      due_kind: editingSubTask?.due_kind ?? 'unknown',
+      due_date: editingSubTask?.due_date ?? null,
+      due_label: editingSubTask?.due_label ?? null,
+      due_reference_date: editingSubTask?.due_reference_date ?? null,
       status,
       completion_criteria: criteria.trim(),
+      expected_outcome: expectedOutcome.trim(),
+      goal: goal.trim(),
+      bowei_role: boweiRole.trim(),
       notes: buildNotesWithAssistingPerson(assistingPerson, notes),
     }
     setSaving(true)
@@ -2121,6 +2257,19 @@ function SubTaskAssignmentModal({ taskId, projectId, editingSubTask, projectMemb
           <div>
             <label className={labelCls}>备注 / 标准</label>
             <textarea className={inputCls} rows={2} value={criteria} onChange={(e) => setCriteria(e.target.value)} placeholder="可填写完成标准、验收口径或交付说明" />
+          </div>
+
+          <div>
+            <label className={labelCls}>预期成果</label>
+            <textarea className={inputCls} rows={2} value={expectedOutcome} onChange={(e) => setExpectedOutcome(e.target.value)} placeholder="这条关键任务预计形成的成果" />
+          </div>
+          <div>
+            <label className={labelCls}>目标</label>
+            <textarea className={inputCls} rows={2} value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="这条关键任务希望达成什么目标" />
+          </div>
+          <div>
+            <label className={labelCls}>博维角色</label>
+            <textarea className={inputCls} rows={2} value={boweiRole} onChange={(e) => setBoweiRole(e.target.value)} placeholder="填写博维公司在这条任务中的分工" />
           </div>
 
           <div>

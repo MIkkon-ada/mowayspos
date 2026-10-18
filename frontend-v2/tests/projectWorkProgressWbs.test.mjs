@@ -95,11 +95,10 @@ const taskSubMap = {
 }
 
 test('shared columns describe the same project work progress fields for web and Excel', async () => {
-  const { PLAN_TABLE_COLUMNS, getPlanTableColumnGroups } = await loadModule('src/components/task-management/planTableColumns.ts')
+  const { PLAN_TABLE_COLUMNS, PLAN_TABLE_OPTIONAL_COLUMNS, getPlanTableColumnGroups } = await loadModule('src/components/task-management/planTableColumns.ts')
   assert.deepEqual(PLAN_TABLE_COLUMNS.map((column) => column.key), [
     'workstream',
     'keyTask',
-    'deliverable',
     'acceptance',
     'responsible',
     'planTime',
@@ -111,7 +110,6 @@ test('shared columns describe the same project work progress fields for web and 
   assert.deepEqual(PLAN_TABLE_COLUMNS.map((column) => column.label), [
     '重点工作',
     '关键任务',
-    '交付成果',
     '验收标准',
     '负责人',
     '计划时间',
@@ -122,9 +120,10 @@ test('shared columns describe the same project work progress fields for web and 
   ])
   assert.deepEqual(getPlanTableColumnGroups(PLAN_TABLE_COLUMNS).map((group) => [group.key, group.label, group.columns.length]), [
     ['structure', '工作结构', 2],
-    ['planning', '计划与验收', 4],
+    ['planning', '计划与验收', 3],
     ['tracking', '推进跟进', 4],
   ])
+  assert.deepEqual(PLAN_TABLE_OPTIONAL_COLUMNS.map((column) => column.key), ['expectedOutcome', 'goal', 'boweiRole'])
 })
 
 test('plan rows expose project-control summaries without a WBS number column', async () => {
@@ -140,6 +139,14 @@ test('plan rows expose project-control summaries without a WBS number column', a
   assert.equal(rows[0].nextStep, '提交管理层复核')
   assert.equal(rows[0].risk, '有风险')
   assert.equal(rows[2].workstream, '经营复盘机制')
+})
+
+test('mobile task cards reuse the plan table search and filters without duplicating parent tasks', async () => {
+  const { buildMobileTaskList } = await loadModule(MODEL_FILE)
+  const result = buildMobileTaskList({ project, tasks, taskSubMap, searchText: '张三' })
+
+  assert.deepEqual(result.tasks.map((task) => task.id), [11])
+  assert.deepEqual(result.subTasksByTaskId[11].map((subtask) => subtask.id), [101])
 })
 
 test('page and export use the project work progress naming and shared schema', () => {

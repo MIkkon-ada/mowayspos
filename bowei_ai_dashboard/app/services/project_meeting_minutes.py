@@ -15,6 +15,7 @@ from .. import models
 from ..domain import submission_status as SS
 from ..domain import source_type as ST
 from ..time_utils import utc_now
+from .key_task_execution import SOURCE_LABELS, submission_summary
 from .project_meeting_agent_contracts import EvidenceSpan, MeetingAgentFinal, MeetingFact, TaskUpdate
 from .meeting_change_set import EXECUTION_SCHEDULE_FIELDS
 
@@ -401,6 +402,49 @@ def build_project_meeting_snapshot(project_id: int, db: Session) -> dict[str, An
             }
         )
 
+    key_task_ids = [subtask.id for subtask, _, _ in key_task_snapshots]
+    latest_events: dict[int, models.KeyTaskExecutionEvent] = {}
+    latest_submissions: dict[int, models.UpdateSubmission] = {}
+    if key_task_ids:
+        for event in (
+            db.query(models.KeyTaskExecutionEvent)
+            .filter(models.KeyTaskExecutionEvent.key_task_id.in_(key_task_ids),
+                    models.KeyTaskExecutionEvent.authority == "confirmed",
+                    models.KeyTaskExecutionEvent.affects_current_progress.is_(True))
+            .order_by(models.KeyTaskExecutionEvent.key_task_id.asc(),
+                      models.KeyTaskExecutionEvent.effective_at.desc(),
+                      models.KeyTaskExecutionEvent.id.desc())
+            .all()
+        ):
+            latest_events.setdefault(event.key_task_id, event)
+        for submission in (
+            db.query(models.UpdateSubmission)
+            .filter(models.UpdateSubmission.related_subtask_id.in_(key_task_ids),
+                    models.UpdateSubmission.confirmed_at.is_not(None))
+            .order_by(models.UpdateSubmission.related_subtask_id.asc(),
+                      models.UpdateSubmission.confirmed_at.desc(),
+                      models.UpdateSubmission.id.desc())
+            .all()
+        ):
+            latest_submissions.setdefault(submission.related_subtask_id, submission)
+    for subtask, _, key_task_snapshot in key_task_snapshots:
+        event = latest_events.get(subtask.id)
+        submission = latest_submissions.get(subtask.id)
+        key_task_snapshot["current_progress"] = (
+            {
+                "event_id": event.id,
+                "summary": event.progress_summary or "",
+                "next_step": event.next_step or "",
+                "source_label": SOURCE_LABELS.get(event.source_type, event.source_type),
+            }
+            if event else {
+                "event_id": None,
+                "summary": submission_summary(submission, subtask.id) if submission else "",
+                "next_step": "",
+                "source_label": "个人提交" if submission else "",
+            }
+        )
+
     published_rows = (
         db.query(models.Meeting)
         .filter(
@@ -777,9 +821,30 @@ def _normalize_agent_fact(item: MeetingFact, document_text: str | None) -> dict[
         errors.append("fact needs_confirmation requires owner review")
     return {
         "content": item.content,
+        "code": item.code,
+        "topic": item.topic,
         "owner": item.owner,
         "tracker": item.tracker,
         "due_date": item.due_date,
+        "source_note": item.source_note,
+        "confidence": item.confidence,
+        "needs_confirmation": item.needs_confirmation,
+        "evidence": evidence_result["evidence"],
+        "validation": {"state": "ready" if not errors else "blocked", "errors": errors},
+    }
+
+
+def _normalize_prior_action_tracking(item: Any, document_text: str | None) -> dict[str, Any]:
+    evidence_result = _normalize_agent_evidence(item.evidence, document_text)
+    errors = list(evidence_result["validation"]["errors"])
+    if item.needs_confirmation:
+        errors.append("prior action tracking needs owner confirmation")
+    return {
+        "content": item.content,
+        "code": item.code,
+        "owner": item.owner,
+        "status": item.status,
+        "progress_note": item.progress_note,
         "confidence": item.confidence,
         "needs_confirmation": item.needs_confirmation,
         "evidence": evidence_result["evidence"],
@@ -1049,6 +1114,7 @@ def normalize_project_meeting_agent_result(
         "next_stage_work": [_normalize_agent_fact(item, document_text) for item in final.next_steps],
         "risks": [_normalize_agent_fact(item, document_text) for item in final.risks],
         "open_questions": [_normalize_agent_fact(item, document_text) for item in final.open_questions],
+        "prior_action_tracking": [_normalize_prior_action_tracking(item, document_text) for item in final.prior_action_tracking],
         "execution_schedule_changes": legacy_changes,
         "meeting_facts": meeting_facts,
         "project_matches": project_matches,

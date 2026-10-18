@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **已被后续实现取代（2026-10-08）：** 本计划提出停止创建 `dispatched`，但当前 `dispatch_project()` 仍是常规入口并写入该状态；审核通过写 `active`，`pending_kickoff` 只作历史兼容。此计划仅保留决策背景，不要照计划重新修改当前流程。现行规则见 [`../../PROJECT_LIFECYCLE_AND_PERMISSIONS.md`](../../PROJECT_LIFECYCLE_AND_PERMISSIONS.md)。项目 `AGENTS.md` 还禁止未经用户允许使用子代理。
+
 **Goal:** Remove dispatch and kickoff as mandatory lifecycle gates so every new project follows `create/configure → owner submit → coach approve → active`, while preserving permissions, execution records, close review, audit history, and legacy-state compatibility.
 
 **Architecture:** Keep the canonical project lifecycle in the backend, but stop creating `dispatched` and `pending_kickoff` for new writes. Treat kickoff as an execution event that can create an audited kickoff meeting and write back approved proposals without changing the project lifecycle. Make the frontend derive todos and actions from the simplified lifecycle, while rendering legacy `dispatched` and `pending_kickoff` rows through compatibility mappings.

@@ -13,7 +13,7 @@ describe('Sidebar navigation styles', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/components/Sidebar.tsx'), 'utf8')
 
     expect(source).toContain('className="flex-1 px-2 py-3 xl:py-2 space-y-0.5 overflow-y-auto"')
-    expect(source).toContain('className="pt-3 xl:pt-2"')
+    expect(source).toContain('className="px-2 pt-4 first:pt-1 xl:pt-4"')
     expect(source).toContain('className="justify-center xl:justify-start px-2.5 py-2 xl:py-1.5"')
     expect(source).not.toContain("padding: '6px 10px'")
   })

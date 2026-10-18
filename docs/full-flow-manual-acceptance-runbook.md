@@ -1,5 +1,7 @@
 # 全流程人工验收 Runbook
 
+> **生命周期口径提示（2026-10-08）：** 本 Runbook 保留人工验收步骤；任何关于 `pending_kickoff` 是新项目门槛的旧描述均已被当前规则取代。现行迁移和权限见 [`PROJECT_LIFECYCLE_AND_PERMISSIONS.md`](PROJECT_LIFECYCLE_AND_PERMISSIONS.md)。
+
 > N4-P0-D-FULL-FLOW-MANUAL-ACCEPTANCE-RUNBOOK
 
 ## 1. 验收目标
@@ -674,24 +676,20 @@ npm run dev
 ## 附录 C：项目状态流转完整图
 
 ```
-新建项目 → draft（草稿）
-              │
-              └─ dispatch（下发）→ dispatched（已派发）
-                                      │
-                                      └─ owner-submit（PM提交）→ pending_review（待审核）
-                                                                      │
-                                                          ┌───────────┘
-                                                          │
-                                              ┌─ approve（审核通过）→ active（进行中）
-                                              │                           │
-                                              │                           └─ archive → archived（已归档）
-                                              │
-                                              └─ return（退回）→ returned（已退回）
-                                                                      │
-                                                                      └─ owner 修改后重新提交 → pending_review
+新建项目
+  → draft
+  → dispatched（公司管理下发）
+  → pending_review（负责人提交立项资料和工作计划）
+      ├─ 企业教练通过 → active
+      └─ 企业教练退回 → returned → 负责人修改重提 → pending_review
+  → pending_close（负责人申请结束）
+      ├─ 负责人取消 / 企业教练退回 → active
+      └─ 企业教练批准 → ended → 技术管理员归档 → archived
 ```
 
-> 技术兜底：super_admin 可通过 kickoff 接口从任意非归档状态直接启动项目到 active。
+> 兼容状态：旧记录可能仍为 `pending_kickoff`；当前审核通过不写入该状态。启动会 Agent 是独立提案审核流程。
+>
+> 特权入口：技术管理员可使用 kickoff 技术兜底接口，将非结束冻结、非归档状态改为 `active`；批量导入也可直接建为 `active`。这两条路径不代表常规立项流程。
 
 ---
 

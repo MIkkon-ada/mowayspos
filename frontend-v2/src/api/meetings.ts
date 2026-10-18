@@ -272,26 +272,31 @@ export type ProjectMeetingFieldSource = {
 
 export type ProjectMeetingProposalLineage = {
   schema_version: 1
-  change_id: string
-  action: 'update_execution_schedule' | 'create_execution_schedule'
-  target: {
+  change_id?: string
+  action?: 'update_execution_schedule' | 'create_execution_schedule'
+  target?: {
     project_id: number
     workstream_id: number
     key_task_id: number
     execution_schedule_id?: number
   }
-  requires_confirmation: true
-  source_fact_id: string
+  requires_confirmation?: true
+  source_fact_id?: string
+  source_fact_ids?: string[]
+  review_decision?: 'minutes_only' | 'link_task' | null
+  linked_key_task_id?: number
+  merged_into_proposal_id?: number
+  related_facts?: Array<{ fact_id: string; fact_type: string; content: string; reason?: string }>
   source_match_id?: string
-  source_delta_id: string
-  field_sources: Record<string, ProjectMeetingFieldSource>
-  meeting_evidence: Record<string, ProjectMeetingEvidenceSpan[]>
-  project_evidence: Array<{ source_object: string; field: string; value: unknown }>
-  delta: { delta_id?: string; delta_type: string; reasoning: string }
-  baseline_state: 'existing_target' | 'not_applicable_new_object'
-  before_baseline: Record<string, unknown>
-  parent_baseline: Record<string, unknown>
-  owner_edit_history: Array<{
+  source_delta_id?: string
+  field_sources?: Record<string, ProjectMeetingFieldSource>
+  meeting_evidence?: Record<string, ProjectMeetingEvidenceSpan[]>
+  project_evidence?: Array<{ source_object: string; field: string; value: unknown }>
+  delta?: { delta_id?: string; delta_type: string; reasoning: string }
+  baseline_state?: 'existing_target' | 'not_applicable_new_object'
+  before_baseline?: Record<string, unknown>
+  parent_baseline?: Record<string, unknown>
+  owner_edit_history?: Array<{
     field: string
     before: unknown
     after: unknown
@@ -302,7 +307,8 @@ export type ProjectMeetingProposalLineage = {
 
 export type ProjectMeetingScheduleChange = {
   id: number
-  action: 'update_execution_schedule' | 'create_execution_schedule'
+  action: 'update_execution_schedule' | 'create_execution_schedule' | 'confirm_work_progress' | 'review_unlinked_fact'
+  target_type?: 'execution_schedule' | 'subtask' | 'unresolved_fact'
   target_id: number | null
   parent_workstream_id: number | null
   parent_subtask_id?: number | null
@@ -310,6 +316,7 @@ export type ProjectMeetingScheduleChange = {
     project_id: number
     workstream_id?: number
     key_task_id?: number
+    subtask_id?: number
     execution_schedule_id?: number
   }
   before: Record<string, unknown>
@@ -317,11 +324,48 @@ export type ProjectMeetingScheduleChange = {
   evidence: Array<string | ProjectMeetingEvidenceSpan>
   reason: string
   confidence: number
-  validation: { state: 'ready' | 'blocked'; errors: string[] }
+  validation: { state: 'ready' | 'needs_review' | 'blocked'; errors: string[] }
   needs_confirmation?: boolean
-  execution_status: 'pending' | 'executed' | 'conflict'
+  execution_status: 'pending' | 'executed' | 'ignored' | 'conflict'
   lineage?: ProjectMeetingProposalLineage
   conflict_reason?: string[]
+}
+
+export type ProjectMeetingWorkProgressPreview = {
+  rows: Array<{
+    workstream_id: number
+    workstream_title: string
+    key_task_id: number
+    key_task_title: string
+    key_task_status: string
+    related_facts: Array<{ fact_id: string; fact_type: string; content: string; delta_type: string; reason: string }>
+    proposed: { progress_summary?: string; next_step?: string }
+    field_fact_ids: Record<string, string[]>
+    evidence: ProjectMeetingEvidenceSpan[]
+    confidence: number
+  }>
+  action_rows?: Array<{
+    fact_id: string
+    code: string
+    content: string
+    owner: string
+    tracker: string
+    due_date: string
+    match_state: 'matched' | 'needs_review'
+    key_task_id: number | null
+    key_task_title: string
+    workstream_id: number | null
+    suggested_key_task_id: number | null
+    confidence: number | null
+  }>
+  unlinked_facts: Array<{
+    fact_id: string
+    content: string
+    fact_type: string
+    reason: string
+    disposition: 'unmatched' | 'needs_confirmation'
+    suggested_key_task_id?: number | null
+  }>
 }
 
 export type ProjectMeetingEvidenceSpan = {
@@ -337,11 +381,17 @@ export type ProjectMeetingEvidence = {
 
 export type ProjectMeetingAgentFact = {
   content: string
+  code?: string
+  topic?: string
   owner?: string
   tracker?: string
   due_date?: string
+  source_note?: string
+  status?: string
+  progress_note?: string
   confidence?: number
   needs_confirmation?: boolean
+  human_edited?: boolean
   evidence: ProjectMeetingEvidenceSpan[]
   validation: { state: 'ready' | 'blocked'; errors: string[] }
 }
@@ -377,11 +427,13 @@ export type ProjectMeetingRun = {
   audit?: ProjectMeetingAgentAudit
   meeting_id: number | null
   meeting: MeetingItem | null
+  standard_minutes?: boolean
+  work_progress_stale?: boolean
   document?: { id?: number | null; original_name?: string; mime_type?: string; size_bytes?: number; content_hash?: string }
   snapshot: {
     project?: { id: number; name: string; code?: string }
     members?: Array<{ person_id?: number; name: string; role?: string }>
-    workstreams?: Array<{ id: number; key_task: string; status?: string; key_tasks?: Array<{ id: number; title: string; status?: string; execution_schedules?: unknown[] }> }>
+    workstreams?: Array<{ id: number; key_task: string; status?: string; key_tasks?: Array<{ id: number; title: string; status?: string; assignee?: string; current_progress?: { event_id: number | null; summary: string; next_step: string; source_label: string }; execution_schedules?: unknown[] }> }>
     history?: { is_first_meeting: boolean; previous_meeting_ids: number[] }
   }
   result: {
@@ -394,15 +446,28 @@ export type ProjectMeetingRun = {
     next_stage_work?: ProjectMeetingAgentFact[]
     risks?: ProjectMeetingAgentFact[]
     open_questions?: ProjectMeetingAgentFact[]
+    prior_action_tracking?: ProjectMeetingAgentFact[]
     execution_schedule_changes?: ProjectMeetingScheduleChange[]
+    work_progress_preview?: ProjectMeetingWorkProgressPreview
   }
   review_package?: { proposals: ProjectMeetingScheduleChange[] } | null
 }
 
-export function createProjectMeetingDocumentRun(projectId: number, file: File): Promise<ProjectMeetingRun> {
+export type ProjectMeetingInput = {
+  title: string
+  meeting_date: string
+  location: string
+  host: string
+  participants: string
+  organizer: string
+  copied_to: string
+}
+
+export function createProjectMeetingDocumentRun(projectId: number, file: File, input: ProjectMeetingInput): Promise<ProjectMeetingRun> {
   const form = new FormData()
   form.append('project_id', String(projectId))
   form.append('file', file, file.name)
+  for (const [key, value] of Object.entries(input)) form.append(key, value)
   return apiUpload<ProjectMeetingRun>('/api/meetings/document-runs', form)
 }
 
@@ -420,11 +485,13 @@ export async function pollProjectMeetingDocumentRun(
     intervalMs?: number
     maxAttempts?: number
     onStatus?: (status: ProjectMeetingRunStatus) => void
+    shouldContinue?: () => boolean
   } = {},
 ): Promise<ProjectMeetingRunStatus> {
   const intervalMs = options.intervalMs ?? 1000
   const maxAttempts = options.maxAttempts ?? 120
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (options.shouldContinue?.() === false) throw new Error('分析轮询已停止')
     const status = await fetchProjectMeetingDocumentRunStatus(runId)
     options.onStatus?.(status)
     if (status.status === 'pending_review' || status.status === 'failed') return status
@@ -439,9 +506,16 @@ export function fetchProjectMeetingReviewPackage(meetingId: number): Promise<Pro
 
 export function reviewProjectMeeting(
   meetingId: number,
-  payload: { action: 'publish' | 'apply_changes' | 'return'; reason?: string; proposal_ids?: number[] },
+  payload: { action: 'publish' | 'apply_changes' | 'approve_and_apply' | 'return'; reason?: string; proposal_ids?: number[] },
 ): Promise<MeetingItem> {
   return apiPost<MeetingItem>(`/api/meetings/${meetingId}/review`, payload)
+}
+
+export function reviewUnlinkedMeetingFacts(
+  meetingId: number,
+  payload: { decision: 'minutes_only' | 'link_task'; proposal_ids: number[]; key_task_id?: number },
+): Promise<{ proposals: ProjectMeetingScheduleChange[] }> {
+  return apiPost<{ proposals: ProjectMeetingScheduleChange[] }>(`/api/meetings/${meetingId}/fact-review`, payload)
 }
 
 export function projectMeetingDocumentDownloadUrl(meetingId: number): string {
@@ -534,8 +608,10 @@ export function createMeeting(payload: {
   risk_items_json: string
   transcript_text: string
   skill_run_id?: number
-}): Promise<MeetingItem> {
-  return apiPost<MeetingItem>('/api/meetings', payload)
+}, clientRequestId?: string): Promise<MeetingItem> {
+  return apiPost<MeetingItem>('/api/meetings', clientRequestId
+    ? { ...payload, client_request_id: clientRequestId }
+    : payload)
 }
 
 export function updateMeeting(
@@ -551,6 +627,7 @@ export function updateMeeting(
     organizer: string
     copied_to: string
     agenda_items_json: string
+    completed_items_json?: string
     prior_action_items_json: string
     source_mode: 'standard_minutes' | 'ai_analysis'
     summary: string

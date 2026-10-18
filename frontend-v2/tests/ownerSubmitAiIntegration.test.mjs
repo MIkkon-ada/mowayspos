@@ -27,7 +27,7 @@ test('AI merge confirmation updates local form state and retains submit validati
   assert.match(source, /setDraftTasks\(normalizedTasks\)/)
   assert.match(source, /if \(workProgressDraft\.length === 0\)/)
   assert.match(source, /if \(subtaskCount === 0\)/)
-  assert.match(source, /!subtask\.assignee_id/)
+  assert.match(source, /!subtask\.assigneeId && !subtask\.assignee\.trim\(\)/)
   assert.match(source, /setFillLoading\(true\)/)
 })
 

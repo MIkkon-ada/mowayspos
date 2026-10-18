@@ -92,7 +92,7 @@ test('progress text removes only the first assisting-person line', async () => {
   assert.equal(getMyTaskProgressText(''), '暂无进展记录')
 })
 
-test('row mapping keeps only the current assignee and deduplicates by subtask id', async () => {
+test('row mapping trusts server identity scope and deduplicates by subtask id', async () => {
   const { buildMyTaskRows } = await loadModel()
   const rows = buildMyTaskRows([
     task(1, 1, '进行中'),
@@ -100,7 +100,7 @@ test('row mapping keeps only the current assignee and deduplicates by subtask id
     task(2, 1, '未开始', { assignee: '李四' }),
     task(3, 2, '已完成'),
   ], projects, '张三')
-  assert.deepEqual(rows.map((row) => row.id), [1, 3])
+  assert.deepEqual(rows.map((row) => row.id), [1, 2, 3])
   assert.equal(rows[0].projectName, '数字化升级项目')
   assert.equal(rows[0].workstreamName, '重点工作 1')
 })
@@ -169,12 +169,14 @@ test('client pagination returns legal pages and supports 10, 20 and 50 rows', as
   assert.equal(paginateMyTaskRows(rows, 1, 50).items.length, 28)
 })
 
-test('data hook queries each active project with the fixed current user name', () => {
+test('data hook uses one authenticated aggregate request without sending identity parameters', () => {
   const hook = read('src/features/my-tasks/useMyTasks.ts')
-  assert.match(hook, /projects\.filter\(isProjectActive\)/)
-  assert.match(hook, /Promise\.allSettled/)
-  assert.match(hook, /fetchSubtasksByAssignee\(currentUser\.name, project\.id\)/)
-  assert.doesNotMatch(hook, /fetchSubtasksByAssignee\([^,]+,\s*null\)/)
+  const api = read('src/api/subtasks.ts')
+  assert.match(hook, /fetchMyTasks\(controller\.signal\)/)
+  assert.match(hook, /controller\.abort\(\)/)
+  assert.doesNotMatch(hook, /fetchSubtasksByAssignee|Promise\.allSettled/)
+  assert.match(api, /fetchMyTasks\(signal\?: AbortSignal\)[\s\S]*?apiGet<MyTasksResponse>\('\/api\/my-tasks', \{ signal, timeoutMs: 15_000 \}\)/)
+  assert.doesNotMatch(api.match(/export function fetchMyTasks[\s\S]*?\n}/)?.[0] ?? '', /person_id|assignee|project_id/)
 })
 
 test('task detail delegates to the shared key-task execution workspace', () => {

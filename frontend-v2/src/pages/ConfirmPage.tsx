@@ -31,6 +31,7 @@ import { canWorkflowAction } from '../domain/permissions'
 import { AiConfirmationIssueActions } from '../features/confirmations/AiConfirmationIssueActions'
 import { MobileConfirmationStream } from '../features/mobile-core-pages/MobileConfirmationStream'
 import { ChevronDownIcon } from '../components/icons/ChevronDownIcon'
+import { useWindowFocusVersion } from '../utils/useWindowFocusVersion'
 
 type WriteMode = 'task_new' | 'subtask_update' | 'subtask_new'
 type ConfirmViewMode = 'all' | 'coordinator' | 'ceo'
@@ -258,7 +259,9 @@ function projectNameFromConfirmation(item: ConfirmationItem | null | undefined, 
 
 export function ConfirmPage() {
   const { currentProjectId, currentUser, projects, globalUserRoles, currentCapabilities } = useProject()
+  const focusRefreshVersion = useWindowFocusVersion()
   const [searchParams, setSearchParams] = useSearchParams()
+  const pendingLoadController = useRef<AbortController | null>(null)
   const [items, setItems] = useState<ConfirmationItem[]>([])
   const [selected, setSelected] = useState<ConfirmationItem | null>(null)
   const [loading, setLoading] = useState(false)
@@ -273,6 +276,20 @@ export function ConfirmPage() {
   const [selectedCardIndex, setSelectedCardIndex] = useState(0)
   const [cardDecisions, setCardDecisions] = useState<Record<number, 'confirm' | 'return' | 'transfer' | 'ceo'>>({})
   const [coordinatorCardNote, setCoordinatorCardNote] = useState('')
+
+  function loadPendingItems(
+    projectId: number | null,
+    tab?: string,
+    options: { includeCardLevel?: boolean } = {},
+  ) {
+    pendingLoadController.current?.abort()
+    const controller = new AbortController()
+    pendingLoadController.current = controller
+    return getPending(projectId, tab, { ...options, signal: controller.signal }).then((rows) => {
+      if (controller.signal.aborted) throw new DOMException('The request was aborted', 'AbortError')
+      return rows
+    })
+  }
 
   const selectedProject = selected?.project_id != null ? projects.find((p) => p.id === selected.project_id) ?? null : null
   const projectArchived = isProjectArchived(selectedProject)
@@ -376,7 +393,7 @@ export function ConfirmPage() {
     setItems([])
     if (viewMode === 'ceo') {
       const ceoProjectId = urlProjectId ?? null
-      getPending(ceoProjectId, 'ceo', { includeCardLevel: true })
+      loadPendingItems(ceoProjectId, 'ceo', { includeCardLevel: true })
         .then((d) => {
           if (!cancelled) {
             setItems(d)
@@ -390,11 +407,13 @@ export function ConfirmPage() {
             }
           }
         })
-        .catch(() => { if (!cancelled) setLoadError('记录加载失败，请刷新重试') })
+        .catch((error: unknown) => {
+          if (!cancelled && !(error instanceof Error && error.name === 'AbortError')) setLoadError('记录加载失败，请刷新重试')
+        })
         .finally(() => { if (!cancelled) setLoading(false) })
     } else if (viewMode === 'coordinator') {
       const coordProjectId = urlProjectId ?? null
-      getPending(coordProjectId, 'coordinator', { includeCardLevel: true })
+      loadPendingItems(coordProjectId, 'coordinator', { includeCardLevel: true })
         .then((d) => {
           if (!cancelled) {
             setItems(d)
@@ -407,10 +426,12 @@ export function ConfirmPage() {
             }
           }
         })
-        .catch(() => { if (!cancelled) setLoadError('记录加载失败，请刷新重试') })
+        .catch((error: unknown) => {
+          if (!cancelled && !(error instanceof Error && error.name === 'AbortError')) setLoadError('记录加载失败，请刷新重试')
+        })
         .finally(() => { if (!cancelled) setLoading(false) })
     } else {
-      getPending(pendingProjectId, 'all')
+      loadPendingItems(pendingProjectId, 'all')
         .then((d) => {
           if (!cancelled) {
             setItems(d)
@@ -421,12 +442,44 @@ export function ConfirmPage() {
             if (target) pickItem(target)
           }
         })
-        .catch(() => { if (!cancelled) setLoadError('记录加载失败，请刷新重试') })
+        .catch((error: unknown) => {
+          if (!cancelled && !(error instanceof Error && error.name === 'AbortError')) setLoadError('记录加载失败，请刷新重试')
+        })
         .finally(() => { if (!cancelled) setLoading(false) })
     }
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      pendingLoadController.current?.abort()
+      pendingLoadController.current = null
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentProjectId, pendingProjectId, viewMode, urlProjectId, urlSubmissionId, urlCardIndex])
+  }, [currentProjectId, pendingProjectId, viewMode, urlProjectId, urlSubmissionId, urlCardIndex, currentUser?.account_id, currentUser?.person_id, currentUser?.username])
+
+  const handledFocusRefreshVersion = useRef(0)
+  useEffect(() => {
+    if (focusRefreshVersion === 0 || handledFocusRefreshVersion.current === focusRefreshVersion) return
+    handledFocusRefreshVersion.current = focusRefreshVersion
+    let cancelled = false
+    setLoading(true)
+    setLoadError(null)
+    const request = viewMode === 'ceo'
+      ? loadPendingItems(urlProjectId ?? null, 'ceo', { includeCardLevel: true })
+      : viewMode === 'coordinator'
+        ? loadPendingItems(urlProjectId ?? null, 'coordinator', { includeCardLevel: true })
+        : loadPendingItems(pendingProjectId, 'all')
+    request.then((rows) => {
+      if (cancelled) return
+      setItems(rows)
+      const refreshedSelection = selected ? rows.find((row) => row.id === selected.id) : null
+      const next = refreshedSelection ?? rows[0] ?? null
+      if (next) pickItem(next)
+      else setSelected(null)
+    }).catch((error: unknown) => {
+      if (cancelled || (error instanceof Error && error.name === 'AbortError')) return
+      setLoadError('记录刷新失败，请检查网络后重试。')
+    }).finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [focusRefreshVersion, viewMode, urlProjectId, pendingProjectId, selected])
 
   function getAIResult(item: ConfirmationItem): Record<string, unknown> | null {
     try {
@@ -800,7 +853,7 @@ export function ConfirmPage() {
 
   function reloadCoordinatorItems() {
     const coordProjectId = urlProjectId ?? null
-    return getPending(coordProjectId, 'coordinator', { includeCardLevel: true })
+    return loadPendingItems(coordProjectId, 'coordinator', { includeCardLevel: true })
       .then((d) => {
         setItems(d)
         const same = selected ? d.find((item) => item.id === selected.id) : undefined
@@ -821,7 +874,7 @@ export function ConfirmPage() {
 
   function reloadCoachItems() {
     const ceoProjectId = urlProjectId ?? null
-    getPending(ceoProjectId, 'ceo', { includeCardLevel: true })
+    loadPendingItems(ceoProjectId, 'ceo', { includeCardLevel: true })
       .then((d) => {
         setItems(d)
         if (selected && d.length > 0) {

@@ -1,5 +1,7 @@
 # Moways × McKinsey Wave 产品与系统差距分析
 
+> **历史分析提示（2026-10-08）：** 本报告是 2026-08-14 的代码与产品快照。报告中把 `pending_kickoff` 作为常规立项审核门槛的文字已过时，不能作为当前流程事实或实现指令。现行项目状态迁移和权限矩阵见 [`PROJECT_LIFECYCLE_AND_PERMISSIONS.md`](PROJECT_LIFECYCLE_AND_PERMISSIONS.md)；其他产品差距分析仍按报告日期理解。
+
 > 分析日期：2026-08-14
 > 分析对象：当前仓库 `D:\项目整体备份\mowayspos-next-task` 的实际代码、数据模型、API、服务、前端路由/页面、AI/Agent、测试与现有文档。
 > 分析目的：恢复 Moways 当前真实产品模型，判断其与 McKinsey Wave 类管理模型的差距，并给出不破坏现有语义边界的升级路线。
@@ -35,7 +37,7 @@ Task(Workstream) / SubTask(KeyTask) / Achievement / Issue / Schedule 回写
 
 已实现或接近可用的 Wave-like 能力包括：
 
-- 项目生命周期治理：`draft → dispatched → pending_review → pending_kickoff → active → pending_close → ended → archived`。
+- 项目生命周期治理：当前常规链路为 `draft → dispatched → pending_review → active`（审核退回到 `returned` 后允许重提），结束链路为 `active → pending_close → active/ended → archived`。`pending_kickoff` 仅保留兼容历史状态，不是新审核门槛。
 - 项目角色与权限：公司管理、超级管理员、企业教练、负责人、统筹人、成员，并由后端做最终校验。
 - 项目执行结构：Project → Workstream → KeyTask，并有周/月执行计划。
 - AI 辅助事实提取：工作汇报、项目初始化材料、会议文本/文档均可形成草稿或分析结果。
@@ -100,8 +102,8 @@ Project
 
 - CEO/技术管理员派发项目；要求项目 CEO 和负责人等成员信息满足条件。
 - 负责人提交项目资料和执行草稿，进入 `pending_review`。
-- 企业教练/技术管理员审核通过后进入 `pending_kickoff`，而非正常情况下直接 `active`。
-- 启动会 Agent 产生提案；企业教练逐项审核并确认启动后，事务内写入批准的结构、发布启动会纪要并切换 `active`。
+- 企业教练/技术管理员审核通过后直接进入 `active`；退回进入 `returned`，负责人补充后可再次提交审核。
+- 启动会 Agent 产生提案；企业教练逐项审核并确认后写入批准的结构并发布启动会纪要，不承担 `pending_kickoff → active` 的常规状态切换。
 - `active` 项目允许正式汇报、执行期计划和普通会议。
 - `pending_close` 与 `ended` 进入业务写冻结；关闭审核会检查未完成材料、待决策问题、待确认成果、成员变更等。
 - 归档后只读，保留时间线、会议、操作和资产视图。
@@ -127,7 +129,7 @@ Project
 - 普通会议分析：文本 → `meeting.analysis` → 结构化会议结果 → 会议修订/审阅。
 - 进度审阅：比较会议或汇报与现有计划，生成进展差异与待处理项。
 - 会议变更集：冻结项目快照，生成带前值、提议值、证据和校验信息的提案，显式审阅后写回。
-- 启动会 Agent：`pending_kickoff` 项目专用，生成 `KickoffChangeProposal`，确认启动后原子应用。
+- 启动会 Agent：执行结构可用的 `active`、`dispatched` 与兼容 `pending_kickoff` 项目可用，生成 `KickoffChangeProposal`，确认后原子应用；不以该 Agent 作为正式汇报前的状态门槛。
 - 当前工作树中的项目会议文档路径：上传 DOCX → 提取文本 → 生成 `ProjectMeetingRun`/Meeting 草稿 → 形成审阅包和变更提案。
 
 会议侧“有结构但未完全收敛”：严格的项目会议 Agent 契约、只读工具、有限步数和证据约束已存在；但是当前文档运行入口仍直接调用 `_do_analyze` 的通用模型分析，尚未接入完整的 Agent processing、审计 trace 和统一后台运行状态。
@@ -309,7 +311,7 @@ Achievement 是成果资产库，但不等于 Result/Impact/Value。Project clos
 
 ### 7.2 启动会和关闭流程
 
-`pending_kickoff` 使项目在执行前拥有真实的启动门槛；`pending_close`/`ended` 的冻结和关闭评估使项目不会被简单标记完成。这两端治理是很多轻量 PM 工具缺失的能力。
+本报告原先将 `pending_kickoff` 视作启动门槛；该判断已被当前简化后的审核直达 `active` 流程取代。`pending_close`/`ended` 的冻结和关闭评估仍是当前项目治理规则。
 
 ### 7.3 会议变更集和证据校验
 
@@ -673,7 +675,7 @@ Evidence → AI Sense → Rule Gate → Agent Proposal → Human Confirmation �
 
 ### 18.1 需要特别注意的代码/文档差异
 
-- 旧的 `N4_P0_BASELINE_MAIN_FLOW_STAGE_MAP.md` 与部分审计文档仍描述“审核通过直接 active”或“没有 pending_kickoff”；当前代码和 `PROJECT_FLOW_BOUNDARY.md` 已实现 `pending_kickoff` 与启动会确认。以代码和最新边界文档为准，旧文档应视为过期审计材料。
+- 旧的 `N4_P0_BASELINE_MAIN_FLOW_STAGE_MAP.md` 与部分审计文档记录的是历史口径；当前代码已回到 `pending_review → active/returned`，不再以 `pending_kickoff` 作为新项目审核门槛。以 [`PROJECT_LIFECYCLE_AND_PERMISSIONS.md`](PROJECT_LIFECYCLE_AND_PERMISSIONS.md) 和实际行为测试为准。
 - `meetings.py` 的当前通用分析路径仍存在把 `confirmed_items` 映射到 `risk_items_json` 的字段风险；现有会议 Agent 差距文档已明确列出，该问题不能被“有会议 Agent”掩盖。
 - `project_meeting_agent.py`、contracts 和 tools 已存在且定向测试通过；但缺少计划中列出的 `project_meeting_agent_processing.py`、后台运行持久化、完整 API 集成和 Agent audit migration。因此报告将其标为“受控代码存在、业务未完全接入”。
 - 当前工作树有大量未提交改动，特别是会议/项目会议工作流。上述判断基于当前工作树实际代码，并不把未提交改动误称为稳定主干能力。

@@ -67,6 +67,7 @@ export function ProjectCloseFlowDrawer({ open, project, currentPersonId, roles, 
   const [runtimeBlockers, setRuntimeBlockers] = useState<ProjectCloseCheckItem[]>([])
   const [mutationCommittedButRefreshFailed, setMutationCommittedButRefreshFailed] = useState(false)
   const loadGenerationRef = useRef(0)
+  const createRequestIdsRef = useRef(new Map<string, string>())
 
   const status = getProjectPrimaryStatus(project)
   const canCreate = canCreateProjectCloseRequest(status, roles)
@@ -79,6 +80,7 @@ export function ProjectCloseFlowDrawer({ open, project, currentPersonId, roles, 
 
   async function loadRequest() {
     if (!project) return
+    createRequestIdsRef.current.clear()
     const generation = ++loadGenerationRef.current
     const emptyForm = freshEmptyForm()
     setRequest(null)
@@ -135,6 +137,7 @@ export function ProjectCloseFlowDrawer({ open, project, currentPersonId, roles, 
     let result: ProjectCloseRequest | { ok: boolean; status: string }
     try {
       result = await action()
+      if (name === 'cancel') createRequestIdsRef.current.clear()
     } catch (error) {
       const parsed = extractProjectCloseBlockers(error)
       if (parsed.length) setRuntimeBlockers(parsed)
@@ -169,8 +172,14 @@ export function ProjectCloseFlowDrawer({ open, project, currentPersonId, roles, 
     if (!project) return
     const validation = validateForm(form)
     if (validation) { setErrorText(validation); return }
+    const fingerprint = JSON.stringify({ actor: currentPersonId, project_id: project.id, payload: form })
+    let requestId = createRequestIdsRef.current.get(fingerprint)
+    if (create && !requestId) {
+      requestId = globalThis.crypto?.randomUUID?.() ?? `close-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      createRequestIdsRef.current.set(fingerprint, requestId)
+    }
     void runAction(create ? 'create' : 'save', () => create
-      ? createProjectCloseRequest(project.id, form)
+      ? createProjectCloseRequest(project.id, form, requestId)
       : updateProjectCloseRequest(project.id, request!.id, form), create ? '结束申请已提交' : '结束材料已保存')
   }
 

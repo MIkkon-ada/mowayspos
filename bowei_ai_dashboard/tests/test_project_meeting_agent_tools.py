@@ -175,6 +175,24 @@ def test_search_plan_nodes_returns_batch_candidates_in_fact_id_input_order(snaps
     }
 
 
+def test_search_plan_nodes_matches_chinese_phrases_without_spaces(snapshot: dict):
+    snapshot["workstreams"][0]["key_tasks"][0]["title"] = "AI升级与项目管理平台正式上线"
+    tools = ProjectMeetingAgentTools(snapshot)
+
+    matched = tools.execute("search_plan_nodes", {
+        "project_id": 7,
+        "queries": [{"fact_id": "F001", "query": "讨论AI升级项目管理平台上线工作安排"}],
+    })
+    unrelated = tools.execute("search_plan_nodes", {
+        "project_id": 7,
+        "queries": [{"fact_id": "F002", "query": "项目工作计划继续安排"}],
+    })
+
+    assert len(matched["results"][0]["candidates"]) == 1
+    assert matched["results"][0]["candidates"][0]["target_id"] == 20
+    assert unrelated["results"][0]["candidates"] == []
+
+
 @pytest.mark.parametrize("fact_id", ["F000", "F00", "FABC", "F001x"])
 def test_search_plan_nodes_rejects_invalid_fact_id(snapshot: dict, fact_id: str):
     with pytest.raises(AgentToolError, match="fact_id"):

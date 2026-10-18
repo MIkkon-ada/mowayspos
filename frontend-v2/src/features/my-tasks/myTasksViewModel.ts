@@ -113,15 +113,13 @@ export function getMyTaskProgressText(notes?: string | null): string {
 export function buildMyTaskRows(
   subtasks: SubTaskWithParent[],
   projects: Array<Pick<Project, 'id' | 'name'>>,
-  assignee: string,
 ): MyTaskRow[] {
   const projectNames = new Map(projects.map((project) => [project.id, project.name]))
   const seen = new Set<number>()
-  const expectedAssignee = assignee.trim()
   const rows: MyTaskRow[] = []
 
   for (const subtask of subtasks) {
-    if (seen.has(subtask.id) || subtask.is_deleted || subtask.assignee?.trim() !== expectedAssignee) continue
+    if (seen.has(subtask.id) || subtask.is_deleted) continue
     seen.add(subtask.id)
     const plan = parseMyTaskPlanTime(subtask.plan_time)
     const projectId = typeof subtask.parent_project_id === 'number' ? subtask.parent_project_id : null
@@ -150,7 +148,6 @@ export function buildMyTaskRows(
 export function mergeMyTaskProjectResults(
   projects: Array<Pick<Project, 'id' | 'name'>>,
   results: PromiseSettledResult<SubTaskWithParent[]>[],
-  assignee: string,
 ): MyTaskProjectMerge {
   const successfulTasks: SubTaskWithParent[] = []
   const successProjectIds: number[] = []
@@ -166,7 +163,7 @@ export function mergeMyTaskProjectResults(
     }
   })
   return {
-    rows: buildMyTaskRows(successfulTasks, projects, assignee),
+    rows: buildMyTaskRows(successfulTasks, projects),
     successProjectIds,
     failedProjectIds,
   }

@@ -110,7 +110,8 @@ def test_agent_prompt_includes_the_exact_tool_and_final_envelope_shapes(document
     assert '{"type":"final","result":{' in prompt
     assert 'Do not use tool_call/tool_name/parameters/final wrapper keys.' in prompt
     assert '"meeting_date":[{"quote":"2026-07-27","char_start":0,"char_end":10}]' in prompt
-    assert '"content":"Action description","owner":"","tracker":"","due_date":""' in prompt
+    assert '"content":"Action description","topic":"","owner":"","tracker":"","due_date":"","source_note":""' in prompt
+    assert '"prior_action_tracking":[]' in prompt
     assert 'Action-only facts may include owner, tracker, and due_date only when each value is explicitly stated in Word evidence.' in prompt
     assert '"action":"update_execution_schedule","target":{"project_id":1,"workstream_id":10,"key_task_id":20,"execution_schedule_id":30}' in prompt
     assert 'Do not put a fact-shaped action item in task_updates.' in prompt
@@ -139,6 +140,111 @@ def test_agent_prompt_includes_the_exact_tool_and_final_envelope_shapes(document
     assert "does not replace Word evidence" in prompt
     assert '"queries":[{"fact_id":"F001","query":"focused task title"}]' in prompt
     assert "用户选择的会议类型" not in prompt
+
+
+def test_standard_minutes_prompt_asks_model_to_return_only_project_analysis(document_text: str):
+    prompt = _base_prompt(
+        1,
+        document_text,
+        standard_minutes=True,
+        standard_fact_inventory=[
+            {"fact_id": "F001", "fact_type": "discussion", "content": "Keep the workflow", "evidence": {"char_start": 0, "char_end": 17}},
+            {"fact_id": "F002", "fact_type": "action_item", "content": "Publish the report", "evidence": {"char_start": 20, "char_end": 39}},
+        ],
+    )
+
+    assert "标准 Word 已由服务端完整解析" in prompt
+    assert "agenda_items、decisions、completed_items、next_steps、prior_action_tracking 留空" in prompt
+    assert "每一条决议、上期进展和本周行动事实都提供一个 F 编号" in prompt
+    assert 'F001 [discussion] span=0:17 Keep the workflow' in prompt
+    assert 'F002 [action_item] span=20:39 Publish the report' in prompt
+
+
+def test_standard_minutes_retries_until_every_source_fact_has_one_analysis_disposition():
+    document = (
+        "Meeting date: 2026-07-27\n"
+        "Decision: Keep the workflow\n"
+        "Action: Publish the weekly report\n"
+        "Prior: Review the open item"
+    )
+    snapshot = {
+        "project_id": 1,
+        "standard_minutes": {
+            "is_standard_minutes": True,
+            "discussion_sections": [{"title": "Workflow", "points": ["Decision: Keep the workflow"]}],
+            "current_action_items": [{"会议安排事项": "Action: Publish the weekly report"}],
+            "prior_action_items": [{"上周事项": "Prior: Review the open item"}],
+        },
+    }
+    quoted = [
+        "Decision: Keep the workflow",
+        "Action: Publish the weekly report",
+        "Prior: Review the open item",
+    ]
+    fact_types = ["decision", "action_item", "progress"]
+    complete_facts = [
+        {"fact_id": f"F{index:03}", "fact_type": fact_type, "disposition": "needs_confirmation",
+         "confidence": 0.9, "reason": "需确认项目关联"}
+        for index, fact_type in enumerate(fact_types, 1)
+    ]
+    prompts: list[str] = []
+    replies = iter([
+        response({"facts": complete_facts[:-1]}, 301),
+        response({"facts": complete_facts}, 302),
+    ])
+
+    result = run_project_meeting_agent(
+        1,
+        document,
+        snapshot,
+        ProjectMeetingAgentTools(snapshot),
+        lambda prompt: (prompts.append(prompt), next(replies))[1],
+    )
+
+    assert result.invocation_log_ids == [301, 302]
+    assert [fact.fact_id for fact in result.final.needs_confirmation] == ["F001", "F002", "F003"]
+    assert "缺少事实编号" in prompts[1]
+
+
+def test_standard_minutes_large_inventory_is_analyzed_in_bounded_batches():
+    document = "\n".join(f"Discussion point {index}" for index in range(1, 10))
+    snapshot = {
+        "project_id": 1,
+        "standard_minutes": {
+            "is_standard_minutes": True,
+            "discussion_sections": [{"title": "Discussion", "points": [f"Discussion point {i}" for i in range(1, 10)]}],
+            "current_action_items": [],
+            "prior_action_items": [],
+        },
+    }
+    inventory_ids = [f"F{i:03}" for i in range(1, 10)]
+    provider_calls = []
+    call_id = 400
+    provider_call_count = 0
+
+    def provider(prompt: str) -> AgentModelResponse:
+        nonlocal call_id, provider_call_count
+        provider_calls.append(prompt)
+        call_id += 1
+        provider_call_count += 1
+        batch_ids = inventory_ids[:8] if provider_call_count == 1 else inventory_ids[8:]
+        return response({"facts": [
+            {"fact_id": fact_id, "fact_type": "decision", "disposition": "needs_confirmation",
+             "confidence": 0.8, "reason": "需确认项目关联"}
+            for fact_id in batch_ids
+        ]}, call_id)
+
+    result = run_project_meeting_agent(
+        1, document, snapshot, ProjectMeetingAgentTools(snapshot), provider, require_plan_lookup=True,
+    )
+
+    assert [fact.fact_id for fact in result.final.needs_confirmation] == inventory_ids
+    assert len(result.trace) == 2
+    assert [item["batch"] for item in result.trace] == [1, 2]
+    assert result.step_count == 4
+    assert [event["batch"] for event in result.events if event["kind"] == "model_response"] == [1, 2]
+    assert '"F009"' not in provider_calls[0]
+    assert '"F009"' in provider_calls[1]
 
 
 def test_agent_retains_events_without_event_callback(snapshot: dict, document_text: str, valid_final: dict):
@@ -177,6 +283,9 @@ def test_agent_isolates_internal_events_from_callback_mutation(snapshot: dict, d
         "step": 1,
         "model_code": "fake-chat",
         "invocation_log_id": 14,
+        "finish_reason": None,
+        "prompt_tokens": None,
+        "completion_tokens": None,
     }
 
 
@@ -188,6 +297,9 @@ def test_agent_strictly_rejects_non_standard_json_constants(snapshot: dict):
     replies = iter([
         AgentModelResponse('{"type": NaN}', "fake-chat", 15),
         AgentModelResponse('{"type": -Infinity}', "fake-chat", 16),
+        AgentModelResponse('{"type": Infinity}', "fake-chat", 17),
+        AgentModelResponse('{"type": NaN}', "fake-chat", 18),
+        AgentModelResponse('{"type": -Infinity}', "fake-chat", 19),
     ])
 
     with pytest.raises(MeetingAgentError) as exc:
@@ -202,6 +314,29 @@ def test_agent_repairs_one_invalid_json_response(snapshot: dict, document_text: 
     result = run_project_meeting_agent(1, document_text, snapshot, ProjectMeetingAgentTools(snapshot), lambda prompt: next(replies))
 
     assert result.invocation_log_ids == [21, 22]
+
+
+def test_agent_repairs_a_second_invalid_response_within_a_bounded_budget(
+    snapshot: dict, document_text: str, valid_final: dict,
+):
+    prompts: list[str] = []
+    replies = iter([
+        AgentModelResponse('{"type":"final","result":', "fake-chat", 201),
+        AgentModelResponse('{"type":"final","result":', "fake-chat", 202),
+        response({"type": "final", "result": valid_final}, 203),
+    ])
+
+    result = run_project_meeting_agent(
+        1,
+        document_text,
+        snapshot,
+        ProjectMeetingAgentTools(snapshot),
+        lambda prompt: (prompts.append(prompt), next(replies))[1],
+    )
+
+    assert result.invocation_log_ids == [201, 202, 203]
+    assert len(prompts) == 3
+    assert "不要输出未闭合的 JSON" in prompts[2]
 
 
 def test_agent_repair_after_plan_lookup_requires_final_without_another_tool_call(
@@ -239,6 +374,7 @@ def test_agent_repair_after_plan_lookup_requires_final_without_another_tool_call
     assert result.invocation_log_ids == [26, 27, 28]
     assert len(result.trace) == 1
     assert "Return a final envelope only; do not call any tool." in prompts[2]
+    assert '"tool": "search_plan_nodes"' in prompts[2]
 
 
 def test_project_meeting_agent_requires_a_plan_search_before_final(snapshot: dict, document_text: str, valid_final: dict):
@@ -305,13 +441,36 @@ def test_agent_reserves_the_last_step_for_a_final_after_five_tool_queries(snapsh
     assert "must return final" in prompts[-1]
 
 
-def test_agent_rejects_a_second_invalid_response(snapshot: dict):
-    replies = iter([AgentModelResponse("bad", "fake-chat", 41), AgentModelResponse("still-bad", "fake-chat", 42)])
+def test_agent_rejects_responses_after_the_bounded_repair_budget(snapshot: dict):
+    replies = iter([
+        AgentModelResponse("bad", "fake-chat", 41),
+        AgentModelResponse("still-bad", "fake-chat", 42),
+        AgentModelResponse("bad-again", "fake-chat", 43),
+        AgentModelResponse("last-bad", "fake-chat", 44),
+        AgentModelResponse("final-bad", "fake-chat", 45),
+    ])
 
     with pytest.raises(MeetingAgentError) as exc:
         run_project_meeting_agent(1, "document", snapshot, ProjectMeetingAgentTools(snapshot), lambda prompt: next(replies))
 
     assert exc.value.code == "invalid_model_output"
+
+
+def test_agent_reports_output_limit_when_the_final_retry_was_truncated(snapshot: dict):
+    replies = iter([
+        AgentModelResponse("bad", "fake-chat", 51),
+        AgentModelResponse("still-bad", "fake-chat", 52),
+        AgentModelResponse('{"type":"final","result":', "fake-chat", 53, finish_reason="length"),
+        AgentModelResponse("still-truncated", "fake-chat", 54),
+        AgentModelResponse("last-truncated", "fake-chat", 55),
+    ])
+
+    with pytest.raises(MeetingAgentError) as exc:
+        run_project_meeting_agent(
+            1, "document", snapshot, ProjectMeetingAgentTools(snapshot), lambda _prompt: next(replies),
+        )
+
+    assert exc.value.code == "truncated_model_output"
 
 
 def test_agent_wraps_provider_exception_and_retains_events(snapshot: dict):

@@ -15,7 +15,7 @@ TEST_FERNET_KEY = "m6F5dBXMRy1ZOQ4Dv_rwuPhtchxZzTCBuRUg-hxeF6U="
 
 
 class FailingAdapters:
-    def complete_chat(self, _model, _api_key, _prompt, *, timeout_seconds):
+    def complete_chat(self, _model, _api_key, _prompt, *, timeout_seconds, response_format=None, on_metadata=None):
         raise AIUpstreamError(
             "AI_UPSTREAM_5XX", retryable=True, message="upstream do-not-log-me"
         )

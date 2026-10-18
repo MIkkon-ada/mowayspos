@@ -164,6 +164,29 @@ def _confirmed_event(
     )
 
 
+def test_snapshot_exposes_current_confirmed_progress_for_word_review(
+    db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
+):
+    project, _ = project_plan
+    moment = datetime(2026, 10, 8, 10, 0)
+    event = record_execution_event(
+        db, project_id=project.id, key_task_id=20, event_type="meeting_confirmation",
+        source_type="meeting_work_progress", source_id=55,
+        dedupe_key="meeting-work-progress-preview-55", actor_name="Owner",
+        occurred_at=moment, confirmed_at=moment, effective_at=moment,
+        affects_current_progress=True, progress_summary="First batch delivered",
+        next_step="Prepare second batch",
+    )
+    db.commit()
+
+    snapshot = build_project_meeting_snapshot(project.id, db)
+
+    assert snapshot["workstreams"][0]["key_tasks"][0]["current_progress"] == {
+        "event_id": event.id, "summary": "First batch delivered",
+        "next_step": "Prepare second batch", "source_label": "会议纪要",
+    }
+
+
 def test_first_meeting_snapshot_contains_project_members_plan_and_schedules(
     db: Session, project_plan: tuple[models.Project, models.ExecutionSchedule]
 ):
@@ -792,9 +815,12 @@ def test_agent_normalization_preserves_evidence_grounded_action_columns(
 
     assert result["next_stage_work"] == [{
         "content": "Move acceptance schedule to complete",
+        "code": "",
+        "topic": "",
         "owner": "Owner",
         "tracker": "",
         "due_date": "2026-08-14",
+        "source_note": "",
         "confidence": 0.9,
         "needs_confirmation": False,
         "evidence": [{"quote": action_quote, "char_start": document_text.index(action_quote), "char_end": len(document_text)}],

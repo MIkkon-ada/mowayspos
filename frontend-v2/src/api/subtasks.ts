@@ -17,6 +17,9 @@ export type SubTaskPayload = {
   start_date?: string | null
   status: string
   completion_criteria: string
+  expected_outcome?: string
+  goal?: string
+  bowei_role?: string
   notes: string
   collaborator_ids?: number[]
   due_kind?: 'exact' | 'fuzzy' | 'unknown'
@@ -35,6 +38,17 @@ export type SubTaskWithParent = SubTaskItem & {
   parent_project_id: number | null
   // Historical display-only fallback; business ownership still comes from parent_project_id.
   parent_special_project: string
+}
+
+export type MyTasksResponse = {
+  projects: Array<{ id: number; name: string }>
+  tasks: SubTaskWithParent[]
+  ambiguous_assignment_count: number
+}
+
+/** Authenticated, server-scoped aggregate; identity comes from the account session. */
+export function fetchMyTasks(signal?: AbortSignal): Promise<MyTasksResponse> {
+  return apiGet<MyTasksResponse>('/api/my-tasks', { signal, timeoutMs: 15_000 })
 }
 
 export function fetchSubTasks(taskId: number, deleted = false): Promise<SubTaskItem[]> {

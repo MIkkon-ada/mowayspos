@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import type { MeetingItem } from '../../types'
 import type { ProjectMeetingAgentFact, ProjectMeetingEvidence, ProjectMeetingEvidenceSpan } from '../../api/meetings'
+import { DiscussionSections, MinutesItemTable } from './FormalMeetingSections'
 
-type MeetingDraftFields = Pick<MeetingItem, 'meeting_date' | 'location' | 'host' | 'participants' | 'organizer' | 'copied_to' | 'summary'>
+type MeetingDraftFields = Pick<MeetingItem, 'meeting_date' | 'location' | 'host' | 'participants' | 'organizer' | 'copied_to' | 'summary'> & { title?: string; meeting_type?: string }
 
 export type FormalProjectMeetingMinutesProps = {
   draft: MeetingDraftFields & {
@@ -10,16 +12,18 @@ export type FormalProjectMeetingMinutesProps = {
     completedItems: ProjectMeetingAgentFact[]
     nextStageWork: ProjectMeetingAgentFact[]
     risks: ProjectMeetingAgentFact[]
+    priorActionTracking?: ProjectMeetingAgentFact[]
   }
   meetingInfoEvidence: Record<string, ProjectMeetingEvidence>
   summaryEvidence?: ProjectMeetingEvidence
   editable: boolean
   disabled?: boolean
   onChange?: (field: keyof MeetingDraftFields, value: string) => void
+  onFactsChange?: (field: 'agendaItems' | 'decisions' | 'completedItems' | 'nextStageWork' | 'risks' | 'priorActionTracking', items: ProjectMeetingAgentFact[]) => void
 }
 
 const editableMetaFields: Array<[keyof MeetingDraftFields, string]> = [
-  ['meeting_date', '会议日期'], ['location', '会议地点'], ['host', '主持人'], ['participants', '参会人员'],
+  ['meeting_date', '会议日期'], ['location', '会议地点'], ['meeting_type', '会议类型'], ['host', '主持人'], ['participants', '参会人员'],
 ]
 
 function evidenceQuotes(evidence: Array<string | ProjectMeetingEvidenceSpan>): string[] {
@@ -29,65 +33,80 @@ function evidenceQuotes(evidence: Array<string | ProjectMeetingEvidenceSpan>): s
 function EvidenceBlock({ evidence }: { evidence?: ProjectMeetingEvidence | ProjectMeetingEvidenceSpan[] }) {
   const spans = Array.isArray(evidence) ? evidence : evidence?.evidence ?? []
   const quotes = evidenceQuotes(spans)
-  const blocked = !Array.isArray(evidence) && evidence?.validation.state === 'blocked'
   if (!quotes.length) return null
-  return <details className="mt-2 text-xs text-slate-500">
-    <summary className="cursor-pointer font-medium text-sky-700">查看原文依据{blocked ? '（待核验）' : ''}</summary>
-    <ul className="mt-2 space-y-1 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3 text-slate-600">{quotes.map((quote, index) => <li key={`${quote}-${index}`}>“{quote}”</li>)}</ul>
-  </details>
+  return <span className="sr-only">{quotes.map((quote) => `“${quote}”`).join('；')}</span>
 }
 
-function FactList({ items, emptyLabel }: { items: ProjectMeetingAgentFact[]; emptyLabel: string }) {
-  if (!items.length) return <p className="mt-3 text-sm text-slate-400">{emptyLabel}</p>
-  return <ul className="mt-3 space-y-3 text-sm leading-7 text-slate-700">{items.map((item, index) => <li key={`${item.content}-${index}`} className="border-b border-dashed border-slate-200 pb-3 last:border-0 last:pb-0"><div className="flex gap-2"><span className="text-sky-500">•</span><span>{item.content}</span>{item.needs_confirmation ? <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold leading-5 text-amber-700">待确认</span> : null}</div><EvidenceBlock evidence={item.evidence} /></li>)}</ul>
+function editedFact(item: ProjectMeetingAgentFact, patch: Partial<ProjectMeetingAgentFact>): ProjectMeetingAgentFact {
+  return { ...item, ...patch, evidence: [], human_edited: true, needs_confirmation: false, validation: { state: 'ready', errors: [] } }
 }
 
-function MetaCell({ label, value, evidence, editable, disabled, onChange }: { label: string; value: string; evidence?: ProjectMeetingEvidence; editable: boolean; disabled: boolean; onChange?: (value: string) => void }) {
-  return <div className="border-b border-slate-200 px-4 py-3 last:border-b-0 sm:grid sm:grid-cols-[96px_minmax(0,1fr)] sm:gap-3">
-    <dt className="text-sm text-slate-500">{label}</dt>
-    <dd className="mt-1 min-w-0 text-sm leading-6 text-slate-800 sm:mt-0">{editable ? <input value={value} onChange={(event) => onChange?.(event.target.value)} disabled={disabled} className="w-full rounded-md border border-slate-200 px-2.5 py-1.5 text-sm text-slate-700 disabled:bg-slate-50" /> : (value || '—')}<EvidenceBlock evidence={evidence} /></dd>
+function FactList({ items, emptyLabel, editable, disabled, structured = false, numbered = false, onChange }: { items: ProjectMeetingAgentFact[]; emptyLabel: string; editable: boolean; disabled: boolean; structured?: boolean; numbered?: boolean; onChange?: (items: ProjectMeetingAgentFact[]) => void }) {
+  const [newItem, setNewItem] = useState('')
+  const updateItem = (index: number, patch: Partial<ProjectMeetingAgentFact>) => onChange?.(items.map((item, itemIndex) => itemIndex === index ? editedFact(item, patch) : item))
+  return <div className="mt-3">
+    {items.length ? <ul className="space-y-3 text-sm leading-7 text-slate-700">{items.map((item, index) => <li key={index} className={`border-b border-dashed border-[#dfe7ef] pb-3 last:border-0 last:pb-0 ${numbered && !editable ? 'flex gap-3' : ''}`}>
+      {numbered && !editable ? <span className="pt-0.5 text-xs font-bold tracking-wide text-[#168ea9]">{String(index + 1).padStart(2, '0')}</span> : null}
+      {editable ? <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+        <div className="flex items-start gap-2"><textarea aria-label={`第${index + 1}项内容`} rows={2} value={item.content} disabled={disabled} onChange={(event) => updateItem(index, { content: event.target.value })} className="min-h-16 min-w-0 flex-1 resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm leading-6 outline-none focus:border-sky-400 disabled:bg-slate-100" /><button type="button" disabled={disabled} onClick={() => onChange?.(items.filter((_, itemIndex) => itemIndex !== index))} className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50">移除</button></div>
+        {structured && <div className="grid gap-2 sm:grid-cols-3">{([['owner', '负责人'], ['tracker', '追踪人'], ['due_date', '完成时限']] as const).map(([field, label]) => <label key={field} className="text-xs text-slate-500">{label}<input value={item[field] || ''} disabled={disabled} onChange={(event) => updateItem(index, { [field]: event.target.value })} className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none focus:border-sky-400 disabled:bg-slate-100" /></label>)}</div>}
+        {item.human_edited ? <p className="text-xs text-amber-700">人工修改；原有 AI 引用已移除</p> : <EvidenceBlock evidence={item.evidence} />}
+      </div> : <><div className="flex gap-2">{numbered ? null : <span className="text-sky-500">•</span>}<span className="min-w-0 flex-1 whitespace-pre-wrap">{item.content}</span>{item.needs_confirmation && <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold leading-5 text-amber-700">建议核对原文</span>}{item.human_edited && <span className="shrink-0 rounded-full bg-sky-50 px-2 py-0.5 text-[11px] text-sky-700">人工修改</span>}</div><EvidenceBlock evidence={item.evidence} /></>}
+    </li>)}</ul> : <p className="text-sm text-slate-400">{emptyLabel}</p>}
+    {editable && <div className="mt-3 flex gap-2"><input aria-label="补充会议事项" value={newItem} disabled={disabled} onChange={(event) => setNewItem(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && newItem.trim()) { onChange?.([...items, { content: newItem.trim(), evidence: [], validation: { state: 'ready', errors: [] }, human_edited: true }]); setNewItem('') } }} placeholder="补充一项会议事项" className="min-w-0 flex-1 rounded-md border border-slate-200 px-3 py-2 text-sm outline-none focus:border-sky-400 disabled:bg-slate-100" /><button type="button" disabled={disabled || !newItem.trim()} onClick={() => { onChange?.([...items, { content: newItem.trim(), evidence: [], validation: { state: 'ready', errors: [] }, human_edited: true }]); setNewItem('') }} className="rounded-md border border-sky-200 px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-50 disabled:opacity-50">添加</button></div>}
   </div>
 }
 
-export function FormalProjectMeetingMinutes({ draft, meetingInfoEvidence, summaryEvidence, editable, disabled = false, onChange }: FormalProjectMeetingMinutesProps) {
-  const hasStructuredActionFields = draft.nextStageWork.some((item) => Boolean(item.owner || item.tracker || item.due_date))
-  return <article className="rounded-2xl border border-slate-200 bg-white px-5 py-7 shadow-sm sm:px-8" aria-label="正式会议纪要">
-    <header className="border-b border-slate-200 pb-5 text-center">
-      <p className="text-xs tracking-[0.18em] text-slate-400">内部留档 · 项目会议纪要</p>
-      <h2 className="mt-2 text-xl font-semibold text-slate-900">会议纪要</h2>
+function MetaCell({ label, value, evidence, editable, disabled, className = '', onChange }: { label: string; value: string; evidence?: ProjectMeetingEvidence; editable: boolean; disabled: boolean; className?: string; onChange?: (value: string) => void }) {
+  const isParticipants = label === '参会人员'
+  const allowsMultipleLines = isParticipants || label === '会议类型' || label === '会议地点'
+  return <div className={`border-b border-[#dfe7ef] px-3 py-2.5 sm:grid sm:grid-cols-[84px_minmax(0,1fr)] sm:gap-2.5 lg:px-3.5 ${className}`}>
+    <dt className="text-[13px] text-slate-500">{label}</dt>
+    <dd className="mt-1 min-w-0 text-[13px] leading-5 text-slate-800 sm:mt-0">{editable ? allowsMultipleLines ? <textarea aria-label={label} rows={Math.min(5, Math.max(isParticipants ? 2 : 1, Math.ceil(value.length / (isParticipants ? 48 : 24))))} value={value} onChange={(event) => onChange?.(event.target.value)} disabled={disabled} className="min-h-[38px] w-full resize-y rounded-md border border-slate-200 px-2.5 py-1.5 text-[13px] leading-5 text-slate-700 disabled:bg-slate-50" /> : <input aria-label={label} value={value} onChange={(event) => onChange?.(event.target.value)} disabled={disabled} className="w-full rounded-md border border-slate-200 px-2.5 py-1.5 text-[13px] text-slate-700 disabled:bg-slate-50" /> : <span className="block break-words whitespace-pre-wrap">{value || '—'}</span>}<EvidenceBlock evidence={evidence} /></dd>
+  </div>
+}
+
+export function FormalProjectMeetingMinutes({ draft, meetingInfoEvidence, summaryEvidence, editable, disabled = false, onChange, onFactsChange }: FormalProjectMeetingMinutesProps) {
+  const formalTitle = draft.title?.includes('会议纪要') ? draft.title : `${draft.title || '项目'} 会议纪要`
+  return <article className="overflow-hidden rounded-[18px] border border-[#e2e7e7] bg-[#fffefa] px-4 py-7 shadow-[0_18px_50px_rgba(25,52,72,0.10)] sm:px-7 lg:px-9 2xl:px-12" aria-label="正式会议纪要">
+    <header className="border-b border-[#dfe7ef] pb-6 text-center">
+      <div className="text-[10px] font-bold tracking-[0.18em] text-[#168ea9]">内部留档 · 项目会议纪要</div>
+      {editable ? <input aria-label="会议纪要标题" value={draft.title ?? ''} disabled={disabled} onChange={(event) => onChange?.('title', event.target.value)} style={{ fontFamily: '"Songti SC", "SimSun", "STSong", serif' }} className="mx-auto mt-3 block w-full max-w-3xl rounded-md border border-slate-200 bg-white px-3 py-2 text-center text-2xl font-semibold leading-tight text-[#202f79] disabled:bg-slate-50" /> : <h2 style={{ fontFamily: '"Songti SC", "SimSun", "STSong", serif' }} className="mt-3 text-3xl font-semibold leading-tight text-[#202f79] lg:text-4xl">{formalTitle}</h2>}
+      <p style={{ fontFamily: '"Songti SC", "SimSun", "STSong", serif' }} className="mt-2 text-xs text-slate-500">{draft.meeting_date || '原文未注明日期'}　|　{draft.meeting_type || '项目会议'}</p>
     </header>
 
-    <dl className="mt-6 overflow-hidden rounded-lg border border-slate-200 sm:grid sm:grid-cols-2 sm:divide-x sm:divide-slate-200">
-      {editableMetaFields.map(([field, label]) => <MetaCell key={field} label={label} value={draft[field] ?? ''} evidence={meetingInfoEvidence[field]} editable={editable} disabled={disabled} onChange={(value) => onChange?.(field, value)} />)}
+    <dl className="mt-5 overflow-hidden rounded-xl border border-[#dfe7ef] bg-white sm:grid sm:grid-cols-2">
+      {editableMetaFields.map(([field, label], index) => <MetaCell key={field} label={label} value={draft[field] ?? ''} evidence={meetingInfoEvidence[field]} editable={editable} disabled={disabled} className={field === 'participants' ? 'border-b-0 sm:col-span-2' : index % 2 === 0 ? 'sm:border-r sm:border-[#dfe7ef]' : ''} onChange={(value) => onChange?.(field, value)} />)}
     </dl>
 
-    <section className="mt-8">
-      <h3 className="text-base font-semibold text-slate-900">一、会议议程</h3>
-      <FactList items={draft.agendaItems} emptyLabel="原文未识别出明确会议议程" />
+    <section className="mt-7">
+      <h3 className="flex items-center gap-2.5 text-lg font-semibold text-[#202f79]"><span className="h-5 w-1 rounded-full bg-[#168ea9]" />一、会议议程</h3>
+      <FactList items={draft.agendaItems} emptyLabel="原文未识别出明确会议议程" editable={editable} disabled={disabled} numbered onChange={(items) => onFactsChange?.('agendaItems', items)} />
     </section>
 
-    <section className="mt-8 border-t border-dashed border-slate-200 pt-7">
-      <h3 className="text-base font-semibold text-slate-900">二、会议小结与决议</h3>
-      {editable ? <textarea value={draft.summary ?? ''} onChange={(event) => onChange?.('summary', event.target.value)} disabled={disabled} rows={5} className="mt-3 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm leading-7 text-slate-700 disabled:bg-slate-50" placeholder="填写会议小结" /> : <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">{draft.summary || '暂无会议小结'}</p>}
+    <section className="mt-7 border-t border-dashed border-[#dfe7ef] pt-5">
+      <h3 className="flex items-center gap-2.5 text-lg font-semibold text-[#202f79]"><span className="h-5 w-1 rounded-full bg-[#168ea9]" />二、会议讨论与结论</h3>
+      {editable ? <textarea value={draft.summary ?? ''} onChange={(event) => onChange?.('summary', event.target.value)} disabled={disabled} rows={3} className="mt-3 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm leading-7 text-slate-700 disabled:bg-slate-50" placeholder="会议概况（可选）" /> : draft.summary ? <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">{draft.summary}</p> : null}
       <EvidenceBlock evidence={summaryEvidence} />
-      <FactList items={draft.decisions} emptyLabel="暂无明确会议决议" />
+      <DiscussionSections items={draft.decisions} editable={editable} disabled={disabled} onChange={(items) => onFactsChange?.('decisions', items)} />
+      {draft.completedItems.length ? <section className="mt-5 border-t border-dashed border-[#dfe7ef] pt-4">
+        <h4 className="font-semibold text-slate-800">本周已确认进展</h4>
+        <FactList items={draft.completedItems} emptyLabel="" editable={editable} disabled={disabled} onChange={(items) => onFactsChange?.('completedItems', items)} />
+      </section> : null}
     </section>
 
-    {draft.completedItems.length ? <section className="mt-8 border-t border-dashed border-slate-200 pt-7">
-      <h3 className="text-base font-semibold text-slate-900">本周已确认进展</h3>
-      <FactList items={draft.completedItems} emptyLabel="" />
-    </section> : null}
-
-    <section className="mt-8 border-t border-dashed border-slate-200 pt-7">
-      <h3 className="text-base font-semibold text-slate-900">三、待办事项跟踪</h3>
-      {!draft.nextStageWork.length ? <p className="mt-3 text-sm text-slate-400">暂无明确待办事项</p> : hasStructuredActionFields ? <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200"><table className="min-w-[820px] w-full text-left text-sm"><thead className="bg-slate-50 text-xs font-medium text-slate-500"><tr>{['编号', '会议安排事项', '负责人', '追踪人', '完成时限', '来源/备注'].map((label) => <th key={label} className="whitespace-nowrap px-4 py-3">{label}</th>)}</tr></thead><tbody>{draft.nextStageWork.map((item, index) => <tr key={`${item.content}-${index}`} className="border-t border-slate-100 align-top text-slate-700"><td className="px-4 py-3">本周-{String(index + 1).padStart(2, '0')}</td><td className="min-w-[300px] px-4 py-3 leading-6">{item.content}<EvidenceBlock evidence={item.evidence} /></td><td className="px-4 py-3">{item.owner || '—'}</td><td className="px-4 py-3">{item.tracker || '—'}</td><td className="px-4 py-3">{item.due_date || '—'}</td><td className="px-4 py-3">{item.needs_confirmation ? '待负责人确认' : '会议原文'}</td></tr>)}</tbody></table></div> : <><p className="mt-3 text-sm text-slate-500">历史纪要尚未保留结构化负责人和期限，以下按原文待办列示。</p><FactList items={draft.nextStageWork} emptyLabel="" /></>}
+    <section className="mt-7 border-t border-dashed border-[#dfe7ef] pt-5">
+      <h3 className="flex items-center gap-2.5 text-lg font-semibold text-[#202f79]"><span className="h-5 w-1 rounded-full bg-[#168ea9]" />三、会议行动项</h3>
+      <h4 className="mt-4 font-semibold text-slate-800">（一）本周待办事项</h4>
+      <MinutesItemTable items={draft.nextStageWork} editable={editable} disabled={disabled} onChange={(items) => onFactsChange?.('nextStageWork', items)} />
+      {Boolean(draft.priorActionTracking?.length) && <section className="mt-7"><h4 className="font-semibold text-slate-800">（二）上周待办追踪</h4><MinutesItemTable items={draft.priorActionTracking ?? []} editable={editable} disabled={disabled} tracking onChange={(items) => onFactsChange?.('priorActionTracking', items)} /></section>}
     </section>
 
-    {draft.risks.length ? <section className="mt-8 border-t border-dashed border-slate-200 pt-7">
-      <h3 className="text-base font-semibold text-slate-900">四、风险与待确认</h3>
-      <FactList items={draft.risks} emptyLabel="" />
+    {draft.risks.length || editable ? <section className="mt-5 border-t border-dashed border-[#dfe7ef] pt-4">
+      <h4 className="font-semibold text-slate-800">风险与待确认</h4>
+      <FactList items={draft.risks} emptyLabel="" editable={editable} disabled={disabled} onChange={(items) => onFactsChange?.('risks', items)} />
     </section> : null}
 
-    <footer className="mt-8 grid gap-3 border-t border-slate-200 pt-5 text-sm leading-6 text-slate-600 sm:grid-cols-2"><p>整理人：{editable ? <input value={draft.organizer ?? ''} onChange={(event) => onChange?.('organizer', event.target.value)} disabled={disabled} className="ml-1 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50" /> : (draft.organizer || '—')}</p><p>抄送：{editable ? <input value={draft.copied_to ?? ''} onChange={(event) => onChange?.('copied_to', event.target.value)} disabled={disabled} className="ml-1 w-[min(100%,300px)] rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50" /> : (draft.copied_to || '—')}</p></footer>
+    <footer className="mt-7 grid gap-3 border-t border-[#dfe7ef] pt-4 text-sm leading-6 text-slate-600 sm:grid-cols-2"><p>整理人：{editable ? <input value={draft.organizer ?? ''} onChange={(event) => onChange?.('organizer', event.target.value)} disabled={disabled} className="ml-1 rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50" /> : (draft.organizer || '—')}</p><p>抄送：{editable ? <input value={draft.copied_to ?? ''} onChange={(event) => onChange?.('copied_to', event.target.value)} disabled={disabled} className="ml-1 w-[min(100%,300px)] rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50" /> : (draft.copied_to || '—')}</p></footer>
   </article>
 }

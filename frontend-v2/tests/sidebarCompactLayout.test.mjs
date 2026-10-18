@@ -10,6 +10,10 @@ const sidebarSource = fs.readFileSync(
   path.join(frontendRoot, 'src/components/Sidebar.tsx'),
   'utf8',
 )
+const navigationModelSource = fs.readFileSync(
+  path.join(frontendRoot, 'src/domain/navigationModel.ts'),
+  'utf8',
+)
 const archiveCss = fs.readFileSync(
   path.join(frontendRoot, 'src/features/project-archive/projectArchive.css'),
   'utf8',
@@ -40,42 +44,26 @@ test('brand header renders a borderless MOWAYS logo on white with a notification
 })
 
 test('navigation keeps every existing item and permission boundary', () => {
-  for (const token of [
-    "label: '驾驶舱'",
-    "label: '工作推进表'",
-    "label: '我的任务'",
-    'label: AI_CONFIRM_CENTER_LABEL',
-    "label: '工作汇报'",
-    "label: '会议纪要'",
-    "label: '成果库'",
-    "label: '问题中心'",
-    "label: '组织管理'",
-    "label: '项目管理'",
-    "label: '通知中心'",
-    "label: '系统设置'",
+  for (const label of [
+    '全局工作台', '项目工作台', '工作推进表', '我的任务', '工作汇报', '会议纪要',
+    '成果库', '问题中心', '组织管理', '项目管理', '通知中心', '系统设置',
   ]) {
-    assert.ok(sidebarSource.includes(token), `missing navigation contract: ${token}`)
+    assert.ok(sidebarSource.includes(label) || navigationModelSource.includes(label), `missing navigation contract: ${label}`)
   }
+  assert.ok(sidebarSource.includes('AI_CONFIRM_CENTER_LABEL') || navigationModelSource.includes('AI_CONFIRM_CENTER_LABEL'))
 
-  for (const condition of [
-    'showParticipantModules && hasActiveProject',
-    'showParticipantModules && isPrivileged',
-    "globalUserRoles.includes('project_ceo')",
-    "globalUserRoles.includes('owner')",
-    'currentUser?.is_tech_admin',
-  ]) {
-    assert.ok(sidebarSource.includes(condition), `missing permission condition: ${condition}`)
-  }
+  for (const condition of ['showParticipantModules', 'hasActiveProject', 'isPrivileged', "includes('project_ceo')", "includes('owner')", 'currentUser?.is_tech_admin'])
+    assert.ok(`${sidebarSource}\n${navigationModelSource}`.includes(condition), `missing permission condition: ${condition}`)
 })
 
 test('navigation keeps its click routing and compact readable dimensions', () => {
   assert.match(sidebarSource, /function handleNavigate\(page: AppPage\)/)
-  assert.match(sidebarSource, /navigate\('\/home\/dashboard'\)/)
+  assert.match(sidebarSource, /navigate\(isGlobalViewer \? '\/home\/dashboard\?scope=global' : '\/home\/dashboard\?scope=my'\)/)
   assert.match(sidebarSource, /onNavigate\(page\)/)
   assert.match(sidebarSource, /onClick=\{\(\) => handleNavigate\(entry\.page\)\}/)
   assert.match(sidebarSource, /title=\{entry\.label\}/)
   assert.match(sidebarSource, /<nav className="flex-1 px-2 py-3 xl:py-2 space-y-0\.5 overflow-y-auto">/)
-  assert.match(sidebarSource, /className="pt-3 xl:pt-2"/)
+  assert.match(sidebarSource, /className="px-2 pt-4 first:pt-1 xl:pt-4"/)
   assert.match(sidebarSource, /gap: 8/)
   assert.match(sidebarSource, /className="justify-center xl:justify-start px-2\.5 py-2 xl:py-1\.5"/)
   assert.doesNotMatch(sidebarSource, /padding: '6px 10px'/)

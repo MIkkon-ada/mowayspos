@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from app import models, schemas
+from app.database import Base
+from app.domain import submission_status as SS
 from app.routers.confirmations import confirm
 from tests.test_ai_confirm_related_subtask_writeback import (
     _make_second_project_team,
@@ -294,6 +298,48 @@ def test_second_confirm_is_rejected_and_does_not_duplicate_assets():
     assert len(achievements) == len(issues) == 1
     assert db.query(models.Achievement).filter(models.Achievement.source_submission_id == submission_id).count() == 1
     assert db.query(models.Issue).filter(models.Issue.source_submission_id == submission_id).count() == 1
+
+
+def test_stale_confirmation_session_cannot_write_assets_twice(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'stale-confirmation.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    db = session_factory()
+    team = _seed_execution_team(db)
+    submission_id = _submit_with_human_result(
+        db,
+        team,
+        _result(team, reports=[_report(
+            team,
+            achievements=[{"name": "并发一次成果"}],
+            issues=[{"description": "并发一次问题"}],
+        )]),
+    )
+    stale_db = session_factory()
+    stale_submission = stale_db.get(models.UpdateSubmission, submission_id)
+    assert stale_submission.confirm_status == SS.S_NEW
+
+    confirm(
+        submission_id,
+        schemas.ConfirmRequest(operator="owner"),
+        current_user="owner",
+        db=db,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        confirm(
+            submission_id,
+            schemas.ConfirmRequest(operator="owner"),
+            current_user="owner",
+            db=stale_db,
+        )
+
+    assert exc.value.status_code == 409
+    assert stale_db.get(models.UpdateSubmission, submission_id).confirm_status == SS.S_CONFIRMED
+    assert db.query(models.Achievement).filter_by(source_submission_id=submission_id).count() == 1
+    assert db.query(models.Issue).filter_by(source_submission_id=submission_id).count() == 1
+    stale_db.close()
+    db.close()
 
 
 def test_written_assets_have_valid_project_task_and_submission_references():

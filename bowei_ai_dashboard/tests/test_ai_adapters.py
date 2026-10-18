@@ -65,6 +65,38 @@ def test_openai_compatible_chat_uses_model_max_output_tokens(monkeypatch):
     assert captured["max_tokens"] == 8192
 
 
+def test_openai_compatible_chat_reports_finish_reason_and_token_usage(monkeypatch):
+    captured = {}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="{}"), finish_reason="length")],
+                usage=SimpleNamespace(prompt_tokens=1200, completion_tokens=8192),
+            )
+
+    monkeypatch.setattr(
+        openai,
+        "OpenAI",
+        lambda **_kwargs: SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+    )
+    model = models.AIModel(
+        code="chat", display_name="Chat", provider="deepseek", model_name="deepseek-chat",
+        model_type="chat", base_url="https://example.test/v1", config_json="{}", enabled=True,
+    )
+
+    OpenAICompatibleChatAdapter().complete(
+        model, "secret", "prompt", timeout_seconds=30,
+        on_metadata=lambda metadata: captured.update(metadata),
+    )
+
+    assert captured == {
+        "finish_reason": "length",
+        "prompt_tokens": 1200,
+        "completion_tokens": 8192,
+    }
+
+
 @pytest.mark.parametrize("configured", [True, False])
 def test_openai_compatible_chat_forwards_explicit_json_output(monkeypatch, configured):
     captured: dict = {}

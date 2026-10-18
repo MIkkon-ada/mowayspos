@@ -4,6 +4,7 @@ import { fetchIssueById, closeIssue, resolveIssue, assignIssueHelper, requestIss
 import { fetchTargetLogs, type OperationLogItem } from '../api/logs'
 import { fetchTasks } from '../api/tasks'
 import { fetchSubtasksByProject } from '../api/subtasks'
+import { promptProjectMember } from '../utils/projectMemberPrompt'
 import type { IssueItem, TaskItem, SubTaskItem } from '../types'
 import { useProject } from '../context/ProjectContext'
 import { toast } from '../utils/toast'
@@ -206,13 +207,13 @@ export function IssueDetailPage() {
     } finally { setActionLoading('') }
   }
   const doAssignHelper = async () => {
-    if (!issue) return
-    const helper = prompt('请输入协助人姓名：')
-    if (!helper) return
+    if (!issue || projectId == null) return
     setActionLoading('assign')
     try {
-      await assignIssueHelper(issue.id, helper)
-      toast.success(`已指定协助人: ${helper}`)
+      const helper = await promptProjectMember(projectId, '请选择协助人')
+      if (!helper) return
+      await assignIssueHelper(issue.id, helper.person_name_snapshot, helper.person_id)
+      toast.success(`已指定协助人: ${helper.person_name_snapshot}`)
       loadIssue()
     } catch (e: unknown) {
       toast.error(`指定失败: ${e instanceof Error ? e.message : '未知错误'}`)

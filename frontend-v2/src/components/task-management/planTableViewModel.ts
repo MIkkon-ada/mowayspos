@@ -313,3 +313,19 @@ export function buildPlanRows({
     showObjective: index === 0,
   }))
 }
+
+export function buildMobileTaskList(input: BuildPlanRowsInput): {
+  tasks: TaskItem[]
+  subTasksByTaskId: Record<number, SubTaskItem[]>
+} {
+  const tasksById = new Map<number, TaskItem>()
+  const subTasksByTaskId: Record<number, SubTaskItem[]> = {}
+  for (const row of buildPlanRows(input)) {
+    tasksById.set(row.task.id, row.task)
+    if (!row.subtask) continue
+    const subtasks = subTasksByTaskId[row.task.id] ?? []
+    if (!subtasks.some((item) => item.id === row.subtask?.id)) subtasks.push(row.subtask)
+    subTasksByTaskId[row.task.id] = subtasks
+  }
+  return { tasks: [...tasksById.values()], subTasksByTaskId }
+}

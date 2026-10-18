@@ -120,7 +120,9 @@ def _ensure_legacy_account(username: str, password_hash: str) -> None:
     with SessionLocal() as db:
         if db.query(Account).filter(Account.username == username).first():
             return
-        person = db.query(Person).filter(Person.name == username).first()
+        from .services.person_identity import unique_active_person_id_for_name
+        person_id = unique_active_person_id_for_name(db, username)
+        person = db.get(Person, person_id) if person_id is not None else None
         account = Account(
             username=username,
             password_hash=password_hash,

@@ -17,6 +17,7 @@ export type VoiceDraftState = {
   mode?: 'text' | 'voice' | 'upload'
   projectId?: number | null
   subtaskId?: number | null
+  scope?: VoiceReportScope
 }
 
 export function readVoiceDraftState(raw: string | null): VoiceDraftState {

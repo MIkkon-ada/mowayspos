@@ -6,17 +6,18 @@ const dashboard = readFileSync(new URL('../src/pages/DashboardPage.tsx', import.
 const meeting = readFileSync(new URL('../src/pages/MeetingPage.tsx', import.meta.url), 'utf8')
 
 test('dashboard uses wrapping desktop header and responsive content padding', () => {
-  assert.match(dashboard, /<header className="hidden min-\[800px\]:flex min-h-16 flex-wrap items-center px-4 py-3 lg:px-6 gap-4 flex-shrink-0 bg-white border-b"/)
+  assert.match(dashboard, /<header className="flex min-h-16 flex-shrink-0 flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-4 py-3 lg:gap-4 lg:px-6"/)
   assert.match(dashboard, /<div className="flex-1 min-w-0">/)
   assert.match(dashboard, /<div className="flex flex-wrap items-center gap-2">/)
-  assert.match(dashboard, /<main className="hidden min-\[800px\]:block flex-1 overflow-y-auto p-4 lg:p-6 space-y-5"/)
+  assert.match(dashboard, /<main className="min-h-0 flex-1 space-y-5 overflow-y-auto bg-slate-50 p-4 pb-12 lg:p-6"/)
 })
 
 test('dashboard mounts the responsive executive governance layout instead of legacy chart grids', () => {
   assert.match(dashboard, /<GovernanceDashboardContent/)
-  assert.match(dashboard, /projectHealthRows=/)
-  assert.match(dashboard, /onOpenAction=/)
-  assert.match(dashboard, /onOpenInitiative=/)
+  assert.match(dashboard, /governance=\{governance\}/)
+  assert.match(dashboard, /projectRows=\{projectRows\}/)
+  assert.match(dashboard, /onOpenProject=/)
+  assert.match(dashboard, /onOpenIssueCenter=/)
   assert.doesNotMatch(dashboard, /chart\.js\/auto/)
   assert.doesNotMatch(dashboard, /<canvas ref=\{chartRef\}/)
 })

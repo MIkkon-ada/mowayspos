@@ -11,7 +11,8 @@ from docx import Document
 
 _DATE_PATTERN = re.compile(r"(20\d{2}-\d{2}-\d{2})")
 _AGENDA_NUMBER = re.compile(r"^\s*\d+[、.．]\s*")
-_TITLE_SUFFIX = re.compile(r"\s*[会议纪要]+\s*$")
+_TITLE_SUFFIX = re.compile(r"\s*会议纪要\s*$")
+_DISCUSSION_HEADING = re.compile(r"^[（(][一二三四五六七八九十\d]+[）)]\s*(.+)$")
 
 
 def _clean(value: str) -> str:
@@ -69,6 +70,25 @@ def _section_lines(paragraphs: list[str], heading: str, next_heading: str) -> li
     return lines
 
 
+def _discussion_sections(lines: list[str]) -> list[dict[str, object]]:
+    sections: list[dict[str, object]] = []
+    for line in lines:
+        match = _DISCUSSION_HEADING.match(line)
+        if match:
+            sections.append({"title": match.group(1).strip(), "points": []})
+            continue
+        point = line.lstrip("·• ").strip()
+        if point:
+            if not sections:
+                sections.append({"title": "会议讨论与结论", "points": []})
+            sections[-1]["points"].append(point)
+    for section in sections:
+        if not section["points"]:
+            section["points"] = [section["title"]]
+            section["title"] = "会议讨论与结论"
+    return sections
+
+
 def _first_value(values: dict[str, str], *labels: str) -> str:
     for label in labels:
         if values.get(_key(label)):
@@ -88,8 +108,9 @@ def parse_standard_meeting_minutes(filename: str, content: bytes) -> dict[str, o
     paragraphs = [_clean(paragraph.text) for paragraph in document.paragraphs]
     paragraphs = [line for line in paragraphs if line]
     values = _table_values(document)
-    agenda_lines = _section_lines(paragraphs, "一、会议议程", "二、会议小结与决议")
-    summary_lines = _section_lines(paragraphs, "二、会议小结与决议", "三、待办事项跟踪")
+    agenda_lines = _section_lines(paragraphs, "一、", "二、")
+    summary_lines = _section_lines(paragraphs, "二、", "三、")
+    discussion_sections = _discussion_sections(summary_lines)
     current_action_items = _find_table(document, {"编号", "会议安排事项", "负责人", "追踪人", "完成时限", "来源/备注"})
     prior_action_items = _find_table(document, {"编号", "上周事项", "负责人", "状态", "本周进展/说明"})
     footer = " ".join(paragraphs[-4:])
@@ -98,15 +119,15 @@ def parse_standard_meeting_minutes(filename: str, content: bytes) -> dict[str, o
     required_basic_fields = (
         _first_value(values, "会议时间"),
         _first_value(values, "会议地点"),
-        _first_value(values, "会议类型"),
-        _first_value(values, "会议主持人", "主持人"),
-        _first_value(values, "与会者", "参会人员"),
+        _first_value(values, "会议类型", "会议主题"),
+        _first_value(values, "会议主持人", "会议主持", "主持人"),
+        _first_value(values, "与会者", "参会人员", "参会人"),
     )
-    organizer = _first_value(values, "整理人") or (organizer_match.group(1).strip() if organizer_match else "")
+    organizer = _first_value(values, "整理人", "会议记录") or (organizer_match.group(1).strip() if organizer_match else "")
     copied_to = _first_value(values, "抄送") or (copied_to_match.group(1).strip() if copied_to_match else "")
     is_standard_minutes = bool(
         agenda_lines
-        and summary_lines
+        and discussion_sections
         and current_action_items
         and all(required_basic_fields)
         and organizer
@@ -124,13 +145,14 @@ def parse_standard_meeting_minutes(filename: str, content: bytes) -> dict[str, o
         "title": title,
         "meeting_date": date_match.group(1) if date_match else "",
         "location": _first_value(values, "会议地点"),
-        "meeting_type": _first_value(values, "会议类型"),
-        "host": _first_value(values, "会议主持人", "主持人"),
-        "participants": _first_value(values, "与会者", "参会人员"),
+        "meeting_type": _first_value(values, "会议类型", "会议主题"),
+        "host": _first_value(values, "会议主持人", "会议主持", "主持人"),
+        "participants": _first_value(values, "与会者", "参会人员", "参会人"),
         "organizer": organizer,
         "copied_to": copied_to,
         "agenda_items": [_AGENDA_NUMBER.sub("", line) for line in agenda_lines],
         "summary": "\n".join(summary_lines),
+        "discussion_sections": discussion_sections,
         "current_action_items": current_action_items,
         "prior_action_items": prior_action_items,
     }

@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react'
+import type { CSSProperties } from 'react'
 import type { Project, SubTaskItem, TaskItem } from '../../types'
 import { buildPlanRows, type PlanTableRow } from './planTableViewModel'
+import { WORK_PROGRESS_VIEW_COLUMNS, WORK_PROGRESS_OPTIONAL_COLUMNS, type WorkProgressOptionalColumnKey } from './workProgressColumnSizing'
+import { useWorkProgressColumnLayout } from './useWorkProgressColumnLayout'
 import './workProgressWorkspace.css'
 
 type Props = {
@@ -11,7 +14,9 @@ type Props = {
   ownerFilter?: string
   searchText?: string
   loading?: boolean
+  optionalColumns?: readonly WorkProgressOptionalColumnKey[]
   onOpenSubTask?: (subtask: SubTaskItem) => void
+  onEditSubTask?: (task: TaskItem, subtask: SubTaskItem) => void
 }
 
 function CellText({ value, empty = '—', className = '', title }: { value?: string | null; empty?: string; className?: string; title?: string }) {
@@ -19,11 +24,25 @@ function CellText({ value, empty = '—', className = '', title }: { value?: str
   return <span className={`wp-cell-text${text === '—' || text.startsWith('同一重点工作') ? ' is-empty' : ''}${className ? ` ${className}` : ''}`} title={title || text}>{text}</span>
 }
 
-function TaskTableRow({ row, onOpen, onOpenAcceptance }: { row: PlanTableRow; onOpen?: Props['onOpenSubTask']; onOpenAcceptance: (task: TaskItem) => void }) {
+function ProgressPoints({ value, empty = '—' }: { value?: string | null; empty?: string }) {
+  if (!value?.trim() || value.trim() === '—') return <CellText empty={empty} />
+  const points = value?.split(/\r?\n|[；;]/)
+    .map((point) => point.trim().replace(/^(?:(?:[-•·]|\d+[.、．)]|[（(]\d+[）)])\s*)+/, '').trim())
+    .filter(Boolean) ?? []
+  if (!points.length) return <CellText empty={empty} />
+  return <ul className="wp-progress-points">{points.map((point, index) => <li key={index}>{point}</li>)}</ul>
+}
+
+function TaskTableRow({ row, onOpen, onEdit, onOpenAcceptance, optionalColumns }: { row: PlanTableRow; onOpen?: Props['onOpenSubTask']; onEdit?: Props['onEditSubTask']; onOpenAcceptance: (task: TaskItem) => void; optionalColumns: readonly WorkProgressOptionalColumnKey[] }) {
   const subtask = row.subtask
   const period = [row.planStart, row.planEnd].filter((value) => value && value !== '—')
   const planTime = [...new Set(period)].join(' — ') || '待安排'
   const submission = subtask?.latest_confirmed_submission
+  const confirmedProgress = subtask?.latest_confirmed_progress
+  const progressSummary = confirmedProgress?.summary?.trim() || submission?.summary
+  const progressMeta = confirmedProgress?.summary?.trim()
+    ? [confirmedProgress.confirmed_at?.slice(0, 10), confirmedProgress.actor, confirmedProgress.source_label].filter(Boolean).join(' · ')
+    : submission ? [submission.confirmed_at?.slice(0, 10), submission.submitter].filter(Boolean).join(' · ') : ''
   const statusMarkers = row.statusMarkers.filter((marker) => marker.kind === 'risk' || marker.kind === 'overdue')
   return <tr className={row.showTaskCells ? 'wp-row-start' : undefined}>
     {row.showTaskCells && <td className="wp-workstream-cell" rowSpan={row.taskRowSpan}>
@@ -34,29 +53,53 @@ function TaskTableRow({ row, onOpen, onOpenAcceptance }: { row: PlanTableRow; on
       {subtask && onOpen
         ? <button type="button" className="wp-task-link" onClick={() => onOpen(subtask)} title={row.keyTask}>{row.keyTask}</button>
         : <CellText value={row.keyTask} />}
+      {subtask && onEdit && optionalColumns.length > 0 && <button type="button" className="wp-edit-fields" onClick={() => onEdit(row.task, subtask)}>编辑字段</button>}
     </td>
+    {optionalColumns.map((key) => <td key={key} className="wp-optional-cell"><CellText value={key === 'expectedOutcome' ? subtask?.expected_outcome : key === 'goal' ? subtask?.goal : subtask?.bowei_role} /></td>)}
     <td className="wp-owner-cell"><CellText value={row.responsible} /></td>
     <td className="wp-time-cell"><CellText value={planTime} empty="待安排" /></td>
     <td className="wp-status-cell"><span className={`wp-status wp-status--${row.statusTone}`}>{row.status}</span>{statusMarkers.map((marker) => <span key={marker.kind} className={`wp-marker wp-marker--${marker.kind}`}>{marker.label}</span>)}</td>
-    <td className="wp-progress-cell"><CellText value={submission?.summary} empty="暂无已确认进展" />
-      {submission && (submission.confirmed_at || submission.submitter) && <small>{submission.confirmed_at?.slice(0, 10)}{submission.submitter ? ` · ${submission.submitter}` : ''}</small>}
+    <td className="wp-progress-cell"><ProgressPoints value={progressSummary} empty="暂无已确认进展" />
+      {progressMeta && <small>{progressMeta}</small>}
     </td>
-    <td className="wp-next-step-cell"><CellText value={row.nextStep} /></td>
+    <td className="wp-next-step-cell">{confirmedProgress?.source_label === '会议纪要' && confirmedProgress.action_items?.length
+      ? <ul className="wp-progress-points">{confirmedProgress.action_items.map((item, index) => <li key={item.fact_id || index}><strong>{item.code ? `${item.code} ` : ''}</strong>{item.content}<small className="block text-slate-500">{[item.owner && `负责人：${item.owner}`, item.tracker && `追踪：${item.tracker}`, item.due_date && `期限：${item.due_date}`].filter(Boolean).join(' · ')}</small></li>)}</ul>
+      : <ProgressPoints value={row.nextStep} />}</td>
   </tr>
 }
 
-export function PlanTableViewV2({ project, tasks, taskSubMap, searchText = '', statusFilter = '', ownerFilter = '', loading = false, onOpenSubTask }: Props) {
+export function PlanTableViewV2({ project, tasks, taskSubMap, searchText = '', statusFilter = '', ownerFilter = '', loading = false, optionalColumns = [], onOpenSubTask, onEditSubTask }: Props) {
   const [acceptanceTask, setAcceptanceTask] = useState<TaskItem | null>(null)
+  const enabledOptionalColumns = useMemo(() => WORK_PROGRESS_OPTIONAL_COLUMNS.filter((column) => optionalColumns.includes(column.key)).map((column) => column.key), [optionalColumns])
   const rows = useMemo(() => buildPlanRows({ project, tasks, taskSubMap, searchText, statusFilter, ownerFilter }), [project, tasks, taskSubMap, searchText, statusFilter, ownerFilter])
+  const sizingRows = useMemo(() => buildPlanRows({ project, tasks, taskSubMap }), [project, tasks, taskSubMap])
+  const columns = useMemo(() => [
+    ...WORK_PROGRESS_VIEW_COLUMNS.slice(0, 2),
+    ...WORK_PROGRESS_OPTIONAL_COLUMNS.filter((column) => enabledOptionalColumns.includes(column.key)),
+    ...WORK_PROGRESS_VIEW_COLUMNS.slice(2),
+  ], [enabledOptionalColumns])
+  const { scrollRef, widths, startResize, changeWidth, resetWidth } = useWorkProgressColumnLayout(sizingRows, loading, project?.id, enabledOptionalColumns)
+  const tableWidth = columns.reduce((sum, column) => sum + widths[column.key], 0)
   if (loading) return <div className="wp-empty" role="status">正在加载项目工作…</div>
   return <section className="wp-workspace" aria-label="项目工作推进表">
-    <div className="wp-table-scroll" key={project?.id}>
-      {rows.length ? <table className="wp-table" aria-label="工作推进明细">
-        <colgroup><col className="wp-col-workstream"/><col className="wp-col-key-task"/><col className="wp-col-owner"/><col className="wp-col-time"/><col className="wp-col-status"/><col className="wp-col-progress"/><col className="wp-col-next-step"/></colgroup>
+    <div ref={scrollRef} className="wp-table-scroll" key={project?.id}>
+      {rows.length ? <table className="wp-table" aria-label="工作推进明细" style={{ width: tableWidth, '--wp-workstream-width': `${widths.workstream}px` } as CSSProperties}>
+        <colgroup>{columns.map((column) => <col key={column.key} className={`wp-col-${column.key}`} style={{ width: widths[column.key] }} />)}</colgroup>
         <thead><tr>
-          <th scope="col">重点工作</th><th scope="col">关键任务</th><th scope="col">负责人</th><th scope="col">计划时间</th><th scope="col">状态 / 风险</th><th scope="col">最新进展</th><th scope="col">下一步计划</th>
+          {columns.map((column) => <th key={column.key} scope="col" aria-label={column.label}>
+            {column.label}
+            <button type="button" className="wp-column-resizer" aria-label={`调整${column.label}列宽`} title="拖动调整列宽，双击恢复自动宽度"
+              onPointerDown={(event) => startResize(column.key, event)} onDoubleClick={() => resetWidth(column.key)}
+              onKeyDown={(event) => {
+                if (event.key === 'Home') { event.preventDefault(); resetWidth(column.key) }
+                if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                  event.preventDefault()
+                  changeWidth(column.key, widths[column.key] + (event.key === 'ArrowRight' ? 10 : -10))
+                }
+              }} />
+          </th>)}
         </tr></thead>
-        <tbody>{rows.map((row) => <TaskTableRow key={`${row.task.id}-${row.subtask?.id ?? 'empty'}`} row={row} onOpen={onOpenSubTask} onOpenAcceptance={setAcceptanceTask} />)}</tbody>
+        <tbody>{rows.map((row) => <TaskTableRow key={`${row.task.id}-${row.subtask?.id ?? 'empty'}`} row={row} onOpen={onOpenSubTask} onEdit={onEditSubTask} onOpenAcceptance={setAcceptanceTask} optionalColumns={enabledOptionalColumns} />)}</tbody>
       </table> : <div className="wp-empty">当前条件下没有匹配的重点工作或关键任务，请调整筛选条件。</div>}
     </div>
     {acceptanceTask && <div className="wp-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setAcceptanceTask(null) }}>

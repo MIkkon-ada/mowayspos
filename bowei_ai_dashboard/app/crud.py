@@ -49,6 +49,8 @@ def validate_subtask_link(
 def to_dict(obj):
     data = {}
     for col in obj.__table__.columns:
+        if col.info.get("api_exclude"):
+            continue
         value = getattr(obj, col.name)
         if isinstance(value, datetime):
             value = value.isoformat(timespec="seconds") + "Z"

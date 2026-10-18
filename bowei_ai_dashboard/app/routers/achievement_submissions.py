@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import update
+from sqlalchemy import false, or_, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
@@ -16,6 +17,9 @@ from ..time_utils import utc_now
 from ..services.notify import project_owner_ids, send as _notify, person_name_for_account
 from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
+from ..services.person_identity import person_identity_matches, person_identity_scope
+from ..services.request_fingerprint import request_payload_fingerprint
+from ..api_errors import CodedHTTPException
 
 router = APIRouter(prefix="/api/achievement-submissions", tags=["achievement-submissions"])
 
@@ -23,6 +27,22 @@ _STATUS_PENDING   = "待确认"
 _STATUS_CONFIRMED = "已确认"
 _STATUS_REJECTED  = "已退回"
 _STATUS_WITHDRAWN = "已撤回"
+
+
+def _is_submission_submitter(
+    context: dict,
+    row: models.AchievementSubmission,
+    current_user: str,
+    db: Session,
+) -> bool:
+    return person_identity_matches(
+        db,
+        person_id=context.get("person_id"),
+        person_name=context.get("name"),
+        stored_person_id=row.submitter_id,
+        stored_name=row.submitter,
+        account_username=current_user,
+    )
 
 
 def _require_owner_or_admin(context: dict, row: models.AchievementSubmission, db: Session) -> None:
@@ -66,6 +86,29 @@ def create_submission(
     if not task_row:
         raise HTTPException(422, "related_task_id 无效，找不到对应关键任务")
 
+    request_payload_hash = None
+    if payload.client_request_id:
+        actor_key = (
+            f"person:{person_id}"
+            if person_id is not None
+            else f"account:{context.get('account_username') or current_user}"
+        )
+        request_payload_hash = request_payload_fingerprint({
+            "actor": actor_key,
+            "payload": payload.model_dump(exclude={"client_request_id"}),
+        })
+        existing = db.query(models.AchievementSubmission).filter_by(
+            client_request_id=payload.client_request_id
+        ).first()
+        if existing is not None:
+            if existing.request_payload_hash != request_payload_hash:
+                raise CodedHTTPException(
+                    409,
+                    "IDEMPOTENCY_KEY_REUSED",
+                    "client_request_id was already used for a different achievement submission",
+                )
+            return crud.to_dict(existing)
+
     attachments = []
     if payload.attachment_ids:
         attachments = db.query(models.AchievementAttachment).filter(
@@ -84,6 +127,7 @@ def create_submission(
         special_project=proj_name,
         related_task_id=payload.related_task_id,
         submitter=current_user,
+        submitter_id=person_id,
         name=payload.name,
         achievement_type=payload.achievement_type,
         version=payload.version,
@@ -92,9 +136,27 @@ def create_submission(
         reuse_tag=payload.reuse_tag,
         status=_STATUS_PENDING,
         source_type=ST.normalize("人工补录"),
+        client_request_id=payload.client_request_id,
+        request_payload_hash=request_payload_hash,
     )
     db.add(row)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        if payload.client_request_id:
+            existing = db.query(models.AchievementSubmission).filter_by(
+                client_request_id=payload.client_request_id
+            ).first()
+            if existing is not None:
+                if existing.request_payload_hash != request_payload_hash:
+                    raise CodedHTTPException(
+                        409,
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "client_request_id was already used for a different achievement submission",
+                    )
+                return crud.to_dict(existing)
+        raise
     if payload.attachment_ids:
         bound_count = db.execute(
             update(models.AchievementAttachment).where(
@@ -144,10 +206,21 @@ def list_submissions(
 
     if not context.get("is_tech_admin"):
         person_name = context.get("name", "")
+        person_id = context.get("person_id")
         owned = context.get("owned_projects", [])
+        submitter_scope = person_identity_scope(
+            db,
+            person_id=person_id,
+            person_name=person_name,
+            id_column=models.AchievementSubmission.submitter_id,
+            name_column=models.AchievementSubmission.submitter,
+            account_username=current_user,
+        )
         q = q.filter(
-            (models.AchievementSubmission.submitter == person_name) |
-            (models.AchievementSubmission.special_project.in_(owned) if owned else False)
+            or_(
+                submitter_scope,
+                models.AchievementSubmission.special_project.in_(owned) if owned else false(),
+            )
         )
 
     if status:
@@ -272,7 +345,8 @@ def withdraw_submission(
     if not row:
         raise HTTPException(404, "submission not found")
     require_project_business_writable(row.project_id, db)
-    if row.submitter != current_user:
+    context = get_user_context_from_db(current_user, db)
+    if not _is_submission_submitter(context, row, current_user, db):
         raise HTTPException(403, "只有提交人本人可以撤回")
     if row.status != _STATUS_PENDING:
         raise HTTPException(422, f"当前状态 [{row.status}] 不可撤回，只有待确认状态可以操作")

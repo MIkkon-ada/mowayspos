@@ -53,9 +53,12 @@ class MeetingInfo(StrictModel):
 
 class MeetingFact(StrictModel):
     content: str = Field(min_length=1)
+    code: str = ""
+    topic: str = ""
     owner: str = ""
     tracker: str = ""
     due_date: str = ""
+    source_note: str = ""
     evidence: list[EvidenceSpan]
     confidence: float = Field(ge=0, le=1)
     needs_confirmation: bool
@@ -69,6 +72,23 @@ class MeetingFact(StrictModel):
             value = getattr(self, field_name).strip()
             if value and value not in evidence_text:
                 raise ValueError(f"meeting fact {field_name} must appear in its evidence")
+        return self
+
+
+class PriorActionTracking(StrictModel):
+    content: str = Field(min_length=1)
+    code: str = ""
+    owner: str = ""
+    status: str = ""
+    progress_note: str = ""
+    evidence: list[EvidenceSpan]
+    confidence: float = Field(ge=0, le=1)
+    needs_confirmation: bool
+
+    @model_validator(mode="after")
+    def require_current_document_evidence(self):
+        if not self.needs_confirmation and not self.evidence:
+            raise ValueError("confirmed prior action tracking requires current document evidence")
         return self
 
 
@@ -154,8 +174,10 @@ class ExtractedMeetingFact(StrictModel):
         "risk",
         "output",
         "scope",
+        "discussion",
     ]
     content: str = Field(min_length=1)
+    reason: str = ""
     fields: dict[str, SourcedValue] = Field(default_factory=dict)
     meeting_evidence: list[EvidenceSpan] = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
@@ -259,6 +281,7 @@ class MeetingAgentFinal(StrictModel):
     next_steps: list[MeetingFact]
     risks: list[MeetingFact]
     open_questions: list[MeetingFact]
+    prior_action_tracking: list[PriorActionTracking] = Field(default_factory=list)
     task_updates: list[TaskUpdate]
     meeting_facts: list[ExtractedMeetingFact] = Field(default_factory=list)
     project_matches: list[ProjectMatch] = Field(default_factory=list)
@@ -369,6 +392,37 @@ class MeetingAgentFinal(StrictModel):
                         raise ValueError(
                             f"meeting fact field requires evidence: {field_name}"
                         )
+
+
+class StandardFactClassification(StrictModel):
+    """Compact AI decision for one deterministic standard-Word fact."""
+
+    fact_id: str = Field(pattern=r"^F[0-9]{3,}$")
+    fact_type: Literal[
+        "action_item", "decision", "completion", "progress", "risk", "output", "scope", "discussion",
+    ]
+    disposition: Literal["matched", "unmatched", "needs_confirmation"]
+    target_id: Annotated[int, Field(strict=True, gt=0)] | None = None
+    confidence: float = Field(ge=0, le=1)
+    reason: str = Field(min_length=1)
+    delta_type: str | None = None
+    delta_reason: str = ""
+
+    @model_validator(mode="after")
+    def validate_disposition(self):
+        if (self.disposition == "matched") != (self.target_id is not None):
+            raise ValueError("matched facts require target_id; other dispositions forbid it")
+        if self.disposition == "matched" and (not self.delta_type or not self.delta_reason.strip()):
+            raise ValueError("matched facts require delta_type and delta_reason")
+        if self.disposition != "matched" and (self.delta_type is not None or self.delta_reason):
+            raise ValueError("unmatched facts must not include delta data")
+        if self.delta_type is not None and self.delta_type not in DELTA_TYPES:
+            raise ValueError("delta_type is not supported")
+        return self
+
+
+class StandardFactBatchResult(StrictModel):
+    facts: list[StandardFactClassification]
 
 
 def _unique_ids(items: list[Any], attribute: str) -> dict[str, Any]:

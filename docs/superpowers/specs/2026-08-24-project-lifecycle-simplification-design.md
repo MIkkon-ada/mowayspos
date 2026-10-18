@@ -1,5 +1,7 @@
 # Project Lifecycle Simplification Design
 
+> **历史设计说明（2026-10-08）：** 本文是历史方案草案，曾提出取消 `dispatched` 和 `pending_kickoff` 常规阶段；当前代码保留 `draft → dispatched → pending_review → active/returned` 常规链路，只有 `pending_kickoff` 属于兼容状态。当前实现口径见 [`../../PROJECT_LIFECYCLE_AND_PERMISSIONS.md`](../../PROJECT_LIFECYCLE_AND_PERMISSIONS.md)。请勿将本文当作尚未执行的目标方案。
+
 ## 1. Goal
 
 Simplify the lifecycle shared by all project types. Remove “dispatch” and “kickoff” as independent lifecycle gates while preserving the real governance controls: project-plan submission, project-coach review, execution confirmation, close review, and archive.

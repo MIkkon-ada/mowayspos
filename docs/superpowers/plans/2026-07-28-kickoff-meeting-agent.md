@@ -1,5 +1,7 @@
 # 启动会确认 Agent Implementation Plan
 
+> **历史流程提示（2026-10-08）：** 本计划曾要求新增 `pending_kickoff` 并把启动会设为强制生命周期关口；该状态门槛已被后续实现取代。保留本文件作为 Agent 功能演进记录，不要按其旧状态目标恢复流程。当前状态与权限见 [`../../PROJECT_LIFECYCLE_AND_PERMISSIONS.md`](../../PROJECT_LIFECYCLE_AND_PERMISSIONS.md)。仓库 `AGENTS.md` 禁止未经用户允许调用子代理。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将项目启动会实现为 PM 发起、企业教练审核、审核通过后原子写入执行版并启动项目的可审计 Agent 工作流。

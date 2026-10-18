@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createIssue, fetchIssues } from '../api/issues'
 import { fetchTasks } from '../api/tasks'
@@ -10,6 +10,7 @@ import { MobileIssueList } from '../features/mobile-core-pages/MobileIssueList'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
 import { getProjectDisplayName } from '../compatibility/projectNames'
 import type { IssueItem, Project, SubTaskItem, TaskItem } from '../types'
+import { useWindowFocusVersion } from '../utils/useWindowFocusVersion'
 
 const PRIORITY_STYLE: Record<string, string> = {
   '高': 'bg-red-100 text-red-700 border-red-200',
@@ -141,6 +142,7 @@ function keyTaskLabelForIssue(item: IssueItem, subtaskById: Record<number, SubTa
 
 export function IssuesPage() {
   const { projects, currentUser } = useProject()
+  const focusRefreshVersion = useWindowFocusVersion()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const projectId = parseProjectId(searchParams)
@@ -219,7 +221,7 @@ export function IssuesPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [projectId])
+  }, [projectId, focusRefreshVersion, currentUser?.account_id, currentUser?.person_id, currentUser?.username])
 
   // --- Load tasks when projectId is set ---
   useEffect(() => {
@@ -231,7 +233,7 @@ export function IssuesPage() {
       .catch(() => { if (!cancelled) setTasks([]) })
       .finally(() => { if (!cancelled) setTasksLoading(false) })
     return () => { cancelled = true }
-  }, [projectId])
+  }, [projectId, focusRefreshVersion, currentUser?.account_id, currentUser?.person_id, currentUser?.username])
 
   // --- Load all subtasks for the project ---
   useEffect(() => {
@@ -241,7 +243,7 @@ export function IssuesPage() {
       .then((rows) => { if (!cancelled) setAllSubtasks(rows.filter((row) => !row.is_deleted)) })
       .catch(() => { if (!cancelled) setAllSubtasks([]) })
     return () => { cancelled = true }
-  }, [projectId])
+  }, [projectId, focusRefreshVersion, currentUser?.account_id, currentUser?.person_id, currentUser?.username])
 
   const subtaskById = useMemo(() => {
     const map: Record<number, SubTaskItem> = {}
@@ -972,6 +974,7 @@ function AddIssueModal({ projects, currentProjectId, currentUser, tasks, tasksLo
     related_subtask_id: null as number | null,
   })
   const [saving, setSaving] = useState(false)
+  const createRequestIdsRef = useRef(new Map<string, string>())
   const [err, setErr] = useState('')
   const [subtasks, setSubtasks] = useState<SubTaskItem[]>([])
   const [subtasksLoading, setSubtasksLoading] = useState(false)
@@ -995,7 +998,14 @@ function AddIssueModal({ projects, currentProjectId, currentUser, tasks, tasksLo
     if (projectArchived) { setErr('项目已归档，不可新增问题'); return }
     setSaving(true); setErr('')
     try {
-      const item = await createIssue({ project_id: form.project_id, description: form.description.trim(), expected_resolve_time: form.expected_resolve_time, related_task_id: form.related_task_id, related_subtask_id: form.related_subtask_id, issue_type: '问题', priority: '中', status: '待处理', source_type: '人工录入' })
+      const payload = { project_id: form.project_id, description: form.description.trim(), expected_resolve_time: form.expected_resolve_time, related_task_id: form.related_task_id, related_subtask_id: form.related_subtask_id, issue_type: '问题', priority: '中', status: '待处理', source_type: '人工录入' }
+      const fingerprint = JSON.stringify(payload)
+      let requestId = createRequestIdsRef.current.get(fingerprint)
+      if (!requestId) {
+        requestId = globalThis.crypto?.randomUUID?.() ?? `issue-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        createRequestIdsRef.current.set(fingerprint, requestId)
+      }
+      const item = await createIssue(payload, requestId)
       onCreated(item)
     } catch (e) {
       setErr(e instanceof Error ? e.message : '创建失败，请重试')

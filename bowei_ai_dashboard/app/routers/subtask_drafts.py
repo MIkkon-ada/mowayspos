@@ -13,6 +13,7 @@ from ..permissions import (
     require_project_role,
 )
 from ..services.notify import person_id_for_name as _pid_for_name
+from ..services.person_identity import person_identity_matches
 from ..time_utils import utc_now
 
 router = APIRouter(prefix="/api/subtask-drafts", tags=["subtask-drafts"])
@@ -34,6 +35,30 @@ def _draft_project_id(draft: models.SubTaskDraft, db: Session) -> int | None:
         if task and task.project_id is not None:
             return task.project_id
     return None
+
+
+def _is_draft_visible_to_user(
+    row: models.SubTaskDraft,
+    current_user: str,
+    context: dict,
+    db: Session,
+) -> bool:
+    # proposer is always written from the authenticated account username.
+    if row.proposer == current_user:
+        return True
+
+    person_id = context.get("person_id")
+    if row.assignee_id is not None:
+        return person_id is not None and row.assignee_id == person_id
+
+    return person_identity_matches(
+        db,
+        person_id=person_id,
+        person_name=context.get("name"),
+        stored_person_id=None,
+        stored_name=row.assignee,
+        account_username=row.assignee,
+    )
 
 
 def _resolve_parent_task(draft: models.SubTaskDraft, payload_parent_task_id: int | None, db: Session) -> models.Task | None:
@@ -111,7 +136,10 @@ def list_drafts(
     rows = q.all()
 
     if not is_admin and project_id is None:
-        rows = [row for row in rows if row.proposer == current_user or row.assignee == current_user]
+        rows = [
+            row for row in rows
+            if _is_draft_visible_to_user(row, current_user, context, db)
+        ]
 
     result = []
     for draft in rows:

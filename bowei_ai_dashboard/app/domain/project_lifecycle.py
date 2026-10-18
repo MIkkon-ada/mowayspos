@@ -24,9 +24,9 @@ ALL_STATUSES = {
 
 CLOSE_FROZEN_STATUSES = {S_PENDING_CLOSE, S_ENDED}
 
-# ``pending_kickoff`` and ``dispatched`` are retained in the compatibility
-# vocabulary because older projects may still carry them in the database. New
-# transitions must not use either state as a lifecycle gate.
+# ``dispatched`` is part of the current owner-submission flow and still allows
+# execution-plan structure edits. ``pending_kickoff`` remains for legacy rows.
+# Neither status is equivalent to ``active`` for formal work-report submission.
 EXECUTION_AVAILABLE_STATUSES = {S_ACTIVE, S_PENDING_KICKOFF, S_DISPATCHED}
 OWNER_PLAN_EDITABLE_STATUSES = {S_DISPATCHED, S_RETURNED}
 

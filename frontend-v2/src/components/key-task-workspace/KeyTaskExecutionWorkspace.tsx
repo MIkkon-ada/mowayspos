@@ -4,6 +4,7 @@ import { confirmKeyTaskCompletion, fetchKeyTaskExecutionWorkspace, reopenKeyTask
 import { updateMonthlyPlan } from '../../api/monthlyPlans'
 import { getProjectMembers } from '../../api/projects'
 import { buildWorkReportEntryUrl } from '../../domain/workReportEntry'
+import { ChevronDownIcon } from '../icons/ChevronDownIcon'
 import type { ProjectMember } from '../../types'
 import { AchievementList } from './AchievementList'
 import { CurrentProgressCard } from './CurrentProgressCard'
@@ -88,8 +89,8 @@ export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId }: { ke
   if (error || !workspace) return <main className="p-8"><p className="text-sm text-red-700">{error || '工作台数据不可用'}</p><button type="button" onClick={refresh} className="mt-3 rounded border px-3 py-2 text-sm">重新加载</button>{onBack && <button type="button" onClick={onBack} className="ml-2 rounded border px-3 py-2 text-sm">返回</button>}</main>
   return (
     <main className="flex-1 min-h-0 overflow-y-auto bg-slate-50">
-      <div className="mx-auto max-w-[1440px] space-y-4 px-4 pb-12 sm:px-6">
-        {onBack && <button type="button" onClick={onBack} className="pt-4 text-sm font-medium text-slate-500 hover:text-blue-600">← 返回</button>}
+      <div className="mx-auto max-w-[1440px] space-y-4 px-4 pb-24 sm:px-6 min-[800px]:pb-12">
+        {onBack && <button type="button" onClick={onBack} className="inline-flex items-center gap-1 pt-4 text-sm font-medium text-slate-500 hover:text-blue-600"><ChevronDownIcon className="h-4 w-4 rotate-90" />返回</button>}
         <KeyTaskHeader workspace={workspace} onSubmitUpdate={submitUpdate} onAddPlan={() => setCreatingPlan(true)} onConfirmCompletion={() => void confirm()} onReopen={() => void reopen()} onChangeRisk={() => void changeRisk()} />
         <KeyTaskRequirementCard workspace={workspace} />
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">

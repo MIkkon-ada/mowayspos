@@ -25,8 +25,10 @@ export type AchievementPayload = {
   source_type?: string
 }
 
-export function createAchievement(payload: AchievementPayload): Promise<AchievementItem> {
-  return apiPost<AchievementItem>('/api/achievements', payload)
+export function createAchievement(payload: AchievementPayload, clientRequestId?: string): Promise<AchievementItem> {
+  return apiPost<AchievementItem>('/api/achievements', clientRequestId
+    ? { ...payload, client_request_id: clientRequestId }
+    : payload)
 }
 
 export function updateAchievement(id: number, payload: AchievementPayload): Promise<AchievementItem> {
@@ -104,8 +106,11 @@ export function uploadAchievementAttachment(
 
 export function createAchievementSubmission(
   payload: AchievementSubmissionPayload,
+  clientRequestId?: string,
 ): Promise<AchievementSubmissionItem> {
-  return apiPost<AchievementSubmissionItem>('/api/achievement-submissions', payload)
+  return apiPost<AchievementSubmissionItem>('/api/achievement-submissions', clientRequestId
+    ? { ...payload, client_request_id: clientRequestId }
+    : payload)
 }
 
 export function fetchAchievementSubmissions(params?: {

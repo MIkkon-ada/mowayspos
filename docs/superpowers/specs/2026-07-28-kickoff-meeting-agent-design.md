@@ -1,5 +1,7 @@
 # 启动会确认 Agent 设计
 
+> **历史方案说明（2026-10-08）：** 本文曾把启动会设为 `pending_review → pending_kickoff → active` 的必经状态门槛；当前实现已改为立项审核通过直接进入 `active`，启动会 Agent 单独审核执行提案。本文保留会议 Agent 的历史设计背景，项目状态和角色/阶段约束以 [`../../PROJECT_LIFECYCLE_AND_PERMISSIONS.md`](../../PROJECT_LIFECYCLE_AND_PERMISSIONS.md) 为准。
+
 ## 目标
 
 将启动会从可自由填写的会议类型升级为项目启动的必经确认流程。Agent 负责理解会议、比对会前工作推进表雏形并生成变更建议；PM 发起并提交，企业教练审核；只有审核通过的内容才能写入正式工作推进表并使项目进入执行中。

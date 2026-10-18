@@ -436,6 +436,61 @@ db.close()
     assert result.returncode == 0, f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
 
 
+def test_retrying_same_achievement_submission_returns_original_after_attachment_binding(tmp_path):
+    script = r'''
+from app.database import Base, engine, SessionLocal
+from app import models
+from app.auth import create_session
+
+Base.metadata.create_all(bind=engine)
+db = SessionLocal()
+db.add_all([
+    models.Person(id=1, name="Member", is_active=True),
+    models.Project(id=1, name="Project A", status="active"),
+    models.Account(username="member", password_hash="x", person_id=1, status="active"),
+    models.ProjectMember(project_id=1, person_id=1, role="owner"),
+    models.Task(id=1, project_id=1, key_task="Task A"),
+])
+attachment = models.AchievementAttachment(
+    project_id=1, storage_key="1/evidence", original_name="proof.pdf",
+    mime_type="application/pdf", size_bytes=1, uploaded_by="member",
+)
+db.add(attachment); db.commit(); attachment_id = attachment.id; db.close()
+
+from app.main import app
+from fastapi.testclient import TestClient
+client = TestClient(app)
+cookies = {__import__("os").environ.get("SESSION_COOKIE_NAME", "bowei_session"): create_session("member")}
+payload = {
+    "project_id": 1,
+    "related_task_id": 1,
+    "name": "Result",
+    "attachment_ids": [attachment_id],
+    "client_request_id": "achievement-submission-retry-001",
+}
+first = client.post("/api/achievement-submissions", json=payload, cookies=cookies)
+assert first.status_code == 200, first.text
+second = client.post("/api/achievement-submissions", json=payload, cookies=cookies)
+assert second.status_code == 200, second.text
+assert second.json()["id"] == first.json()["id"]
+assert "client_request_id" not in first.json()
+assert "request_payload_hash" not in first.json()
+changed = {**payload, "name": "Changed Result"}
+conflict = client.post("/api/achievement-submissions", json=changed, cookies=cookies)
+assert conflict.status_code == 409, conflict.text
+db = SessionLocal(); attachment = db.get(models.AchievementAttachment, attachment_id)
+assert attachment.achievement_submission_id == first.json()["id"]
+assert db.query(models.AchievementSubmission).count() == 1
+assert db.query(models.Notification).filter_by(type="achievement_submitted").count() == 1
+db.close()
+'''
+    database_path = (tmp_path / "achievement-submission-retry.db").resolve()
+    env = os.environ.copy()
+    env.update({"APP_ENV": "test", "DATABASE_URL": f"sqlite:///{database_path.as_posix()}", "FRONTEND_ORIGIN": ""})
+    result = subprocess.run([sys.executable, "-c", script], cwd=BACKEND_ROOT, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+
+
 def test_submission_confirmation_creates_one_achievement(tmp_path):
     """Once confirmation changes the submission state, a second request cannot write again."""
     script = r'''

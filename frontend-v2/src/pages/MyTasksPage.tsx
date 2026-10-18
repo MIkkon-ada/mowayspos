@@ -21,7 +21,7 @@ function formatRefreshTime(value: Date | null): string {
 export function MyTasksPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { rows, activeProjects, failedProjects, loading, error, partialError, lastRefreshedAt, refresh } = useMyTasks()
+  const { rows, activeProjects, loading, error, ambiguousAssignmentCount, lastRefreshedAt, refresh } = useMyTasks()
   const [status, setStatus] = useState<MyTaskStatusFilter>('全部')
   const [projectId, setProjectId] = useState<number | null>(null)
   const [search, setSearch] = useState('')
@@ -115,14 +115,14 @@ export function MyTasksPage() {
           </label>
         </section>
 
-        {partialError && (
-          <div className="my-task-warning" role="status"><span aria-hidden="true">!</span><span>部分项目任务加载失败：{failedProjects.map((project) => project.name).join('、')}。已保留其余项目结果。</span><button type="button" onClick={refresh}>重试</button></div>
+        {ambiguousAssignmentCount > 0 && (
+          <div className="my-task-warning" role="status"><span aria-hidden="true">!</span><span>有 {ambiguousAssignmentCount} 条旧任务只记录了姓名，且存在同名人员，因此暂不归入本人任务。请项目负责人核对人员关联。</span></div>
         )}
 
-        {loading && <div className="my-task-state"><span className="my-task-state-icon is-spinning" aria-hidden="true">↻</span><h2>正在汇总跨项目任务</h2><p>请稍候，我们正在逐个读取你参与的进行中项目。</p></div>}
+        {loading && <div className="my-task-state"><span className="my-task-state-icon is-spinning" aria-hidden="true">↻</span><h2>正在汇总跨项目任务</h2><p>请稍候，我们正在读取当前账号可见项目中的任务。</p></div>}
         {!loading && error && <div className="my-task-state is-error"><span className="my-task-state-icon" aria-hidden="true">!</span><h2>任务加载失败</h2><p>暂时无法读取你参与项目中的任务，请稍后重试。</p><button type="button" onClick={refresh}>重新加载</button></div>}
         {noActiveProjects && <div className="my-task-state"><span className="my-task-state-icon" aria-hidden="true">◇</span><h2>暂无进行中的项目</h2><p>你当前没有可汇总任务的进行中项目。</p></div>}
-        {noTasks && <div className="my-task-state"><span className="my-task-state-icon" aria-hidden="true">✓</span><h2>暂无分配给你的任务</h2><p>进行中项目已经加载完成，但还没有以当前账号姓名分配给你的关键任务。</p><div className="my-task-empty-actions"><button type="button" onClick={openSelectedProject}>创建新任务</button><button type="button" onClick={openSelectedProject}>查看项目详情</button></div></div>}
+        {noTasks && <div className="my-task-state"><span className="my-task-state-icon" aria-hidden="true">✓</span><h2>暂无分配给你的任务</h2><p>可见的进行中项目已经加载完成，但还没有关联到当前账号人员的关键任务。</p><div className="my-task-empty-actions"><button type="button" onClick={openSelectedProject}>创建新任务</button><button type="button" onClick={openSelectedProject}>查看项目详情</button></div></div>}
         {noFilteredTasks && <div className="my-task-state"><span className="my-task-state-icon" aria-hidden="true">⌕</span><h2>没有符合条件的任务</h2><p>调整项目、状态或搜索关键词后再试。</p><button type="button" onClick={clearFilters}>清除筛选</button></div>}
 
         {!loading && !error && filteredRows.length > 0 && (

@@ -74,6 +74,7 @@ bowei_ai_dashboard/data/
 *.jpeg
 *.gif
 *.webp
+!frontend-v2/public/moways-logo.png
 
 # Temporary / backup files
 *.bak

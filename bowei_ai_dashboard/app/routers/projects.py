@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
 from sqlalchemy import inspect, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
@@ -64,6 +65,9 @@ from ..services.project_purge_storage import (
     stage_project_payloads,
 )
 from ..services.project_init_attachment_storage import project_init_attachment_root
+from ..services.person_identity import unique_active_person_id_for_name
+from ..services.request_fingerprint import request_payload_fingerprint
+from ..services import owner_plan_drafts as OPD
 from ..services.project_access import (
     authorize_global_project_action,
     authorize_project_action,
@@ -71,6 +75,22 @@ from ..services.project_access import (
 )
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
+
+
+def _active_person_by_unique_name(db: Session, name: str, field_label: str) -> models.Person | None:
+    normalized_name = (name or "").strip()
+    if not normalized_name:
+        return None
+    person_id = unique_active_person_id_for_name(db, normalized_name)
+    if person_id is not None:
+        return db.get(models.Person, person_id)
+    matches = db.query(models.Person.id).filter(
+        models.Person.name == normalized_name,
+        models.Person.is_active.is_(True),
+    ).limit(2).all()
+    if len(matches) > 1:
+        raise HTTPException(422, f"{field_label}姓名重复，无法自动确定人员，请先确认人员身份")
+    return None
 
 # 项目全局动作的统一拒绝提示：仅公司管理或超级管理员可执行此操作。
 # 项目归档需提交公司管理审核。
@@ -121,8 +141,7 @@ def _person_id_for_name(name: str | None, db: Session) -> int | None:
     value = (name or "").strip()
     if not value:
         return None
-    row = db.query(models.Person).filter(models.Person.name == value, models.Person.is_active.is_(True)).first()
-    return row.id if row else None
+    return unique_active_person_id_for_name(db, value)
 
 
 def _helper_note(helper: str | None) -> str:
@@ -150,6 +169,14 @@ def _validate_work_progress_draft(payload: schemas.ProjectProfilePayload) -> Non
             raise HTTPException(422, "请至少添加一个关键任务")
         if any(sub_draft.assignee_id is None for sub_draft in subtasks):
             raise HTTPException(422, "请选择关键任务负责人")
+        for sub_draft in subtasks:
+            start, end = sub_draft.plan_start, sub_draft.plan_end
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", start or "") and re.fullmatch(r"\d{4}-\d{2}-\d{2}", end or ""):
+                try:
+                    if date.fromisoformat(end) < date.fromisoformat(start):
+                        raise HTTPException(422, "关键任务结束日期不能早于开始日期")
+                except ValueError:
+                    raise HTTPException(422, "关键任务日期无效")
 
 
 def _is_importable_person_name(value: str) -> bool:
@@ -196,10 +223,11 @@ def _resolve_work_progress_people(
         raise HTTPException(422, f"存在无效或已停用的人员 ID：{', '.join(map(str, invalid_ids))}")
 
     def _resolve_imported_name(name: str, *, assignee: bool = False) -> models.Person:
-        person = db.query(models.Person).filter(
-            models.Person.name == name,
-            models.Person.is_active.is_(True),
-        ).first()
+        person = _active_person_by_unique_name(
+            db,
+            name,
+            "关键任务责任人" if assignee else "人员",
+        )
         if person is not None:
             people[person.id] = person
             return person
@@ -234,10 +262,9 @@ def _resolve_work_progress_people(
             if _contains_chinese(task_owner_name):
                 _resolve_imported_name(task_owner_name)
             else:
-                existing_owner = db.query(models.Person).filter(
-                    models.Person.name == task_owner_name,
-                    models.Person.is_active.is_(True),
-                ).first()
+                existing_owner = _active_person_by_unique_name(
+                    db, task_owner_name, "重点工作负责人"
+                )
                 if existing_owner is not None:
                     people[existing_owner.id] = existing_owner
         for sub_draft in task_draft.subtasks or []:
@@ -758,12 +785,13 @@ def _save_work_progress_draft(
     _sync_project_old_fields(project.id, db)
 
     project_name = project.name or ""
+    kept_task_ids, kept_subtask_ids = set(), set()
     for task_draft in drafts:
         task_title = (task_draft.title or "").strip()
         if not task_title:
             continue
 
-        task = (
+        task = db.get(models.Task, task_draft.id or task_draft.task_id) if (task_draft.id or task_draft.task_id) else (
             db.query(models.Task)
             .filter(
                 models.Task.project_id == project.id,
@@ -772,9 +800,13 @@ def _save_work_progress_draft(
             )
             .first()
         )
+        if payload.replace_plan and not (task_draft.id or task_draft.task_id):
+            task = None
         if task is None:
             task = models.Task(project_id=project.id, key_task=task_title[:200])
             db.add(task)
+
+        task.key_task = task_title[:200]
 
         task.special_project = project_name
         legacy_goal = (task_draft.description or "").strip()
@@ -790,6 +822,8 @@ def _save_work_progress_draft(
         task.status = task.status or TS.S_NOT_STARTED
         task.source_type = ST.MANUAL
         task.submitter = current_user
+        db.flush()
+        kept_task_ids.add(task.id)
         task.edit_count = (task.edit_count or 0) + 1
         db.flush()
 
@@ -797,7 +831,7 @@ def _save_work_progress_draft(
             sub_title = (sub_draft.title or "").strip()
             if not sub_title:
                 continue
-            subtask = (
+            subtask = db.get(models.SubTask, sub_draft.id or sub_draft.subtask_id) if (sub_draft.id or sub_draft.subtask_id) else (
                 db.query(models.SubTask)
                 .filter(
                     models.SubTask.task_id == task.id,
@@ -806,6 +840,8 @@ def _save_work_progress_draft(
                 )
                 .first()
             )
+            if payload.replace_plan and not (sub_draft.id or sub_draft.subtask_id):
+                subtask = None
             if subtask is None:
                 subtask = models.SubTask(task_id=task.id, title=sub_title[:200], assignee="")
                 db.add(subtask)
@@ -819,6 +855,18 @@ def _save_work_progress_draft(
                 subtask.assignee = (sub_draft.assignee or "").strip()
                 subtask.assignee_id = _person_id_for_name(subtask.assignee, db)
             subtask.plan_time = _format_work_progress_plan_time(sub_draft.plan_start, sub_draft.plan_end)
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", sub_draft.plan_start or ""):
+                subtask.start_date = date.fromisoformat(sub_draft.plan_start)
+            else:
+                subtask.start_date = None
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", sub_draft.plan_end or ""):
+                subtask.due_date = date.fromisoformat(sub_draft.plan_end)
+                subtask.due_kind = "exact"
+                subtask.due_label = None
+            else:
+                subtask.due_date = None
+                subtask.due_kind = "fuzzy" if sub_draft.plan_end else "unknown"
+                subtask.due_label = sub_draft.plan_end or None
             subtask.status = subtask.status or TS.S_NOT_STARTED
             subtask.completion_criteria = (sub_draft.evaluation_standard or "").strip()
             if sub_draft.helper_ids:
@@ -833,6 +881,11 @@ def _save_work_progress_draft(
             else:
                 subtask.collaborator_ids = []
                 subtask.notes = _helper_note(sub_draft.helper)
+            db.flush()
+            kept_subtask_ids.add(subtask.id)
+
+    if payload.replace_plan:
+        OPD.reconcile_plan(db, project, kept_task_ids, kept_subtask_ids, current_user)
 
 
 def _extract_special_project_from_json(raw_json: str | None) -> list[str]:
@@ -990,6 +1043,32 @@ def create_project(
     access = authorize_global_project_action(current_user, A_CREATE, db)
     context = access.context
 
+    request_payload_hash = None
+    if payload.client_request_id:
+        actor_key = (
+            f"person:{context['person_id']}"
+            if context.get("person_id") is not None
+            else f"account:{context.get('account_username') or current_user}"
+        )
+        request_payload_hash = request_payload_fingerprint({
+            "actor": actor_key,
+            "payload": payload.model_dump(exclude={"client_request_id"}),
+        })
+        existing = db.query(models.Project).filter_by(
+            client_request_id=payload.client_request_id
+        ).first()
+        if existing is not None:
+            if existing.request_payload_hash != request_payload_hash:
+                raise CodedHTTPException(
+                    409,
+                    "IDEMPOTENCY_KEY_REUSED",
+                    "client_request_id was already used for a different project create request",
+                )
+            raw = _read_project_raw(existing.id, db)
+            return _project_response(
+                raw, _get_user_roles(existing.id, existing.name, context, db), db
+            )
+
     name = (payload.name or "").strip()
     if not name:
         raise HTTPException(422, "name 不能为空")
@@ -1000,9 +1079,33 @@ def create_project(
     project = models.Project(
         name=name,
         sort_order=0,
+        client_request_id=payload.client_request_id,
+        request_payload_hash=request_payload_hash,
     )
     db.add(project)
-    db.flush()  # ?? project.id
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        if payload.client_request_id:
+            existing = db.query(models.Project).filter_by(
+                client_request_id=payload.client_request_id
+            ).first()
+            if existing is not None:
+                if existing.request_payload_hash != request_payload_hash:
+                    raise CodedHTTPException(
+                        409,
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "client_request_id was already used for a different project create request",
+                    )
+                raw = _read_project_raw(existing.id, db)
+                return _project_response(
+                    raw, _get_user_roles(existing.id, existing.name, context, db), db
+                )
+        duplicate_name = db.query(models.Project).filter_by(name=name).first()
+        if duplicate_name is not None:
+            raise HTTPException(409, f"项目名称 '{name}' 已存在")
+        raise
     _set_project_lifecycle(project, "draft", db=db, project_id=project.id)
 
     _update_project_columns(
@@ -1042,7 +1145,53 @@ def batch_import_projects(
     批量导入：从 Excel 粘贴的结构化数据创建专项+关键任务+问题。
     专项已存在则复用，关键任务逐行创建，问题有内容则写入问题库。
     """
-    authorize_global_project_action(current_user, A_BATCH_IMPORT, db)
+    access = authorize_global_project_action(current_user, A_BATCH_IMPORT, db)
+    batch_import = None
+    request_payload_hash = None
+    if payload.client_request_id:
+        context = access.context
+        actor_key = (
+            f"person:{context['person_id']}"
+            if context.get("person_id") is not None
+            else f"account:{context.get('account_username') or current_user}"
+        )
+        request_payload_hash = request_payload_fingerprint({
+            "actor": actor_key,
+            "payload": payload.model_dump(exclude={"client_request_id"}),
+        })
+        existing = db.query(models.ProjectBatchImport).filter_by(
+            client_request_id=payload.client_request_id
+        ).first()
+        if existing is not None:
+            if existing.request_payload_hash != request_payload_hash:
+                raise CodedHTTPException(
+                    409,
+                    "IDEMPOTENCY_KEY_REUSED",
+                    "client_request_id was already used for a different project batch import",
+                )
+            return existing.result_json
+        batch_import = models.ProjectBatchImport(
+            client_request_id=payload.client_request_id,
+            request_payload_hash=request_payload_hash,
+            result_json={},
+        )
+        db.add(batch_import)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            existing = db.query(models.ProjectBatchImport).filter_by(
+                client_request_id=payload.client_request_id
+            ).first()
+            if existing is not None:
+                if existing.request_payload_hash != request_payload_hash:
+                    raise CodedHTTPException(
+                        409,
+                        "IDEMPOTENCY_KEY_REUSED",
+                        "client_request_id was already used for a different project batch import",
+                    )
+                return existing.result_json
+            raise
 
     projects_created = 0
     projects_matched = 0
@@ -1119,8 +1268,7 @@ def batch_import_projects(
             db.add(issue)
             issues_created += 1
 
-    db.commit()
-    return {
+    result = {
         "ok": True,
         "projects_created": projects_created,
         "projects_matched": projects_matched,
@@ -1128,6 +1276,10 @@ def batch_import_projects(
         "issues_created": issues_created,
         "skipped_rows": skipped_rows,
     }
+    if batch_import is not None:
+        batch_import.result_json = result
+    db.commit()
+    return result
 
 
 @router.get("/{project_id}/members")
@@ -1602,6 +1754,38 @@ def get_project(
     return _project_response(raw, user_roles, db)
 
 
+@router.get("/{project_id}/work-progress-columns")
+def get_work_progress_columns(
+    project_id: int,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    project = db.get(models.Project, project_id)
+    if not project:
+        raise HTTPException(404, "project not found")
+    authorize_project_action(current_user, project, A_VIEW, db, allow_legacy_roles=True)
+    allowed = {"expectedOutcome", "goal", "boweiRole"}
+    return {"optional_columns": [key for key in (project.work_progress_optional_columns or []) if key in allowed]}
+
+
+@router.patch("/{project_id}/work-progress-columns")
+def update_work_progress_columns(
+    project_id: int,
+    payload: schemas.WorkProgressColumnsPayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    project = db.get(models.Project, project_id)
+    if not project:
+        raise HTTPException(404, "project not found")
+    authorize_project_action(current_user, project, A_VIEW, db, allow_legacy_roles=True)
+    before = list(project.work_progress_optional_columns or [])
+    project.work_progress_optional_columns = payload.optional_columns
+    crud.log(db, current_user, "update_work_progress_columns", "project", project_id, {"optional_columns": before}, {"optional_columns": payload.optional_columns}, project_id=project_id)
+    db.commit()
+    return {"optional_columns": payload.optional_columns}
+
+
 @router.patch("/{project_id}")
 def update_project(
     project_id: int,
@@ -1631,17 +1815,29 @@ def update_project(
                 raise HTTPException(409, f"项目名称 '{new_name}' 已被其他项目使用")
             project.name = new_name
 
-    # Close/ended/archive transitions are managed by dedicated endpoints.
-    # archived -> active remains temporarily compatible until P4-P3 restore API.
+    # Lifecycle changes belong to their dedicated, role- and state-guarded flows.
     forbidden_targets = {PL.S_PENDING_CLOSE, PL.S_ENDED, PL.S_ARCHIVED}
     for candidate in (payload.status, payload.lifecycle_status):
         if candidate is not None and str(candidate).strip() in forbidden_targets:
             raise HTTPException(409, PROJECT_CLOSE_FROZEN_MESSAGE)
 
+    if payload.status is not None and payload.lifecycle_status is not None:
+        patch_status = _normalize_lifecycle_status(payload.status, project.status or "draft")
+        patch_lifecycle_status = _normalize_lifecycle_status(payload.lifecycle_status, project.status or "draft")
+        if patch_status != patch_lifecycle_status:
+            raise HTTPException(422, "status 与 lifecycle_status 必须一致")
+
     lifecycle_candidate = payload.status if payload.status is not None else payload.lifecycle_status
     if lifecycle_candidate is not None:
-        lifecycle = _normalize_lifecycle_status(lifecycle_candidate, project.status or "draft")
-        _set_project_lifecycle(project, lifecycle, db=db, project_id=project_id)
+        current_lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
+        requested_lifecycle = _normalize_lifecycle_status(lifecycle_candidate, current_lifecycle)
+        if requested_lifecycle != current_lifecycle:
+            raise CodedHTTPException(
+                409,
+                "PROJECT_STATE_CONFLICT",
+                "项目阶段必须通过对应的下发、提交、审核或结束流程变更",
+            )
+        _set_project_lifecycle(project, current_lifecycle, db=db, project_id=project_id)
 
     updates: dict = {}
     if payload.code is not None: updates["code"] = payload.code.strip()
@@ -1783,6 +1979,32 @@ def _close_request_response(
     }
 
 
+def _close_request_retry_result(
+    db: Session,
+    project: models.Project,
+    request_id: str,
+    payload_hash: str,
+) -> dict | None:
+    existing = db.query(models.ProjectCloseRequest).filter(
+        models.ProjectCloseRequest.client_request_id == request_id
+    ).first()
+    if existing is None:
+        return None
+    if existing.request_payload_hash != payload_hash:
+        raise CodedHTTPException(
+            409,
+            "IDEMPOTENCY_KEY_REUSED",
+            "client_request_id was already used for a different project close request",
+        )
+    if existing.project_id != project.id:
+        raise CodedHTTPException(
+            409,
+            "IDEMPOTENCY_KEY_REUSED",
+            "client_request_id was already used for a different project close request",
+        )
+    return _close_request_response(existing, project, db)
+
+
 def _close_link(project_id: int, request_id: int) -> str:
     return f"/home/projects?projectId={project_id}&closeRequestId={request_id}"
 
@@ -1840,6 +2062,24 @@ def create_project_close_request(
     project = _lock_project_for_close(project_id, db)
     if not project:
         raise HTTPException(404, "project not found")
+    request_payload_hash = None
+    if payload.client_request_id:
+        actor_key = (
+            f"person:{context['person_id']}"
+            if context.get("person_id") is not None
+            else f"account:{context.get('account_username') or current_user}"
+        )
+        request_payload_hash = request_payload_fingerprint({
+            "actor": actor_key,
+            "project_id": project_id,
+            "payload": payload.model_dump(exclude={"client_request_id"}),
+        })
+        existing_result = _close_request_retry_result(
+            db, project, payload.client_request_id, request_payload_hash
+        )
+        if existing_result is not None:
+            return existing_result
+
     if PL.normalize(project.status) != PL.S_ACTIVE:
         raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "仅进行中的项目可申请结束")
     if db.query(models.ProjectCloseRequest).filter_by(project_id=project_id, status="pending").first():
@@ -1860,9 +2100,23 @@ def create_project_close_request(
         handover_plan=payload.handover_plan,
         retrospective=payload.retrospective,
         status="pending",
+        client_request_id=payload.client_request_id,
+        request_payload_hash=request_payload_hash,
     )
     db.add(request)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        if payload.client_request_id:
+            fresh_project = _lock_project_for_close(project_id, db)
+            if fresh_project:
+                existing_result = _close_request_retry_result(
+                    db, fresh_project, payload.client_request_id, request_payload_hash or ""
+                )
+                if existing_result is not None:
+                    return existing_result
+        raise
     before = _close_state(request, project)
     _set_project_lifecycle(project, PL.S_PENDING_CLOSE, db=db, project_id=project_id)
     after = _close_state(request, project)
@@ -2535,6 +2789,44 @@ def dispatch_project(
     return {"ok": True, "notified_to": len(recipient_ids), "status": PL.S_DISPATCHED}
 
 
+def _owner_plan_context(project_id, current_user, db, *, lock=False):
+    statement = select(models.Project).where(models.Project.id == project_id)
+    if lock:
+        statement = statement.with_for_update().execution_options(populate_existing=True)
+    project = db.execute(statement).scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "project not found")
+    access = authorize_project_action(current_user, project, A_OWNER_SUBMIT, db)
+    if not PL.is_owner_plan_editable(project.status):
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "当前项目不可保存方案，请查看审核状态")
+    return project, OPD.actor_key(access.context, current_user)
+
+
+@router.get("/{project_id}/owner-plan-draft")
+def get_owner_plan_draft(project_id: int, current_user: str = Depends(get_current_user_name), db: Session = Depends(get_db)):
+    project, key = _owner_plan_context(project_id, current_user, db)
+    record = (project.owner_plan_drafts or {}).get(key) or {}
+    return {"draft": record.get("payload"), "saved_at": record.get("saved_at"),
+            "existing_plan": OPD.existing_plan(db, project_id), "return_reason": OPD.return_reason(db, project)}
+
+
+@router.put("/{project_id}/owner-plan-draft")
+def save_owner_plan_draft(project_id: int, payload: schemas.ProjectProfilePayload,
+                          current_user: str = Depends(get_current_user_name), db: Session = Depends(get_db)):
+    project, key = _owner_plan_context(project_id, current_user, db, lock=True)
+    OPD.validate_ids(db, project_id, payload.work_progress_draft)
+    if len(payload.work_progress_draft) > 100 or sum(len(task.subtasks) for task in payload.work_progress_draft) > 1000:
+        raise HTTPException(422, "方案过大，请拆分重点工作后保存")
+    if payload.ai_run_id:
+        run = db.get(models.ProjectInitAnalysisRun, payload.ai_run_id)
+        if not run or run.project_id != project_id:
+            raise HTTPException(422, "AI 草稿不属于当前项目")
+    record = {"payload": payload.model_dump(mode="json"), "saved_at": utc_now().isoformat()}
+    project.owner_plan_drafts = {**(project.owner_plan_drafts or {}), key: record}
+    db.commit()
+    return {"saved_at": record["saved_at"]}
+
+
 @router.post("/{project_id}/owner-submit")
 def owner_submit_project_profile(
     project_id: int,
@@ -2543,7 +2835,7 @@ def owner_submit_project_profile(
     db: Session = Depends(get_db),
 ):
     """负责人提交立项信息，进入待审核。"""
-    project = db.get(models.Project, project_id)
+    project = db.execute(select(models.Project).where(models.Project.id == project_id).with_for_update().execution_options(populate_existing=True)).scalar_one_or_none()
     if not project:
         raise HTTPException(404, "project not found")
     _require_project_not_close_frozen(project)
@@ -2564,6 +2856,7 @@ def owner_submit_project_profile(
         raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "当前项目阶段不可提交立项信息")
 
     try:
+        OPD.validate_ids(db, project_id, payload.work_progress_draft)
         resolved_people = _resolve_work_progress_people(
             payload,
             db,
@@ -2580,6 +2873,7 @@ def owner_submit_project_profile(
             db=db,
             resolved_people=resolved_people,
         )
+        project.owner_plan_drafts = {}
         crud.log(db, current_user, "owner_submit_project", "project", project_id, {"status": lifecycle}, {"status": "pending_review"})
         db.commit()
     except Exception:
@@ -2601,7 +2895,9 @@ def return_project(
     db: Session = Depends(get_db),
 ):
     """企业教练 / 超级管理员将项目启动申请退回给负责人。"""
-    project = db.get(models.Project, project_id)
+    project = db.execute(
+        select(models.Project).where(models.Project.id == project_id).with_for_update()
+    ).scalar_one_or_none()
     if not project:
         raise HTTPException(404, "project not found")
     authorize_project_action(current_user, project, A_REVIEW_START, db)
@@ -2609,6 +2905,8 @@ def return_project(
     lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
     if lifecycle == "archived":
         raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "已归档项目不可退回")
+    if lifecycle != PL.S_PENDING_REVIEW:
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "仅待审核项目可通过或退回")
 
     payload = payload or schemas.ProjectProfilePayload()
     _set_project_lifecycle(project, "returned", db=db, project_id=project_id)
@@ -2650,7 +2948,9 @@ def approve_project(
     db: Session = Depends(get_db),
 ):
     """企业教练审核通过并确立项目。"""
-    project = db.get(models.Project, project_id)
+    project = db.execute(
+        select(models.Project).where(models.Project.id == project_id).with_for_update()
+    ).scalar_one_or_none()
     if not project:
         raise HTTPException(404, "project not found")
     authorize_project_action(current_user, project, A_REVIEW_START, db)
@@ -2658,6 +2958,8 @@ def approve_project(
     lifecycle = _project_row_lifecycle(_read_project_raw(project_id, db) or {})
     if lifecycle == "archived":
         raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "已归档项目不可启动")
+    if lifecycle != PL.S_PENDING_REVIEW:
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "仅待审核项目可通过或退回")
 
     payload = payload or schemas.ProjectProfilePayload()
     _set_project_lifecycle(project, PL.S_ACTIVE, db=db, project_id=project_id)

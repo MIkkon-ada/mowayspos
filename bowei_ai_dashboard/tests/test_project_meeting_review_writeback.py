@@ -13,7 +13,12 @@ from sqlalchemy.pool import StaticPool
 from app import models
 from app.database import Base
 from app import schemas
-from app.routers.meetings import _project_meeting_change_set, patch_meeting_change_proposal, review_project_meeting
+from app.routers.meetings import (
+    _project_meeting_change_set,
+    patch_meeting_change_proposal,
+    review_project_meeting,
+    review_unlinked_meeting_facts,
+)
 from app.services import meeting_change_set
 
 
@@ -191,6 +196,58 @@ def test_publish_meeting_does_not_write_selected_schedule_changes(db):
     assert db.query(models.MeetingReviewEvent).filter_by(meeting_id=meeting.id, action="published").count() == 1
 
 
+def test_stale_publish_session_cannot_publish_an_already_approved_meeting(db):
+    meeting, _, _, _ = _seed(db)
+    stale_db = sessionmaker(bind=db.get_bind())()
+    stale_meeting = stale_db.get(models.Meeting, meeting.id)
+    assert stale_meeting.review_status == "pending_review"
+
+    review_project_meeting(
+        meeting.id,
+        schemas.ProjectMeetingReviewPayload(action="publish"),
+        current_user="owner",
+        db=db,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        review_project_meeting(
+            meeting.id,
+            schemas.ProjectMeetingReviewPayload(action="publish"),
+            current_user="owner",
+            db=stale_db,
+        )
+
+    assert exc.value.status_code == 409
+    assert stale_db.get(models.Meeting, meeting.id).review_status == "approved"
+    assert db.query(models.MeetingReviewEvent).filter_by(meeting_id=meeting.id, action="published").count() == 1
+
+
+def test_stale_fact_review_session_cannot_resolve_facts_after_publish(db):
+    meeting, _, proposal, _ = _seed(db)
+    stale_db = sessionmaker(bind=db.get_bind())()
+    assert stale_db.get(models.Meeting, meeting.id).review_status == "pending_review"
+
+    review_project_meeting(
+        meeting.id,
+        schemas.ProjectMeetingReviewPayload(action="publish"),
+        current_user="owner",
+        db=db,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        review_unlinked_meeting_facts(
+            meeting.id,
+            schemas.ProjectMeetingFactResolutionPayload(
+                decision="minutes_only", proposal_ids=[proposal.id],
+            ),
+            current_user="owner",
+            db=stale_db,
+        )
+
+    assert exc.value.status_code == 409
+    assert stale_db.get(models.Meeting, meeting.id).review_status == "approved"
+
+
 def test_apply_changes_requires_published_meeting_then_writes_selected_change(db):
     meeting, _, proposal, _ = _seed(db)
 
@@ -224,6 +281,130 @@ def test_apply_changes_requires_published_meeting_then_writes_selected_change(db
 def test_apply_changes_payload_requires_selected_proposals():
     with pytest.raises(ValueError, match="proposal_ids"):
         schemas.ProjectMeetingReviewPayload(action="apply_changes")
+
+
+def test_reviewed_word_progress_updates_confirmed_task_projection(db):
+    meeting, _, proposal, _ = _seed(db)
+    proposal.action = "confirm_work_progress"
+    proposal.target_type = "subtask"
+    proposal.target_id = 20
+    proposal.before_json = json.dumps({"event_id": None, "progress_summary": "", "next_step": ""})
+    proposal.proposed_json = json.dumps({"next_step": "完成客户清单第二批"}, ensure_ascii=False)
+    proposal.evidence_json = json.dumps([{"quote": "completed", "char_start": 0, "char_end": 9}])
+    proposal.lineage_json = json.dumps({"schema_version": 1, "source_fact_ids": ["F001"], "baseline_event_id": None})
+    db.commit()
+
+    review_project_meeting(meeting.id, schemas.ProjectMeetingReviewPayload(action="publish"), current_user="owner", db=db)
+    review_project_meeting(meeting.id, schemas.ProjectMeetingReviewPayload(action="apply_changes", proposal_ids=[proposal.id]), current_user="owner", db=db)
+
+    event = db.query(models.KeyTaskExecutionEvent).one()
+    assert event.source_type == "meeting_work_progress"
+    assert event.key_task_id == 20
+    assert event.next_step == "完成客户清单第二批"
+    assert event.affects_current_progress is True
+    assert db.get(models.MeetingChangeProposal, proposal.id).execution_status == "executed"
+    assert db.get(models.ExecutionSchedule, 30).status == "in_progress"
+
+
+def test_owner_can_approve_minutes_and_selected_progress_together(db):
+    meeting, _, proposal, _ = _seed(db)
+    proposal.action = "confirm_work_progress"
+    proposal.target_type = "subtask"
+    proposal.target_id = 20
+    proposal.before_json = json.dumps({"event_id": None, "progress_summary": "", "next_step": ""})
+    proposal.proposed_json = json.dumps({"next_step": "完成客户清单第二批"}, ensure_ascii=False)
+    proposal.evidence_json = json.dumps([{"quote": "completed", "char_start": 0, "char_end": 9}])
+    proposal.lineage_json = json.dumps({"schema_version": 1, "source_fact_ids": ["F001"], "baseline_event_id": None})
+    db.commit()
+
+    result = review_project_meeting(
+        meeting.id,
+        schemas.ProjectMeetingReviewPayload(action="approve_and_apply", proposal_ids=[proposal.id]),
+        current_user="owner", db=db,
+    )
+
+    assert result["publish_status"] == "published"
+    assert result["review_status"] == "approved"
+    assert db.query(models.KeyTaskExecutionEvent).count() == 1
+    assert db.get(models.MeetingChangeProposal, proposal.id).execution_status == "executed"
+
+
+def test_unlinked_word_fact_can_be_linked_before_publish(db):
+    from app.routers import meetings as meeting_routes
+    meeting, _, proposal, run = _seed(db)
+    proposal.action = "review_unlinked_fact"
+    proposal.target_type = "unresolved_fact"
+    proposal.target_id = None
+    proposal.before_json = json.dumps({"fact_id": "F001", "fact_type": "action_item", "content": "completed", "reason": "任务归属有歧义"}, ensure_ascii=False)
+    proposal.proposed_json = json.dumps({"next_step": "completed"})
+    proposal.evidence_json = json.dumps([{"quote": "completed", "char_start": 0, "char_end": 9}])
+    proposal.validation_json = json.dumps({"state": "needs_review", "errors": ["请选择归属"]})
+    proposal.lineage_json = json.dumps({"schema_version": 1, "source_fact_ids": ["F001"], "review_decision": None})
+    run.result_json = json.dumps({"needs_confirmation": [{"fact_id": "F001", "content": "completed"}]})
+    db.commit()
+
+    meeting_routes.review_unlinked_meeting_facts(
+        meeting.id,
+        schemas.ProjectMeetingFactResolutionPayload(decision="link_task", proposal_ids=[proposal.id], key_task_id=20),
+        current_user="owner", db=db,
+    )
+
+    db.refresh(proposal)
+    assert proposal.action == "confirm_work_progress"
+    assert proposal.target_id == 20
+    assert json.loads(proposal.validation_json)["state"] == "ready"
+    result = review_project_meeting(
+        meeting.id,
+        schemas.ProjectMeetingReviewPayload(action="approve_and_apply", proposal_ids=[proposal.id]),
+        current_user="owner", db=db,
+    )
+    assert result["publish_status"] == "published"
+    assert db.query(models.KeyTaskExecutionEvent).one().next_step == "completed"
+
+
+def test_unlinked_word_fact_stays_in_minutes_by_default(db):
+    meeting, _, proposal, _ = _seed(db)
+    proposal.action = "review_unlinked_fact"
+    proposal.target_type = "unresolved_fact"
+    proposal.target_id = None
+    proposal.before_json = json.dumps({"fact_id": "F001", "fact_type": "action_item", "content": "completed", "reason": "任务归属有歧义"}, ensure_ascii=False)
+    proposal.proposed_json = json.dumps({"next_step": "completed"})
+    proposal.evidence_json = json.dumps([{"quote": "completed", "char_start": 0, "char_end": 9}])
+    proposal.validation_json = json.dumps({"state": "needs_review", "errors": ["请选择归属"]})
+    proposal.lineage_json = json.dumps({"schema_version": 1, "source_fact_ids": ["F001"], "review_decision": None})
+    db.commit()
+
+    result = review_project_meeting(
+        meeting.id, schemas.ProjectMeetingReviewPayload(action="publish"), current_user="owner", db=db,
+    )
+
+    assert result["publish_status"] == "published"
+    assert db.query(models.KeyTaskExecutionEvent).count() == 0
+    assert proposal.execution_status == "ignored"
+    assert json.loads(proposal.lineage_json)["review_decision"] == "minutes_only_on_publish"
+
+
+def test_unlinked_word_fact_can_be_kept_only_in_minutes(db):
+    from app.routers import meetings as meeting_routes
+    meeting, _, proposal, run = _seed(db)
+    proposal.action = "review_unlinked_fact"
+    proposal.target_type = "unresolved_fact"
+    proposal.target_id = None
+    proposal.before_json = json.dumps({"fact_id": "F001", "fact_type": "decision", "content": "completed"})
+    proposal.proposed_json = "{}"
+    proposal.lineage_json = json.dumps({"schema_version": 1, "source_fact_ids": ["F001"], "review_decision": None})
+    run.result_json = json.dumps({"unmatched_items": [{"fact_id": "F001", "content": "completed"}]})
+    db.commit()
+
+    meeting_routes.review_unlinked_meeting_facts(
+        meeting.id,
+        schemas.ProjectMeetingFactResolutionPayload(decision="minutes_only", proposal_ids=[proposal.id]),
+        current_user="owner", db=db,
+    )
+
+    assert db.get(models.MeetingChangeProposal, proposal.id).execution_status == "ignored"
+    result = review_project_meeting(meeting.id, schemas.ProjectMeetingReviewPayload(action="publish"), current_user="owner", db=db)
+    assert result["publish_status"] == "published"
 
 
 def test_meeting_create_plan_proposal_keeps_workstream_and_key_task_parents(db):

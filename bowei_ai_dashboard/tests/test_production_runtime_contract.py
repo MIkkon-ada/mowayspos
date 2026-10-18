@@ -116,7 +116,7 @@ def test_inner_nginx_has_api_websocket_upload_and_forwarded_proto_contract():
 def test_frontend_dockerfile_uses_tracked_lockfile_with_npm_ci():
     dockerfile = _read("Dockerfile.frontend")
 
-    assert "COPY frontend/package.json frontend/package-lock.json ./" in dockerfile
+    assert "COPY frontend-v2/package.json frontend-v2/package-lock.json ./" in dockerfile
     assert "RUN npm ci" in dockerfile
     assert "npm install" not in dockerfile
 

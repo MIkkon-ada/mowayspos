@@ -348,7 +348,9 @@ export type IssueItem = {
   issue_type?: string
   description?: string
   owner?: string
+  owner_id?: number | null
   helper?: string
+  helper_person_id?: number | null
   priority?: string
   status?: string
   need_decision_by?: string
@@ -437,6 +439,9 @@ export type SubTaskItem = {
   due_reference_date?: string | null
   status: string
   completion_criteria?: string
+  expected_outcome?: string
+  goal?: string
+  bowei_role?: string
   notes?: string
   source_submission_id?: number | null
   latest_confirmed_submission?: {
@@ -444,6 +449,14 @@ export type SubTaskItem = {
     submitter: string
     confirmed_at: string
     summary: string
+  } | null
+  latest_confirmed_progress?: {
+    summary: string
+    next_step: string
+    source_label: string
+    confirmed_at: string
+    actor: string
+    action_items?: Array<{ fact_id: string; code: string; content: string; owner: string; tracker: string; due_date: string }>
   } | null
   latest_next_step?: string | null
   is_overdue?: boolean

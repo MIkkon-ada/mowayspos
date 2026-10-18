@@ -86,10 +86,18 @@ test('project page exposes new tabs, deep link and safe close entries', () => {
 test('all seven close request APIs match backend methods and paths', () => {
   const source = read('src/api/projects.ts')
   for (const name of ['createProjectCloseRequest', 'getProjectCloseRequests', 'getProjectCloseRequest', 'updateProjectCloseRequest', 'cancelProjectCloseRequest', 'approveProjectCloseRequest', 'rejectProjectCloseRequest']) assert.match(source, new RegExp(`function ${name}\\(`))
-  assert.match(source, /apiPost<ProjectCloseRequest>\(`\/api\/projects\/\$\{projectId\}\/close-requests`, payload\)/)
+  assert.match(source, /apiPost<ProjectCloseRequest>\(`\/api\/projects\/\$\{projectId\}\/close-requests`, clientRequestId[\s\S]{0,100}\? \{ \.\.\.payload, client_request_id: clientRequestId \}/)
   assert.match(source, /apiGet<ProjectCloseRequest\[]>\(`\/api\/projects\/\$\{projectId\}\/close-requests\$\{query\}`\)/)
   assert.match(source, /apiPatch<ProjectCloseRequest>/)
   for (const suffix of ['cancel', 'approve', 'reject']) assert.match(source, new RegExp(`close-requests/\\$\\{requestId\\}/${suffix}`))
+})
+
+test('project close create retries keep one request id per actor and form payload', () => {
+  const source = read('src/features/settings/ProjectCloseFlowDrawer.tsx')
+  assert.match(source, /createRequestIdsRef = useRef\(new Map<string, string>\(\)\)/)
+  assert.match(source, /JSON\.stringify\(\{ actor: currentPersonId, project_id: project\.id, payload: form \}\)/)
+  assert.match(source, /createProjectCloseRequest\(project\.id, form, requestId\)/)
+  assert.match(source, /createRequestIdsRef\.current\.clear\(\)/)
 })
 
 test('drawer covers blockers, warnings, permissions, validation and archive', () => {

@@ -8,6 +8,7 @@ import { getAchievementAddressAction } from '../domain/achievementFlow'
 import { isProjectArchived } from '../domain/projectLifecycleStatus'
 import { canManageProjectWork } from '../domain/taskPermission'
 import type { AchievementItem, Project, SubTaskItem, TaskItem } from '../types'
+import { useWindowFocusVersion } from '../utils/useWindowFocusVersion'
 
 const ACHIEVEMENT_TYPES = ['方案', '模板', 'SOP', 'Prompt', 'Agent', '文档'] as const
 const SOURCE_OPTIONS = ['全部', 'AI确认入库', '手动登记'] as const
@@ -175,6 +176,7 @@ function emptyForm(projectId: number | null): RegistrationForm {
 
 export function AchievementsPage() {
   const { projects, currentUser } = useProject()
+  const focusRefreshVersion = useWindowFocusVersion()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const projectId = parseProjectId(searchParams)
@@ -200,6 +202,7 @@ export function AchievementsPage() {
   const [allSubtasks, setAllSubtasks] = useState<SubTaskItem[]>([])
   const [registerOpen, setRegisterOpen] = useState(false)
   const [registerForm, setRegisterForm] = useState<RegistrationForm>(() => emptyForm(projectId))
+  const createRequestIdsRef = useRef(new Map<string, string>())
   const [registerError, setRegisterError] = useState('')
   const [registerSaving, setRegisterSaving] = useState(false)
   const [editMode, setEditMode] = useState(false)
@@ -294,7 +297,7 @@ export function AchievementsPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [projectId])
+  }, [projectId, focusRefreshVersion, currentUser?.account_id, currentUser?.person_id, currentUser?.username])
 
   useEffect(() => {
     if (projectId) return
@@ -320,7 +323,7 @@ export function AchievementsPage() {
       })
       .finally(() => { if (!cancelled) setOverviewLoading(false) })
     return () => { cancelled = true }
-  }, [projectId, projects])
+  }, [projectId, projects, focusRefreshVersion, currentUser?.account_id, currentUser?.person_id, currentUser?.username])
 
   useEffect(() => {
     setOverviewPage(1)
@@ -335,7 +338,7 @@ export function AchievementsPage() {
       .catch(() => { if (!cancelled) setTasks([]) })
       .finally(() => { if (!cancelled) setTasksLoading(false) })
     return () => { cancelled = true }
-  }, [projectId])
+  }, [projectId, focusRefreshVersion, currentUser?.account_id, currentUser?.person_id, currentUser?.username])
 
   useEffect(() => {
     if (!registerForm.related_task_id) {
@@ -358,7 +361,7 @@ export function AchievementsPage() {
       .then((rows) => { if (!cancelled) setAllSubtasks(rows.filter((row) => !row.is_deleted)) })
       .catch(() => { if (!cancelled) setAllSubtasks([]) })
     return () => { cancelled = true }
-  }, [projectId])
+  }, [projectId, focusRefreshVersion, currentUser?.account_id, currentUser?.person_id, currentUser?.username])
 
   const subtaskById = useMemo(() => {
     const map: Record<number, SubTaskItem> = {}
@@ -380,6 +383,7 @@ export function AchievementsPage() {
   }
 
   function openRegisterModal() {
+    createRequestIdsRef.current.clear()
     setRegisterError('')
     setRegisterForm(emptyForm(projectId))
     setRegisterOpen(true)
@@ -393,7 +397,7 @@ export function AchievementsPage() {
     setRegisterError('')
     try {
       const scenarioParts = [registerForm.description.trim(), registerForm.scenario.trim()].filter(Boolean)
-      const created = await createAchievement({
+      const payload = {
         project_id: registerForm.project_id,
         related_task_id: registerForm.related_task_id,
         related_subtask_id: registerForm.related_subtask_id,
@@ -406,7 +410,19 @@ export function AchievementsPage() {
         reuse_tag: registerForm.reuse_tag.trim(),
         source_type: 'manual',
         status: '已入库',
+      }
+      const fingerprint = JSON.stringify({
+        actor: currentUser?.person_id ?? currentUser?.username ?? '',
+        project_id: payload.project_id,
+        payload,
       })
+      let requestId = createRequestIdsRef.current.get(fingerprint)
+      if (!requestId) {
+        requestId = globalThis.crypto?.randomUUID?.() ?? `achievement-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        createRequestIdsRef.current.set(fingerprint, requestId)
+      }
+      const created = await createAchievement(payload, requestId)
+      createRequestIdsRef.current.delete(fingerprint)
       setRegisterOpen(false)
       setItems((prev) => [created, ...prev.filter((item) => item.id !== created.id)])
       setSelected(created)

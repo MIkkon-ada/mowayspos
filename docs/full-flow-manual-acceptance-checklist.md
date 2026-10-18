@@ -1,5 +1,7 @@
 # 全流程验收检查清单
 
+> **生命周期口径提示（2026-10-08）：** 本清单的状态相关项目是历史验收记录/待执行检查项，不作为当前规则来源。当前迁移、角色和阶段前置条件见 [`PROJECT_LIFECYCLE_AND_PERMISSIONS.md`](PROJECT_LIFECYCLE_AND_PERMISSIONS.md)。
+
 > 配套 `docs/full-flow-manual-acceptance-runbook.md` 使用，边测边勾选。
 
 ---

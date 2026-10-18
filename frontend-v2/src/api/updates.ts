@@ -1,6 +1,7 @@
 import { apiDelete, apiGet, apiPost, apiUpload } from './client'
 
 export type CreateUpdatePayload = {
+  client_request_id?: string
   project_id?: number | null  // 可选，AI 自动匹配
   source_type: string
   transcript_text: string
@@ -117,6 +118,7 @@ export function extractWorkReportDocumentText(file: File): Promise<WorkReportDoc
 export type CreateUpdateResult = {
   submission?: { id?: number; confirm_status?: string; [k: string]: unknown }
   suggestion?: Record<string, unknown>
+  idempotent?: boolean
 }
 
 export type CreateUpdateBatchPayload = {

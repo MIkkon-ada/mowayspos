@@ -57,6 +57,9 @@ class ChatResult:
     text: str
     model_code: str
     invocation_log_id: int
+    finish_reason: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -318,6 +321,7 @@ class AIService:
         context: AIInvocationContext | None = None,
         response_validator: Callable[[str], bool | str | None] | None = None,
     ) -> ChatResult:
+        metadata: dict[str, Any] = {}
         text, model, log = self._invoke(
             capability_key,
             ModelType.CHAT,
@@ -329,9 +333,17 @@ class AIService:
                 None if capability_key == Capability.TASK_PLAN_PROPOSAL else timeout,
                 response_validator,
                 {"type": "json_object"} if capability_key == Capability.PROJECT_INIT_ANALYSIS else None,
+                metadata,
             ),
         )
-        return ChatResult(text=text, model_code=model.code, invocation_log_id=log.id)
+        return ChatResult(
+            text=text,
+            model_code=model.code,
+            invocation_log_id=log.id,
+            finish_reason=metadata.get("finish_reason"),
+            prompt_tokens=metadata.get("prompt_tokens"),
+            completion_tokens=metadata.get("completion_tokens"),
+        )
 
     def _complete_validated_chat(
         self,
@@ -341,8 +353,11 @@ class AIService:
         timeout_seconds: int,
         response_validator: Callable[[str], bool | str | None] | None,
         response_format: dict[str, str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         options = {"response_format": response_format} if response_format is not None else {}
+        if metadata is not None:
+            options["on_metadata"] = lambda values: (metadata.clear(), metadata.update(values))
         text = self.adapters.complete_chat(
             model,
             api_key,

@@ -23,10 +23,21 @@ from ..permissions import (
 from ..time_utils import utc_now
 from ..services.project_resolution import resolve_project_context
 from ..services.project_close import require_project_business_writable
-from ..services.key_task_execution import record_execution_event, submission_summary
+from ..services.key_task_execution import SOURCE_LABELS, record_execution_event, submission_summary
+from ..services.my_tasks import list_my_tasks as list_my_tasks_for_user
 
 router = APIRouter(tags=["subtasks"])  # endpoint 不变；业务语义：KeyTask/关键任务 CRUD
 _TRASH_ROLES = {"owner"}
+
+
+@router.get("/api/my-tasks")
+def get_my_tasks(
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """Return personal tasks using the authenticated account's stable person ID."""
+    current_user = require_login(current_user, db)
+    return list_my_tasks_for_user(current_user, db)
 
 
 def _require_global_read_scope(context: dict) -> None:
@@ -56,6 +67,7 @@ def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[d
     """Attach latest confirmed progress and display-safe status facts without N+1 queries."""
     subtask_ids = [row.id for row in rows]
     latest_by_subtask: dict[int, dict] = {}
+    latest_progress_by_subtask: dict[int, dict] = {}
     latest_next_step_by_subtask: dict[int, str] = {}
     if subtask_ids:
         submissions = (
@@ -99,11 +111,24 @@ def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[d
         for event in execution_events:
             if event.key_task_id in latest_next_step_by_subtask:
                 continue
+            try:
+                display_payload = json.loads(event.display_payload_json or "{}")
+            except (TypeError, ValueError):
+                display_payload = {}
             latest_next_step_by_subtask[event.key_task_id] = (event.next_step or "").strip()
+            latest_progress_by_subtask[event.key_task_id] = {
+                "summary": (event.progress_summary or "").strip(),
+                "next_step": (event.next_step or "").strip(),
+                "source_label": SOURCE_LABELS.get(event.source_type, event.source_type),
+                "confirmed_at": event.confirmed_at.isoformat() if event.confirmed_at else "",
+                "actor": event.actor_name_snapshot or "",
+                "action_items": display_payload.get("action_items", []) if isinstance(display_payload, dict) else [],
+            }
 
     today = date.today()
     for row, payload in zip(rows, payloads):
         payload["latest_confirmed_submission"] = latest_by_subtask.get(row.id)
+        payload["latest_confirmed_progress"] = latest_progress_by_subtask.get(row.id)
         payload["latest_next_step"] = latest_next_step_by_subtask.get(row.id, "")
         payload["is_overdue"] = bool(
             row.due_kind == "exact"
@@ -710,14 +735,19 @@ def update_subtask(
     before = crud.to_dict(row)
     assignee_id = _validate_key_task_people(task, payload.assignee, payload.collaborator_ids, db)
     before_assignee = (row.assignee or "").strip()
-    crud.update_model(row, payload.model_dump())
+    update_data = payload.model_dump()
+    # Older editors omit optional extension fields; keep their saved values.
+    for field in ("expected_outcome", "goal", "bowei_role"):
+        if field not in payload.model_fields_set:
+            update_data.pop(field, None)
+    crud.update_model(row, update_data)
     row.assignee_id = assignee_id
 
     if not before_assignee and (row.assignee or "").strip():
         if TS.normalize(row.status) == TS.S_NOT_STARTED:
             row.status = TS.S_IN_PROGRESS
 
-    crud.log(db, current_user, "subtask_update", "subtask", row.id, before, payload.model_dump())
+    crud.log(db, current_user, "subtask_update", "subtask", row.id, before, update_data)
     _sync_parent_task_status(task, db, current_user)
     db.commit()
     return crud.to_dict(row)

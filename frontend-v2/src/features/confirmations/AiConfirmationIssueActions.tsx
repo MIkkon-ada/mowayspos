@@ -8,6 +8,7 @@ import {
   submitIssueOpinion,
 } from '../../api/issues'
 import type { IssueItem } from '../../types'
+import { promptProjectMember } from '../../utils/projectMemberPrompt'
 
 type Props = {
   issueId: number
@@ -50,6 +51,24 @@ export function AiConfirmationIssueActions({ issueId, projectId, canOwnerAct, ca
     }
   }
 
+  const chooseAndAssignHelper = async () => {
+    if (projectId == null) {
+      setMessage('问题未关联项目，无法按项目成员身份指定协助人。')
+      return
+    }
+    try {
+      const helper = await promptProjectMember(projectId, '请选择协助人')
+      if (helper) {
+        await run(
+          () => assignIssueHelper(issue!.id, helper.person_name_snapshot, helper.person_id),
+          `已指定协助人：${helper.person_name_snapshot}`,
+        )
+      }
+    } catch (error) {
+      setMessage(`指定失败：${error instanceof Error ? error.message : '请稍后重试'}`)
+    }
+  }
+
   const openDetail = () => {
     const query = projectId == null ? '' : `?projectId=${projectId}&issueId=${issueId}`
     window.location.assign(`/work/issues/${issueId}${query}`)
@@ -74,10 +93,7 @@ export function AiConfirmationIssueActions({ issueId, projectId, canOwnerAct, ca
       <div className="mt-3 space-y-2">
         <button type="button" onClick={openDetail} className="h-9 w-full rounded-lg border border-violet-200 bg-white text-xs font-semibold text-violet-700 hover:bg-violet-100">查看完整问题详情</button>
         {!terminal && canOwnerAct && (
-          <button type="button" disabled={acting} onClick={() => {
-            const helper = window.prompt('请输入协助人姓名：')
-            if (helper?.trim()) void run(() => assignIssueHelper(issue.id, helper.trim()), '已指定协助人。')
-          }} className="h-9 w-full rounded-lg border border-indigo-200 bg-white text-xs font-semibold text-indigo-700 disabled:opacity-50">指定协助人</button>
+          <button type="button" disabled={acting} onClick={() => { void chooseAndAssignHelper() }} className="h-9 w-full rounded-lg border border-indigo-200 bg-white text-xs font-semibold text-indigo-700 disabled:opacity-50">指定协助人</button>
         )}
         {!terminal && canSubmitOpinion && (
           <button type="button" disabled={acting} onClick={() => {

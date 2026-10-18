@@ -138,6 +138,109 @@ def test_create_and_dispatch_keep_company_management_boundary():
     )
 
 
+def test_project_create_retry_returns_the_original_project():
+    db = _seed()
+    payload = schemas.ProjectCreatePayload.model_validate({
+        "name": "Retry Project",
+        "client_request_id": "project-create-retry-001",
+    })
+
+    created = create_project(payload, current_user="company_ceo", db=db)
+    retry = create_project(payload, current_user="company_ceo", db=db)
+
+    assert retry["id"] == created["id"]
+    assert "client_request_id" not in created
+    assert "request_payload_hash" not in created
+    assert db.query(models.Project).filter_by(name="Retry Project").count() == 1
+
+    legacy_retry = schemas.ProjectCreatePayload(name="Retry Project")
+    with pytest.raises(HTTPException) as exc:
+        create_project(legacy_retry, current_user="company_ceo", db=db)
+    assert exc.value.status_code == 409
+
+
+def test_reusing_project_create_request_id_for_different_material_conflicts():
+    db = _seed()
+    first = schemas.ProjectCreatePayload.model_validate({
+        "name": "Retry Project",
+        "client_request_id": "project-create-retry-002",
+    })
+    changed = schemas.ProjectCreatePayload.model_validate({
+        "name": "Different Project",
+        "client_request_id": "project-create-retry-002",
+    })
+    create_project(first, current_user="company_ceo", db=db)
+
+    with pytest.raises(HTTPException, match="different project create request") as exc:
+        create_project(changed, current_user="company_ceo", db=db)
+
+    assert exc.value.status_code == 409
+    assert db.query(models.Project).filter(models.Project.name.in_(["Retry Project", "Different Project"])).count() == 1
+
+
+def test_project_batch_import_retry_returns_original_result_without_duplicate_rows():
+    db = _seed()
+    payload = schemas.ProjectBatchImportPayload.model_validate({
+        "client_request_id": "project-batch-retry-001",
+        "rows": [{
+            "project_name": "Imported Project",
+            "key_task": "Imported Task",
+            "issue": "Imported Issue",
+        }],
+    })
+
+    first = batch_import_projects(payload, current_user="admin", db=db)
+    retry = batch_import_projects(payload, current_user="admin", db=db)
+
+    assert retry == first
+    assert db.query(models.Project).filter_by(name="Imported Project").count() == 1
+    assert db.query(models.Task).filter_by(key_task="Imported Task").count() == 1
+    assert db.query(models.Issue).filter_by(description="Imported Issue").count() == 1
+
+
+def test_project_batch_import_reused_request_id_with_changed_rows_conflicts():
+    db = _seed()
+    first = schemas.ProjectBatchImportPayload.model_validate({
+        "client_request_id": "project-batch-retry-002",
+        "rows": [{"project_name": "Imported Project", "key_task": "First Task"}],
+    })
+    changed = schemas.ProjectBatchImportPayload.model_validate({
+        "client_request_id": "project-batch-retry-002",
+        "rows": [{"project_name": "Imported Project", "key_task": "Changed Task"}],
+    })
+    batch_import_projects(first, current_user="admin", db=db)
+
+    with pytest.raises(HTTPException, match="different project batch import") as exc:
+        batch_import_projects(changed, current_user="admin", db=db)
+
+    assert exc.value.status_code == 409
+    assert db.query(models.Task).filter(models.Task.key_task.in_(["First Task", "Changed Task"])).count() == 1
+
+
+def test_project_batch_import_request_id_cannot_replay_across_actors():
+    db = _seed()
+    db.add(models.Person(id=8, name="Second Admin", system_role="normal_member", is_active=True))
+    db.add(models.Account(
+        username="second_admin",
+        password_hash="x",
+        person_id=8,
+        status="active",
+        is_tech_admin=True,
+    ))
+    db.commit()
+    payload = schemas.ProjectBatchImportPayload.model_validate({
+        "client_request_id": "project-batch-actor-001",
+        "rows": [{"project_name": "Imported Project", "key_task": "Imported Task"}],
+    })
+    batch_import_projects(payload, current_user="admin", db=db)
+
+    with pytest.raises(HTTPException, match="different project batch import") as exc:
+        batch_import_projects(payload, current_user="second_admin", db=db)
+
+    assert exc.value.status_code == 409
+    assert db.query(models.Task).filter_by(key_task="Imported Task").count() == 1
+
+
 def test_company_ceo_cannot_review_start_as_project_coach():
     _assert_denial(
         lambda: approve_project(1, current_user="company_ceo", db=_seed(lifecycle="pending_review")),
@@ -279,8 +382,8 @@ def test_global_and_lifecycle_endpoints_use_access_services(monkeypatch):
         current_user="owner",
         db=_seed(lifecycle="dispatched"),
     )
-    return_project(1, current_user="coach", db=_seed())
-    approve_project(1, current_user="coach", db=_seed())
+    return_project(1, current_user="coach", db=_seed(lifecycle="pending_review"))
+    approve_project(1, current_user="coach", db=_seed(lifecycle="pending_review"))
     kickoff_project(1, current_user="admin", db=_seed())
 
     assert global_calls == [A_CREATE, A_BATCH_IMPORT, A_TECHNICAL_KICKOFF]

@@ -26,8 +26,10 @@ export type TaskPayload = {
 /** alias：TaskPayload 即 WorkstreamPayload */
 export type WorkstreamPayload = TaskPayload
 
-export function createTask(payload: TaskPayload): Promise<TaskItem> {
-  return apiPost<TaskItem>('/api/tasks', payload)
+export function createTask(payload: TaskPayload, clientRequestId?: string): Promise<TaskItem> {
+  return apiPost<TaskItem>('/api/tasks', clientRequestId
+    ? { ...payload, client_request_id: clientRequestId }
+    : payload)
 }
 
 export function updateTask(id: number, payload: TaskPayload): Promise<TaskItem> {
@@ -103,6 +105,8 @@ export function extractTasksFromOutline(payload: {
 export function batchCreateTasks(payload: {
   project_id: number
   tasks: TaskDraft[]
-}): Promise<TaskItem[]> {
-  return apiPost<TaskItem[]>('/api/tasks/batch', payload)
+}, clientRequestId?: string): Promise<TaskItem[]> {
+  return apiPost<TaskItem[]>('/api/tasks/batch', clientRequestId
+    ? { ...payload, client_request_id: clientRequestId }
+    : payload)
 }

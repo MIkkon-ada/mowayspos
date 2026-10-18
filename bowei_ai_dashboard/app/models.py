@@ -36,7 +36,7 @@ class Task(Base, TimestampMixin):
     owner = Column(String(50), index=True)
     owner_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
     collaborators = Column(String(200), default="")
-    plan_time = Column(String(20), index=True)
+    plan_time = Column(String(80), index=True)
     status = Column(String(20), default="未开始", index=True)
     problem_note = Column(Text, default="")
     achievement_links = Column(Text, default="")
@@ -51,6 +51,10 @@ class Task(Base, TimestampMixin):
     deleted_by = Column(String(50), default="")
     delete_reason = Column(Text, default="")
     delete_batch_id = Column(String(64), default="", index=True)
+    client_request_id = Column(
+        String(64), nullable=True, unique=True, index=True, info={"api_exclude": True}
+    )
+    request_payload_hash = Column(String(64), nullable=True, info={"api_exclude": True})
 
 
 class UpdateSubmissionBatch(Base, TimestampMixin):
@@ -58,6 +62,7 @@ class UpdateSubmissionBatch(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True, index=True)
     client_request_id = Column(String(64), nullable=False, unique=True, index=True)
+    request_payload_hash = Column(String(64), nullable=True)
     submitter = Column(String(50), default="")
     submitter_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
     source_type = Column(String(40), index=True)
@@ -70,6 +75,8 @@ class UpdateSubmission(Base, TimestampMixin):
     __tablename__ = "update_submissions"
 
     id = Column(Integer, primary_key=True, index=True)
+    client_request_id = Column(String(64), nullable=True, unique=True, index=True)
+    request_payload_hash = Column(String(64), nullable=True)
     batch_id = Column(Integer, ForeignKey("update_submission_batches.id"), nullable=True, index=True)
     batch_order = Column(Integer, default=0)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
@@ -121,6 +128,10 @@ class Meeting(Base, TimestampMixin):
         Integer, ForeignKey("meeting_document_sources.id", ondelete="SET NULL"),
         nullable=True, index=True,
     )
+    client_request_id = Column(
+        String(64), nullable=True, unique=True, index=True, info={"api_exclude": True}
+    )
+    request_payload_hash = Column(String(64), nullable=True, info={"api_exclude": True})
     review_status = Column(String(24), nullable=False, default="legacy", server_default="legacy", index=True)
     review_version = Column(Integer, nullable=False, default=1, server_default="1")
 
@@ -674,6 +685,8 @@ class Achievement(Base, TimestampMixin):
     source_submission_id = Column(Integer, nullable=True, index=True)
     source_achievement_submission_id = Column(Integer, nullable=True, index=True)
     edit_count = Column(Integer, default=0)
+    client_request_id = Column(String(64), nullable=True, unique=True, index=True, info={"api_exclude": True})
+    request_payload_hash = Column(String(64), nullable=True, info={"api_exclude": True})
 
 
 class AchievementSubmission(Base, TimestampMixin):
@@ -697,6 +710,10 @@ class AchievementSubmission(Base, TimestampMixin):
     reviewed_at = Column(DateTime, nullable=True)
     reject_reason = Column(Text, default="")
     source_type = Column(String(40), default="人工补录")
+    client_request_id = Column(
+        String(64), nullable=True, unique=True, index=True, info={"api_exclude": True}
+    )
+    request_payload_hash = Column(String(64), nullable=True, info={"api_exclude": True})
 
 
 class AchievementAttachment(Base, TimestampMixin):
@@ -774,6 +791,7 @@ class Issue(Base, TimestampMixin):
     owner = Column(String(50), index=True)
     owner_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
     helper = Column(String(100), default="")
+    helper_person_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
     priority = Column(String(10), default="中", index=True)
     status = Column(String(20), default="待处理", index=True)
     need_decision_by = Column(String(50), default="")
@@ -791,6 +809,10 @@ class Issue(Base, TimestampMixin):
     edit_count = Column(Integer, default=0)
     reporter = Column(String(50), default="", index=True)
     handler_reply = Column(Text, default="")
+    client_request_id = Column(
+        String(64), nullable=True, unique=True, index=True, info={"api_exclude": True}
+    )
+    request_payload_hash = Column(String(64), nullable=True, info={"api_exclude": True})
 
 
 class Project(Base, TimestampMixin):
@@ -809,6 +831,21 @@ class Project(Base, TimestampMixin):
     collaborators = Column(Text, default="")
     sort_order = Column(Integer, default=0)
     is_active = Column(Boolean, default=False)
+    work_progress_optional_columns = Column(JSON, nullable=False, default=list, server_default="[]")
+    owner_plan_drafts = Column(JSON, nullable=False, default=dict, server_default="{}", info={"api_exclude": True})
+    client_request_id = Column(
+        String(64), nullable=True, unique=True, index=True, info={"api_exclude": True}
+    )
+    request_payload_hash = Column(String(64), nullable=True, info={"api_exclude": True})
+
+
+class ProjectBatchImport(Base, TimestampMixin):
+    __tablename__ = "project_batch_imports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_request_id = Column(String(64), nullable=False, unique=True, index=True)
+    request_payload_hash = Column(String(64), nullable=False)
+    result_json = Column(JSON, nullable=False)
 
 
 class ProjectCloseRequest(Base, TimestampMixin):
@@ -828,6 +865,10 @@ class ProjectCloseRequest(Base, TimestampMixin):
     review_comment = Column(Text, default="")
     reviewed_at = Column(DateTime, nullable=True)
     cancelled_at = Column(DateTime, nullable=True)
+    client_request_id = Column(
+        String(64), nullable=True, unique=True, index=True, info={"api_exclude": True}
+    )
+    request_payload_hash = Column(String(64), nullable=True, info={"api_exclude": True})
 
 
 class Person(Base, TimestampMixin):
@@ -928,7 +969,7 @@ class SubTask(Base, TimestampMixin):
     assignee = Column(String(50), nullable=False, index=True)
     assignee_id = Column(Integer, ForeignKey("people.id"), nullable=True, index=True)
     collaborator_ids = Column(JSON, nullable=False, default=list, server_default="[]")
-    plan_time = Column(String(20), default="")
+    plan_time = Column(String(80), default="")
     # Structured execution dates coexist with the legacy plan_time display text.
     start_date = Column(Date, nullable=True, index=True)
     due_kind = Column(String(10), nullable=False, default="unknown", server_default="unknown", index=True)
@@ -937,6 +978,9 @@ class SubTask(Base, TimestampMixin):
     due_reference_date = Column(Date, nullable=True, index=True)
     status = Column(String(20), default="未开始", index=True)
     completion_criteria = Column(Text, default="")
+    expected_outcome = Column(Text, nullable=False, default="", server_default="")
+    goal = Column(Text, nullable=False, default="", server_default="")
+    bowei_role = Column(Text, nullable=False, default="", server_default="")
     notes = Column(Text, default="")
     source_submission_id = Column(Integer, nullable=True, index=True)
     is_deleted = Column(Boolean, default=False, index=True)

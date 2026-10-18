@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   getProjects,
@@ -70,6 +70,7 @@ const EMPTY_FORM: FormState = {
 export function ProjectAdminPage() {
   const { currentUser } = useProject()
   const navigate = useNavigate()
+  const projectCreateRequestIdsRef = useRef(new Map<string, string>())
 
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(false)
@@ -117,6 +118,7 @@ export function ProjectAdminPage() {
   }
 
   const resetForm = () => {
+    projectCreateRequestIdsRef.current.clear()
     setForm(EMPTY_FORM)
     setFormError(null)
     setInitMembers(EMPTY_MEMBERS)
@@ -171,7 +173,16 @@ export function ProjectAdminPage() {
           coordinator_ids: initMembers.coordinator,
           member_ids: initMembers.member,
         }
-        const created = await createProject(payload)
+        const fingerprint = JSON.stringify({
+          actor: currentUser?.person_id ?? currentUser?.account_id ?? currentUser?.username ?? '',
+          payload,
+        })
+        let requestId = projectCreateRequestIdsRef.current.get(fingerprint)
+        if (!requestId) {
+          requestId = globalThis.crypto?.randomUUID?.() ?? `project-${Date.now()}-${Math.random().toString(36).slice(2)}`
+          projectCreateRequestIdsRef.current.set(fingerprint, requestId)
+        }
+        const created = await createProject(payload, requestId)
         setBanner(`项目「${created.name}」已创建（#${created.id}）`)
         setNewProjectId(created.id)
         resetForm()

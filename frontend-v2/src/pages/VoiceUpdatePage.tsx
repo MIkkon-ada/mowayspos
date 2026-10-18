@@ -11,7 +11,14 @@ import { VoiceUpdateResultPanel } from '../features/voice-update/VoiceUpdateResu
 import { VoiceUpdateSubmitPanel } from '../features/voice-update/VoiceUpdateSubmitPanel'
 import { VoiceUpdateTaskBindingBar } from '../features/voice-update/VoiceUpdateTaskBindingBar'
 import { VoiceUpdateTaskContextDrawer } from '../features/voice-update/VoiceUpdateTaskContextDrawer'
-import { DRAFT_KEY, useVoiceDraft } from '../features/voice-update/useVoiceDraft'
+import {
+  DRAFT_KEY,
+  getVoiceDraftStorageKey,
+  readVoiceDraftLastContext,
+  readVoiceDraftStorage,
+  saveVoiceDraftLastContext,
+  useVoiceDraft,
+} from '../features/voice-update/useVoiceDraft'
 import { useVoiceExtraction } from '../features/voice-update/useVoiceExtraction'
 import { useVoiceHistory } from '../features/voice-update/useVoiceHistory'
 import { useVoiceRecorder } from '../features/voice-update/useVoiceRecorder'
@@ -38,7 +45,6 @@ function parseId(value: string | null): number | null {
 export function VoiceUpdatePage() {
   const { currentUser, projects } = useProject()
   const [searchParams] = useSearchParams()
-  const draftState = useMemo(() => readVoiceDraftState(localStorage.getItem(DRAFT_KEY)), [])
   const requestedProjectId = parseId(searchParams.get('projectId'))
   const requestedSubtaskId = parseId(searchParams.get('subtaskId'))
   const requestedSubmissionId = parseId(searchParams.get('submissionId'))
@@ -47,11 +53,39 @@ export function VoiceUpdatePage() {
     ? requestedEntryIntent
     : 'report'
   const historyRequested = searchParams.get('history') === '1'
-  const [mode, setMode] = useState<VoiceInputMode>(draftState.mode ?? 'text')
+  const savedDraftContext = useMemo(() => {
+    try { return readVoiceDraftLastContext(currentUser) } catch { return null }
+  }, [currentUser])
+  const savedDraftContextIsAvailable = savedDraftContext?.projectId == null
+    || projects.some((project) => project.id === savedDraftContext.projectId)
+  const initialProjectId = requestedProjectId ?? (
+    savedDraftContextIsAvailable ? savedDraftContext?.projectId ?? null : null
+  )
+  const initialScope: VoiceReportScope = requestedProjectId
+    ? requestedSubtaskId ? 'task' : 'project'
+    : savedDraftContextIsAvailable ? savedDraftContext?.scope ?? 'all' : 'all'
+  const initialDraftStorageKey = getVoiceDraftStorageKey(currentUser, initialProjectId)
+  const initialDraftState = useMemo(() => {
+    try {
+      return readVoiceDraftState(readVoiceDraftStorage(currentUser, initialProjectId))
+    } catch {
+      return {}
+    }
+  }, [currentUser, initialDraftStorageKey, initialProjectId])
+  useEffect(() => {
+    try {
+      localStorage.removeItem(DRAFT_KEY)
+    } catch {
+      // Ignore unavailable browser storage.
+    }
+  }, [])
+  const [mode, setMode] = useState<VoiceInputMode>(initialDraftState.mode ?? 'text')
   const [text, setText] = useState('')
   const [selectedProvider, setSelectedProvider] = useState('capability')
-  const [reportScope, setReportScope] = useState<VoiceReportScope>('all')
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
+  const [reportScope, setReportScope] = useState<VoiceReportScope>(() => requestedProjectId && initialDraftState.scope === 'task'
+    ? 'task'
+    : initialScope)
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(() => initialProjectId)
   const [quickSubtaskId, setQuickSubtaskId] = useState<number | null>(null)
   const [providers, setProviders] = useState<AvailableProvider[]>([
     { provider: 'capability', display_name: 'AI能力策略', model: '模型信息加载中' },
@@ -60,6 +94,28 @@ export function VoiceUpdatePage() {
   const [resolvedProjectDetail, setResolvedProjectDetail] = useState<Project | null>(null)
   const projectSelectionInitialized = useRef(false)
   const historyDeepLinkHandled = useRef(false)
+  const draftProjectId = reportScope === 'all' ? null : selectedProjectId
+  const draftStorageKey = draftProjectId !== null || reportScope === 'all'
+    ? getVoiceDraftStorageKey(currentUser, draftProjectId)
+    : null
+  const draftState = useMemo(() => {
+    try {
+      return readVoiceDraftState(draftStorageKey ? readVoiceDraftStorage(currentUser, draftProjectId) : null)
+    } catch {
+      return {}
+    }
+  }, [currentUser, draftProjectId, draftStorageKey])
+
+  useEffect(() => {
+    setMode(draftState.mode ?? 'text')
+  }, [draftStorageKey, draftState.mode])
+
+  useEffect(() => {
+    saveVoiceDraftLastContext(currentUser, {
+      projectId: reportScope === 'all' ? null : selectedProjectId,
+      scope: reportScope,
+    })
+  }, [currentUser, reportScope, selectedProjectId])
 
   useEffect(() => {
     let cancelled = false
@@ -126,14 +182,14 @@ export function VoiceUpdatePage() {
       if (!requestedProject) return
       setSelectedProjectId(requestedProject.id)
       if (requestedSubtaskId) setReportScope('task')
-      else setReportScope('project')
+      else setReportScope(draftState.scope === 'task' ? 'task' : 'project')
       projectSelectionInitialized.current = true
       return
     }
-    setSelectedProjectId(null)
-    setReportScope('all')
+    setSelectedProjectId(initialProjectId)
+    setReportScope(initialScope)
     projectSelectionInitialized.current = true
-  }, [pageProjects, requestedProjectId, requestedSubtaskId, searchParams])
+  }, [initialProjectId, initialScope, pageProjects, requestedProjectId, requestedSubtaskId, searchParams])
 
   const taskBinding = useVoiceTaskBinding({
     scope: reportScope,
@@ -216,7 +272,15 @@ export function VoiceUpdatePage() {
     setHistoryOpen(true)
     if (requestedSubmissionId) void historyState.handleSelectUpdate(requestedSubmissionId)
   }, [historyRequested, requestedSubmissionId, historyState])
-  const { draftSaved, saveDraft } = useVoiceDraft({ text, selectedProvider, setText, setSelectedProvider })
+  const { draftSaved, saveDraft } = useVoiceDraft({
+    currentUser,
+    projectId: draftProjectId,
+    scope: reportScope,
+    text,
+    selectedProvider,
+    setText,
+    setSelectedProvider,
+  })
   const { submittedAt, handleSubmitFinal } = useVoiceSubmission({
     reportScope,
     selectedProjectId,
@@ -251,8 +315,29 @@ export function VoiceUpdatePage() {
     phase,
   })
 
+  function persistDraftSnapshot() {
+    if (!draftStorageKey) return
+    try {
+      localStorage.setItem(draftStorageKey, JSON.stringify({
+        text,
+        provider: selectedProvider,
+        mode,
+        projectId: selectedProjectId,
+        subtaskId: taskBinding.selectedSubtaskId,
+        scope: reportScope,
+      }))
+      saveVoiceDraftLastContext(currentUser, {
+        projectId: reportScope === 'all' ? null : selectedProjectId,
+        scope: reportScope,
+      })
+    } catch {
+      // Ignore unavailable browser storage.
+    }
+  }
+
   function handleProjectChange(projectId: number | null) {
     if (controlsLocked) return
+    persistDraftSnapshot()
     resetExtractionState()
     removeDocument()
     setQuickSubtaskId(null)
@@ -261,6 +346,7 @@ export function VoiceUpdatePage() {
 
   function handleScopeChange(scope: VoiceReportScope) {
     if (controlsLocked) return
+    persistDraftSnapshot()
     resetExtractionState()
     removeDocument()
     setQuickSubtaskId(null)
@@ -278,6 +364,7 @@ export function VoiceUpdatePage() {
 
   function handleQuickTaskSelect(projectId: number, subtaskId: number) {
     if (controlsLocked) return
+    persistDraftSnapshot()
     resetExtractionState()
     removeDocument()
     setQuickSubtaskId(subtaskId)
@@ -287,17 +374,7 @@ export function VoiceUpdatePage() {
 
   function handleSaveDraft() {
     saveDraft()
-    try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({
-        text,
-        provider: selectedProvider,
-        mode,
-        projectId: selectedProjectId,
-        subtaskId: taskBinding.selectedSubtaskId,
-      }))
-    } catch {
-      // Existing draft behavior intentionally ignores storage failures.
-    }
+    persistDraftSnapshot()
   }
 
   const noActiveProjects = activeProjects.length === 0 && !selectedProject

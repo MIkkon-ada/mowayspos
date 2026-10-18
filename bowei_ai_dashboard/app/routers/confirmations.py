@@ -36,6 +36,7 @@ from ..services.key_task_execution import normalize_text_list, record_execution_
 from ..services import policy as P
 from ..services import workflow as W
 from ..services import escalation as ESC
+from ..services.person_identity import person_identity_matches, person_identity_scope
 
 router = APIRouter(prefix="/api/confirmations", tags=["confirmations"])
 
@@ -343,8 +344,18 @@ _WITHDRAWABLE_STATUSES = SS.WITHDRAWABLE
 _ACTIVE_STATUSES       = list(SS.ALL_ACTIVE)
 
 
-def _load_submission(db: Session, submission_id: int) -> models.UpdateSubmission:
-    row = db.get(models.UpdateSubmission, submission_id)
+def _load_submission(
+    db: Session,
+    submission_id: int,
+    *,
+    for_update: bool = True,
+) -> models.UpdateSubmission:
+    query = db.query(models.UpdateSubmission).filter(
+        models.UpdateSubmission.id == submission_id,
+    )
+    if for_update:
+        query = query.with_for_update().populate_existing()
+    row = query.first()
     if not row:
         raise HTTPException(404, "confirmation not found")
     return row
@@ -357,23 +368,13 @@ def _is_submission_submitter(
     db: Session,
 ) -> bool:
     """Use submitter_id for new rows; only legacy rows may match stored strings."""
-    if row.submitter_id is not None:
-        person_id = context.get("person_id")
-        return person_id is not None and row.submitter_id == person_id
-
-    submitter = (row.submitter or "").strip()
-    current_user = (current_user or "").strip()
-    if submitter and submitter == current_user:
-        return True
-
-    person_id = context.get("person_id")
-    context_name = (context.get("name") or "").strip()
-    return bool(
-        submitter
-        and person_id is not None
-        and context_name
-        and submitter == context_name
-        and _unique_active_person_id_for_name(db, context_name) == person_id
+    return person_identity_matches(
+        db,
+        person_id=context.get("person_id"),
+        person_name=context.get("name"),
+        stored_person_id=row.submitter_id,
+        stored_name=row.submitter,
+        account_username=current_user,
     )
 
 
@@ -729,9 +730,19 @@ def my_rejected(
     db: Session = Depends(get_db),
 ):
     """任意登录用户：查询打回给自己的提交，用于首页提醒。"""
+    context = get_user_context_from_db(current_user, db)
+    person_id = context.get("person_id")
+    own_submission_scope = person_identity_scope(
+        db,
+        person_id=person_id,
+        person_name=context.get("name"),
+        id_column=models.UpdateSubmission.submitter_id,
+        name_column=models.UpdateSubmission.submitter,
+        account_username=current_user,
+    )
     rows = (
         db.query(models.UpdateSubmission)
-        .filter(models.UpdateSubmission.submitter == current_user)
+        .filter(own_submission_scope)
         .order_by(models.UpdateSubmission.updated_at.desc())
         .all()
     )
@@ -872,13 +883,20 @@ def counts(
         sub_rows = db.query(
             models.UpdateSubmission.project_id,
             models.UpdateSubmission.submitter,
+            models.UpdateSubmission.submitter_id,
             models.UpdateSubmission.confirm_status,
         ).all()
         visible_statuses = [
             r.confirm_status or ""
             for r in sub_rows
-            if P.can_view_batch(context, r.submitter, r.project_id, cache)
-            and P.role_allows_batch(context, r.submitter, r.project_id, r.confirm_status, cache)
+            if P.can_view_batch(
+                context, r.submitter, r.project_id, cache,
+                submitter_id=r.submitter_id,
+            )
+            and P.role_allows_batch(
+                context, r.submitter, r.project_id, r.confirm_status, cache,
+                submitter_id=r.submitter_id,
+            )
         ]
         result = {
             tab: sum(1 for s in visible_statuses if s in statuses)
@@ -939,7 +957,10 @@ def pending(
             continue
 
         row_project_id = _submission_project_id(db, row)
-        if not P.can_view_batch(context, row.submitter, row_project_id, cache):
+        if not P.can_view_batch(
+            context, row.submitter, row_project_id, cache,
+            submitter_id=row.submitter_id,
+        ):
             continue
         if effective_project_id is not None and row_project_id != effective_project_id:
             continue
@@ -973,7 +994,10 @@ def pending(
         )
 
         # 角色过滤
-        passed_role = P.role_allows_batch(context, row.submitter, row_project_id, row.confirm_status, cache)
+        passed_role = P.role_allows_batch(
+            context, row.submitter, row_project_id, row.confirm_status, cache,
+            submitter_id=row.submitter_id,
+        )
         if not passed_role:
             # 卡片级例外：project_ceo 对主状态非 WAITING_CEO_DECISION 但含待决策卡片的记录也应可见
             if has_card_ceo and not is_submission_ceo:
@@ -1024,7 +1048,7 @@ def detail(
     current_user: str = Depends(get_current_user_name),
     db: Session = Depends(get_db),
 ):
-    row = _load_submission(db, submission_id)
+    row = _load_submission(db, submission_id, for_update=False)
     context = get_user_context_from_db(current_user, db)
     _require_submission_project_access(row, context, db)
     _require_confirmation_center(context)

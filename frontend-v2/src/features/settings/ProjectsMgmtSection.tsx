@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { ChevronDownIcon } from '../../components/icons/ChevronDownIcon'
 import { useProject } from '../../context/ProjectContext'
 import {
   getProjects,
@@ -42,8 +43,9 @@ import {
 } from './projectsWorkbench'
 import { ProjectOverviewStats } from './ProjectOverviewStats'
 import { ProjectTodoSection, type ProjectTodoViewModel } from './ProjectTodoSection'
-import { buildDraftRows, type ProjectReviewDraftRow } from './projectReviewDraftRows'
+import type { ProjectReviewDraftRow } from './projectReviewDraftRows'
 import { ProjectPlanAiImportDialog } from './ProjectPlanAiImportDialog'
+import { ProjectPlanPreview, buildPlanPreviewTasks } from './ProjectPlanPreview'
 
 // ── 常量 ──────────────────────────────────────────────────────
 
@@ -179,7 +181,7 @@ function summarizeProjectRoleLine(projectMembers: ProjectMember[], project: Proj
   const coordinatorNames = getMemberNamesByRole(projectMembers, 'coordinator')
   const memberNames = getMemberNamesByRole(projectMembers, 'member')
   return {
-    ceoText: ceoNames.length > 0 ? ceoNames.join('、') : '未配置',
+    ceoText: ceoNames.length > 0 ? ceoNames.join('、') : project.coaches?.join('、') || '未配置',
     ownerText: ownerNames.length > 0 ? ownerNames.join('、') : project.owners?.join('、') || '未配置',
     coordinatorText: coordinatorNames.length > 0 ? coordinatorNames.join('、') : project.coordinator?.trim() || '未配置',
     memberText: memberNames.length > 0 ? `${memberNames.length}人` : `${project.collaborators?.length ?? 0}人`,
@@ -302,12 +304,15 @@ export function ProjectsMgmtSection() {
   // 推进表雏形数据
   const [projectTasksMap, setProjectTasksMap] = useState<Record<number, TaskItem[]>>({})
   const [projectSubtasksMap, setProjectSubtasksMap] = useState<Record<number, SubTaskWithParent[]>>({})
+  const [planLoadState, setPlanLoadState] = useState<Record<number, { loading: boolean; error: string }>>({})
+  const [planReloadVersion, setPlanReloadVersion] = useState(0)
 
   // 新建项目
   const [showNew, setShowNew] = useState(false)
   const [creating, setCreating] = useState(false)
   const [newForm, setNewForm] = useState<NewProjectForm>(EMPTY_NEW_FORM)
   const [newTeam, setNewTeam] = useState<TeamMap>({ ...EMPTY_TEAM })
+  const projectCreateRequestIdsRef = useRef(new Map<string, string>())
 
   // 编辑项目
   const [showEdit, setShowEdit] = useState(false)
@@ -358,29 +363,34 @@ export function ProjectsMgmtSection() {
   // ── 加载推进表雏形数据（tasks + subtasks）──
   useEffect(() => {
     let cancelled = false
+    setPlanLoadState(Object.fromEntries(projects.map((project) => [project.id, { loading: true, error: '' }])))
     Promise.allSettled(
       projects.map(async (p) => {
-        const [tasks, subtasks] = await Promise.all([
-          fetchTasks(p.id).catch(() => [] as TaskItem[]),
-          fetchSubtasksByProject(p.id).catch(() => [] as SubTaskWithParent[]),
-        ])
-        return { pid: p.id, tasks, subtasks }
+        try {
+          const [tasks, subtasks] = await Promise.all([fetchTasks(p.id), fetchSubtasksByProject(p.id)])
+          return { pid: p.id, tasks, subtasks, error: '' }
+        } catch (error: unknown) {
+          return { pid: p.id, tasks: [] as TaskItem[], subtasks: [] as SubTaskWithParent[], error: error instanceof Error ? error.message : '审核材料加载失败' }
+        }
       }),
     ).then((results) => {
       if (cancelled) return
       const nextTasks: Record<number, TaskItem[]> = {}
       const nextSubs: Record<number, SubTaskWithParent[]> = {}
+      const nextStates: Record<number, { loading: boolean; error: string }> = {}
       results.forEach((r) => {
         if (r.status === 'fulfilled') {
           nextTasks[r.value.pid] = r.value.tasks
           nextSubs[r.value.pid] = r.value.subtasks
+          nextStates[r.value.pid] = { loading: false, error: r.value.error }
         }
       })
       setProjectTasksMap(nextTasks)
       setProjectSubtasksMap(nextSubs)
+      setPlanLoadState(nextStates)
     })
     return () => { cancelled = true }
-  }, [projects])
+  }, [projects, planReloadVersion])
 
   // ── 角色化视图判定 ──
   const isOwnerView =
@@ -460,6 +470,7 @@ export function ProjectsMgmtSection() {
   // ── Handlers ──
 
   function resetNewForm() {
+    projectCreateRequestIdsRef.current.clear()
     setNewForm(EMPTY_NEW_FORM)
     setNewTeam({ ...EMPTY_TEAM })
   }
@@ -475,7 +486,7 @@ export function ProjectsMgmtSection() {
     }
     setCreating(true)
     try {
-      const project = await createProject({
+      const payload = {
         name,
         description: newForm.description.trim(),
         project_type: newForm.project_type,
@@ -489,12 +500,25 @@ export function ProjectsMgmtSection() {
         coordinator_ids: newTeam.coordinator,
         member_ids: newTeam.member,
         project_ceo_ids: newTeam.project_ceo,
+      }
+      const fingerprint = JSON.stringify({
+        actor: currentUser?.person_id ?? currentUser?.account_id ?? currentUser?.username ?? '',
+        payload,
       })
+      let requestId = projectCreateRequestIdsRef.current.get(fingerprint)
+      if (!requestId) {
+        requestId = globalThis.crypto?.randomUUID?.() ?? `project-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        projectCreateRequestIdsRef.current.set(fingerprint, requestId)
+      }
+      const project = await createProject(payload, requestId)
       setProjects((prev) => [...prev, project])
+      void getProjectMembers(project.id)
+        .then((rows) => setMembers((previous) => ({ ...previous, [project.id]: rows })))
+        .catch(() => toast.warning('项目草稿已创建，团队信息暂未加载，请刷新项目列表。'))
       reloadProjects()
       resetNewForm()
       setShowNew(false)
-      toast.success(`项目"${name}"已立项`)
+      toast.success(`项目“${name}”草稿已保存，请检查信息后下发给负责人`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '创建失败')
     } finally {
@@ -600,16 +624,23 @@ export function ProjectsMgmtSection() {
     }
   }
 
-  async function handleReturn(pid: number, name: string) {
-    const reason = window.prompt(`确认退回"${name}"的立项申请？\n请输入退回原因（可选）：`)
-    if (reason === null) return
+  async function handleReturn(pid: number, name: string, reason?: string) {
+    if (reason === undefined) {
+      const project = projects.find((item) => item.id === pid)
+      if (project) setApprovalMaterialsProject(project)
+      return
+    }
+    setApproveLoading(true)
     try {
       const updated = await returnProject(pid, reason || undefined)
       setProjects((prev) => prev.map((p) => (p.id === pid ? { ...p, ...updated } : p)))
       reloadProjects()
       toast.success(`已退回"${name}"`)
+      setApprovalMaterialsProject(null)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '退回失败')
+    } finally {
+      setApproveLoading(false)
     }
   }
 
@@ -731,10 +762,10 @@ export function ProjectsMgmtSection() {
   const menuProject = menuState ? projects.find((p) => p.id === menuState.pid) ?? null : null
 
   return (
-    <div className="projects-lifecycle-workbench projects-lifecycle-page-shell -m-3 bg-[#F8FAFC] px-6 py-5">
+    <div className="projects-lifecycle-workbench initiation-projects projects-lifecycle-page-shell -m-3 bg-[#F8FAFC] px-6 py-5">
       <header className="mx-auto flex max-w-[1440px] flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">项目管理</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">项目中心</h1>
           <p className="mt-1 text-sm text-slate-500">管理项目从立项、启动到执行与归档</p>
         </div>
         {(canCreateProject || canBatchImport) && (
@@ -995,6 +1026,9 @@ export function ProjectsMgmtSection() {
           projectMembers={members[approvalMaterialsProject.id] ?? []}
           tasks={projectTasksMap[approvalMaterialsProject.id] ?? []}
           subtasks={projectSubtasksMap[approvalMaterialsProject.id] ?? []}
+          planLoading={planLoadState[approvalMaterialsProject.id]?.loading ?? true}
+          planError={planLoadState[approvalMaterialsProject.id]?.error ?? ''}
+          onRetry={() => setPlanReloadVersion((value) => value + 1)}
           canReview={(() => {
             const roles = getProjectRoles(approvalMaterialsProject.id)
             return canProjectAction('project.review_start', {
@@ -1006,7 +1040,7 @@ export function ProjectsMgmtSection() {
           loading={approveLoading}
           onClose={() => !approveLoading && setApprovalMaterialsProject(null)}
           onApprove={() => void handleApprove(approvalMaterialsProject)}
-          onReturn={() => void handleReturn(approvalMaterialsProject.id, approvalMaterialsProject.name)}
+          onReturn={(reason) => void handleReturn(approvalMaterialsProject.id, approvalMaterialsProject.name, reason)}
         />
       )}
 
@@ -1743,6 +1777,9 @@ export function ApprovalMaterialsWorkbenchModal({
   onClose,
   onApprove,
   onReturn,
+  planLoading = false,
+  planError = '',
+  onRetry,
 }: {
   project: Project
   projectMembers: ProjectMember[]
@@ -1752,21 +1789,21 @@ export function ApprovalMaterialsWorkbenchModal({
   loading: boolean
   onClose: () => void
   onApprove: () => void
-  onReturn: () => void
+  onReturn: (reason?: string) => void
+  planLoading?: boolean
+  planError?: string
+  onRetry?: () => void
 }) {
   const teamLine = summarizeProjectRoleLine(projectMembers, project)
   const draftSummary = getDraftSummary(tasks, subtasks, project)
-  const draftRows = buildDraftRows(tasks, subtasks, project, projectMembers)
+  const [returning, setReturning] = useState(false)
+  const [reviewReturnReason, setReviewReturnReason] = useState('')
   const projectType = project.project_type?.trim() || '未填写'
   const clientName = project.client_name?.trim() || '内部项目 / 未填写'
   const background = project.background?.trim() || '未填写'
   const expectedOutcomes = project.expected_outcomes?.trim() || '未填写'
   const projectPeriod = formatPlanTimeShort(project.start_date, project.end_date)
 
-  const rowsForTask = (task: TaskItem) => {
-    const taskTitle = task.key_task || '—'
-    return draftRows.filter((row) => row.keyTask === taskTitle)
-  }
 
   return (
     <div
@@ -1806,8 +1843,9 @@ export function ApprovalMaterialsWorkbenchModal({
           </button>
         </header>
 
+        {returning && <section className="shrink-0 border-b border-amber-200 bg-amber-50 px-6 py-4"><label className="block text-sm font-semibold text-amber-900" htmlFor="project-review-return-reason">退回意见</label><p className="mt-1 text-xs text-amber-800">说明需要修改的内容，负责人再次进入计划页时会看到这些意见。</p><textarea id="project-review-return-reason" autoFocus rows={3} value={reviewReturnReason} onChange={(event) => setReviewReturnReason(event.target.value)} className="mt-2 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-800" /></section>}
         <main className="projects-approval-workbench-main flex-1 overflow-y-auto bg-[#f6f9ff] pb-8">
-          <div className="projects-approval-workbench-columns mx-auto flex max-w-[1440px] items-start gap-6 px-6 py-6">
+          <div className="projects-approval-workbench-columns initiation-approval-layout mx-auto flex max-w-[1440px] items-start gap-6 px-6 py-6">
             <aside className="projects-approval-left-pane sticky top-6 w-[400px] shrink-0 space-y-6">
               <section className="overflow-hidden rounded-xl border border-[#e0c0b1]/70 bg-white shadow-sm">
                 <h3 className="sr-only">项目核心信息</h3>
@@ -1840,6 +1878,7 @@ export function ApprovalMaterialsWorkbenchModal({
                   <details className="app-disclosure group mt-4">
                     <summary className="projects-approval-supplement-summary flex cursor-pointer select-none items-center gap-2 rounded-lg border border-orange-100 bg-orange-50/40 px-3 py-2 text-sm font-semibold text-orange-700 outline-none transition-colors hover:bg-orange-50 focus-visible:ring-2 focus-visible:ring-orange-200">
                       补充详细信息
+                      <ChevronDownIcon className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
                     </summary>
                     <div className="mt-4 space-y-4 border-t border-slate-200/80 pt-4 text-sm text-slate-700">
                       <div>
@@ -1882,61 +1921,7 @@ export function ApprovalMaterialsWorkbenchModal({
                 </div>
               </div>
 
-              {tasks.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-10 text-center text-sm text-slate-400">
-                  暂无工作推进表雏形
-                </div>
-              ) : (
-                <div>
-                  {tasks.map((task, taskIndex) => {
-                    const rows = rowsForTask(task)
-                    return (
-                      <div key={task.id ?? taskIndex} className="mb-6 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                        <div className="flex items-start gap-4 border-b border-slate-200 bg-slate-100/70 px-6 py-4">
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-orange-50 text-lg font-semibold text-orange-700">
-                            {taskIndex + 1}
-                          </div>
-                          <div className="grid flex-1 grid-cols-1 gap-4 md:grid-cols-2">
-                            <div>
-                              <div className="block text-[10px] font-semibold uppercase text-slate-500/80">重点工作名称</div>
-                              <div className="mt-1 text-lg font-semibold text-slate-900">{task.key_task || '未填写'}</div>
-                            </div>
-                            <div>
-                              <div className="block text-[10px] font-semibold uppercase text-slate-500/80">重点工作目标</div>
-                              <div className="mt-1 text-sm leading-relaxed text-slate-600">{task.key_achievement?.trim() || '未填写'}</div>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="overflow-x-auto">
-                          <table className="w-full border-collapse text-left text-sm">
-                            <thead>
-                              <tr className="border-b border-slate-200/80 bg-slate-50/80 text-[11px] font-semibold text-slate-500">
-                                <th className="w-[250px] py-2 pl-6 pr-3">关键任务</th>
-                                <th className="w-[100px] px-3 py-2">责任人</th>
-                                <th className="w-[100px] px-3 py-2">协助人</th>
-                                <th className="w-[160px] px-3 py-2">时间段</th>
-                                <th className="px-3 py-2">备注 / 标准</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                              {rows.map((row, rowIndex) => (
-                                <tr key={`${row.keyTask}-${row.subTask}-${rowIndex}`} className="hover:bg-slate-50">
-                                  <td className="py-3 pl-6 pr-3 text-sm text-slate-800">{row.subTask}</td>
-                                  <td className="px-3 py-3 text-sm text-slate-700">{row.assignee}</td>
-                                  <td className="px-3 py-3 text-sm text-slate-600">{row.collaborator}</td>
-                                  <td className="px-3 py-3 text-sm text-slate-600">{row.planRange}</td>
-                                  <td className="px-3 py-3 text-sm text-slate-600">{row.note}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
+              {planLoading ? <div role="status" className="rounded-xl border border-blue-100 bg-blue-50 p-5 text-sm text-blue-800">正在加载审核材料…</div> : planError ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-800"><p>审核材料加载失败：{planError}。材料完整加载前不可审核通过。</p><button type="button" onClick={onRetry} className="mt-3 rounded-lg border border-red-200 bg-white px-4 py-2">重新加载审核材料</button></div> : <ProjectPlanPreview tasks={buildPlanPreviewTasks(tasks, subtasks, projectMembers)} />}
 
             </section>
           </div>
@@ -1950,12 +1935,13 @@ export function ApprovalMaterialsWorkbenchModal({
           >
             关闭
           </button>
-          {canReview && (
+          {canReview && returning && <div className="flex gap-2"><button type="button" disabled={loading} onClick={() => setReturning(false)} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm text-slate-600">取消退回</button><button type="button" disabled={loading || !reviewReturnReason.trim()} onClick={() => onReturn(reviewReturnReason.trim())} className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">确认退回</button></div>}
+          {canReview && !returning && (
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={onReturn}
-                disabled={loading}
+                onClick={() => setReturning(true)}
+                disabled={loading || planLoading || Boolean(planError)}
                 className="h-10 rounded-lg border border-orange-300 bg-white px-6 text-sm font-semibold text-orange-700 transition-colors hover:bg-orange-50 disabled:opacity-50"
               >
                 退回修改
@@ -1963,7 +1949,7 @@ export function ApprovalMaterialsWorkbenchModal({
               <button
                 type="button"
                 onClick={onApprove}
-                disabled={loading}
+                disabled={loading || planLoading || Boolean(planError)}
                 className="h-10 rounded-lg bg-orange-600 px-10 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-orange-700 disabled:opacity-50"
               >
                 {loading ? '处理中…' : '审核通过'}

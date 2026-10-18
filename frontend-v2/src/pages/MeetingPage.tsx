@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { analyzeProgressReview, deleteMeeting, fetchMeetingRevisions, fetchMeetings, fetchProjectMeetingReviewPackage, patchMeetingStatus, projectMeetingDocumentDownloadUrl, reviewProjectMeeting, updateMeeting, type MeetingRevisionItem, type ProjectMeetingRun } from '../api/meetings'
+import { deleteMeeting, fetchMeetingRevisions, fetchMeetings, fetchProjectMeetingReviewPackage, patchMeetingStatus, projectMeetingDocumentDownloadUrl, reviewProjectMeeting, reviewUnlinkedMeetingFacts, updateMeeting, type MeetingRevisionItem, type ProjectMeetingRun } from '../api/meetings'
 import { useProject } from '../context/ProjectContext'
 import type { MeetingItem } from '../types'
 import { InfoRow, MeetingSection, renderJsonList } from '../features/meeting/meetingShared'
@@ -8,7 +8,6 @@ import { toast } from '../utils/toast'
 import { SkeletonTableRows } from '../components/Skeleton'
 import { NewMeetingModal } from '../features/meeting/NewMeetingModal'
 import { KickoffAgentWorkspace } from '../features/meeting/KickoffAgentWorkspace'
-import { MeetingProgressReviewSection } from '../features/meeting/MeetingProgressReviewSection'
 import { MeetingDetailWorkspace } from '../features/meeting/MeetingDetailWorkspace'
 import { STATUS_CONFIG, fmtTime, getStatus, type PublishStatus } from '../features/meeting/meetingUtils'
 import { getProjectDisplayName } from '../compatibility/projectNames'
@@ -42,7 +41,6 @@ export function MeetingPage() {
   const [projectMeetings, setProjectMeetings] = useState<Record<number, MeetingItem[]>>({})
   const [revisions, setRevisions] = useState<MeetingRevisionItem[]>([])
   const [selectedRevision, setSelectedRevision] = useState<MeetingRevisionItem | null>(null)
-  const [progressReviewRefresh, setProgressReviewRefresh] = useState(0)
   const [projectMeetingReview, setProjectMeetingReview] = useState<ProjectMeetingRun | null>(null)
 
   const currentProject = projects.find((p) => p.id === currentProjectId) ?? null
@@ -168,7 +166,7 @@ export function MeetingPage() {
     }
   }
 
-  async function handleCreated(m: MeetingItem) {
+  function handleCreated(m: MeetingItem) {
     setMeetings((prev) => {
       const idx = prev.findIndex((x) => x.id === m.id)
       if (idx >= 0) {
@@ -181,12 +179,6 @@ export function MeetingPage() {
     setSelected(m)
     setShowNewModal(false)
     setEditingItem(null)
-    try {
-      await analyzeProgressReview(m.id)
-      setProgressReviewRefresh((value) => value + 1)
-    } catch {
-      toast.error('会议已保存，但成员完成情况分析未完成，可在详情中重试')
-    }
   }
 
   async function handleDeleteMeeting(meeting: MeetingItem) {
@@ -223,6 +215,11 @@ export function MeetingPage() {
   const meetingEditor = effectiveProjectId && (showNewModal || editingItem)
      ? <NewMeetingModal
          projectId={effectiveProjectId}
+         accountKey={currentUser?.account_id != null
+           ? `account:${currentUser.account_id}`
+           : currentUser?.person_id != null
+             ? `person:${currentUser.person_id}`
+             : `username:${currentUser?.username?.trim().toLowerCase() || 'unknown'}`}
          editItem={editingItem ?? undefined}
         onClose={() => {
           setShowNewModal(false)
@@ -256,10 +253,15 @@ export function MeetingPage() {
       workstreamId: workstream.id,
       title: task.title,
       status: task.status,
-      progress: '',
+      assignee: task.assignee,
+      currentProgress: task.current_progress ? {
+        summary: task.current_progress.summary,
+        nextStep: task.current_progress.next_step,
+        sourceLabel: task.current_progress.source_label,
+      } : undefined,
     })))
     const scheduleChanges = projectMeetingReview.review_package?.proposals ?? projectMeetingReview.result.execution_schedule_changes ?? []
-    const meetingDraft = selected
+    const meetingDraft = projectMeetingReview.meeting ?? selected
     const isOwner = canWorkflowAction('meeting.publish', {
       isTechAdmin: currentUser?.is_tech_admin,
       isCompanyCeo: currentUser?.is_ceo,
@@ -267,8 +269,8 @@ export function MeetingPage() {
       projectRoles: effectiveProject?.user_roles ?? currentProjectRoles,
     })
     return (
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <main className="flex-1 overflow-y-auto">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <main className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
           <ProjectMeetingReviewWorkspace
             projectContext={{
               projectId: effectiveProjectId ?? project?.id ?? 0,
@@ -296,16 +298,19 @@ export function MeetingPage() {
               completedItems: projectMeetingReview.result.completed_items ?? [],
               nextStageWork: projectMeetingReview.result.next_stage_work ?? [],
               risks: projectMeetingReview.result.risks ?? [],
+              priorActionTracking: projectMeetingReview.result.prior_action_tracking ?? [],
               sourceFilename: projectMeetingReview.document?.original_name,
             }}
             meetingInfoEvidence={projectMeetingReview.result.meeting_info_evidence ?? {}}
             summaryEvidence={projectMeetingReview.result.summary_evidence}
             openQuestions={projectMeetingReview.result.open_questions ?? []}
+            workProgressPreview={projectMeetingReview.result.work_progress_preview}
+            workProgressStale={projectMeetingReview.work_progress_stale}
             agentAudit={projectMeetingReview.audit}
             scheduleChanges={scheduleChanges.map((change, index) => {
               const agentChange = projectMeetingReview.result.execution_schedule_changes?.[index]
               const workstreamId = change.parent_workstream_id ?? change.target?.workstream_id ?? agentChange?.parent_workstream_id ?? agentChange?.target?.workstream_id ?? null
-              const parentSubtaskId = change.parent_subtask_id ?? change.target?.key_task_id ?? agentChange?.parent_subtask_id ?? agentChange?.target?.key_task_id ?? null
+              const parentSubtaskId = change.parent_subtask_id ?? change.target?.key_task_id ?? change.target?.subtask_id ?? (change.action === 'confirm_work_progress' ? change.target_id : null) ?? agentChange?.parent_subtask_id ?? agentChange?.target?.key_task_id ?? null
               return {
                 id: change.id,
                 action: change.action,
@@ -343,18 +348,24 @@ export function MeetingPage() {
                   participants: draft.participants ?? '',
                   organizer: draft.organizer ?? '',
                   copied_to: draft.copied_to ?? '',
-                  agenda_items_json: selected.agenda_items_json ?? '[]',
-                  prior_action_items_json: selected.prior_action_items_json ?? '[]',
+                  agenda_items_json: JSON.stringify(draft.agendaItems),
+                  completed_items_json: JSON.stringify(draft.completedItems),
+                  prior_action_items_json: JSON.stringify(draft.priorActionTracking),
                   source_mode: selected.source_mode ?? 'ai_analysis',
                   summary: draft.summary ?? '',
-                  task_list_json: selected.task_list_json ?? '[]',
-                  decision_items_json: selected.decision_items_json ?? '[]',
-                  risk_items_json: selected.risk_items_json ?? '[]',
+                  task_list_json: JSON.stringify(draft.nextStageWork),
+                  decision_items_json: JSON.stringify(draft.decisions),
+                  risk_items_json: JSON.stringify(draft.risks),
                   transcript_text: String(selected.transcript_text ?? ''),
                 })
                 setSelected(updated)
                 setMeetings((current) => current.map((item) => item.id === updated.id ? updated : item))
-                toast.success('负责人编辑已保存，尚未回填任何子计划')
+                try {
+                  setProjectMeetingReview(await fetchProjectMeetingReviewPackage(updated.id))
+                  toast.success('负责人编辑已保存，尚未回填任何子计划')
+                } catch {
+                  toast.error('修改已保存，但审核内容刷新失败；请重新打开会议查看')
+                }
               } catch {
                 toast.error('保存负责人编辑失败，请稍后重试')
               } finally {
@@ -367,8 +378,29 @@ export function MeetingPage() {
                 const updated = await reviewProjectMeeting(selected.id, { action: 'publish' })
                 setSelected(updated)
                 setMeetings((current) => current.map((item) => item.id === updated.id ? updated : item))
-                toast.success('会议纪要已发布，项目计划尚未变更')
+                const refreshed = await fetchProjectMeetingReviewPackage(updated.id).catch(() => null)
+                if (refreshed) setProjectMeetingReview(refreshed)
+                toast.success('会议纪要已发布，未勾选的会议事项保留在纪要中')
               } catch { toast.error('发布失败，请检查审核状态或权限') } finally { setActionLoading(false) }
+            }}
+            onApproveAndApply={async (proposalIds) => {
+              setActionLoading(true)
+              try {
+                const updated = await reviewProjectMeeting(selected.id, { action: 'approve_and_apply', proposal_ids: proposalIds })
+                setSelected(updated)
+                setMeetings((current) => current.map((item) => item.id === updated.id ? updated : item))
+                const refreshed = await fetchProjectMeetingReviewPackage(updated.id).catch(() => null)
+                if (refreshed) setProjectMeetingReview(refreshed)
+                toast.success('会议纪要已发布，选中的推进表建议已同步')
+              } catch { toast.error('审核或同步失败，会议纪要与推进表均未提交；请检查建议状态') } finally { setActionLoading(false) }
+            }}
+            onReviewUnlinkedFacts={async (payload) => {
+              setActionLoading(true)
+              try {
+                await reviewUnlinkedMeetingFacts(selected.id, payload)
+                setProjectMeetingReview(await fetchProjectMeetingReviewPackage(selected.id))
+                toast.success(payload.decision === 'link_task' ? '已关联关键任务，推进表建议待审核' : '已确认仅保留在会议纪要')
+              } catch { toast.error('事项审核失败，请确认关键任务仍属于当前项目') } finally { setActionLoading(false) }
             }}
             onApplyChanges={async (proposalIds) => {
               setActionLoading(true)

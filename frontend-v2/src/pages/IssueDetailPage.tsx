@@ -9,6 +9,7 @@ import type { IssueItem, TaskItem, SubTaskItem } from '../types'
 import { useProject } from '../context/ProjectContext'
 import { toast } from '../utils/toast'
 import { fmtDate, fmtFull } from '../utils/time'
+import { getIssueActionPermissions } from '../domain/issueActionPermissions'
 
 // ============================================================
 // Constants (mirrored from IssuesPage in case of future divergence)
@@ -170,12 +171,13 @@ export function IssueDetailPage() {
     return currentProject?.name || `项目 #${projectId}`
   }, [currentProject, projectId])
 
-  const canManageIssues = useMemo(() => {
-    if (currentUser?.is_tech_admin) return true
-    if (!currentProject) return false
-    const roles: string[] = currentProject.user_roles ?? []
-    return roles.includes('owner')
-  }, [currentUser, currentProject])
+  const issueActions = useMemo(() => getIssueActionPermissions({
+    roles: currentProject?.user_roles ?? [],
+    isTechAdmin: Boolean(currentUser?.is_tech_admin),
+    issueType: issue?.issue_type ?? '',
+    status: issue?.status ?? '',
+    isOwnerAssignee: Boolean(issue?.owner && currentUser?.name && issue.owner === currentUser.name),
+  }), [currentProject, currentUser, issue])
 
   // ── Actions ──
   const doClose = async () => {
@@ -264,7 +266,6 @@ export function IssueDetailPage() {
   const st = issue ? (STATUS_STYLE[issue.status || ''] || STATUS_STYLE['待处理']) : STATUS_STYLE['待处理']
   const terminal = issue?.status === '已解决' || issue?.status === '已关闭'
   const isClosed = issue?.status === '已关闭'
-  const isPendingOwner = issue?.status === '待负责人确认'
   const isPendingDecision = issue?.status === '待决策'
   const flowIndex = getIssueFlowIndex(issue?.status || '待处理')
 
@@ -483,21 +484,21 @@ export function IssueDetailPage() {
               {!terminal && (
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
                   <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">操作</h3>
-                  {!canManageIssues ? (
-                    <p className="text-xs text-slate-400 text-center py-3">仅负责人和企业教练可执行处理动作</p>
+                  {!issueActions.canManage ? (
+                    <p className="text-xs text-slate-400 text-center py-3">仅负责人、统筹人或企业教练可执行处理动作</p>
                   ) : (
                   <div className="space-y-2">
                     {/* Assign helper */}
-                    <button
+                    {issueActions.canAssignHelper && <button
                       onClick={doAssignHelper}
                       disabled={!!actionLoading}
                       className="w-full text-left px-3 py-2.5 rounded-lg border border-slate-200 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50"
                     >
                       👥 指定协助人
-                    </button>
+                    </button>}
 
-                    {/* Submit opinion (for 待处理 / 待协调) */}
-                    {!isPendingOwner && !isPendingDecision && (
+                    {/* Only the assigned coordinator or project coach can submit an opinion for its flow. */}
+                    {issueActions.canSubmitOpinion && (
                       <button
                         onClick={doSubmitOpinion}
                         disabled={!!actionLoading}
@@ -508,16 +509,16 @@ export function IssueDetailPage() {
                     )}
 
                     {/* Request CEO decision */}
-                    <button
+                    {issueActions.canRequestDecision && <button
                       onClick={doRequestCeo}
                       disabled={!!actionLoading}
                       className="w-full text-left px-3 py-2.5 rounded-lg border border-slate-200 text-sm font-semibold text-pink-600 hover:bg-pink-50 transition-colors disabled:opacity-50"
                     >
                       ⚡ 请求公司管理决策
-                    </button>
+                    </button>}
 
                     {/* Owner confirm */}
-                    {isPendingOwner && (
+                    {issueActions.canOwnerConfirm && (
                       <>
                         <button
                           onClick={() => doOwnerConfirm(true)}
@@ -537,7 +538,7 @@ export function IssueDetailPage() {
                     )}
 
                     {/* Resolve */}
-                    {!isPendingOwner && (
+                    {issueActions.canResolve && (
                       <button
                         onClick={doResolve}
                         disabled={!!actionLoading}
@@ -548,13 +549,17 @@ export function IssueDetailPage() {
                     )}
 
                     {/* Close */}
-                    <button
+                    {issueActions.canClose && <button
                       onClick={doClose}
                       disabled={!!actionLoading}
                       className="w-full text-left px-3 py-2.5 rounded-lg border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
                     >
                       ✕ 关闭问题
-                    </button>
+                    </button>}
+                    {!issueActions.canAssignHelper && !issueActions.canSubmitOpinion && !issueActions.canRequestDecision
+                      && !issueActions.canOwnerConfirm && !issueActions.canResolve && !issueActions.canClose && (
+                        <p className="py-3 text-center text-xs text-slate-400">当前角色在此状态下没有可执行操作</p>
+                      )}
                   </div>
                   )}
                   {actionLoading && (

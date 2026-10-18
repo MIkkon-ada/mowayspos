@@ -844,13 +844,14 @@ def submit_opinion(
     project_id = row.project_id
     if not context.get("is_tech_admin"):
         can_opinion = False
+        person_id = context.get("person_id")
         if project_id is not None:
-            roles = set(get_all_project_roles(current_user, project_id, db))
+            roles = set(get_all_project_roles(int(person_id), project_id, db)) if person_id is not None else set()
             # 统筹人 对 待协调 的 Issue 可提交意见
-            if PROJECT_ROLE_COORD_KEY in roles and row.issue_type == IT.TYPE_COORDINATE:
+            if PROJECT_ROLE_COORD_KEY in roles and IT.is_coordination(row.issue_type):
                 can_opinion = True
             # 项目企业教练(project_ceo) 对 需决策 的 Issue 可提交意见
-            if "project_ceo" in roles and row.issue_type == IT.TYPE_DECISION:
+            if "project_ceo" in roles and IT.is_decision(row.issue_type):
                 can_opinion = True
         if not can_opinion:
             raise HTTPException(403, "permission denied — 仅该专项的统筹人/企业教练可提交意见")

@@ -80,6 +80,18 @@ class TestRequestCeoStatusFlow:
         assert "PROJECT_ROLE_OWNER_KEY" in func_body
 
 
+class TestSubmitOpinionTypeNormalization:
+    def test_submit_opinion_normalizes_stored_decision_type(self, issues_source: str):
+        func_body = _extract_func(issues_source, "submit_opinion")
+        assert "IT.is_coordination(row.issue_type)" in func_body
+        assert "IT.is_decision(row.issue_type)" in func_body
+
+    def test_submit_opinion_looks_up_roles_by_resolved_person_id(self, issues_source: str):
+        func_body = _extract_func(issues_source, "submit_opinion")
+        assert 'context.get("person_id")' in func_body
+        assert "get_all_project_roles(int(person_id), project_id, db)" in func_body
+
+
 class TestPatchStatusFlow:
     def test_patch_status_still_exists(self, issues_source: str):
         func_body = _extract_func(issues_source, "patch_status")

@@ -271,6 +271,8 @@ export function ConfirmPage() {
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<'return' | 'transfer' | 'ceo' | null>(null)
   const [actionNote, setActionNote] = useState('')
+  const [submissionReturnOpen, setSubmissionReturnOpen] = useState(false)
+  const [submissionReturnNote, setSubmissionReturnNote] = useState('')
   const [opLogsOpen, setOpLogsOpen] = useState(false)
   const [showTranscript, setShowTranscript] = useState(false)
   const [selectedCardIndex, setSelectedCardIndex] = useState(0)
@@ -685,9 +687,9 @@ export function ConfirmPage() {
     } finally { setActing(false) }
   }
 
-  async function handleDecision(action: 'return' | 'transfer' | 'ceo') {
+  async function handleDecision(action: 'return' | 'transfer' | 'ceo', noteOverride?: string) {
     if (!selected || !currentUser) return
-    const note = actionNote.trim()
+    const note = (noteOverride ?? actionNote).trim()
     if (!note) return
     setActionError(null)
     setActionSuccess(null)
@@ -708,6 +710,8 @@ export function ConfirmPage() {
       setSelected(updated)
       setActionSuccess(action === 'return' ? '已退回' : action === 'transfer' ? '已转交统筹人' : '已提交企业教练决策')
       setActionNote('')
+      setSubmissionReturnNote('')
+      setSubmissionReturnOpen(false)
       setPendingAction(null)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -976,6 +980,7 @@ export function ConfirmPage() {
   })
   const selectedStatus = SS.normalize(selected?.confirm_status)
   const hasAnyPersistedTaskCard = taskCards.some((card) => card.isPersistedTaskCard)
+  const hasConfirmedTaskCards = taskCards.some((card) => card.confirmationStatus === 'confirmed')
   const hasPendingSubmissionCards = taskCards.some((card) =>
     card.confirmationStatus === 'transferred_to_coordinator' ||
     card.confirmationStatus === ('pending_ceo_' + 'decision'),
@@ -1522,6 +1527,30 @@ export function ConfirmPage() {
                         )}
                       </section>
                     </>
+                  )}
+
+                  {viewMode === 'all' && canUseOwnerActions && SS.OWNER_ACTIONABLE.has(selectedStatus) && hasAnyPersistedTaskCard && (
+                    <section className="rounded-xl border border-orange-200 bg-orange-50/60 p-3">
+                      <h3 className="text-sm font-bold text-slate-800">整条汇报</h3>
+                      <p className="mt-1 text-xs leading-5 text-slate-600">退回后，提交人可修订原汇报、重新提取并核对，再以原记录重提。</p>
+                      {hasConfirmedTaskCards ? (
+                        <p className="mt-2 rounded-lg bg-white px-3 py-2 text-xs leading-5 text-orange-700">已有任务卡确认入库，不能退回整条汇报。</p>
+                      ) : (
+                        <>
+                          <button type="button" onClick={() => { setSubmissionReturnOpen(true); setSubmissionReturnNote('') }} disabled={submissionActionsLocked} className="mt-3 h-10 w-full rounded-lg border border-orange-300 bg-white text-sm font-semibold text-orange-700 disabled:opacity-50">退回整条汇报</button>
+                          {submissionReturnOpen && (
+                            <div className="mt-3 rounded-xl border border-orange-200 bg-white p-3">
+                              <label htmlFor="submission-return-reason" className="text-xs font-bold text-slate-700">退回原因<span className="ml-1 text-red-500">*</span></label>
+                              <textarea id="submission-return-reason" value={submissionReturnNote} onChange={(event) => setSubmissionReturnNote(event.target.value)} placeholder="请说明需要提交人补充或修改的内容…" disabled={acting} className="mt-2 min-h-20 w-full resize-none rounded-lg border border-slate-200 p-3 text-sm focus:border-orange-300 focus:outline-none" />
+                              <div className="mt-3 flex gap-2">
+                                <button type="button" onClick={() => { setSubmissionReturnOpen(false); setSubmissionReturnNote('') }} disabled={acting} className="h-9 flex-1 rounded-lg border border-slate-200 text-xs text-slate-600">取消</button>
+                                <button type="button" onClick={() => void handleDecision('return', submissionReturnNote)} disabled={acting || !submissionReturnNote.trim()} className="h-9 flex-1 rounded-lg bg-orange-600 text-xs font-bold text-white disabled:opacity-50">确认退回整条汇报</button>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </section>
                   )}
 
                   {/* ===== COORDINATOR VIEW ===== */}

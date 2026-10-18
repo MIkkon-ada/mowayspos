@@ -290,6 +290,39 @@ class TestSubmitterNotificationIdentity:
         ).one()
         assert notification.recipient_id == unique_person.id
 
+    def test_reject_refuses_a_submission_with_a_task_card_already_confirmed(self):
+        db = _make_session()
+        team = _seed_team(db)
+        row = _submission(
+            db,
+            submitter=team["submitter"].name,
+            submitter_id=team["submitter"].id,
+            status=SS.S_PENDING_OWNER,
+        )
+        result = {
+            "task_reports": [
+                {"matched_subtask_id": 101, "confirmation_status": "confirmed"}
+            ]
+        }
+        row.human_result_json = json.dumps(result, ensure_ascii=False)
+        db.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            reject(
+                row.id,
+                schemas.RejectRequest(reason="请补充", operator="owner"),
+                current_user="owner",
+                db=db,
+            )
+
+        db.refresh(row)
+        assert exc_info.value.status_code == 409
+        assert row.confirm_status == SS.S_PENDING_OWNER
+        assert row.human_result_json == json.dumps(result, ensure_ascii=False)
+        assert db.query(models.OperationLog).filter_by(
+            action="confirmation_return", target_id=row.id
+        ).count() == 0
+
 
 def test_resubmit_updates_original_transcript_and_keeps_revision_auditable():
     db = _make_session()

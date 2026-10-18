@@ -279,6 +279,17 @@ def _require_no_pending_coordinator_cards(data: dict) -> None:
         raise HTTPException(409, "submission contains task cards waiting for coordinator feedback")
 
 
+def _require_no_confirmed_task_cards(data: dict) -> None:
+    """已写入正式推进数据的任务卡不能随整条汇报退回并重新提取。"""
+    reports = data.get("task_reports") or []
+    if isinstance(reports, list) and any(
+        isinstance(report, dict)
+        and _card_confirmation_status(report) == "confirmed"
+        for report in reports
+    ):
+        raise HTTPException(409, "已有任务卡确认入库，不能退回整条汇报")
+
+
 _CARD_OWNER_ACTIONABLE = frozenset({"", "pending", "ceo_decided", "coordinator_given"})
 
 _CARD_WORKFLOW_FIELDS = frozenset({
@@ -2076,6 +2087,7 @@ def reject(
     data = W.submission_result(row)
     _require_no_pending_ceo_cards(data)
     _require_no_pending_coordinator_cards(data)
+    _require_no_confirmed_task_cards(data)
     project_id = _submission_project_id(db, row)
     row.confirm_status = SS.S_RETURNED
     row.reject_reason = payload.reason

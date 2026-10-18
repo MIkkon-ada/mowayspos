@@ -95,10 +95,11 @@ const taskSubMap = {
 test('work progress keeps only the plan table while key-task detail remains available', () => {
   const source = read(PAGE_FILE)
   assert.doesNotMatch(source, /ExecutionProgressView/)
-  assert.doesNotMatch(source, /执行详情/)
+  assert.doesNotMatch(source, /ExecutionProgressView/)
   assert.match(source, /<PlanTableViewV2[\s\S]*?onOpenSubTask=\{openSubDetail\}/)
   assert.match(source, /<KeyTaskExecutionDetailView/)
-  assert.match(source, /selectedSubTask \? \(/)
+  assert.match(source, /aria-label="关键任务执行详情"/)
+  assert.match(source, /\{selectedSubTask \? <KeyTaskExecutionDetailView/)
   assert.match(source, /fetchSubtaskDetail\(st\.id\)/)
 })
 
@@ -294,7 +295,7 @@ test('work progress header keeps only the plan table without losing operations',
   const page = read(PAGE_FILE)
   assert.match(page, /aria-label="切换项目"/)
   assert.match(page, /工作推进表/)
-  assert.doesNotMatch(page, /执行详情/)
+  assert.doesNotMatch(page, /ExecutionProgressView/)
   assert.match(page, /aria-haspopup="menu"/)
   assert.match(page, /导出 Excel/)
   assert.match(page, /handlePlanExport\(\)/)

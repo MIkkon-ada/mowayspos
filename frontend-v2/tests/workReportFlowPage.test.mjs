@@ -298,13 +298,13 @@ test('history groups cross-project children by batch while keeping legacy rows s
   assert.match(source, /onSelectUpdate\(item\.id\)/)
 })
 
-test('returned batch child restarts only its own project and evidence', () => {
+test('returned report child can be edited and resubmitted on the original record', () => {
   const page = read(PAGE)
   const detail = read('src/features/voice-update/VoiceUpdateDetailDrawer.tsx')
-  assert.match(detail, /onRestartFromSubmission\(detailItem\)/)
-  assert.match(page, /setReportScope\('project'\)/)
-  assert.match(page, /setSelectedProjectId\(detailItem\.project_id\)/)
-  assert.match(page, /task_reports/)
+  assert.match(detail, /resubmitSubmission\(\s*detailItem\.id/)
+  assert.match(detail, /value=\{transcriptText\}/)
+  assert.match(detail, /修改并重新提交/)
+  assert.doesNotMatch(page, /onRestartFromSubmission/)
 })
 
 test('batch aggregate status prioritizes returned, then all confirmed, otherwise reviewing', () => {

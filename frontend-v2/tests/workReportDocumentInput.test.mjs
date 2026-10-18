@@ -52,10 +52,11 @@ test('starting a new report clears parsed document text and document metadata to
   )
 })
 
-test('restarting from history clears stale document metadata before restoring report text', () => {
-  const page = read('src/pages/VoiceUpdatePage.tsx')
+test('returned report history edits and resubmits without starting a duplicate report', () => {
+  const detail = read('src/features/voice-update/VoiceUpdateDetailDrawer.tsx')
   assert.match(
-    page,
-    /onRestartFromSubmission=\{\(detailItem\) => \{\s*resetExtractionState\(\)\s*removeDocument\(\)/,
+    detail,
+    /resubmitSubmission\([\s\S]*?detailItem\.id[\s\S]*?transcriptText\.trim\(\)/,
   )
+  assert.match(detail, /value=\{transcriptText\}/)
 })

@@ -17,7 +17,7 @@ test('shared key task workspace remains available from work progress and persona
   assert.match(workspace, /ExecutionTimeline/)
   assert.match(personal, /KeyTaskExecutionWorkspace/)
   assert.match(management, /KeyTaskExecutionWorkspace/)
-  assert.match(page, /selectedSubTask \? \(/)
+  assert.match(page, /\{selectedSubTask \? <KeyTaskExecutionDetailView/)
   assert.doesNotMatch(page, /SHOW_EXECUTION_DETAIL|viewMode === ['"]execution['"]|ExecutionProgressView/)
 })
 

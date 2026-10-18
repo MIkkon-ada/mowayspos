@@ -97,7 +97,7 @@ test('history rows show project time source and normalized review state', () => 
 test('returned history detail reuses the existing resubmitSubmission API client', () => {
   const source = `${read(PAGE)}\n${read(DETAIL)}`
   assert.match(source, /resubmitSubmission/)
-  assert.match(source, /补充并重新提交/)
+  assert.match(source, /修改并重新提交/)
 })
 
 test('submission success opens history and no longer navigates submitters to confirmations', () => {

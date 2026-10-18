@@ -11,7 +11,7 @@ test('task-management keeps the shared key-task execution workspace after removi
   const page = read('src/pages/TaskManagementPage.tsx')
   assert.match(detail, /KeyTaskExecutionWorkspace/)
   assert.match(detail, /keyTaskId=\{subTask\.id\}/)
-  assert.match(page, /selectedSubTask \? \(/)
+  assert.match(page, /\{selectedSubTask \? <KeyTaskExecutionDetailView/)
   assert.doesNotMatch(page, /SHOW_EXECUTION_DETAIL|viewMode === ['"]execution['"]|ExecutionProgressView/)
   assert.match(page, /KeyTaskExecutionDetailView/)
 })

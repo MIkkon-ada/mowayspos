@@ -111,6 +111,31 @@ def test_invalid_card_rolls_back_without_batch_or_child():
     assert db.query(models.UpdateSubmission).count() == 0
 
 
+@pytest.mark.parametrize(
+    ("status", "expected_http_status"),
+    [
+        ("draft", 409), ("dispatched", 409), ("pending_review", 409),
+        ("returned", 409), ("pending_close", 409), ("ended", 409),
+        ("archived", 403),
+    ],
+)
+def test_batch_report_rejects_every_non_active_project(status, expected_http_status):
+    db = _session(); _seed(db)
+    db.get(models.Project, 1).status = status
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        create_submission_batch(
+            _payload(cards=[_card(11, 111, "任务A1")]),
+            current_user="admin",
+            db=db,
+        )
+
+    assert exc.value.status_code == expected_http_status
+    assert db.query(models.UpdateSubmissionBatch).count() == 0
+    assert db.query(models.UpdateSubmission).count() == 0
+
+
 def test_member_without_access_to_every_project_gets_zero_writes():
     db = _session(); _seed(db)
     with pytest.raises(HTTPException) as exc:

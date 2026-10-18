@@ -160,9 +160,8 @@ def _require_project_active(project_id: int | None, db: Session) -> None:
     proj = db.get(models.Project, project_id)
     if proj is None:
         return
-    status = (getattr(proj, "status", "") or "").strip()
-    lifecycle = (getattr(proj, "lifecycle_status", "") or "").strip()
-    if status == "active" or lifecycle == "active":
+    status = (getattr(proj, "status", "") or "").strip().lower()
+    if status == "active":
         return
     raise HTTPException(409, "项目尚未启动，暂不能提交工作汇报。")
 

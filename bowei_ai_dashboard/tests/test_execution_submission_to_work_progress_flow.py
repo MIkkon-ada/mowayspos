@@ -168,13 +168,21 @@ def test_flow1_submit_without_human_result_does_not_call_real_ai():
     assert stored.get("completed_items") == ["测试完成项"]
 
 
-def test_flow1_non_active_project_rejects_submission():
+@pytest.mark.parametrize(
+    ("status", "expected_http_status"),
+    [
+        ("draft", 409), ("dispatched", 409), ("pending_review", 409),
+        ("returned", 409), ("pending_kickoff", 409), ("pending_close", 409),
+        ("ended", 409), ("archived", 403),
+    ],
+)
+def test_flow1_non_active_project_rejects_submission(status, expected_http_status):
     """非 active 项目不应接受正式汇报。"""
     db = _make_session()
     team = _seed_execution_team(db)
 
     # 把项目改为非 active
-    team["project"].status = "pending_review"
+    team["project"].status = status
     team["project"].is_active = False
     db.commit()
 
@@ -190,8 +198,35 @@ def test_flow1_non_active_project_rejects_submission():
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as exc:
         asyncio.run(create_update(payload, current_user="member", db=db))
+    assert exc.value.status_code == expected_http_status
+    if status != "archived":
+        assert "暂不能提交" in str(exc.value.detail)
+
+
+def test_flow1_non_active_status_cannot_be_overridden_by_stale_lifecycle_attribute():
+    """数据库中的项目状态是正式汇报的准入依据，旧兼容字段不能放行。"""
+    db = _make_session()
+    team = _seed_execution_team(db)
+    team["project"].status = "ended"
+    # 兼容迁移期间可能残留的对象属性；正式状态仍必须优先、且失败关闭。
+    team["project"].lifecycle_status = "active"
+    db.commit()
+
+    payload = schemas.ExtractRequest(
+        project_id=team["project"].id,
+        source_type="任务进展",
+        title="进展更新",
+        transcript_text="结束项目的汇报尝试",
+        submitter=team["member"].name,
+        human_result={"completed_items": ["不应入库"]},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(create_update(payload, current_user="member", db=db))
+
     assert exc.value.status_code == 409
     assert "暂不能提交" in str(exc.value.detail)
+    assert db.query(models.UpdateSubmission).count() == 0
 
 
 # ── 流程二：PM 确认入库 ─────────────────────────────────────────

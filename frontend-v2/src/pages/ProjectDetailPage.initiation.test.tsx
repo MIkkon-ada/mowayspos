@@ -8,8 +8,11 @@ vi.mock('../api/subtasks', () => ({ fetchSubTasksBatch: api.fetchSubTasksBatch }
 vi.mock('../context/ProjectContext', () => ({ useProject: () => ({ currentUser: { person_id: 1, is_tech_admin: true }, reloadProjects: api.reloadProjects }) }))
 vi.mock('react-router-dom', () => ({ useParams: () => ({ projectId: '2' }), useNavigate: () => vi.fn() }))
 vi.mock('../features/settings/ProjectsMgmtSection', () => ({
-  DetailPanel: ({ project, onOpenApprovalMaterials }: any) => <><p>{project.status}</p><button onClick={onOpenApprovalMaterials}>查看审核材料</button></>,
+  DetailPanel: ({ project, onOpenApprovalMaterials, onOpenCloseFlow }: any) => <><p>{project.status}</p><button onClick={onOpenApprovalMaterials}>查看审核材料</button><button onClick={onOpenCloseFlow}>申请项目结束</button></>,
   ApprovalMaterialsWorkbenchModal: ({ onApprove, onReturn, planError, loading }: any) => <><p>{planError}</p><button disabled={loading || Boolean(planError)} onClick={onApprove}>审核通过</button><button onClick={() => onReturn('补充日期')}>退回修改</button></>,
+}))
+vi.mock('../features/settings/ProjectCloseFlowDrawer', () => ({
+  ProjectCloseFlowDrawer: ({ open, project }: any) => open ? <div role="dialog">项目结束申请：{project?.name}</div> : null,
 }))
 import ProjectDetailPage from './ProjectDetailPage'
 
@@ -47,5 +50,11 @@ describe('project detail initiation actions', () => {
     fireEvent.click(await screen.findByRole('button', { name: '查看审核材料' }))
     expect(screen.getByText('pending_review')).toBeTruthy()
     expect(screen.getByRole('button', { name: '审核通过' }).hasAttribute('disabled')).toBe(true)
+  })
+  it('opens the project close workflow from the project detail action', async () => {
+    api.getProject.mockResolvedValue({ id: 2, name: '执行中项目', status: 'active' })
+    render(<ProjectDetailPage />)
+    fireEvent.click(await screen.findByRole('button', { name: '申请项目结束' }))
+    expect((await screen.findByRole('dialog')).textContent).toContain('项目结束申请：执行中项目')
   })
 })

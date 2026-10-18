@@ -7,6 +7,7 @@ import { useProject } from '../context/ProjectContext'
 import { projectEditPath, projectOwnerSubmitPath } from '../domain/projectEntryRoutes'
 import { DetailPanel } from '../features/settings/ProjectsMgmtSection'
 import { ApprovalMaterialsWorkbenchModal } from '../features/settings/ProjectsMgmtSection'
+import { ProjectCloseFlowDrawer } from '../features/settings/ProjectCloseFlowDrawer'
 import type { Project, ProjectMember, TaskItem, SubTaskWithParent } from '../types'
 import { toast } from '../utils/toast'
 
@@ -216,6 +217,19 @@ export default function ProjectDetailPage() {
           onReturn={(reason) => void handleReturn(reason)}
         />
       )}
+
+      <ProjectCloseFlowDrawer
+        open={closeFlowProjectId === project.id}
+        project={closeFlowProjectId === project.id ? project : null}
+        currentPersonId={myPersonId}
+        roles={roles}
+        onClose={() => setCloseFlowProjectId(null)}
+        onChanged={async (changedProjectId) => {
+          const updated = await getProject(changedProjectId)
+          setProject(updated)
+          reloadProjects()
+        }}
+      />
     </div>
   )
 }

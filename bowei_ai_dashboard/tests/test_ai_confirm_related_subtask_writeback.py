@@ -493,6 +493,8 @@ def test_single_card_confirm_writes_related_subtask_id():
                 "result_type": "subtask_progress",
                 "type": "progress",
                 "matched_subtask_id": team["subtask"].id,
+                "completed": "单卡确认进展",
+                "next_steps": ["复核附件"],
                 "achievements": [{"name": "单卡成果"}],
                 "subtask_issues": [
                     {"description": "单卡问题"},
@@ -536,6 +538,12 @@ def test_single_card_confirm_writes_related_subtask_id():
         team["subtask"].id, current_user="owner", db=db
     )
     assert workspace["latest_submission"]["id"] == submission_id
+    assert workspace["current_progress"]["progress_summary"] == "单卡确认进展"
+    assert workspace["current_progress"]["next_step"] == "复核附件"
+    assert any(
+        event["source_type"] == "update_submission" and event["source_id"] == submission_id
+        for event in workspace["timeline"]
+    )
 
 
 def test_single_card_confirm_links_legacy_subtask_with_null_is_deleted():

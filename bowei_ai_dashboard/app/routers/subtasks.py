@@ -107,6 +107,10 @@ def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[d
             )
             .all()
         )
+        confirmed_by_submission_id = {
+            submission.id: submission.confirmed_by or ""
+            for submission in submissions
+        }
         for submission in submissions:
             matched_ids: set[int] = set()
             if submission.related_subtask_id in subtask_ids and (
@@ -187,7 +191,7 @@ def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[d
             except (TypeError, ValueError):
                 display_payload = {}
             latest_next_step_by_subtask[event.key_task_id] = (event.next_step or "").strip()
-            latest_progress_by_subtask[event.key_task_id] = {
+            progress_payload = {
                 "summary": (event.progress_summary or "").strip(),
                 "next_step": (event.next_step or "").strip(),
                 "source_label": SOURCE_LABELS.get(event.source_type, event.source_type),
@@ -195,6 +199,9 @@ def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[d
                 "actor": event.actor_name_snapshot or "",
                 "action_items": display_payload.get("action_items", []) if isinstance(display_payload, dict) else [],
             }
+            if event.source_type == "update_submission":
+                progress_payload["confirmed_by"] = confirmed_by_submission_id.get(event.source_id, "")
+            latest_progress_by_subtask[event.key_task_id] = progress_payload
 
     today = date.today()
     for row, payload in zip(rows, payloads):

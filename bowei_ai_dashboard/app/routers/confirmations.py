@@ -1723,6 +1723,35 @@ def confirm_task_card(
         _submission_project_name(db, row, json_payload=data),
         now,
     )
+    matched_subtask_id = report.get("matched_subtask_id")
+    if matched_subtask_id:
+        subtask = db.get(models.SubTask, int(matched_subtask_id))
+        parent = db.get(models.Task, subtask.task_id) if subtask else None
+        if subtask and parent and (parent.project_id or effective_project_id):
+            completed = normalize_text_list(report.get("completed") or report.get("completed_items"))
+            summary = "；".join(completed)
+            if not summary and report.get("result_type") == RT.TYPE_SUBTASK_COMPLETE:
+                summary = "关键任务已确认完成"
+            next_step = "；".join(normalize_text_list(report.get("next_steps")))
+            record_execution_event(
+                db,
+                project_id=parent.project_id or effective_project_id,
+                key_task_id=subtask.id,
+                event_type="work_submission",
+                source_type="update_submission",
+                source_id=row.id,
+                dedupe_key=f"update_submission:{row.id}:key-task:{subtask.id}",
+                actor_person_id=row.submitter_id,
+                actor_name=row.submitter or payload.operator,
+                occurred_at=row.created_at or now,
+                confirmed_at=now,
+                effective_at=now,
+                affects_current_progress=bool(summary or next_step),
+                status_after=subtask.status,
+                progress_summary=summary,
+                next_step=next_step,
+                display_payload={"submission_title": row.title},
+            )
     _mark_task_card(row, data, card_index, "confirmed", payload.operator)
     if _all_task_cards_confirmed(data):
         row.confirm_status = SS.S_CONFIRMED

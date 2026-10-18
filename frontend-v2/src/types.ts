@@ -466,6 +466,7 @@ export type SubTaskItem = {
     source_label: string
     confirmed_at: string
     actor: string
+    confirmed_by?: string
     action_items?: Array<{ fact_id: string; code: string; content: string; owner: string; tracker: string; due_date: string }>
   } | null
   latest_next_step?: string | null

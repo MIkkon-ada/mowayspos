@@ -81,6 +81,19 @@ describe('shared work progress table', () => {
     expect(within(row).getByText('2026-10-08 · 负责人 · 会议纪要')).toBeTruthy()
     expect(within(row).getByText('继续整理第二批')).toBeTruthy()
   })
+  it('shows the confirmer, not the submitter, for confirmed personal progress events', () => {
+    const reviewedSub = {
+      ...subs[0],
+      latest_confirmed_progress: {
+        summary: '确认后的正式进展', next_step: '', source_label: '个人提交',
+        confirmed_at: '2026-10-08T10:00:00', actor: '汇报人甲', confirmed_by: '审核人乙',
+      },
+    } as SubTaskItem
+    render(<PlanTableViewV2 project={project} tasks={[task]} taskSubMap={{ 1: [reviewedSub] }} />)
+    const row = screen.getByText('准备方案').closest('tr')!
+    expect(within(row.cells[4]).getByText('2026-10-08 · 确认人：审核人乙 · 个人提交')).toBeTruthy()
+    expect(within(row.cells[4]).queryByText(/汇报人甲/)).toBeNull()
+  })
   it('distinguishes no report from an unconfirmed report without showing its content as formal progress', () => {
     const pending = {
       ...subs[0],

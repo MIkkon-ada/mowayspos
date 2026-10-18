@@ -192,6 +192,29 @@ def test_batch_subtasks_exposes_reviewed_meeting_progress_as_current_progress():
     }
 
 
+def test_personal_submission_progress_projection_separates_submitter_from_confirmer():
+    db = _db()
+    _seed_batch_access(db)
+    moment = datetime(2026, 10, 8, 10, 0)
+    submission = _submission(20, "汇报人甲", moment, "正式进展")
+    submission.confirmed_by = "审核人乙"
+    db.add(submission)
+    db.flush()
+    record_execution_event(
+        db, project_id=1, key_task_id=20, event_type="work_submission",
+        source_type="update_submission", source_id=submission.id,
+        dedupe_key=f"update_submission:{submission.id}:key-task:20", actor_name="汇报人甲",
+        occurred_at=moment, confirmed_at=moment, effective_at=moment,
+        affects_current_progress=True, progress_summary="正式进展",
+    )
+    db.commit()
+
+    payload = list_subtasks_batch(task_ids="10", current_user="owner", db=db)["10"][0]
+
+    assert payload["latest_confirmed_progress"]["actor"] == "汇报人甲"
+    assert payload["latest_confirmed_progress"]["confirmed_by"] == "审核人乙"
+
+
 def test_workspace_submission_keeps_metadata_and_next_step_on_the_same_source():
     db = _db()
     _seed_batch_access(db)

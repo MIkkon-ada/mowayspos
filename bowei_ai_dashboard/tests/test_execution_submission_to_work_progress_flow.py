@@ -296,6 +296,56 @@ def test_project_scope_http_reads_hide_tasks_from_an_unrelated_project():
         assert str(task_b.id) not in batch.json()
 
 
+@pytest.mark.parametrize("card_reference", ["task_and_subtask", "subtask_only", "explicit_project"])
+def test_single_project_report_rejects_task_cards_from_another_project_over_http(card_reference):
+    """有权提交到项目 A 不应允许把项目 B 的任务卡放进 A 的待确认汇报。"""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.database import get_db
+    from app.routers import updates
+
+    db = _make_session()
+    team = _seed_execution_team(db)
+    project_b = models.Project(id=2, name="隔离汇报项目B", status="active", is_active=True)
+    task_b = models.Task(
+        id=2, project_id=2, key_task="B项目任务", special_project=project_b.name,
+        owner="B负责人", status="进行中", source_type="人工录入",
+    )
+    db.add_all([project_b, task_b])
+    db.flush()
+    subtask_b = models.SubTask(
+        id=2, task_id=task_b.id, title="B项目关键任务", assignee="B负责人",
+        status="进行中", plan_time="2026-10-01",
+    )
+    db.add(subtask_b)
+    db.commit()
+
+    app = FastAPI()
+    app.include_router(updates.router)
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[updates.get_current_user_name] = lambda: "member"
+
+    card = {"type": "progress", "completed": "项目B任务已完成"}
+    if card_reference == "task_and_subtask":
+        card.update({"parent_task_id": task_b.id, "matched_subtask_id": subtask_b.id})
+    elif card_reference == "subtask_only":
+        card["matched_subtask_id"] = subtask_b.id
+    else:
+        card["project_id"] = project_b.id
+
+    with TestClient(app) as client:
+        response = client.post("/api/updates", json={
+            "project_id": team["project"].id,
+            "source_type": "任务进展",
+            "title": "跨项目任务汇报",
+            "transcript_text": "报告项目B任务进展",
+            "human_result": {"task_reports": [card]},
+        })
+
+    assert response.status_code == 422, response.text
+    assert db.query(models.UpdateSubmission).count() == 0
+
+
 # ── 流程二：PM 确认入库 ─────────────────────────────────────────
 
 def test_flow2_owner_confirm_writes_to_tables_and_sets_related_task_id():

@@ -166,6 +166,54 @@ def _require_project_active(project_id: int | None, db: Session) -> None:
     raise HTTPException(409, "项目尚未启动，暂不能提交工作汇报。")
 
 
+def _validate_single_project_task_reports(
+    human_result: dict | None,
+    project_id: int,
+    db: Session,
+) -> None:
+    """Keep every submitted task card inside the explicitly selected project."""
+    reports = (human_result or {}).get("task_reports") or []
+    if not isinstance(reports, list):
+        raise HTTPException(422, "task_reports 必须是列表")
+
+    for index, report in enumerate(reports, start=1):
+        if not isinstance(report, dict):
+            raise HTTPException(422, f"任务卡 {index} 格式无效")
+
+        card_project_id = report.get("project_id")
+        if card_project_id is not None:
+            try:
+                card_project_id = int(card_project_id)
+            except (TypeError, ValueError):
+                card_project_id = None
+            if card_project_id is not None and card_project_id != project_id:
+                raise HTTPException(422, f"任务卡 {index} 不属于当前项目")
+
+        parent_task_id = report.get("parent_task_id")
+        if parent_task_id is not None:
+            try:
+                parent_task_id = int(parent_task_id)
+            except (TypeError, ValueError):
+                parent_task_id = None
+            parent_task = db.get(models.Task, parent_task_id) if parent_task_id is not None else None
+            if parent_task and not parent_task.is_deleted and parent_task.project_id != project_id:
+                raise HTTPException(422, "重点工作不属于当前项目")
+
+        matched_subtask_id = report.get("matched_subtask_id") or report.get("related_subtask_id")
+        if matched_subtask_id is None:
+            continue
+        try:
+            matched_subtask_id = int(matched_subtask_id)
+        except (TypeError, ValueError):
+            continue
+        subtask = db.get(models.SubTask, matched_subtask_id)
+        if not subtask or subtask.is_deleted:
+            continue
+        parent_task = db.get(models.Task, subtask.task_id)
+        if parent_task and not parent_task.is_deleted and parent_task.project_id != project_id:
+            raise HTTPException(422, "关键任务不属于当前项目")
+
+
 # ── 端点 ───────────────────────────────────────────────────────
 
 @router.post("/extract-document-text")
@@ -427,6 +475,7 @@ async def create_update(
         raise HTTPException(403, "permission denied")
     require_project_not_archived(project_id, db)
     _require_project_active(project_id, db)
+    _validate_single_project_task_reports(human_result, project_id, db)
 
     # 收集所有卡片涉及的项目 ID，用于跨项目通知和归档检查
     card_project_ids: set[int] = {project_id}

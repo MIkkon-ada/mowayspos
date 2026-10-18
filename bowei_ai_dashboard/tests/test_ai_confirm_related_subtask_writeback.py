@@ -445,8 +445,8 @@ def test_matched_subtask_id_belongs_to_other_task_raises_422():
     assert exc.value.status_code == 422
 
 
-def test_matched_subtask_id_belongs_to_other_project_raises_422():
-    """matched_subtask_id 属于其他 Project → 422."""
+def test_matched_subtask_id_belongs_to_other_project_is_rejected_before_submission():
+    """跨项目任务卡不能先进入当前项目的待确认汇报。"""
     db = _make_session()
     team = _seed_execution_team(db)
     # 创建第二个项目
@@ -468,12 +468,10 @@ def test_matched_subtask_id_belongs_to_other_project_raises_422():
         "issues": [],
         "key_task_issues": [],
     }
-    submission_id = _submit_with_human_result(db, team, human_result)
-
     with pytest.raises(HTTPException) as exc:
-        confirm(submission_id, schemas.ConfirmRequest(operator="owner"),
-                current_user="owner", db=db)
+        _submit_with_human_result(db, team, human_result)
     assert exc.value.status_code == 422
+    assert db.query(models.UpdateSubmission).count() == 0
 
 
 # ═══════════════════════════════════════════════════════════════════

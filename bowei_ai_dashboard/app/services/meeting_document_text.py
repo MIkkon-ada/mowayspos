@@ -54,15 +54,70 @@ def extract_meeting_document_text(filename: str, content: bytes) -> str:
     except ElementTree.ParseError as exc:
         raise MeetingDocumentTextError("Word 文档内容无法解析") from exc
 
-    paragraphs: list[str] = []
-    for paragraph in root.iter(f"{_WORD_NS}p"):
-        line = "".join(node.text or "" for node in paragraph.iter(f"{_WORD_NS}t")).strip()
-        if line:
-            paragraphs.append(line)
-    text = "\n".join(paragraphs).strip()
+    body = root.find(f".//{_WORD_NS}body")
+    if body is None:
+        raise MeetingDocumentTextError("Word 文档缺少正文")
+    text = "\n".join(_extract_word_blocks(body)).strip()
     if not text:
         raise MeetingDocumentTextError("文档中没有可分析的文字")
     return text
+
+
+def _paragraph_text(paragraph: ElementTree.Element) -> str:
+    parts: list[str] = []
+
+    def append(value: str) -> None:
+        if value == "\f" and parts and parts[-1] == "\f":
+            return
+        parts.append(value)
+
+    for node in paragraph.iter():
+        if node.tag == f"{_WORD_NS}t":
+            append(node.text or "")
+        elif node.tag == f"{_WORD_NS}tab":
+            append("\t")
+        elif node.tag == f"{_WORD_NS}br":
+            break_type = node.attrib.get(f"{_WORD_NS}type", "")
+            append("\f" if break_type == "page" else "\n")
+        elif node.tag == f"{_WORD_NS}lastRenderedPageBreak":
+            append("\f")
+    return "".join(parts).strip()
+
+
+def _table_rows(table: ElementTree.Element) -> list[str]:
+    rows: list[str] = []
+    for row in table.findall(f"{_WORD_NS}tr"):
+        cells: list[str] = []
+        for cell in row.findall(f"{_WORD_NS}tc"):
+            cell_text = " / ".join(part for part in _extract_word_blocks(cell) if part)
+            cells.append(cell_text.replace("\n", " / "))
+        line = "\t".join(cells).rstrip()
+        if line.strip():
+            rows.append(line)
+    return rows
+
+
+def _extract_word_blocks(container: ElementTree.Element) -> list[str]:
+    blocks: list[str] = []
+    for child in container:
+        if child.tag == f"{_WORD_NS}p":
+            paragraph = _paragraph_text(child)
+            if paragraph:
+                blocks.append(paragraph)
+        elif child.tag == f"{_WORD_NS}tbl":
+            blocks.extend(_table_rows(child))
+        else:
+            # Walk content wrappers such as content controls while ignoring
+            # formatting/property trees that cannot contain body content.
+            if child.tag.endswith("Pr") or child.tag in {
+                f"{_WORD_NS}sectPr",
+                f"{_WORD_NS}tblGrid",
+                f"{_WORD_NS}trPr",
+                f"{_WORD_NS}tcPr",
+            }:
+                continue
+            blocks.extend(_extract_word_blocks(child))
+    return blocks
 
 
 def _extract_xlsx_text(content: bytes) -> str:

@@ -100,8 +100,9 @@ npm.cmd run check:bundle:dist
 | --- | --- | --- | --- |
 | A02 项目详情访问隔离 | 隔离内存库调用 `get_project`：成员和项目外账号各一次 | **通过定向检查**：成员读取项目 ID 1；项目外账号收到 403 | 合成数据、直接调用路由函数，不是浏览器 HTTP 会话；生产账号和跨租户验证未完成 |
 | A02 / G01 / G02 角色及结束分支回归 | `test_project_view_is_limited_to_project_members_or_global_admin`、结束申请退回/取消/批准历史、创建与批准阶段阻断复核、结束阻断模块 | **8 passed** | 代码级后端回归；不替代真实页面操作或目标数据库验证 |
+| B09 立项计划退回修订重提 | `test_http_save_return_resubmit_approve_keeps_the_same_tasks` | **1 passed**：负责人取回原方案与退回意见，修订并重提后教练批准；关键工作和子任务原位更新且无重复 | API 级 TestClient 验证；浏览器呈现和真实组织账号验收未完成 |
 | H06 PostgreSQL 运行时门禁 | 启动 Docker Desktop 并查询 Docker Engine | **未通过环境准备**：Docker Desktop 后端在启动 Inference manager 时报告 `dockerInference` 监听路径语法错误；`docker info` 未能返回，未创建容器、数据库或卷 | 没有对现有数据库或持久卷执行任何操作；修复本机 Docker Desktop 启动问题后仍需执行 PostgreSQL 16 迁移、备份恢复及冒烟 |
 
 本次没有修改产品代码。Docker Desktop 启动失败属于本机验收环境问题，不构成 H06 通过证据；目标 PostgreSQL 迁移恢复仍未验收。
 
-**更新判定（本次追加后）：** A02 项目详情访问拒绝及 G01/G02 结束流程负向代码回归已取得定向证据；Docker Desktop 启动失败，H06、真实 AI、会议全链路及 60 项逐项签收仍未完成，项目整体尚未验收通过。
+**更新判定（本次追加后）：** A02 项目详情访问拒绝、B09 立项方案退回修订重提 API 链，以及 G01/G02 结束流程负向代码回归已取得定向证据；Docker Desktop 启动失败，H06、真实 AI、会议全链路及 60 项逐项签收仍未完成，项目整体尚未验收通过。

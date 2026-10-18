@@ -23,14 +23,18 @@ describe('shared work progress table', () => {
   it('renders all work and task records inside one continuous table without merged group cards', () => {
     render(<PlanTableViewV2 {...input} />)
     const table = screen.getByRole('table', { name: '工作推进明细' })
-    expect(within(table).getAllByRole('row')).toHaveLength(3)
-    const workstreamCell = within(table).getByText('重点工作一').closest('td')
+    expect(within(table).getAllByRole('row')).toHaveLength(4)
     expect(within(table).getAllByText('重点工作一')).toHaveLength(1)
-    expect(workstreamCell?.getAttribute('rowspan')).toBe('2')
-    expect(within(table).getByRole('columnheader', { name: '重点工作' })).toBeTruthy()
+    expect(within(table).getByRole('button', { name: '折叠重点工作 重点工作一' })).toBeTruthy()
+    expect(within(table).queryByRole('columnheader', { name: '重点工作' })).toBeNull()
     expect(screen.getByRole('button', { name: '查看验收标准' })).toBeTruthy()
     expect(screen.queryByText('WBS编号')).toBeNull()
     expect(screen.queryByText('成果与验收')).toBeNull()
+    fireEvent.click(within(table).getByRole('button', { name: '折叠重点工作 重点工作一' }))
+    expect(within(table).getAllByRole('row')).toHaveLength(2)
+    expect(within(table).getByRole('button', { name: '展开重点工作 重点工作一' })).toBeTruthy()
+    fireEvent.click(within(table).getByRole('button', { name: '展开重点工作 重点工作一' }))
+    expect(within(table).getAllByRole('row')).toHaveLength(4)
   })
   it('opens the existing task detail from a task name', () => {
     const onOpen = vi.fn()
@@ -46,9 +50,9 @@ describe('shared work progress table', () => {
     } as SubTaskItem
     render(<PlanTableViewV2 project={project} tasks={[task]} taskSubMap={{ 1: [detailedSub] }} />)
     const row = screen.getByText('准备方案').closest('tr')!
-    expect(within(row.cells[5]).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['完成调研', '整理方案', '提交评审'])
-    expect(within(row.cells[6]).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['联系客户', '确认排期'])
-    expect(within(row.cells[5]).getByText('2026-10-07 · 张三')).toBeTruthy()
+    expect(within(row.cells[4]).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['完成调研', '整理方案', '提交评审'])
+    expect(within(row.cells[5]).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['联系客户', '确认排期'])
+    expect(within(row.cells[4]).getByText('2026-10-07 · 张三')).toBeTruthy()
   })
   it('shows approved meeting progress in the work progress table', () => {
     const reviewedSub = {
@@ -69,31 +73,31 @@ describe('shared work progress table', () => {
   })
   it('lets the user resize a column and restores the saved width', () => {
     const view = render(<PlanTableViewV2 {...input} />)
-    const handle = screen.getByRole('button', { name: '调整重点工作列宽' })
+    const handle = screen.getByRole('button', { name: '调整关键任务列宽' })
     fireEvent.pointerDown(handle, { clientX: 100 })
     fireEvent.pointerMove(window, { clientX: 130 })
     fireEvent.pointerUp(window)
-    expect(screen.getByRole('table').querySelector('col')?.style.width).toBe('250px')
+    expect(screen.getByRole('table').querySelector('col')?.style.width).toBe('300px')
     view.unmount()
     render(<PlanTableViewV2 {...input} />)
-    expect(screen.getByRole('table').querySelector('col')?.style.width).toBe('250px')
-    fireEvent.doubleClick(screen.getByRole('button', { name: '调整重点工作列宽' }))
-    expect(screen.getByRole('table').querySelector('col')?.style.width).toBe('220px')
+    expect(screen.getByRole('table').querySelector('col')?.style.width).toBe('300px')
+    fireEvent.doubleClick(screen.getByRole('button', { name: '调整关键任务列宽' }))
+    expect(screen.getByRole('table').querySelector('col')?.style.width).toBe('270px')
   })
-  it('retains an unexpanded work record when it has no child task yet', () => {
+  it('retains a workstream group when it has no child task yet', () => {
     render(<PlanTableViewV2 project={project} tasks={[task]} taskSubMap={{ 1: [] }} />)
     const table = screen.getByRole('table')
-    expect(within(table).getAllByRole('row')).toHaveLength(2)
+    expect(within(table).getAllByRole('row')).toHaveLength(3)
     expect(within(table).getByText('暂无关键任务')).toBeTruthy()
     expect(within(table).queryAllByRole('listitem')).toHaveLength(0)
-    expect(screen.queryByText('尚未拆分关键任务')).toBeNull()
+    expect(screen.getByText('尚未拆分关键任务')).toBeTruthy()
   })
   it('shows the three project-enabled fields from each key task, while keeping seven default columns', () => {
     const first = { ...subs[0], expected_outcome: '形成诊断报告', goal: '确认核心问题', bowei_role: '博维负责访谈与分析' }
     const view = render(<PlanTableViewV2 project={project} tasks={[task]} taskSubMap={{ 1: [first] }} />)
-    expect(screen.getAllByRole('columnheader')).toHaveLength(7)
+    expect(screen.getAllByRole('columnheader')).toHaveLength(6)
     view.rerender(<PlanTableViewV2 project={project} tasks={[task]} taskSubMap={{ 1: [first] }} optionalColumns={['expectedOutcome', 'goal', 'boweiRole']} />)
-    expect(screen.getAllByRole('columnheader')).toHaveLength(10)
+    expect(screen.getAllByRole('columnheader')).toHaveLength(9)
     const row = screen.getByText('准备方案').closest('tr')!
     expect(within(row).getByText('形成诊断报告')).toBeTruthy()
     expect(within(row).getByText('确认核心问题')).toBeTruthy()

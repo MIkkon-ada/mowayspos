@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { Project, SubTaskItem, TaskItem } from '../../types'
 import { buildPlanRows, type PlanTableRow } from './planTableViewModel'
 import { WORK_PROGRESS_VIEW_COLUMNS, WORK_PROGRESS_OPTIONAL_COLUMNS, type WorkProgressOptionalColumnKey } from './workProgressColumnSizing'
 import { useWorkProgressColumnLayout } from './useWorkProgressColumnLayout'
+import { ChevronDownIcon } from '../icons/ChevronDownIcon'
 import './workProgressWorkspace.css'
 
 type Props = {
@@ -48,14 +49,11 @@ function TaskTableRow({ row, onOpen, onEdit, onOpenAcceptance, optionalColumns }
     : submission ? [submission.confirmed_at?.slice(0, 10), submission.submitter].filter(Boolean).join(' · ') : ''
   const statusMarkers = row.statusMarkers.filter((marker) => marker.kind === 'risk' || marker.kind === 'overdue')
   return <tr className={row.showTaskCells ? 'wp-row-start' : undefined}>
-    {row.showTaskCells && <td className="wp-workstream-cell" rowSpan={row.taskRowSpan}>
-      <CellText value={row.workstream} />
-      <button type="button" className="wp-standard-link" onClick={() => onOpenAcceptance(row.task)}>查看验收标准</button>
-    </td>}
     <td className="wp-key-task-cell">
       {subtask && onOpen
         ? <button type="button" className="wp-task-link" onClick={() => onOpen(subtask)} title={row.keyTask}>{row.keyTask}</button>
         : <CellText value={row.keyTask} />}
+      {row.showTaskCells && <button type="button" className="wp-standard-link" onClick={() => onOpenAcceptance(row.task)}>查看验收标准</button>}
       {subtask && onEdit && optionalColumns.length > 0 && <button type="button" className="wp-edit-fields" onClick={() => onEdit(row.task, subtask)}>编辑字段</button>}
     </td>
     {optionalColumns.map((key) => <td key={key} className="wp-optional-cell"><CellText value={key === 'expectedOutcome' ? subtask?.expected_outcome : key === 'goal' ? subtask?.goal : subtask?.bowei_role} /></td>)}
@@ -73,20 +71,30 @@ function TaskTableRow({ row, onOpen, onEdit, onOpenAcceptance, optionalColumns }
 
 export function PlanTableViewV2({ project, tasks, taskSubMap, searchText = '', statusFilter = '', ownerFilter = '', quickFilter = 'all', issueTaskIds = new Set<number>(), issueSubtaskIds = new Set<number>(), loading = false, optionalColumns = [], onOpenSubTask, onEditSubTask }: Props) {
   const [acceptanceTask, setAcceptanceTask] = useState<TaskItem | null>(null)
+  const [collapsedWorkstreams, setCollapsedWorkstreams] = useState<Set<number>>(new Set())
   const enabledOptionalColumns = useMemo(() => WORK_PROGRESS_OPTIONAL_COLUMNS.filter((column) => optionalColumns.includes(column.key)).map((column) => column.key), [optionalColumns])
   const rows = useMemo(() => buildPlanRows({ project, tasks, taskSubMap, searchText, statusFilter, ownerFilter, quickFilter, issueTaskIds, issueSubtaskIds }), [project, tasks, taskSubMap, searchText, statusFilter, ownerFilter, quickFilter, issueTaskIds, issueSubtaskIds])
+  const groups = useMemo(() => {
+    const grouped = new Map<number, { title: string; rows: PlanTableRow[] }>()
+    rows.forEach((row) => {
+      const group = grouped.get(row.task.id) ?? { title: row.workstream, rows: [] }
+      group.rows.push(row)
+      grouped.set(row.task.id, group)
+    })
+    return [...grouped.entries()].map(([taskId, group]) => ({ taskId, ...group }))
+  }, [rows])
   const sizingRows = useMemo(() => buildPlanRows({ project, tasks, taskSubMap }), [project, tasks, taskSubMap])
   const columns = useMemo(() => [
-    ...WORK_PROGRESS_VIEW_COLUMNS.slice(0, 2),
+    ...WORK_PROGRESS_VIEW_COLUMNS.slice(0, 1),
     ...WORK_PROGRESS_OPTIONAL_COLUMNS.filter((column) => enabledOptionalColumns.includes(column.key)),
-    ...WORK_PROGRESS_VIEW_COLUMNS.slice(2),
+    ...WORK_PROGRESS_VIEW_COLUMNS.slice(1),
   ], [enabledOptionalColumns])
   const { scrollRef, widths, startResize, changeWidth, resetWidth } = useWorkProgressColumnLayout(sizingRows, loading, project?.id, enabledOptionalColumns)
   const tableWidth = columns.reduce((sum, column) => sum + widths[column.key], 0)
   if (loading) return <div className="wp-empty" role="status">正在加载项目工作…</div>
   return <section className="wp-workspace" aria-label="项目工作推进表">
     <div ref={scrollRef} className="wp-table-scroll" key={project?.id}>
-      {rows.length ? <table className="wp-table" aria-label="工作推进明细" style={{ width: tableWidth, '--wp-workstream-width': `${widths.workstream}px` } as CSSProperties}>
+      {rows.length ? <table className="wp-table" aria-label="工作推进明细" style={{ width: tableWidth } as CSSProperties}>
         <colgroup>{columns.map((column) => <col key={column.key} className={`wp-col-${column.key}`} style={{ width: widths[column.key] }} />)}</colgroup>
         <thead><tr>
           {columns.map((column) => <th key={column.key} scope="col" aria-label={column.label}>
@@ -102,7 +110,31 @@ export function PlanTableViewV2({ project, tasks, taskSubMap, searchText = '', s
               }} />
           </th>)}
         </tr></thead>
-        <tbody>{rows.map((row) => <TaskTableRow key={`${row.task.id}-${row.subtask?.id ?? 'empty'}`} row={row} onOpen={onOpenSubTask} onEdit={onEditSubTask} onOpenAcceptance={setAcceptanceTask} optionalColumns={enabledOptionalColumns} />)}</tbody>
+        <tbody>{groups.map((group) => {
+          const keyTaskRows = group.rows.filter((row) => row.subtask)
+          const completed = keyTaskRows.filter((row) => row.status === '已完成').length
+          const overdue = keyTaskRows.filter((row) => row.status !== '已完成' && (row.status === '延期' || row.statusMarkers.some((marker) => marker.kind === 'overdue'))).length
+          const risky = keyTaskRows.filter((row) => row.statusMarkers.some((marker) => marker.kind === 'risk')).length
+          const collapsed = collapsedWorkstreams.has(group.taskId)
+          const toggleLabel = `${collapsed ? '展开' : '折叠'}重点工作 ${group.title}`
+          return <Fragment key={group.taskId}>
+            <tr className="wp-workstream-heading"><th scope="rowgroup" colSpan={columns.length}>
+              <button type="button" className="wp-workstream-toggle" aria-label={toggleLabel} aria-expanded={!collapsed} onClick={() => setCollapsedWorkstreams((current) => {
+                const next = new Set(current)
+                if (next.has(group.taskId)) next.delete(group.taskId)
+                else next.add(group.taskId)
+                return next
+              })}>
+                <ChevronDownIcon className={`wp-workstream-chevron${collapsed ? ' is-collapsed' : ''}`} />
+                <strong className="wp-workstream-title">{group.title}</strong>
+                <span className="wp-workstream-count">{keyTaskRows.length ? `${completed}/${keyTaskRows.length} 项关键任务已完成` : '尚未拆分关键任务'}</span>
+                {overdue > 0 && <span className="wp-workstream-badge wp-workstream-badge--overdue">延期 {overdue}</span>}
+                {risky > 0 && <span className="wp-workstream-badge wp-workstream-badge--risk">风险 {risky}</span>}
+              </button>
+            </th></tr>
+            {!collapsed && group.rows.map((row) => <TaskTableRow key={`${row.task.id}-${row.subtask?.id ?? 'empty'}`} row={row} onOpen={onOpenSubTask} onEdit={onEditSubTask} onOpenAcceptance={setAcceptanceTask} optionalColumns={enabledOptionalColumns} />)}
+          </Fragment>
+        })}</tbody>
       </table> : <div className="wp-empty">当前条件下没有匹配的重点工作或关键任务，请调整筛选条件。</div>}
     </div>
     {acceptanceTask && <div className="wp-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setAcceptanceTask(null) }}>

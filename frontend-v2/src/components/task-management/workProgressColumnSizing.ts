@@ -1,7 +1,6 @@
 import type { PlanTableRow } from './planTableViewModel'
 
 export const WORK_PROGRESS_VIEW_COLUMNS = [
-  { key: 'workstream', label: '重点工作', min: 180, max: 300, narrow: 220, flexible: false },
   { key: 'keyTask', label: '关键任务', min: 230, max: 430, narrow: 270, flexible: true },
   { key: 'owner', label: '负责人', min: 88, max: 160, narrow: 100, flexible: false },
   { key: 'planTime', label: '计划时间', min: 120, max: 190, narrow: 130, flexible: false },
@@ -21,7 +20,7 @@ export type WorkProgressColumnKey = (typeof WORK_PROGRESS_ALL_COLUMNS)[number]['
 export type WorkProgressWidths = Record<WorkProgressColumnKey, number>
 export type WorkProgressWidthOverrides = Partial<WorkProgressWidths>
 
-const WIDE_TABLE_MIN_WIDTH = 1350
+const WIDE_TABLE_MIN_WIDTH = 1070
 
 export function clampWorkProgressWidth(key: WorkProgressColumnKey, value: number): number {
   const column = WORK_PROGRESS_ALL_COLUMNS.find((item) => item.key === key)!
@@ -54,7 +53,6 @@ export function createWorkProgressTextMeasurer(): (text: string) => number {
 
 function rowTexts(row: PlanTableRow, key: WorkProgressColumnKey): string[] {
   switch (key) {
-    case 'workstream': return [row.workstream]
     case 'keyTask': return [row.keyTask]
     case 'owner': return [row.responsible]
     case 'planTime': return [[row.planStart, row.planEnd].filter((value) => value !== '—').join(' — ')]

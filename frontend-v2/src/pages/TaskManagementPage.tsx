@@ -267,6 +267,7 @@ export function TaskManagementPage() {
   const [formDefaultProjectId, setFormDefaultProjectId] = useState<number | null>(null)
   const taskCreateAttemptRef = useRef<{ fingerprint: string; requestId: string } | null>(null)
   const effectiveTaskProjectId = viewProjectId ?? currentProjectId ?? autoSelectedTaskProjectId
+  const selectionProjectRef = useRef<number | null>(effectiveTaskProjectId)
   const projectFromContext = useMemo(
     () => projects.find((project) => project.id === effectiveTaskProjectId) ?? null,
     [effectiveTaskProjectId, projects],
@@ -357,6 +358,11 @@ export function TaskManagementPage() {
       })
     return () => { cancelled = true }
   }, [effectiveTaskProjectId, projectFromContext])
+
+  useEffect(() => {
+    if (selectionProjectRef.current !== effectiveTaskProjectId) clearSelection()
+    selectionProjectRef.current = effectiveTaskProjectId
+  }, [effectiveTaskProjectId])
 
   useEffect(() => {
     if (viewProjectId != null || currentProjectId != null) {
@@ -1075,7 +1081,7 @@ export function TaskManagementPage() {
       )}
 
       {/* Compact project header: project selection stays visible; other filters open in a small panel. */}
-      {!selectedSubTask && <header className="work-progress-page-header min-h-14 px-4 py-2 lg:px-6 gap-3 flex flex-wrap items-center flex-shrink-0 min-w-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
+      {!showDeleted && <header className="work-progress-page-header min-h-14 px-4 py-2 lg:px-6 gap-3 flex flex-wrap items-center flex-shrink-0 min-w-0 bg-white border-b" style={{ borderColor: '#E9EFF6' }}>
         {!showDeleted && projectStandardText && <button type="button" className="wp-standard-toggle" aria-expanded={projectStandardExpanded} onClick={() => setProjectStandardExpanded((expanded) => !expanded)}>
           <span>项目总体标准</span><span>{projectStandardExpanded ? '收起' : '展开'}</span>
         </button>}
@@ -1139,11 +1145,11 @@ export function TaskManagementPage() {
         </div>
       </header>}
 
-      {!selectedSubTask && !showDeleted && projectStandardExpanded && projectStandardText && <section className="wp-standard-expanded" aria-label="项目总体标准">
+      {!showDeleted && projectStandardExpanded && projectStandardText && <section className="wp-standard-expanded" aria-label="项目总体标准">
         <div className="wp-standard-expanded-content">{projectStandardText}</div>
       </section>}
 
-      {!selectedSubTask && !showDeleted && effectiveTaskProjectId != null && <section className="wp-overview" aria-label="项目进度总览">
+      {!showDeleted && effectiveTaskProjectId != null && <section className="wp-overview" aria-label="项目进度总览">
         <div className="wp-overview-metrics">
           <button type="button" className={`wp-metric${quickFilter === 'all' && !filterStatus ? ' is-active' : ''}`} onClick={() => { setQuickFilter('all'); setFilterStatus('') }}>
             <span className="wp-metric-label">关键任务</span><strong>{overview ? overview.total : '…'}</strong><small>项</small>
@@ -1171,12 +1177,12 @@ export function TaskManagementPage() {
           </div>
           {currentIssueSnapshot?.state === 'error' && <span className="wp-issue-unavailable" role="status">问题数据加载失败，数量暂不可用。</span>}
           {(quickFilter !== 'all' || filterStatus || filterOwner || search) && <button type="button" className="wp-reset-filters" onClick={() => { setQuickFilter('all'); setFilterStatus(''); setFilterOwner(''); setSearch('') }}>重置筛选</button>}
-          {currentIssueSnapshot?.state === 'error' && <Link className="wp-issue-link" to={`/work/issues?projectId=${effectiveTaskProjectId}`}>打开问题清单</Link>}
+          {currentIssueSnapshot && <Link className="wp-issue-link" to={`/work/issues?projectId=${effectiveTaskProjectId}`}>查看问题清单</Link>}
         </div>
       </section>}
 
       {/* Main */}
-      {selectedSubTask ? (
+      {selectedSubTask && showDeleted ? (
         <KeyTaskExecutionDetailView
           project={focusedProject ?? focusedSubTaskProject}
           task={tasks.find((task) => task.id === selectedSubTask.task_id) ?? null}
@@ -1917,6 +1923,22 @@ export function TaskManagementPage() {
 
       </div>
       )}
+      {(selectedSubTask || subDetailLoading) && !showDeleted && <div className="wp-detail-overlay">
+        <button type="button" className="wp-detail-backdrop" aria-label="关闭关键任务详情" onClick={() => clearSelection()} />
+        <aside className="wp-detail-panel" role="dialog" aria-modal="true" aria-label="关键任务执行详情">
+          {selectedSubTask ? <KeyTaskExecutionDetailView
+            project={focusedProject ?? focusedSubTaskProject}
+            task={tasks.find((task) => task.id === selectedSubTask.task_id) ?? null}
+            subTask={selectedSubTask}
+            projectMembers={projectMembersByProject[(focusedProject ?? focusedSubTaskProject)?.id ?? 0] ?? []}
+            canManageSchedules={Boolean(currentUser?.is_tech_admin || currentUser?.name === selectedSubTask.assignee || canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: (focusedProject ?? focusedSubTaskProject)?.user_roles ?? currentProjectRoles }))}
+            canChangeAssignee={canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: (focusedProject ?? focusedSubTaskProject)?.user_roles ?? currentProjectRoles })}
+            onEditSubTask={handleWorkbenchSubTaskSave}
+            onSchedulesChanged={() => { fetchSubtaskDetail(selectedSubTask.id).then(setSelectedSubTask).catch(() => {}) }}
+            onBack={() => clearSelection()}
+          /> : <div className="flex h-full items-center justify-center text-sm text-slate-500" role="status">正在加载关键任务详情…</div>}
+        </aside>
+      </div>}
     </div>
   )
 }

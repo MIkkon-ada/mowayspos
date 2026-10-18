@@ -14,11 +14,13 @@ import asyncio
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import sessionmaker
 
 from app import models, schemas
 from app.database import Base
 from app.domain import submission_status as SS
+from app.routers import confirmations
 from app.routers.confirmations import (
     ceo_decide,
     confirm,
@@ -38,7 +40,11 @@ from app.routers.updates import create_update
 
 
 def _db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)()
 
@@ -161,6 +167,62 @@ def _assert_forbidden(callable_, *args, **kwargs):
     with pytest.raises(HTTPException) as error:
         callable_(*args, **kwargs)
     assert error.value.status_code == 403
+
+
+def test_confirmation_http_route_allows_pm_only_for_final_confirmation():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.database import get_db
+
+    db = _db()
+    people, project = _seed(db)
+    project.status = "active"
+    project.is_active = True
+    task = models.Task(
+        id=1, project_id=project.id, key_task="工作流样例", special_project=project.name,
+        owner="项目负责人", status="进行中", source_type="人工录入",
+    )
+    db.add(task)
+    db.flush()
+    subtask = models.SubTask(
+        id=1, task_id=task.id, title="HTTP 确认样例", assignee=people["member"].name,
+        status="进行中", plan_time="2026-10-01",
+    )
+    db.add(subtask)
+    db.commit()
+    submitted = asyncio.run(
+        create_update(
+            _report(project.id, subtask.id, people["member"].name, "HTTP 角色确认"),
+            current_user="member",
+            db=db,
+        )
+    )
+    submission_id = submitted["submission"]["id"]
+
+    app = FastAPI()
+    app.include_router(confirmations.router)
+    actor = ["member"]
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[confirmations.get_current_user_name] = lambda: actor[0]
+
+    with TestClient(app) as client:
+        for role in ("member", "coordinator", "coach"):
+            actor[0] = role
+            denied = client.post(
+                f"/api/confirmations/{submission_id}/confirm",
+                json={"operator": role},
+            )
+            assert denied.status_code == 403, (role, denied.text)
+            assert db.get(models.UpdateSubmission, submission_id).confirm_status == SS.S_NEW
+
+        actor[0] = "owner"
+        allowed = client.post(
+            f"/api/confirmations/{submission_id}/confirm",
+            json={"operator": "owner"},
+        )
+
+    assert allowed.status_code == 200, allowed.text
+    assert db.get(models.UpdateSubmission, submission_id).confirm_status == SS.S_CONFIRMED
 
 
 def test_full_role_lifecycle_runs_from_dispatch_to_close():

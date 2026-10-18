@@ -245,6 +245,57 @@ def test_flow1_non_active_status_cannot_be_overridden_by_stale_lifecycle_attribu
     assert db.query(models.UpdateSubmission).count() == 0
 
 
+def test_project_scope_http_reads_hide_tasks_from_an_unrelated_project():
+    """项目成员不能通过列表、详情或批量子任务接口读取另一个项目。"""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.database import get_db
+    from app.routers import key_tasks, subtasks, tasks
+
+    db = _make_session()
+    team = _seed_execution_team(db)
+    project_b = models.Project(id=2, name="隔离项目B", status="active", is_active=True)
+    task_b = models.Task(
+        id=2, project_id=2, key_task="项目B内部重点工作", special_project="隔离项目B",
+        owner="项目负责人B", status="进行中", source_type="人工录入",
+    )
+    db.add_all([project_b, task_b])
+    db.flush()
+    subtask_b = models.SubTask(
+        id=2, task_id=task_b.id, title="项目B内部任务", assignee="项目负责人B",
+        status="进行中", plan_time="2026-10-01",
+    )
+    db.add(subtask_b)
+    db.commit()
+
+    app = FastAPI()
+    app.include_router(tasks.router)
+    app.include_router(subtasks.router)
+    app.include_router(key_tasks.router)
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[tasks.get_current_user_name] = lambda: "member"
+    app.dependency_overrides[subtasks.get_current_user_name] = lambda: "member"
+    app.dependency_overrides[key_tasks.get_current_user_name] = lambda: "member"
+
+    with TestClient(app) as client:
+        assert client.get("/api/tasks", params={"project_id": 1}).status_code == 200
+        assert client.get("/api/tasks", params={"project_id": 2}).status_code == 403
+        assert client.get(f"/api/tasks/{team['task'].id}").status_code == 200
+        assert client.get(f"/api/tasks/{task_b.id}").status_code == 403
+        assert client.get(f"/api/tasks/{team['task'].id}/subtasks").status_code == 200
+        assert client.get(f"/api/tasks/{task_b.id}/subtasks").status_code == 403
+        assert client.get("/api/subtasks", params={"project_id": 2}).status_code == 403
+        assert client.get(f"/api/subtasks/{subtask_b.id}/detail").status_code == 403
+        assert client.get(f"/api/key-tasks/{task_b.id}/execution-workspace").status_code == 403
+        batch = client.get(
+            "/api/tasks/subtasks/batch",
+            params={"task_ids": f"{team['task'].id},{task_b.id}"},
+        )
+        assert batch.status_code == 200
+        assert str(team["task"].id) in batch.json()
+        assert str(task_b.id) not in batch.json()
+
+
 # ── 流程二：PM 确认入库 ─────────────────────────────────────────
 
 def test_flow2_owner_confirm_writes_to_tables_and_sets_related_task_id():

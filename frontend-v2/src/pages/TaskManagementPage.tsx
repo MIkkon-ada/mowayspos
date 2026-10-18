@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { exportTasksToExcel } from '../utils/exportTasksExcel'
 import { exportPlanTableToExcel } from '../utils/exportPlanTableExcel'
@@ -23,6 +23,7 @@ import { WORK_PROGRESS_OPTIONAL_COLUMNS, type WorkProgressOptionalColumnKey } fr
 import { parseWorkProgressProjectId, updateWorkProgressProjectQuery } from '../components/task-management/workProgressProjectQuery'
 import { ChevronDownIcon } from '../components/icons/ChevronDownIcon'
 import { KeyTaskExecutionDetailView } from '../components/task-management/KeyTaskExecutionDetailView'
+import { WorkProgressDetailOverlay } from '../components/task-management/WorkProgressDetailOverlay'
 import { MobileTaskList } from '../features/mobile-core-pages/MobileTaskList'
 import { toast } from '../utils/toast'
 import { useWindowFocusVersion } from '../utils/useWindowFocusVersion'
@@ -233,6 +234,7 @@ export function TaskManagementPage() {
   // 关键任务详情面板
   const [selectedSubTask, setSelectedSubTask] = useState<SubTaskDetail | null>(null)
   const [subDetailLoading, setSubDetailLoading] = useState(false)
+  const workProgressScrollTop = useRef<number | null>(null)
   const [sourceCollapsed, setSourceCollapsed] = useState(true)
   const [subEditField, setSubEditField] = useState<string | null>(null)
   const [subEditVal, setSubEditVal] = useState('')
@@ -300,6 +302,14 @@ export function TaskManagementPage() {
   const canManageTrash = currentUser?.is_tech_admin || resolvedTaskProjects.some((p) =>
     canManageProjectTrash({ isTechAdmin: false, projectRoles: p.user_roles ?? [] }),
   )
+
+  useLayoutEffect(() => {
+    const savedTop = workProgressScrollTop.current
+    if (savedTop === null) return
+    const tableScroll = document.querySelector<HTMLElement>('.wp-table-scroll')
+    if (tableScroll) tableScroll.scrollTop = savedTop
+    if (!selectedSubTask && !subDetailLoading) workProgressScrollTop.current = null
+  }, [selectedSubTask, subDetailLoading])
 
   useEffect(() => {
     if (effectiveTaskProjectId == null) {
@@ -713,6 +723,7 @@ export function TaskManagementPage() {
   }
 
   function openSubDetail(st: SubTaskItem) {
+    workProgressScrollTop.current = document.querySelector<HTMLElement>('.wp-table-scroll')?.scrollTop ?? null
     focusSubTask(st)
   }
 
@@ -1938,9 +1949,7 @@ export function TaskManagementPage() {
 
       </div>
       )}
-      {(selectedSubTask || subDetailLoading) && !showDeleted && <div className="wp-detail-overlay">
-        <button type="button" className="wp-detail-backdrop" aria-label="关闭关键任务详情" onClick={() => clearSelection()} />
-        <aside className="wp-detail-panel" role="dialog" aria-modal="true" aria-label="关键任务执行详情">
+      {(selectedSubTask || subDetailLoading) && !showDeleted && <WorkProgressDetailOverlay onClose={clearSelection}>
           {selectedSubTask ? <KeyTaskExecutionDetailView
             project={focusedProject ?? focusedSubTaskProject}
             task={tasks.find((task) => task.id === selectedSubTask.task_id) ?? null}
@@ -1953,8 +1962,7 @@ export function TaskManagementPage() {
             onRiskChanged={() => { void refreshTaskSubTaskProjection(selectedSubTask.task_id) }}
             onBack={() => clearSelection()}
           /> : <div className="flex h-full items-center justify-center text-sm text-slate-500" role="status">正在加载关键任务详情…</div>}
-        </aside>
-      </div>}
+      </WorkProgressDetailOverlay>}
     </div>
   )
 }

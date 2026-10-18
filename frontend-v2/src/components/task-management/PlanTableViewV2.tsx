@@ -47,6 +47,11 @@ function TaskTableRow({ row, onOpen, onEdit, onOpenAcceptance, optionalColumns }
   const progressMeta = confirmedProgress?.summary?.trim()
     ? [confirmedProgress.confirmed_at?.slice(0, 10), confirmedProgress.actor, confirmedProgress.source_label].filter(Boolean).join(' · ')
     : submission ? [submission.confirmed_at?.slice(0, 10), submission.submitter].filter(Boolean).join(' · ') : ''
+  const unconfirmed = subtask?.latest_unconfirmed_submission
+  const unconfirmedMeta = unconfirmed
+    ? [unconfirmed.confirm_status, unconfirmed.submitter, unconfirmed.created_at?.slice(0, 10)].filter(Boolean).join(' · ')
+    : ''
+  const progressEmpty = subtask?.has_any_submission === false ? '尚未汇报' : '暂无已确认进展'
   const statusMarkers = row.statusMarkers.filter((marker) => marker.kind === 'risk' || marker.kind === 'overdue')
   return <tr className={row.showTaskCells ? 'wp-row-start' : undefined}>
     <td className="wp-key-task-cell">
@@ -60,8 +65,9 @@ function TaskTableRow({ row, onOpen, onEdit, onOpenAcceptance, optionalColumns }
     <td className="wp-owner-cell"><CellText value={row.responsible} /></td>
     <td className="wp-time-cell"><CellText value={planTime} empty="待安排" /></td>
     <td className="wp-status-cell"><span className={`wp-status wp-status--${row.statusTone}`}>{row.status}</span>{statusMarkers.map((marker) => <span key={marker.kind} className={`wp-marker wp-marker--${marker.kind}`}>{marker.label}</span>)}</td>
-    <td className="wp-progress-cell"><ProgressPoints value={progressSummary} empty="暂无已确认进展" />
+    <td className="wp-progress-cell"><ProgressPoints value={progressSummary} empty={progressEmpty} />
       {progressMeta && <small>{progressMeta}</small>}
+      {unconfirmedMeta && <small className="wp-unconfirmed-note">{(subtask?.unconfirmed_submission_count ?? 0) > 1 ? `未完成确认 ${subtask?.unconfirmed_submission_count} 条 · ` : ''}{unconfirmedMeta}</small>}
     </td>
     <td className="wp-next-step-cell">{confirmedProgress?.source_label === '会议纪要' && confirmedProgress.action_items?.length
       ? <ul className="wp-progress-points">{confirmedProgress.action_items.map((item, index) => <li key={item.fact_id || index}><strong>{item.code ? `${item.code} ` : ''}</strong>{item.content}<small className="block text-slate-500">{[item.owner && `负责人：${item.owner}`, item.tracker && `追踪：${item.tracker}`, item.due_date && `期限：${item.due_date}`].filter(Boolean).join(' · ')}</small></li>)}</ul>

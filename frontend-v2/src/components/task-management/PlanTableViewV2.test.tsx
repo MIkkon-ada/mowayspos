@@ -71,6 +71,25 @@ describe('shared work progress table', () => {
     expect(within(row).getByText('2026-10-08 · 负责人 · 会议纪要')).toBeTruthy()
     expect(within(row).getByText('继续整理第二批')).toBeTruthy()
   })
+  it('distinguishes no report from an unconfirmed report without showing its content as formal progress', () => {
+    const pending = {
+      ...subs[0],
+      has_any_submission: true,
+      unconfirmed_submission_count: 1,
+      latest_unconfirmed_submission: {
+        id: 9, confirm_status: '待负责人审核', submitter: '王五', created_at: '2026-10-18T09:30:00',
+      },
+    } as SubTaskItem
+    const noReport = { ...subs[1], has_any_submission: false } as SubTaskItem
+    render(<PlanTableViewV2 project={project} tasks={[task]} taskSubMap={{ 1: [noReport, pending] }} />)
+
+    const pendingRow = screen.getByText('准备方案').closest('tr')!
+    const noReportRow = screen.getByText('提交审核').closest('tr')!
+    expect(within(pendingRow).getByText('待负责人审核 · 王五 · 2026-10-18')).toBeTruthy()
+    expect(within(pendingRow).getByText('暂无已确认进展')).toBeTruthy()
+    expect(within(pendingRow).queryByText('未确认汇报正文')).toBeNull()
+    expect(within(noReportRow).getByText('尚未汇报')).toBeTruthy()
+  })
   it('lets the user resize a column and restores the saved width', () => {
     const view = render(<PlanTableViewV2 {...input} />)
     const handle = screen.getByRole('button', { name: '调整关键任务列宽' })

@@ -450,6 +450,14 @@ export type SubTaskItem = {
     confirmed_at: string
     summary: string
   } | null
+  has_any_submission?: boolean
+  unconfirmed_submission_count?: number
+  latest_unconfirmed_submission?: {
+    id: number
+    confirm_status: string
+    submitter: string
+    created_at: string
+  } | null
   latest_confirmed_progress?: {
     summary: string
     next_step: string

@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,7 @@ from .. import crud, models, schemas
 from ..database import get_db
 from ..domain import task_status as TS
 from ..domain import project_lifecycle as PL
+from ..domain import submission_status as SS
 from ..domain import submission_result_type as RT
 from ..permissions import (
     PROJECT_ROLE_COORDINATOR,
@@ -64,35 +65,97 @@ def _get_task_project_id(task: models.Task, db: Session) -> int | None:
 
 
 def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[dict], db: Session) -> None:
-    """Attach latest confirmed progress and display-safe status facts without N+1 queries."""
+    """Attach confirmed and unconfirmed report metadata without N+1 queries."""
     subtask_ids = [row.id for row in rows]
     latest_by_subtask: dict[int, dict] = {}
     latest_progress_by_subtask: dict[int, dict] = {}
     latest_next_step_by_subtask: dict[int, str] = {}
+    latest_any_submission_by_subtask: dict[int, dict] = {}
+    latest_unconfirmed_by_subtask: dict[int, dict] = {}
+    unconfirmed_count_by_subtask: dict[int, int] = {}
+    latest_confirmed_at_by_subtask: dict[int, datetime] = {}
     if subtask_ids:
+        parent_rows = db.query(models.Task.id, models.Task.project_id, models.Task.special_project).filter(
+            models.Task.id.in_({row.task_id for row in rows})
+        ).all()
+        legacy_names = {name for _, project_id, name in parent_rows if project_id is None and name}
+        projects_by_name = {
+            project.name: project.id
+            for project in db.query(models.Project).filter(models.Project.name.in_(legacy_names)).all()
+        } if legacy_names else {}
+        project_by_task = {
+            task_id: project_id or projects_by_name.get(special_project)
+            for task_id, project_id, special_project in parent_rows
+        }
+        project_by_subtask = {row.id: project_by_task.get(row.task_id) for row in rows}
+        project_ids = {project_id for project_id in project_by_task.values() if project_id is not None}
         submissions = (
             db.query(models.UpdateSubmission)
             .filter(
-                models.UpdateSubmission.related_subtask_id.in_(subtask_ids),
-                models.UpdateSubmission.confirmed_at.is_not(None),
+                models.UpdateSubmission.related_subtask_id.in_(subtask_ids)
+                | models.UpdateSubmission.project_id.in_(project_ids or {-1})
             )
             .order_by(
-                models.UpdateSubmission.related_subtask_id.asc(),
-                models.UpdateSubmission.confirmed_at.desc(),
+                models.UpdateSubmission.created_at.desc(),
                 models.UpdateSubmission.id.desc(),
             )
             .all()
         )
         for submission in submissions:
-            subtask_id = submission.related_subtask_id
-            if subtask_id is None or subtask_id in latest_by_subtask:
+            matched_ids: set[int] = set()
+            if submission.related_subtask_id in subtask_ids and (
+                submission.project_id is None
+                or submission.project_id == project_by_subtask.get(submission.related_subtask_id)
+            ):
+                matched_ids.add(submission.related_subtask_id)
+            for source_json in (submission.human_result_json, submission.ai_result_json):
+                try:
+                    source_payload = json.loads(source_json or "{}")
+                except (TypeError, ValueError):
+                    source_payload = {}
+                reports = source_payload.get("task_reports") if isinstance(source_payload, dict) else None
+                if not isinstance(reports, list):
+                    continue
+                for report in reports:
+                    if not isinstance(report, dict):
+                        continue
+                    raw_id = report.get("matched_subtask_id") or report.get("related_subtask_id")
+                    try:
+                        matched_id = int(raw_id)
+                    except (TypeError, ValueError):
+                        continue
+                    if matched_id in subtask_ids and submission.project_id in project_ids:
+                        matched_ids.add(matched_id)
+            if not matched_ids:
                 continue
-            latest_by_subtask[subtask_id] = {
-                "id": submission.id,
-                "submitter": submission.submitter or "",
-                "confirmed_at": submission.confirmed_at.isoformat(),
-                "summary": submission_summary(submission, subtask_id),
-            }
+            status = SS.normalize(submission.confirm_status)
+            is_unconfirmed = submission.confirmed_at is None and status in SS.ALL_ACTIVE
+            for subtask_id in matched_ids:
+                latest_any_submission_by_subtask.setdefault(subtask_id, {
+                    "id": submission.id,
+                    "confirm_status": status,
+                    "submitter": submission.submitter or "",
+                    "created_at": submission.created_at.isoformat() if submission.created_at else "",
+                })
+                if is_unconfirmed:
+                    unconfirmed_count_by_subtask[subtask_id] = unconfirmed_count_by_subtask.get(subtask_id, 0) + 1
+                    latest_unconfirmed_by_subtask.setdefault(subtask_id, {
+                        "id": submission.id,
+                        "confirm_status": status,
+                        "submitter": submission.submitter or "",
+                        "created_at": submission.created_at.isoformat() if submission.created_at else "",
+                    })
+                if submission.confirmed_at is not None and (
+                    subtask_id not in latest_confirmed_at_by_subtask
+                    or submission.confirmed_at > latest_confirmed_at_by_subtask[subtask_id]
+                ):
+                    latest_confirmed_at_by_subtask[subtask_id] = submission.confirmed_at
+                    latest_by_subtask[subtask_id] = {
+                        "id": submission.id,
+                        "submitter": submission.submitter or "",
+                        "confirmed_at": submission.confirmed_at.isoformat(),
+                        "summary": submission_summary(submission, subtask_id),
+                    }
 
         execution_events = (
             db.query(models.KeyTaskExecutionEvent)
@@ -130,6 +193,9 @@ def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[d
         payload["latest_confirmed_submission"] = latest_by_subtask.get(row.id)
         payload["latest_confirmed_progress"] = latest_progress_by_subtask.get(row.id)
         payload["latest_next_step"] = latest_next_step_by_subtask.get(row.id, "")
+        payload["has_any_submission"] = row.id in latest_any_submission_by_subtask
+        payload["unconfirmed_submission_count"] = unconfirmed_count_by_subtask.get(row.id, 0)
+        payload["latest_unconfirmed_submission"] = latest_unconfirmed_by_subtask.get(row.id)
         payload["is_overdue"] = bool(
             row.due_kind == "exact"
             and row.due_date is not None

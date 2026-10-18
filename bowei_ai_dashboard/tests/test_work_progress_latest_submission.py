@@ -103,6 +103,55 @@ def test_batch_subtasks_projects_latest_confirmed_submission_and_status_facts():
     assert second["has_risk"] is False
 
 
+def test_batch_subtasks_exposes_unconfirmed_submission_state_without_progress_content():
+    db = _db()
+    _seed_batch_access(db)
+    db.add_all([
+        models.Project(id=2, name="其他项目", status="active", is_active=True),
+        models.Task(id=11, special_project="测试项目", key_task="历史重点工作", owner="负责人"),
+        models.SubTask(id=22, task_id=11, title="历史关键任务", assignee="负责人", status="进行中"),
+    ])
+    pending = models.UpdateSubmission(
+        project_id=1,
+        submitter="丙",
+        title="待确认汇报",
+        transcript_text="尚未确认的正式进展内容",
+        human_result_json='{"task_reports":[{"matched_subtask_id":20,"completed":["尚未确认的正式进展内容"]},{"matched_subtask_id":22,"completed":["其他待确认内容"]}]}',
+        confirm_status="待负责人审核",
+        created_at=datetime(2026, 10, 18, 9, 30),
+    )
+    unrelated = models.UpdateSubmission(
+        project_id=2,
+        related_subtask_id=20,
+        submitter="其他项目成员",
+        title="其他项目的错误关联",
+        transcript_text="不得显示到当前项目",
+        confirm_status="待确认",
+    )
+    db.add_all([pending, unrelated])
+    db.commit()
+
+    batches = list_subtasks_batch(task_ids="10,11", current_user="owner", db=db)
+    payload = batches["10"]
+    first, second = payload
+
+    assert first["unconfirmed_submission_count"] == 1
+    assert first["has_any_submission"] is True
+    assert first["latest_unconfirmed_submission"] == {
+        "id": pending.id,
+        "confirm_status": "待负责人审核",
+        "submitter": "丙",
+        "created_at": "2026-10-18T09:30:00",
+    }
+    assert "尚未确认的正式进展内容" not in str(first["latest_unconfirmed_submission"])
+    assert second["unconfirmed_submission_count"] == 0
+    assert second["has_any_submission"] is False
+    assert second["latest_unconfirmed_submission"] is None
+    legacy = batches["11"][0]
+    assert legacy["unconfirmed_submission_count"] == 1
+    assert legacy["latest_unconfirmed_submission"]["id"] == pending.id
+
+
 def test_batch_subtasks_exposes_reviewed_meeting_progress_as_current_progress():
     db = _db()
     _seed_batch_access(db)

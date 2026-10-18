@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { getUpdate } from '../api/updates'
+import type { UpdateDetail } from '../api/updates'
 import { getProject } from '../api/projects'
 import { getAITaskExtractionModels } from '../api/aiConfig'
 import { useProject } from '../context/ProjectContext'
@@ -16,6 +18,7 @@ import {
   getVoiceDraftStorageKey,
   readVoiceDraftLastContext,
   readVoiceDraftStorage,
+  getVoiceResubmissionDraftStorageKey,
   saveVoiceDraftLastContext,
   useVoiceDraft,
 } from '../features/voice-update/useVoiceDraft'
@@ -30,6 +33,7 @@ import { canExtractVoiceUpdate } from '../features/voice-update/voiceUpdateResul
 import type { VoiceReportScope } from '../features/voice-update/voiceUpdateResultTypes'
 import { formatTime } from '../features/voice-update/voiceUpdateHelpers'
 import { getProjectStatusLabel, isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
+import * as SS from '../domain/submissionStatus'
 import type { WorkReportEntryIntent } from '../domain/workReportEntry'
 import type { Project } from '../types'
 import '../features/voice-update/voiceUpdateFlow.css'
@@ -44,10 +48,13 @@ function parseId(value: string | null): number | null {
 
 export function VoiceUpdatePage() {
   const { currentUser, projects } = useProject()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const location = useLocation()
   const requestedProjectId = parseId(searchParams.get('projectId'))
   const requestedSubtaskId = parseId(searchParams.get('subtaskId'))
   const requestedSubmissionId = parseId(searchParams.get('submissionId'))
+  const requestedResubmitId = parseId(searchParams.get('resubmitId'))
   const requestedEntryIntent = searchParams.get('entryIntent')
   const entryIntent: WorkReportEntryIntent = requestedEntryIntent === 'issue' || requestedEntryIntent === 'achievement'
     ? requestedEntryIntent
@@ -91,6 +98,8 @@ export function VoiceUpdatePage() {
     { provider: 'capability', display_name: 'AI能力策略', model: '模型信息加载中' },
   ])
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [resubmission, setResubmission] = useState<{ id: number; rejectReason: string; supplementNote: string } | null>(null)
+  const [resubmitLoadError, setResubmitLoadError] = useState<string | null>(null)
   const [resolvedProjectDetail, setResolvedProjectDetail] = useState<Project | null>(null)
   const projectSelectionInitialized = useRef(false)
   const historyDeepLinkHandled = useRef(false)
@@ -272,13 +281,68 @@ export function VoiceUpdatePage() {
     setHistoryOpen(true)
     if (requestedSubmissionId) void historyState.handleSelectUpdate(requestedSubmissionId)
   }, [historyRequested, requestedSubmissionId, historyState])
+  const resubmitDraftStorageKey = getVoiceResubmissionDraftStorageKey(currentUser, requestedResubmitId)
+  const setVoiceDraftText = useCallback((value: string) => {
+    if (!requestedResubmitId) setText(value)
+  }, [requestedResubmitId])
+
+  useEffect(() => {
+    if (!requestedResubmitId) {
+      setResubmission(null)
+      setResubmitLoadError(null)
+      return
+    }
+    let cancelled = false
+    setResubmission(null)
+    setResubmitLoadError(null)
+    getUpdate(requestedResubmitId).then((detail: UpdateDetail) => {
+      if (cancelled) return
+      if (!SS.RETURNED_TO_SUBMITTER.has(SS.normalize(detail.confirm_status))) {
+        setResubmitLoadError('这条汇报已不处于退回状态，不能继续修订。请刷新提交记录。')
+        return
+      }
+      const routeDraft = location.state as { transcriptText?: string; supplementNote?: string } | null
+      let savedDraft: { text?: string; supplementNote?: string } | null = null
+      try {
+        const raw = resubmitDraftStorageKey ? localStorage.getItem(resubmitDraftStorageKey) : null
+        savedDraft = raw ? JSON.parse(raw) as { text?: string; supplementNote?: string } : null
+      } catch {
+        savedDraft = null
+      }
+      resetExtractionState()
+      setText(savedDraft?.text ?? routeDraft?.transcriptText ?? detail.transcript_text)
+      setResubmission({
+        id: detail.id,
+        rejectReason: detail.reject_reason ?? '',
+        supplementNote: savedDraft?.supplementNote ?? routeDraft?.supplementNote ?? '',
+      })
+      const projectId = detail.project_id ?? null
+      const subtaskId = detail.related_subtask_id ?? null
+      setSelectedProjectId(projectId)
+      setReportScope(subtaskId ? 'task' : projectId ? 'project' : 'all')
+      setQuickSubtaskId(subtaskId)
+    }).catch((error: unknown) => {
+      if (!cancelled) setResubmitLoadError(error instanceof Error ? error.message : '无法读取退回汇报，请刷新提交记录后重试。')
+    })
+    return () => { cancelled = true }
+  }, [requestedResubmitId])
+
+  useEffect(() => {
+    if (!resubmission || !resubmitDraftStorageKey) return
+    try {
+      localStorage.setItem(resubmitDraftStorageKey, JSON.stringify({ text, supplementNote: resubmission.supplementNote }))
+    } catch {
+      // Keep the in-memory revision even when browser storage is unavailable.
+    }
+  }, [resubmission, resubmitDraftStorageKey, text])
+
   const { draftSaved, saveDraft } = useVoiceDraft({
     currentUser,
     projectId: draftProjectId,
     scope: reportScope,
     text,
     selectedProvider,
-    setText,
+    setText: setVoiceDraftText,
     setSelectedProvider,
   })
   const { submittedAt, handleSubmitFinal } = useVoiceSubmission({
@@ -300,9 +364,28 @@ export function VoiceUpdatePage() {
     setPhase,
     setError: setExtractionError,
     refreshHistory: historyState.refreshHistory,
+    resubmission: resubmission ? {
+      id: resubmission.id,
+      supplementNote: resubmission.supplementNote,
+      draftStorageKey: resubmitDraftStorageKey,
+    } : undefined,
+    onResubmitted: async (id) => {
+      setResubmission(null)
+      setHistoryOpen(true)
+      const next = new URLSearchParams()
+      next.set('history', '1')
+      next.set('submissionId', String(id))
+      if (selectedProjectId) next.set('projectId', String(selectedProjectId))
+      setSearchParams(next, { replace: true })
+      await historyState.handleSelectUpdate(id)
+    },
   })
 
-  const controlsLocked = phase === 'extracting' || phase === 'submitting' || mediaActive || uploading || documentUploading
+  const resubmissionLoading = Boolean(requestedResubmitId && !resubmission && !resubmitLoadError)
+  const pageSubmitBlockedReason = resubmissionLoading
+    ? '正在读取退回汇报…'
+    : projectSubmitBlockedReason
+  const controlsLocked = phase === 'extracting' || phase === 'submitting' || mediaActive || uploading || documentUploading || resubmissionLoading
   const extractDisabled = !canExtractVoiceUpdate({
     scope: reportScope,
     candidateCount: taskBinding.taskOptions.length,
@@ -313,7 +396,7 @@ export function VoiceUpdatePage() {
     recording,
     uploading: uploading || documentUploading,
     phase,
-  })
+  }) || resubmissionLoading
 
   function persistDraftSnapshot() {
     if (!draftStorageKey) return
@@ -336,7 +419,7 @@ export function VoiceUpdatePage() {
   }
 
   function handleProjectChange(projectId: number | null) {
-    if (controlsLocked) return
+    if (controlsLocked || resubmission) return
     persistDraftSnapshot()
     resetExtractionState()
     removeDocument()
@@ -345,7 +428,7 @@ export function VoiceUpdatePage() {
   }
 
   function handleScopeChange(scope: VoiceReportScope) {
-    if (controlsLocked) return
+    if (controlsLocked || resubmission) return
     persistDraftSnapshot()
     resetExtractionState()
     removeDocument()
@@ -355,7 +438,7 @@ export function VoiceUpdatePage() {
   }
 
   function handleTaskChange(subtaskId: number | null) {
-    if (controlsLocked) return
+    if (controlsLocked || resubmission) return
     resetExtractionState()
     removeDocument()
     setQuickSubtaskId(null)
@@ -363,7 +446,7 @@ export function VoiceUpdatePage() {
   }
 
   function handleQuickTaskSelect(projectId: number, subtaskId: number) {
-    if (controlsLocked) return
+    if (controlsLocked || resubmission) return
     persistDraftSnapshot()
     resetExtractionState()
     removeDocument()
@@ -373,8 +456,29 @@ export function VoiceUpdatePage() {
   }
 
   function handleSaveDraft() {
+    if (resubmission && resubmitDraftStorageKey) {
+      try { localStorage.setItem(resubmitDraftStorageKey, JSON.stringify({ text, supplementNote: resubmission.supplementNote })) } catch { /* keep in-memory draft */ }
+      return
+    }
     saveDraft()
     persistDraftSnapshot()
+  }
+
+  function handleReportTextChange(value: string) {
+    if (resubmission && phase === 'extracted') resetExtractionState()
+    setText(value)
+  }
+
+  function handleReviseAndReextract(id: number, transcriptText: string, supplementNote: string) {
+    const detail = historyState.detailItem
+    if (!detail || detail.id !== id) return
+    const next = new URLSearchParams()
+    next.set('resubmitId', String(id))
+    if (detail.project_id) next.set('projectId', String(detail.project_id))
+    if (detail.related_subtask_id) next.set('subtaskId', String(detail.related_subtask_id))
+    historyState.setDetailItem(null)
+    setHistoryOpen(false)
+    navigate(`/work/submit?${next.toString()}`, { state: { transcriptText, supplementNote } })
   }
 
   const noActiveProjects = activeProjects.length === 0 && !selectedProject
@@ -392,7 +496,7 @@ export function VoiceUpdatePage() {
           taskOptions={taskBinding.taskOptions}
           taskLoading={taskBinding.taskLoading}
           taskError={taskBinding.taskError}
-          controlsLocked={controlsLocked}
+          controlsLocked={controlsLocked || Boolean(resubmission)}
           selectedProjectIsActive={selectedProjectIsActive}
           onProjectChange={handleProjectChange}
           onScopeChange={handleScopeChange}
@@ -403,7 +507,9 @@ export function VoiceUpdatePage() {
         <button type="button" className="voice-update-history-button" onClick={() => setHistoryOpen(true)}>历史提交</button>
       </header>
 
-      {noActiveProjects ? (
+      {resubmitLoadError ? (
+        <div className="voice-update-empty-page"><div><h2>无法修订这条汇报</h2><p>{resubmitLoadError}</p></div></div>
+      ) : noActiveProjects ? (
         <div className="voice-update-empty-page">
           <div><h2>暂无可提交汇报的执行中项目</h2><p>项目进入执行阶段后，可在这里提交工作进展。</p></div>
         </div>
@@ -412,6 +518,12 @@ export function VoiceUpdatePage() {
           <main className="voice-update-main-scroll">
             <div className="voice-update-workspace">
               <div className="voice-update-left-column">
+                {resubmission && (
+                  <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900">
+                    <strong>正在修订原汇报</strong>
+                    <p className="mt-1 text-xs">退回原因：{resubmission.rejectReason || '未说明'}</p>
+                  </div>
+                )}
                 <VoiceUpdateInputPanel
                   entryIntent={entryIntent}
                   mode={mode}
@@ -429,7 +541,7 @@ export function VoiceUpdatePage() {
                   canRecord={canRecord}
                   timerLabel={formatTime(timer)}
                   text={text}
-                  onTextChange={setText}
+                  onTextChange={handleReportTextChange}
                   uploading={uploading}
                   uploadFileName={uploadFileName}
                   uploadInputRef={uploadInputRef}
@@ -496,7 +608,8 @@ export function VoiceUpdatePage() {
               onSubmitFinal={handleSubmitFinal}
               onViewSubmissionHistory={() => setHistoryOpen(true)}
               projectArchived={projectArchived || Boolean(selectedProject && !selectedProjectIsActive)}
-              projectSubmitBlockedReason={projectSubmitBlockedReason}
+              projectSubmitBlockedReason={pageSubmitBlockedReason}
+              isResubmission={Boolean(resubmission)}
           />
         </div>
       )}
@@ -523,8 +636,7 @@ export function VoiceUpdatePage() {
         showTranscript={historyState.showTranscript}
         onClose={() => { historyState.setDetailItem(null); historyState.setDetailLoading(false); historyState.setShowTranscript(false) }}
         onToggleTranscript={() => historyState.setShowTranscript((value) => !value)}
-        currentUserName={currentUser?.name}
-        onResubmitted={async (id) => { await historyState.refreshHistory(); void historyState.handleSelectUpdate(id) }}
+        onReviseAndReextract={handleReviseAndReextract}
       />
     </div>
   )

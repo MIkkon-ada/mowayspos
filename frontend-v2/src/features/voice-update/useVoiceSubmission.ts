@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { resubmitSubmission } from '../../api/confirmations'
 import { createUpdate, createUpdateBatch } from '../../api/updates'
 import { createDrafts } from '../../api/subtaskDrafts'
 import type { CurrentUser, Project } from '../../types'
@@ -27,6 +28,8 @@ type UseVoiceSubmissionArgs = {
   setPhase: (phase: Phase) => void
   setError: (value: string | null) => void
   refreshHistory: () => Promise<void>
+  resubmission?: { id: number; supplementNote: string; draftStorageKey: string | null }
+  onResubmitted?: (id: number) => Promise<void>
 }
 
 export function useVoiceSubmission({
@@ -48,6 +51,8 @@ export function useVoiceSubmission({
   setPhase,
   setError,
   refreshHistory,
+  resubmission,
+  onResubmitted,
 }: UseVoiceSubmissionArgs) {
   const [submittedAt, setSubmittedAt] = useState('')
   const [submittedSubmissionId, setSubmittedSubmissionId] = useState<number | null>(null)
@@ -149,28 +154,39 @@ export function useVoiceSubmission({
         keyTaskIssues,
       })
       const sourceType = mode === 'voice' ? '语音更新' : mode === 'document' ? '文档解析' : '文字更新'
-      submissionRequestId.current ||= globalThis.crypto?.randomUUID?.()
-        ?? `report-${Date.now()}-${Math.random().toString(36).slice(2)}`
       let submissionId: number | null = null
-      if (reportScope === 'task') {
-        const { submission } = await createUpdate({
-          client_request_id: submissionRequestId.current,
-          project_id: projectId,
-          source_type: sourceType,
-          transcript_text: content,
-          submitter: submitterName,
-          human_result: mergedHumanResult,
-        })
-        submissionId = submission?.id ?? null
+      if (resubmission) {
+        await resubmitSubmission(
+          resubmission.id,
+          resubmission.supplementNote,
+          submitterName,
+          mergedHumanResult,
+          content,
+        )
+        submissionId = resubmission.id
       } else {
-        const batchResult = await createUpdateBatch({
-          client_request_id: submissionRequestId.current,
-          source_type: sourceType,
-          title: '工作汇报',
-          transcript_text: content,
-          human_result: mergedHumanResult,
-        })
-        submissionId = batchResult.submissions[0]?.id ?? null
+        submissionRequestId.current ||= globalThis.crypto?.randomUUID?.()
+          ?? `report-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        if (reportScope === 'task') {
+          const { submission } = await createUpdate({
+            client_request_id: submissionRequestId.current,
+            project_id: projectId,
+            source_type: sourceType,
+            transcript_text: content,
+            submitter: submitterName,
+            human_result: mergedHumanResult,
+          })
+          submissionId = submission?.id ?? null
+        } else {
+          const batchResult = await createUpdateBatch({
+            client_request_id: submissionRequestId.current,
+            source_type: sourceType,
+            title: '工作汇报',
+            transcript_text: content,
+            human_result: mergedHumanResult,
+          })
+          submissionId = batchResult.submissions[0]?.id ?? null
+        }
       }
 
       const newTaskReports = taskReports.filter((r) => r.type === 'new_task') as Extract<TaskReport, { type: 'new_task' }>[]
@@ -189,7 +205,7 @@ export function useVoiceSubmission({
         })),
       ].filter((d) => d.title.trim())
 
-      if (draftItems.length > 0 && projectId) {
+      if (!resubmission && draftItems.length > 0 && projectId) {
         createDrafts({
           project_id: projectId,
           source_submission_id: submissionId,
@@ -207,9 +223,14 @@ export function useVoiceSubmission({
       const draftStorageKey = reportScope === 'all' || selectedProjectId !== null
         ? getVoiceDraftStorageKey(currentUser, reportScope === 'all' ? null : selectedProjectId)
         : null
-      if (draftStorageKey) localStorage.removeItem(draftStorageKey)
+      if (resubmission) {
+        if (resubmission.draftStorageKey) localStorage.removeItem(resubmission.draftStorageKey)
+      } else if (draftStorageKey) {
+        localStorage.removeItem(draftStorageKey)
+      }
       await refreshHistory()
       submissionRequestId.current = null
+      if (resubmission) await onResubmitted?.(resubmission.id)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '提交失败，请重试')
       setPhase('extracted')

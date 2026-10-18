@@ -301,6 +301,7 @@ def test_resubmit_updates_original_transcript_and_keeps_revision_auditable():
         status=SS.S_RETURNED,
     )
     row.transcript_text = "原始汇报内容"
+    row.human_result_json = json.dumps({"summary": "旧摘要", "task_reports": [{"completed": "旧进展"}]}, ensure_ascii=False)
     db.commit()
 
     result = resubmit(
@@ -308,20 +309,56 @@ def test_resubmit_updates_original_transcript_and_keeps_revision_auditable():
         schemas.ResubmitRequest(
             transcript_text="修订后的汇报内容",
             supplement_note="补上延期原因",
+            human_result={"summary": "新摘要", "task_reports": [{"type": "progress", "completed": "新进展"}]},
         ),
         current_user="submitter_account",
         db=db,
     )
 
     assert result["submission"]["transcript_text"] == "修订后的汇报内容"
+    assert result["submission"]["id"] == row.id
     assert result["submission"]["confirm_status"] == SS.S_PENDING_OWNER
+    assert json.loads(result["submission"]["human_result_json"])["summary"] == "新摘要"
+    assert json.loads(result["submission"]["human_result_json"])["task_reports"][0]["completed"] == "新进展"
     log = db.query(models.OperationLog).filter_by(
         action="confirmation_resubmit", target_id=row.id
     ).one()
     assert json.loads(log.before_json)["transcript_text"] == "原始汇报内容"
     assert json.loads(log.after_json)["transcript_text"] == "修订后的汇报内容"
+    assert json.loads(log.after_json)["human_result"]["summary"] == "新摘要"
     assert db.query(models.Achievement).filter_by(source_submission_id=row.id).count() == 0
     assert db.query(models.Issue).filter_by(source_submission_id=row.id).count() == 0
+
+
+def test_resubmit_requires_new_human_result_and_preserves_returned_record_when_missing():
+    db = _make_session()
+    team = _seed_team(db)
+    row = _submission(
+        db,
+        submitter=team["submitter"].name,
+        submitter_id=team["submitter"].id,
+        status=SS.S_RETURNED,
+    )
+    row.transcript_text = "原始汇报内容"
+    row.human_result_json = json.dumps({"summary": "旧卡片"}, ensure_ascii=False)
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        resubmit(
+            row.id,
+            schemas.ResubmitRequest(
+                transcript_text="修订后的汇报内容",
+                supplement_note="补上延期原因",
+            ),
+            current_user="submitter_account",
+            db=db,
+        )
+
+    assert exc.value.status_code == 422
+    db.refresh(row)
+    assert row.confirm_status == SS.S_RETURNED
+    assert row.transcript_text == "原始汇报内容"
+    assert json.loads(row.human_result_json)["summary"] == "旧卡片"
 
     def test_reject_does_not_create_notification_for_ambiguous_legacy_name(self):
         db = _make_session()
@@ -356,7 +393,7 @@ class TestResubmitIdentity:
 
         result = resubmit(
             row.id,
-            schemas.ResubmitRequest(supplement_note="已补充"),
+            schemas.ResubmitRequest(supplement_note="已补充", human_result={"task_reports": []}),
             current_user="submitter_account",
             db=db,
         )
@@ -376,7 +413,7 @@ class TestResubmitIdentity:
         with pytest.raises(HTTPException) as exc:
             resubmit(
                 row.id,
-                schemas.ResubmitRequest(),
+                schemas.ResubmitRequest(human_result={"task_reports": []}),
                 current_user="other_account",
                 db=db,
             )
@@ -395,7 +432,7 @@ class TestResubmitIdentity:
 
         result = resubmit(
             row.id,
-            schemas.ResubmitRequest(),
+            schemas.ResubmitRequest(human_result={"task_reports": []}),
             current_user="submitter_account",
             db=db,
         )
@@ -415,7 +452,7 @@ class TestResubmitIdentity:
 
         result = resubmit(
             row.id,
-            schemas.ResubmitRequest(),
+            schemas.ResubmitRequest(human_result={"task_reports": []}),
             current_user="unique_legacy_account",
             db=db,
         )

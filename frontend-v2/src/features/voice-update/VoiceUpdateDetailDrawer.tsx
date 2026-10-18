@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import type { UpdateDetail } from '../../api/updates'
-import { resubmitSubmission } from '../../api/confirmations'
 import { getProjectDisplayName } from '../../compatibility/projectNames'
 import * as SS from '../../domain/submissionStatus'
 import { fmtFull } from '../../utils/time'
@@ -21,8 +20,7 @@ type VoiceUpdateDetailDrawerProps = {
   showTranscript: boolean
   onClose: () => void
   onToggleTranscript: () => void
-  currentUserName?: string
-  onResubmitted: (id: number) => Promise<void>
+  onReviseAndReextract: (id: number, transcriptText: string, supplementNote: string) => void
 }
 
 export function VoiceUpdateDetailDrawer({
@@ -31,41 +29,16 @@ export function VoiceUpdateDetailDrawer({
   showTranscript,
   onClose,
   onToggleTranscript,
-  currentUserName,
-  onResubmitted,
+  onReviseAndReextract,
 }: VoiceUpdateDetailDrawerProps) {
   const [transcriptText, setTranscriptText] = useState('')
   const [supplementNote, setSupplementNote] = useState('')
-  const [resubmitting, setResubmitting] = useState(false)
-  const [resubmitError, setResubmitError] = useState<string | null>(null)
   const timelineNodes = buildTimelineNodes(detailItem)
 
   useEffect(() => {
     setTranscriptText(detailItem?.transcript_text ?? '')
     setSupplementNote('')
-    setResubmitError(null)
   }, [detailItem?.id])
-
-  async function handleResubmit() {
-    if (!detailItem || !currentUserName || !transcriptText.trim()) return
-    setResubmitting(true)
-    setResubmitError(null)
-    try {
-      await resubmitSubmission(
-        detailItem.id,
-        supplementNote.trim(),
-        currentUserName,
-        undefined,
-        transcriptText.trim(),
-      )
-      setSupplementNote('')
-      await onResubmitted(detailItem.id)
-    } catch (error: unknown) {
-      setResubmitError(error instanceof Error ? error.message : '重新提交失败，请重试')
-    } finally {
-      setResubmitting(false)
-    }
-  }
 
   if (!detailItem && !detailLoading) return null
 
@@ -179,7 +152,6 @@ export function VoiceUpdateDetailDrawer({
                   aria-label="汇报内容"
                   value={transcriptText}
                   onChange={(event) => setTranscriptText(event.target.value)}
-                  disabled={resubmitting}
                   maxLength={5000}
                   className="w-full min-h-28 rounded-lg border border-red-200 bg-white p-2 text-xs resize-y"
                 />
@@ -187,17 +159,19 @@ export function VoiceUpdateDetailDrawer({
                   value={supplementNote}
                   onChange={(event) => setSupplementNote(event.target.value)}
                   placeholder="补充说明（可选）"
-                  disabled={resubmitting}
                   className="w-full min-h-20 rounded-lg border border-red-200 bg-white p-2 text-xs resize-none"
                 />
-                {resubmitError && <p className="mt-2 text-xs text-red-600">{resubmitError}</p>}
                 <div className="mt-2 flex gap-2">
                   <button
                     className="ml-auto rounded-lg bg-orange-500 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                    onClick={handleResubmit}
-                    disabled={resubmitting || !transcriptText.trim() || !currentUserName}
+                    onClick={() => detailItem && onReviseAndReextract(
+                      detailItem.id,
+                      transcriptText.trim(),
+                      supplementNote.trim(),
+                    )}
+                    disabled={!transcriptText.trim()}
                   >
-                    {resubmitting ? '提交中…' : '修改并重新提交'}
+                    修改并重新提取
                   </button>
                 </div>
               </div>

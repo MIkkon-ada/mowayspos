@@ -18,6 +18,11 @@ export function getVoiceDraftStorageKey(user: VoiceDraftOwner, projectId: number
   return ownerKey ? `${ownerKey}:project:${projectId ?? 'all'}` : null
 }
 
+export function getVoiceResubmissionDraftStorageKey(user: VoiceDraftOwner, submissionId: number | null): string | null {
+  const ownerKey = getVoiceDraftOwnerKey(user)
+  return ownerKey && submissionId ? `${ownerKey}:resubmission:${submissionId}` : null
+}
+
 export function getVoiceDraftLastContextKey(user: VoiceDraftOwner): string | null {
   const ownerKey = getVoiceDraftOwnerKey(user)
   return ownerKey ? `${ownerKey}:last-context` : null

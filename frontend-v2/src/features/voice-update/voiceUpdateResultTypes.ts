@@ -149,4 +149,5 @@ export type VoiceUpdateSubmitPanelProps = {
   onViewSubmissionHistory: () => void
   projectArchived?: boolean
   projectSubmitBlockedReason?: string | null
+  isResubmission?: boolean
 }

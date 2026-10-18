@@ -2109,6 +2109,10 @@ def resubmit(
     if not _is_submission_submitter(row, context, current_user, db):
         raise HTTPException(403, "只有原提交人可以重新提交")
     W.require_submission_status(row, SS.RETURNED_TO_SUBMITTER)
+    if not isinstance(payload.human_result, dict) or not payload.human_result:
+        raise HTTPException(422, "请先重新提取并核对汇报结果，再重新提交")
+    if not isinstance(payload.human_result.get("task_reports"), list):
+        raise HTTPException(422, "汇报结果不完整，请重新提取并核对后再提交")
     before = crud.to_dict(row)
     project_id = _submission_project_id(db, row)
     if payload.transcript_text is not None:
@@ -2116,15 +2120,10 @@ def resubmit(
         if not revised_transcript:
             raise HTTPException(422, "汇报内容不能为空")
         row.transcript_text = revised_transcript
-    if payload.human_result:
-        new_result = dict(payload.human_result)
-        if payload.supplement_note:
-            new_result["supplement_note"] = payload.supplement_note
-        row.human_result_json = json.dumps(new_result, ensure_ascii=False)
-    elif payload.supplement_note:
-        existing = W.json_or_empty(row.human_result_json or row.ai_result_json)
-        existing["supplement_note"] = payload.supplement_note
-        row.human_result_json = json.dumps(existing, ensure_ascii=False)
+    new_result = dict(payload.human_result)
+    if payload.supplement_note:
+        new_result["supplement_note"] = payload.supplement_note
+    row.human_result_json = json.dumps(new_result, ensure_ascii=False)
     row.confirm_status = SS.S_PENDING_OWNER
     row.reject_reason = None
     crud.log(
@@ -2137,6 +2136,7 @@ def resubmit(
         {
             "note": payload.supplement_note or "",
             "transcript_text": row.transcript_text,
+            "human_result": new_result,
         },
     )
     if project_id:

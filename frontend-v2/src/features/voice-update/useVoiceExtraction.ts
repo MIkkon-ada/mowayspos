@@ -130,6 +130,12 @@ export function useVoiceExtraction({
     setPhase('extracting')
     setError(null)
     setResult(null)
+    setEditValues(null)
+    setEditingField(null)
+    setProposedSubtasks([])
+    setTaskReports([])
+    setKeyTaskIssues([])
+    setCardEdits({})
 
     // 设置子任务上下文：有预选任务时用预选，否则用全部候选任务供手动选择归属
     if (selectedTaskContext) {

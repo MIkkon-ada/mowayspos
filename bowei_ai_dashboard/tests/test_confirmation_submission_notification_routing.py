@@ -229,6 +229,7 @@ def test_resubmit_notifies_only_project_a_owners_with_exact_link():
         schemas.ResubmitRequest(
             supplement_note="updated",
             operator=team["accounts"]["member_a"],
+            human_result={"task_reports": []},
         ),
         current_user=team["accounts"]["member_a"],
         db=db,
@@ -253,6 +254,7 @@ def test_resubmit_does_not_notify_submitter_when_submitter_is_owner():
         schemas.ResubmitRequest(
             supplement_note="owner update",
             operator=team["accounts"]["owner_a1"],
+            human_result={"task_reports": []},
         ),
         current_user=team["accounts"]["owner_a1"],
         db=db,

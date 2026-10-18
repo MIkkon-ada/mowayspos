@@ -16,6 +16,7 @@ export function VoiceUpdateSubmitPanel({
   onViewSubmissionHistory,
   projectArchived = false,
   projectSubmitBlockedReason = null,
+  isResubmission = false,
 }: VoiceUpdateSubmitPanelProps) {
   const controlsLocked = phase === 'extracting' || phase === 'submitting'
   const hasMissingSuggestionOwner = taskReports.some((report, index) => (
@@ -55,7 +56,7 @@ export function VoiceUpdateSubmitPanel({
       <div className="voice-update-footer-bar">
         <div className="voice-update-footer-actions">
           <button type="button" className="voice-update-footer-secondary" onClick={onSaveDraft} disabled={controlsLocked || projectArchived}>
-            {draftSaved ? '已保存草稿' : '保存草稿'}
+            {draftSaved ? '已保存草稿' : isResubmission ? '保存修订' : '保存草稿'}
           </button>
           <button type="button" className="voice-update-footer-secondary" onClick={onClear} disabled={controlsLocked}>清空内容</button>
         </div>
@@ -65,7 +66,7 @@ export function VoiceUpdateSubmitPanel({
         <div className="voice-update-footer-actions">
           {submitBlockedReason && <span className="voice-update-footer-hint">{submitBlockedReason}</span>}
           <button type="button" className="voice-update-footer-primary" onClick={onSubmitFinal} disabled={!canSubmit}>
-            {phase === 'extracting' ? 'AI 提取中' : phase === 'submitting' ? '提交中…' : '提交至 AI 确认中心'}
+            {phase === 'extracting' ? 'AI 提取中' : phase === 'submitting' ? '提交中…' : isResubmission ? '核对无误，重新提交' : '提交至 AI 确认中心'}
           </button>
         </div>
       </div>

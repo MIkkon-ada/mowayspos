@@ -1,12 +1,8 @@
 /** @vitest-environment jsdom */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VoiceUpdateDetailDrawer } from './VoiceUpdateDetailDrawer'
 import type { UpdateDetail } from '../../api/updates'
-
-const { resubmitSubmission } = vi.hoisted(() => ({ resubmitSubmission: vi.fn() }))
-
-vi.mock('../../api/confirmations', () => ({ resubmitSubmission }))
 
 const detailItem: UpdateDetail = {
   id: 41,
@@ -23,10 +19,10 @@ const detailItem: UpdateDetail = {
 }
 
 describe('VoiceUpdateDetailDrawer returned report resubmission', () => {
-  beforeEach(() => resubmitSubmission.mockReset().mockResolvedValue({ ok: true }))
+  afterEach(cleanup)
 
-  it('edits and resubmits the same report with the original text available', async () => {
-    const onResubmitted = vi.fn().mockResolvedValue(undefined)
+  it('opens the correction workbench instead of resubmitting the edited text directly', () => {
+    const onReviseAndReextract = vi.fn()
     render(
       <VoiceUpdateDetailDrawer
         detailItem={detailItem}
@@ -34,26 +30,18 @@ describe('VoiceUpdateDetailDrawer returned report resubmission', () => {
         showTranscript
         onClose={vi.fn()}
         onToggleTranscript={vi.fn()}
-        currentUserName="member_a"
-        onResubmitted={onResubmitted}
+        onReviseAndReextract={onReviseAndReextract}
       />,
     )
 
     const reportEditor = screen.getByRole('textbox', { name: '汇报内容' }) as HTMLTextAreaElement
     expect(reportEditor.value).toBe('原始进展内容')
-    fireEvent.change(reportEditor, { target: { value: '修订后的进展内容' } })
+    fireEvent.change(reportEditor, { target: { value: '修订后重新提取的内容' } })
     fireEvent.change(screen.getByPlaceholderText('补充说明（可选）'), {
-      target: { value: '补充延期原因' },
+      target: { value: '补充说明' },
     })
-    fireEvent.click(screen.getByRole('button', { name: '修改并重新提交' }))
+    fireEvent.click(screen.getByRole('button', { name: '修改并重新提取' }))
 
-    await waitFor(() => expect(resubmitSubmission).toHaveBeenCalledWith(
-      41,
-      '补充延期原因',
-      'member_a',
-      undefined,
-      '修订后的进展内容',
-    ))
-    expect(onResubmitted).toHaveBeenCalledWith(41)
+    expect(onReviseAndReextract).toHaveBeenCalledWith(41, '修订后重新提取的内容', '补充说明')
   })
 })

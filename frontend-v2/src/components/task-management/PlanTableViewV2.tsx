@@ -14,7 +14,7 @@ type Props = {
   statusFilter?: string
   ownerFilter?: string
   searchText?: string
-  quickFilter?: 'all' | 'overdue' | 'risk' | 'issues'
+  quickFilter?: 'all' | 'overdue' | 'risk' | 'issues' | 'date_unknown'
   issueTaskIds?: ReadonlySet<number>
   issueSubtaskIds?: ReadonlySet<number>
   loading?: boolean
@@ -52,7 +52,7 @@ function TaskTableRow({ row, onOpen, onEdit, onOpenAcceptance, optionalColumns }
     ? [unconfirmed.confirm_status, unconfirmed.submitter, unconfirmed.created_at?.slice(0, 10)].filter(Boolean).join(' · ')
     : ''
   const progressEmpty = subtask?.has_any_submission === false ? '尚未汇报' : '暂无已确认进展'
-  const statusMarkers = row.statusMarkers.filter((marker) => marker.kind === 'risk' || marker.kind === 'overdue')
+  const statusMarkers = row.statusMarkers.filter((marker) => marker.kind === 'risk' || marker.kind === 'overdue' || marker.kind === 'date_unknown')
   return <tr className={row.showTaskCells ? 'wp-row-start' : undefined}>
     <td className="wp-key-task-cell">
       {subtask && onOpen

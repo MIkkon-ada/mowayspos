@@ -84,8 +84,8 @@ export type PlanTableRow = {
 }
 
 export type PlanStatusMarker = {
-  kind: 'overdue' | 'risk' | 'paused' | 'not_started' | 'completed'
-  label: '已延期' | '有风险' | '暂缓' | '未开始' | '已完成'
+  kind: 'overdue' | 'risk' | 'paused' | 'not_started' | 'completed' | 'date_unknown'
+  label: '已延期' | '有风险' | '暂缓' | '未开始' | '已完成' | '待确认日期'
 }
 
 export type BuildPlanRowsInput = {
@@ -95,7 +95,7 @@ export type BuildPlanRowsInput = {
   searchText?: string
   statusFilter?: string
   ownerFilter?: string
-  quickFilter?: 'all' | 'overdue' | 'risk' | 'issues'
+  quickFilter?: 'all' | 'overdue' | 'risk' | 'issues' | 'date_unknown'
   issueTaskIds?: ReadonlySet<number>
   issueSubtaskIds?: ReadonlySet<number>
 }
@@ -108,6 +108,7 @@ export function summarizeWorkProgress(rows: PlanTableRow[], issues: IssueItem[])
     completed: uniqueRows.filter((row) => row.status === '已完成').length,
     delayed: uniqueRows.filter((row) => row.status !== '已完成' && (row.status === '延期' || row.statusMarkers.some((marker) => marker.kind === 'overdue'))).length,
     risky: uniqueRows.filter((row) => row.statusMarkers.some((marker) => marker.kind === 'risk')).length,
+    dateToConfirm: uniqueRows.filter((row) => row.statusMarkers.some((marker) => marker.kind === 'date_unknown')).length,
     openIssues: issues.filter((issue) => issue.status !== '已解决' && issue.status !== '已关闭').length,
   }
 }
@@ -208,6 +209,15 @@ export function getPlanStatusTone(status: string): PlanTableRow['statusTone'] {
   return 'neutral'
 }
 
+export function hasUnconfirmedPlanDate(subtask: SubTaskItem | null): boolean {
+  if (!subtask) return false
+  const status = getPlanStatusLabel(subtask.status)
+  if (status === '已完成' || status === '已取消') return false
+  const hasExactDueDate = Boolean(subtask.due_date)
+    && (subtask.due_kind === 'exact' || subtask.due_kind == null)
+  return !hasExactDueDate
+}
+
 export function getPlanStatusMarkers(subtask: SubTaskItem | null): PlanStatusMarker[] {
   if (!subtask) return []
   const status = getPlanStatusLabel(subtask.status)
@@ -218,6 +228,7 @@ export function getPlanStatusMarkers(subtask: SubTaskItem | null): PlanStatusMar
   if (subtask.has_risk) markers.push({ kind: 'risk', label: '有风险' })
   if (status === '暂缓') markers.push({ kind: 'paused', label: '暂缓' })
   if (status === '未开始') markers.push({ kind: 'not_started', label: '未开始' })
+  if (hasUnconfirmedPlanDate(subtask)) markers.push({ kind: 'date_unknown', label: '待确认日期' })
   return markers
 }
 
@@ -271,6 +282,7 @@ export function buildPlanRows({
     const visibleSubtasks = searchedSubtasks.filter((subtask) => {
       if (ownerFilter && (subtask.assignee || task.owner || '').trim() !== ownerFilter.trim()) return false
       if (quickFilter === 'risk' && !getPlanStatusMarkers(subtask).some((marker) => marker.kind === 'risk')) return false
+      if (quickFilter === 'date_unknown' && !getPlanStatusMarkers(subtask).some((marker) => marker.kind === 'date_unknown')) return false
       if (quickFilter === 'overdue') {
         const status = getPlanStatusLabel(subtask.status || task.status)
         if (status === '已完成' || (!subtask.is_overdue && status !== '延期')) return false

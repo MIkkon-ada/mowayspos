@@ -246,7 +246,7 @@ export function TaskManagementPage() {
   const [filterOwner, setFilterOwner] = useState('')
   const [filterPageOpen, setFilterPageOpen] = useState(false)
   const [filterDraft, setFilterDraft] = useState({ status: '', owner: '', search: '' })
-  const [quickFilter, setQuickFilter] = useState<'all' | 'overdue' | 'risk' | 'issues'>('all')
+  const [quickFilter, setQuickFilter] = useState<'all' | 'overdue' | 'risk' | 'issues' | 'date_unknown'>('all')
   const [issueSnapshot, setIssueSnapshot] = useState<{ projectId: number | null; state: 'idle' | 'loading' | 'loaded' | 'error'; items: IssueItem[] }>({ projectId: null, state: 'idle', items: [] })
   const [operationsOpen, setOperationsOpen] = useState(false)
   const [columnsOpen, setColumnsOpen] = useState(false)
@@ -1160,6 +1160,9 @@ export function TaskManagementPage() {
           <button type="button" className={`wp-metric wp-metric--danger${quickFilter === 'overdue' ? ' is-active' : ''}`} onClick={() => { setQuickFilter(quickFilter === 'overdue' ? 'all' : 'overdue'); setFilterStatus('') }}>
             <span className="wp-metric-label">延期</span><strong>{overview ? overview.delayed : '…'}</strong><small>项</small>
           </button>
+          <button type="button" className={`wp-metric wp-metric--date${quickFilter === 'date_unknown' ? ' is-active' : ''}`} onClick={() => { setQuickFilter(quickFilter === 'date_unknown' ? 'all' : 'date_unknown'); setFilterStatus('') }}>
+            <span className="wp-metric-label">待确认日期</span><strong>{overview ? overview.dateToConfirm : '…'}</strong><small>项</small>
+          </button>
           <button type="button" className={`wp-metric wp-metric--issue${quickFilter === 'issues' ? ' is-active' : ''}`} disabled={currentIssueSnapshot?.state !== 'loaded'} onClick={() => { setQuickFilter(quickFilter === 'issues' ? 'all' : 'issues'); setFilterStatus('') }}>
             <span className="wp-metric-label">未解决问题</span><strong>{currentIssueSnapshot?.state === 'loaded' ? openProjectIssues.length : currentIssueSnapshot?.state === 'error' ? '暂不可用' : '…'}</strong><small>{currentIssueSnapshot?.state === 'loaded' ? '项' : ''}</small>
           </button>
@@ -1172,6 +1175,7 @@ export function TaskManagementPage() {
           <div className="wp-quick-filters" role="group" aria-label="快速筛选">
             <button type="button" aria-pressed={quickFilter === 'all' && !filterStatus} onClick={() => { setQuickFilter('all'); setFilterStatus('') }}>全部</button>
             <button type="button" aria-pressed={quickFilter === 'overdue'} onClick={() => { setQuickFilter('overdue'); setFilterStatus('') }}>延期</button>
+            <button type="button" aria-pressed={quickFilter === 'date_unknown'} onClick={() => { setQuickFilter('date_unknown'); setFilterStatus('') }}>待确认日期</button>
             <button type="button" aria-pressed={quickFilter === 'risk'} onClick={() => { setQuickFilter('risk'); setFilterStatus('') }}>有风险</button>
             <button type="button" aria-pressed={quickFilter === 'issues'} disabled={currentIssueSnapshot?.state !== 'loaded'} onClick={() => { setQuickFilter('issues'); setFilterStatus('') }}>关联未解决问题</button>
           </div>

@@ -172,7 +172,24 @@ test('work progress overview counts key task status and only real open issues', 
     { id: 4, project_id: 7, status: '已关闭' },
   ])
 
-  assert.deepEqual(summary, { total: 2, completed: 0, delayed: 1, risky: 1, openIssues: 2 })
+  assert.deepEqual(summary, { total: 2, completed: 0, delayed: 1, risky: 1, dateToConfirm: 2, openIssues: 2 })
+})
+
+test('unknown plan dates are marked and filtered separately from overdue work', async () => {
+  const { buildPlanRows, summarizeWorkProgress } = await loadModule(MODEL_FILE)
+  const subtasks = {
+    11: [
+      { ...taskSubMap[11][0], status: '进行中', due_kind: 'unknown', due_date: null, due_label: '7.3—7.10', is_overdue: false },
+      { ...taskSubMap[11][1], status: '进行中', due_kind: 'fuzzy', due_date: null, due_label: '7月中旬', is_overdue: false },
+    ],
+    12: [{ id: 103, task_id: 12, title: '已完成事项', status: '已完成', due_kind: 'unknown', due_date: null }],
+  }
+  const rows = buildPlanRows({ project, tasks, taskSubMap: subtasks })
+  const summary = summarizeWorkProgress(rows, [])
+
+  assert.deepEqual(rows[0].statusMarkers.map((marker) => marker.kind), ['risk', 'date_unknown'])
+  assert.deepEqual(buildPlanRows({ project, tasks, taskSubMap: subtasks, quickFilter: 'date_unknown' }).map((row) => row.subtask?.id), [101, 102])
+  assert.deepEqual(summary, { total: 3, completed: 1, delayed: 0, risky: 1, dateToConfirm: 2, openIssues: 0 })
 })
 
 test('mobile task cards reuse the plan table search and filters without duplicating parent tasks', async () => {

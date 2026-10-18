@@ -1,4 +1,5 @@
 import type { SubTaskItem, TaskItem } from '../../types'
+import { hasUnconfirmedPlanDate } from '../../components/task-management/planTableViewModel'
 
 type Props = {
   tasks: TaskItem[]
@@ -27,7 +28,7 @@ export function MobileTaskList({ tasks, subTasksByTaskId, loading, onOpenSubTask
         </div>
         <div className="divide-y divide-slate-100">
           {subtasks.length ? subtasks.map((subtask) => <button type="button" key={subtask.id} onClick={() => onOpenSubTask(subtask)} className="w-full px-4 py-3 text-left active:bg-slate-50">
-            <div className="flex items-start justify-between gap-3"><span className="min-w-0 text-sm font-medium leading-5 text-slate-700">{subtask.title}</span><span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClass(subtask.status || '')}`}>{subtask.status || '未开始'}</span></div>
+            <div className="flex items-start justify-between gap-3"><span className="min-w-0 text-sm font-medium leading-5 text-slate-700">{subtask.title}</span><span className="flex shrink-0 items-center gap-1"><span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClass(subtask.status || '')}`}>{subtask.status || '未开始'}</span>{hasUnconfirmedPlanDate(subtask) && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">待确认日期</span>}</span></div>
             <p className="mt-1 text-xs text-slate-400">负责人：{subtask.assignee || '—'} · 计划时间：{subtask.plan_time || '—'}</p>
           </button>) : <p className="px-4 py-3 text-xs text-slate-400">暂无关键任务</p>}
         </div>

@@ -4,7 +4,7 @@
 - 整体确认：task_reports 中 matched_subtask_id + achievements → related_subtask_id 写入
 - 整体确认：task_reports 中 matched_subtask_id + subtask_issues → related_subtask_id 写入
 - related_task_id 仍指向父级 Task / 重点工作
-- update_submissions.related_subtask_id 不写入，保持 NULL
+- update_submissions.related_subtask_id 仅在唯一 Key Task 可确定时写入
 - suggest_new_subtask：Achievement.related_subtask_id == new_sub.id
 - 旧格式 achievements 无 matched_subtask_id → related_subtask_id 保持 NULL
 - 旧格式 issues 无 matched_subtask_id → related_subtask_id 保持 NULL
@@ -527,6 +527,68 @@ def test_single_card_confirm_writes_related_subtask_id():
     assert ach.related_subtask_id == team["subtask"].id
     assert issue.related_subtask_id == team["subtask"].id
 
+    submission = db.get(models.UpdateSubmission, submission_id)
+    assert submission.related_subtask_id == team["subtask"].id
+
+    from app.routers.key_tasks import get_execution_workspace
+
+    workspace = get_execution_workspace(
+        team["subtask"].id, current_user="owner", db=db
+    )
+    assert workspace["latest_submission"]["id"] == submission_id
+
+
+def test_multi_card_confirm_does_not_guess_update_submission_related_subtask_id():
+    """多卡分别对应多个关键任务时，汇报不应猜测单一关联任务。"""
+    db = _make_session()
+    team = _seed_execution_team(db)
+    second_subtask = models.SubTask(
+        task_id=team["task"].id,
+        title="第二个关键任务",
+        assignee=team["member"].name,
+    )
+    db.add(second_subtask)
+    db.flush()
+
+    human_result = {
+        "special_project": team["project"].name,
+        "project_id": team["project"].id,
+        "task_reports": [
+            {
+                "result_type": "subtask_progress",
+                "type": "progress",
+                "matched_subtask_id": subtask_id,
+                "completed": f"任务 {index} 已完成",
+                "achievements": [],
+                "subtask_issues": [],
+            }
+            for index, subtask_id in enumerate(
+                [team["subtask"].id, second_subtask.id], start=1
+            )
+        ],
+        "achievements": [],
+        "issues": [],
+        "key_task_issues": [],
+    }
+    submission_id = _submit_with_human_result(db, team, human_result)
+
+    for card_index in range(2):
+        confirm_task_card(
+            submission_id,
+            card_index,
+            schemas.ConfirmRequest(operator="owner"),
+            current_user="owner",
+            db=db,
+        )
+        if card_index == 0:
+            submission = db.get(models.UpdateSubmission, submission_id)
+            assert submission.confirm_status == SS.S_PENDING_OWNER
+            assert submission.related_subtask_id is None
+
+    submission = db.get(models.UpdateSubmission, submission_id)
+    assert submission.confirm_status == SS.S_CONFIRMED
+    assert submission.related_subtask_id is None
+
 
 # ═══════════════════════════════════════════════════════════════════
 # 确认后读取结果
@@ -610,7 +672,7 @@ def test_confirmed_issue_read_includes_related_subtask_id():
 # ═══════════════════════════════════════════════════════════════════
 
 def test_confirmations_py_only_writes_deterministic_update_submission_lineage():
-    """confirmations.py 只在单一 Key Task 可确定时写入 lineage。"""
+    """confirmations.py 仅在确认链路可确定时写入 submission lineage。"""
     import ast
     from pathlib import Path
 
@@ -619,16 +681,20 @@ def test_confirmations_py_only_writes_deterministic_update_submission_lineage():
         / "app" / "routers" / "confirmations.py"
     )
     source = confirm_file.read_text(encoding="utf-8")
-    # row.related_subtask_id 赋值必须在 _confirm 之外，
-    # 只允许在已有位置（无关写操作）
-    # 确认所有 row.related_subtask_id = ... 行都是我们在 models.py 中的字段定义
-    # 实际上：文件中不应有任何给 row.related_subtask_id 赋值的语句
-    # 通过 AST 检查
     tree = ast.parse(source)
 
     class RowSubtaskIdVisitor(ast.NodeVisitor):
         def __init__(self):
-            self.assignments: list[str] = []
+            self.function_name = None
+            self.assignments: dict[str, list[int]] = {}
+
+        def visit_FunctionDef(self, node):
+            previous = self.function_name
+            self.function_name = node.name
+            self.generic_visit(node)
+            self.function_name = previous
+
+        visit_AsyncFunctionDef = visit_FunctionDef
 
         def visit_Assign(self, node):
             for target in node.targets:
@@ -638,14 +704,15 @@ def test_confirmations_py_only_writes_deterministic_update_submission_lineage():
                     and target.value.id == "row"
                     and target.attr == "related_subtask_id"
                 ):
-                    self.assignments.append(
-                        f"line {node.lineno}: row.related_subtask_id = ..."
-                    )
+                    self.assignments.setdefault(self.function_name, []).append(node.lineno)
             self.generic_visit(node)
 
     v = RowSubtaskIdVisitor()
     v.visit(tree)
-    assert len(v.assignments) == 1, v.assignments
+    assert {name: len(lines) for name, lines in v.assignments.items()} == {
+        "confirm": 1,
+        "confirm_task_card": 1,
+    }, v.assignments
 
 
 def test_no_new_migration():

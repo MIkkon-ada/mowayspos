@@ -1728,6 +1728,22 @@ def confirm_task_card(
         row.confirm_status = SS.S_CONFIRMED
         row.confirmed_by = payload.operator
         row.confirmed_at = now
+        # Keep the task detail's latest-submission view consistent with the
+        # progress written from the cards. Only link when every confirmed card
+        # resolves to exactly one distinct, live subtask; multi-task reports
+        # remain unlinked rather than guessing.
+        linked_subtask_ids = {
+            subtask_id
+            for (subtask_id,) in db.query(models.SubTask.id)
+            .filter(
+                models.SubTask.source_submission_id == row.id,
+                models.SubTask.is_deleted.is_(False),
+            )
+            .all()
+        }
+        row.related_subtask_id = (
+            next(iter(linked_subtask_ids)) if len(linked_subtask_ids) == 1 else None
+        )
     else:
         row.confirm_status = SS.S_PENDING_OWNER
 

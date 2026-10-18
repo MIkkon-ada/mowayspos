@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import sessionmaker
 
 from app import models, schemas
@@ -48,7 +49,11 @@ from app.routers.projects import (
 
 
 def _make_session():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)()
 
@@ -118,6 +123,42 @@ def test_project_view_is_limited_to_project_members_or_global_admin():
         lambda: list_members(1, current_user="outsider", db=db),
         detail="permission denied — 仅项目成员可查看",
     )
+
+
+def test_start_review_http_route_allows_only_project_coach_or_technical_admin():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.database import get_db
+
+    db = _seed(lifecycle="pending_review")
+    app = FastAPI()
+    app.include_router(projects.router)
+    actor = ["member"]
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[projects.get_current_user_name] = lambda: actor[0]
+
+    with TestClient(app) as client:
+        for role in ("member", "owner", "coordinator", "company_ceo"):
+            actor[0] = role
+            denied = client.post("/api/projects/1/approve", json={})
+            assert denied.status_code == 403, (role, denied.text)
+            assert db.get(models.Project, 1).status == "pending_review"
+
+        actor[0] = "coach"
+        approved = client.post("/api/projects/1/approve", json={})
+
+    assert approved.status_code == 200, approved.text
+    assert db.get(models.Project, 1).status == "active"
+
+    admin_db = _seed(lifecycle="pending_review")
+    admin_app = FastAPI()
+    admin_app.include_router(projects.router)
+    admin_app.dependency_overrides[get_db] = lambda: admin_db
+    admin_app.dependency_overrides[projects.get_current_user_name] = lambda: "admin"
+    with TestClient(admin_app) as client:
+        admin_approved = client.post("/api/projects/1/approve", json={})
+    assert admin_approved.status_code == 200, admin_approved.text
+    assert admin_db.get(models.Project, 1).status == "active"
 
 
 def test_create_and_dispatch_keep_company_management_boundary():

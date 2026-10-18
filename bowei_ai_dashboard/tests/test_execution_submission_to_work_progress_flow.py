@@ -12,11 +12,13 @@ import json
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import sessionmaker
 
 from app import models, schemas
 from app.database import Base
 from app.domain import submission_status as SS
+from app.routers import updates
 from app.routers.updates import create_update
 from app.routers.confirmations import confirm
 from app.routers.tasks import get_task_updates
@@ -26,7 +28,11 @@ from app.routers.subtasks import get_subtask_detail
 # ── 测试辅助 ────────────────────────────────────────────────────
 
 def _make_session():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)()
 
@@ -171,36 +177,46 @@ def test_flow1_submit_without_human_result_does_not_call_real_ai():
 @pytest.mark.parametrize(
     ("status", "expected_http_status"),
     [
+        ("active", 200),
         ("draft", 409), ("dispatched", 409), ("pending_review", 409),
         ("returned", 409), ("pending_kickoff", 409), ("pending_close", 409),
         ("ended", 409), ("archived", 403),
     ],
 )
 def test_flow1_non_active_project_rejects_submission(status, expected_http_status):
-    """非 active 项目不应接受正式汇报。"""
+    """实际 HTTP 路由只允许 active 项目创建正式汇报。"""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.database import get_db
+
     db = _make_session()
     team = _seed_execution_team(db)
 
-    # 把项目改为非 active
     team["project"].status = status
-    team["project"].is_active = False
+    team["project"].is_active = status == "active"
     db.commit()
 
-    payload = schemas.ExtractRequest(
-        project_id=team["project"].id,
-        source_type="任务进展",
-        title="进展更新",
-        transcript_text="测试文本",
-        submitter=team["member"].name,
-        human_result={"completed_items": ["test"]},
-    )
+    app = FastAPI()
+    app.include_router(updates.router)
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[updates.get_current_user_name] = lambda: "member"
 
-    from fastapi import HTTPException
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(create_update(payload, current_user="member", db=db))
-    assert exc.value.status_code == expected_http_status
-    if status != "archived":
-        assert "暂不能提交" in str(exc.value.detail)
+    with TestClient(app) as client:
+        response = client.post("/api/updates", json={
+            "project_id": team["project"].id,
+            "source_type": "任务进展",
+            "title": "进展更新",
+            "transcript_text": "状态矩阵接口验收",
+            "submitter": team["member"].name,
+            "human_result": {"completed_items": ["状态矩阵"]},
+        })
+
+    assert response.status_code == expected_http_status, response.text
+    if status == "active":
+        assert response.json()["submission"]["project_id"] == team["project"].id
+        assert db.query(models.UpdateSubmission).count() == 1
+    else:
+        assert db.query(models.UpdateSubmission).count() == 0
 
 
 def test_flow1_non_active_status_cannot_be_overridden_by_stale_lifecycle_attribute():

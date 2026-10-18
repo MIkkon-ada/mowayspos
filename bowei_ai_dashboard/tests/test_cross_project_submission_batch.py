@@ -7,6 +7,7 @@ from datetime import timedelta
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import sessionmaker
 
 from app import models, schemas
@@ -26,7 +27,11 @@ def _single_update_payload(request_id="single-request", transcript="单项目汇
 
 
 def _session():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)()
 
@@ -114,26 +119,40 @@ def test_invalid_card_rolls_back_without_batch_or_child():
 @pytest.mark.parametrize(
     ("status", "expected_http_status"),
     [
+        ("active", 200),
         ("draft", 409), ("dispatched", 409), ("pending_review", 409),
-        ("returned", 409), ("pending_close", 409), ("ended", 409),
+        ("returned", 409), ("pending_kickoff", 409), ("pending_close", 409), ("ended", 409),
         ("archived", 403),
     ],
 )
-def test_batch_report_rejects_every_non_active_project(status, expected_http_status):
+def test_batch_report_http_route_requires_active_project(status, expected_http_status):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.database import get_db
+    from app.routers import updates
+
     db = _session(); _seed(db)
     db.get(models.Project, 1).status = status
     db.commit()
 
-    with pytest.raises(HTTPException) as exc:
-        create_submission_batch(
-            _payload(cards=[_card(11, 111, "任务A1")]),
-            current_user="admin",
-            db=db,
+    app = FastAPI()
+    app.include_router(updates.router)
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[updates.get_current_user_name] = lambda: "admin"
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/updates/batch",
+            json=_payload(cards=[_card(11, 111, "任务A1")]).model_dump(mode="json"),
         )
 
-    assert exc.value.status_code == expected_http_status
-    assert db.query(models.UpdateSubmissionBatch).count() == 0
-    assert db.query(models.UpdateSubmission).count() == 0
+    assert response.status_code == expected_http_status, response.text
+    if status == "active":
+        assert db.query(models.UpdateSubmissionBatch).count() == 1
+        assert db.query(models.UpdateSubmission).count() == 1
+    else:
+        assert db.query(models.UpdateSubmissionBatch).count() == 0
+        assert db.query(models.UpdateSubmission).count() == 0
 
 
 def test_member_without_access_to_every_project_gets_zero_writes():

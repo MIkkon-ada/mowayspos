@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { ApiError } from '../../api/client'
 import { confirmKeyTaskCompletion, fetchKeyTaskExecutionWorkspace, reopenKeyTask, setKeyTaskRisk, type ExecutionPlan, type KeyTaskWorkspace } from '../../api/keyTaskWorkspace'
 import { updateMonthlyPlan } from '../../api/monthlyPlans'
 import { getProjectMembers } from '../../api/projects'
@@ -89,7 +90,13 @@ export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId, onRisk
       refresh()
       onRiskChanged?.()
     } catch (reason) {
-      setRiskError(reason instanceof Error ? reason.message : '保存风险标记失败，请重试')
+      if (reason instanceof ApiError && reason.status >= 500) {
+        setRiskError('服务器保存失败（服务端错误），风险原因仍保留在表单中；请稍后重试。')
+      } else if (reason instanceof ApiError && reason.status === 0) {
+        setRiskError('网络连接失败，风险原因仍保留在表单中；请检查网络后重试。')
+      } else {
+        setRiskError(reason instanceof Error ? reason.message : '保存风险标记失败，请重试')
+      }
     } finally {
       setRiskSaving(false)
     }

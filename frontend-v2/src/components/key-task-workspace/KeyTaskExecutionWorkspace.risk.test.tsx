@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
+import { ApiError } from '../../api/client'
 import type { KeyTaskWorkspace } from '../../api/keyTaskWorkspace'
 import { KeyTaskExecutionWorkspace } from './KeyTaskExecutionWorkspace'
 
@@ -76,6 +77,22 @@ describe('KeyTaskExecutionWorkspace risk actions', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '标记风险' })).toBeNull())
     expect(api.setKeyTaskRisk).toHaveBeenNthCalledWith(2, 9, '关键供应商延期')
     expect(onRiskChanged).toHaveBeenCalledTimes(1)
+  })
+
+  it('explains server-side save failures in Chinese while keeping the reason available', async () => {
+    renderWorkspace()
+    fireEvent.click(await screen.findByRole('button', { name: '标记风险' }))
+    const input = screen.getByRole('textbox', { name: '风险原因' })
+    fireEvent.change(input, { target: { value: '关键供应商延期' } })
+    api.setKeyTaskRisk.mockRejectedValueOnce(new ApiError(500, 'server_error', { detail: 'server_error' }))
+
+    fireEvent.click(screen.getByRole('button', { name: '保存风险' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('服务器保存失败（服务端错误）')
+    expect(alert.textContent).toContain('请稍后重试')
+    expect((screen.getByRole('textbox', { name: '风险原因' }) as HTMLTextAreaElement).value).toBe('关键供应商延期')
+    expect(screen.getByRole('dialog', { name: '标记风险' })).toBeTruthy()
   })
 
   it('requires a second explicit action to remove an existing risk mark', async () => {

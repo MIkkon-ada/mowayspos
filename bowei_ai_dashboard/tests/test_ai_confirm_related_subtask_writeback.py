@@ -538,6 +538,54 @@ def test_single_card_confirm_writes_related_subtask_id():
     assert workspace["latest_submission"]["id"] == submission_id
 
 
+def test_single_card_confirm_links_legacy_subtask_with_null_is_deleted():
+    """历史关键任务 is_deleted 为空时仍应视为未删除并可关联汇报。"""
+    db = _make_session()
+    team = _seed_execution_team(db)
+    team["subtask"].is_deleted = None
+    db.commit()
+
+    human_result = {
+        "special_project": team["project"].name,
+        "project_id": team["project"].id,
+        "task_reports": [
+            {
+                "result_type": "subtask_progress",
+                "type": "progress",
+                "matched_subtask_id": team["subtask"].id,
+                "completed": "完成历史关键任务进展核对",
+                "achievements": [],
+                "subtask_issues": [],
+            }
+        ],
+        "achievements": [],
+        "issues": [],
+        "key_task_issues": [],
+    }
+    submission_id = _submit_with_human_result(db, team, human_result)
+    # The real request session sets autoflush=False, so pending SubTask changes
+    # are not visible to the lineage query until the handler explicitly flushes.
+    db.autoflush = False
+
+    confirm_task_card(
+        submission_id,
+        0,
+        schemas.ConfirmRequest(operator="owner"),
+        current_user="owner",
+        db=db,
+    )
+
+    submission = db.get(models.UpdateSubmission, submission_id)
+    assert submission.related_subtask_id == team["subtask"].id
+
+    from app.routers.key_tasks import get_execution_workspace
+
+    workspace = get_execution_workspace(
+        team["subtask"].id, current_user="owner", db=db
+    )
+    assert workspace["latest_submission"]["id"] == submission_id
+
+
 def test_multi_card_confirm_does_not_guess_update_submission_related_subtask_id():
     """多卡分别对应多个关键任务时，汇报不应猜测单一关联任务。"""
     db = _make_session()

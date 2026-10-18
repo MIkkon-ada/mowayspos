@@ -1732,12 +1732,15 @@ def confirm_task_card(
         # progress written from the cards. Only link when every confirmed card
         # resolves to exactly one distinct, live subtask; multi-task reports
         # remain unlinked rather than guessing.
+        # Request sessions disable autoflush, so persist the task-card writeback
+        # before querying its source_submission_id.
+        db.flush()
         linked_subtask_ids = {
             subtask_id
             for (subtask_id,) in db.query(models.SubTask.id)
             .filter(
                 models.SubTask.source_submission_id == row.id,
-                models.SubTask.is_deleted.is_(False),
+                models.SubTask.is_deleted.is_not(True),
             )
             .all()
         }

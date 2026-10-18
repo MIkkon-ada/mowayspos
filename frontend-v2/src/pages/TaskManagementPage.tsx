@@ -477,6 +477,16 @@ export function TaskManagementPage() {
     })
   }
 
+  async function refreshTaskSubTaskProjection(taskId: number) {
+    try {
+      const rows = await fetchSubTasks(taskId, false)
+      setTaskSubMap((previous) => ({ ...previous, [taskId]: rows }))
+      if (selectedTask?.id === taskId) setSubTasks(rows)
+    } catch {
+      toast.error('风险已保存，但工作推进表刷新失败；请刷新页面重试。')
+    }
+  }
+
   const handledFocusRefreshVersion = useRef(0)
   useEffect(() => {
     if (focusRefreshVersion === 0 || handledFocusRefreshVersion.current === focusRefreshVersion) return
@@ -1196,6 +1206,7 @@ export function TaskManagementPage() {
           canChangeAssignee={canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: (focusedProject ?? focusedSubTaskProject)?.user_roles ?? currentProjectRoles })}
           onEditSubTask={handleWorkbenchSubTaskSave}
           onSchedulesChanged={() => { fetchSubtaskDetail(selectedSubTask.id).then(setSelectedSubTask).catch(() => {}) }}
+          onRiskChanged={() => { void refreshTaskSubTaskProjection(selectedSubTask.task_id) }}
           onBack={() => clearSelection()}
         />
       ) : (
@@ -1939,6 +1950,7 @@ export function TaskManagementPage() {
             canChangeAssignee={canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: (focusedProject ?? focusedSubTaskProject)?.user_roles ?? currentProjectRoles })}
             onEditSubTask={handleWorkbenchSubTaskSave}
             onSchedulesChanged={() => { fetchSubtaskDetail(selectedSubTask.id).then(setSelectedSubTask).catch(() => {}) }}
+            onRiskChanged={() => { void refreshTaskSubTaskProjection(selectedSubTask.task_id) }}
             onBack={() => clearSelection()}
           /> : <div className="flex h-full items-center justify-center text-sm text-slate-500" role="status">正在加载关键任务详情…</div>}
         </aside>

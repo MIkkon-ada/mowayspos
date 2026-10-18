@@ -16,7 +16,7 @@ import { IssueList } from './IssueList'
 import { KeyTaskHeader } from './KeyTaskHeader'
 import { KeyTaskRequirementCard } from './KeyTaskRequirementCard'
 
-export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId }: { keyTaskId: number; onBack?: () => void; projectId?: number | null }) {
+export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId, onRiskChanged }: { keyTaskId: number; onBack?: () => void; projectId?: number | null; onRiskChanged?: () => void }) {
   const navigate = useNavigate()
   const [workspace, setWorkspace] = useState<KeyTaskWorkspace | null>(null)
   const [selectedPlan, setSelectedPlan] = useState<ExecutionPlan | null>(null)
@@ -87,6 +87,7 @@ export function KeyTaskExecutionWorkspace({ keyTaskId, onBack, projectId }: { ke
       await setKeyTaskRisk(keyTaskId, note)
       setRiskDialogMode(null)
       refresh()
+      onRiskChanged?.()
     } catch (reason) {
       setRiskError(reason instanceof Error ? reason.message : '保存风险标记失败，请重试')
     } finally {

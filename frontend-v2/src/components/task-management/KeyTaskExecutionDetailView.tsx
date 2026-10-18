@@ -11,10 +11,11 @@ type Props = {
   canManageSchedules?: boolean
   canChangeAssignee?: boolean
   onSchedulesChanged?: () => void
+  onRiskChanged?: () => void
   onEditSubTask?: (payload: Omit<SubTaskPayload, 'project_id'>) => Promise<void>
 }
 
 /** Both task-management and My Tasks enter the same Key Task execution workspace. */
-export function KeyTaskExecutionDetailView({ project, subTask, onBack }: Props) {
-  return <KeyTaskExecutionWorkspace keyTaskId={subTask.id} projectId={project?.id ?? null} onBack={onBack} />
+export function KeyTaskExecutionDetailView({ project, subTask, onBack, onRiskChanged }: Props) {
+  return <KeyTaskExecutionWorkspace keyTaskId={subTask.id} projectId={project?.id ?? null} onBack={onBack} onRiskChanged={onRiskChanged} />
 }

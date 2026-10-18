@@ -49,8 +49,8 @@ describe('KeyTaskExecutionWorkspace risk actions', () => {
     api.setKeyTaskRisk.mockResolvedValue({ ok: true })
   })
 
-  function renderWorkspace() {
-    render(<MemoryRouter><KeyTaskExecutionWorkspace keyTaskId={9} projectId={1} /></MemoryRouter>)
+  function renderWorkspace(onRiskChanged?: () => void) {
+    render(<MemoryRouter><KeyTaskExecutionWorkspace keyTaskId={9} projectId={1} onRiskChanged={onRiskChanged} /></MemoryRouter>)
   }
 
   it('opens and cancels the risk form without calling a browser prompt or writing data', async () => {
@@ -63,7 +63,8 @@ describe('KeyTaskExecutionWorkspace risk actions', () => {
   })
 
   it('keeps the reason available after a failed save and closes only after success', async () => {
-    renderWorkspace()
+    const onRiskChanged = vi.fn()
+    renderWorkspace(onRiskChanged)
     fireEvent.click(await screen.findByRole('button', { name: '标记风险' }))
     const input = screen.getByRole('textbox', { name: '风险原因' })
     fireEvent.change(input, { target: { value: '关键供应商延期' } })
@@ -74,16 +75,19 @@ describe('KeyTaskExecutionWorkspace risk actions', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存风险' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '标记风险' })).toBeNull())
     expect(api.setKeyTaskRisk).toHaveBeenNthCalledWith(2, 9, '关键供应商延期')
+    expect(onRiskChanged).toHaveBeenCalledTimes(1)
   })
 
   it('requires a second explicit action to remove an existing risk mark', async () => {
+    const onRiskChanged = vi.fn()
     api.fetchKeyTaskExecutionWorkspace.mockResolvedValue(workspace('关键供应商延期'))
-    renderWorkspace()
+    renderWorkspace(onRiskChanged)
     fireEvent.click(await screen.findByRole('button', { name: '解除风险' }))
     expect(screen.getByRole('dialog', { name: '解除风险' })).toBeTruthy()
     expect(api.setKeyTaskRisk).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '确认解除风险' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '解除风险' })).toBeNull())
     expect(api.setKeyTaskRisk).toHaveBeenCalledWith(9, '')
+    expect(onRiskChanged).toHaveBeenCalledTimes(1)
   })
 })

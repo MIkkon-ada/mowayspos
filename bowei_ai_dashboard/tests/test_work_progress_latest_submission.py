@@ -9,7 +9,7 @@ from app.database import Base
 from app.main import app
 from app.routers import key_tasks
 from app.routers.subtasks import list_subtasks_batch
-from app.services.key_task_execution import record_execution_event
+from app.services.key_task_execution import latest_submission_dict, record_execution_event
 
 
 def _db():
@@ -69,6 +69,7 @@ def _submission(subtask_id, submitter, confirmed_at, title):
         transcript_text=title,
         confirm_status="已确认" if confirmed_at else "待确认",
         confirmed_at=confirmed_at,
+        confirmed_by="审核人" if confirmed_at else "",
     )
 
 
@@ -88,7 +89,9 @@ def test_batch_subtasks_projects_latest_confirmed_submission_and_status_facts():
     assert first["latest_confirmed_submission"] == {
         "id": newest.id,
         "submitter": "乙",
+        "confirmed_by": "审核人",
         "confirmed_at": "2026-08-02T00:00:00",
+        "source_label": "个人提交",
         "summary": "新进展",
     }
     assert first["is_overdue"] is True
@@ -96,7 +99,9 @@ def test_batch_subtasks_projects_latest_confirmed_submission_and_status_facts():
     assert second["latest_confirmed_submission"] == {
         "id": other_task.id,
         "submitter": "丁",
+        "confirmed_by": "审核人",
         "confirmed_at": "2026-08-03T00:00:00",
+        "source_label": "个人提交",
         "summary": "其他任务进展",
     }
     assert second["is_overdue"] is False
@@ -184,6 +189,36 @@ def test_batch_subtasks_exposes_reviewed_meeting_progress_as_current_progress():
         "summary": "第一批已经完成", "next_step": "继续第二批整理",
         "source_label": "会议纪要", "confirmed_at": "2026-10-08T10:00:00", "actor": "负责人",
         "action_items": [],
+    }
+
+
+def test_workspace_submission_keeps_metadata_and_next_step_on_the_same_source():
+    db = _db()
+    _seed_batch_access(db)
+    submission = _submission(20, "提交人甲", datetime(2026, 10, 8, 9, 0), "个人汇报摘要")
+    submission.confirmed_by = "审核人乙"
+    db.add(submission)
+    db.flush()
+    record_execution_event(
+        db, project_id=1, key_task_id=20, event_type="meeting_confirmation",
+        source_type="meeting_work_progress", source_id=55,
+        dedupe_key="meeting_work_progress:55:confirmed", actor_name="会议主持人",
+        occurred_at=datetime(2026, 10, 9, 10, 0), confirmed_at=datetime(2026, 10, 9, 10, 0),
+        effective_at=datetime(2026, 10, 9, 10, 0), affects_current_progress=True,
+        progress_summary="会议确认的另一条进展", next_step="会议安排的下一步",
+    )
+    db.commit()
+
+    result = latest_submission_dict(db, 20)
+
+    assert result == {
+        "id": submission.id,
+        "summary": "个人汇报摘要",
+        "next_step": "",
+        "submitter": "提交人甲",
+        "confirmed_by": "审核人乙",
+        "confirmed_at": "2026-10-08T09:00:00",
+        "source_label": "个人提交",
     }
 
 

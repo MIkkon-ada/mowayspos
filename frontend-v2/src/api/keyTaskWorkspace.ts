@@ -47,7 +47,9 @@ export type LatestKeyTaskSubmission = {
   summary: string
   next_step: string
   submitter: string
+  confirmed_by?: string
   confirmed_at: string | null
+  source_label?: string
 }
 
 export type ExecutionEvent = {

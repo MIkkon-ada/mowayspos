@@ -159,7 +159,9 @@ def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[d
                     latest_by_subtask[subtask_id] = {
                         "id": submission.id,
                         "submitter": submission.submitter or "",
+                        "confirmed_by": submission.confirmed_by or "",
                         "confirmed_at": submission.confirmed_at.isoformat(),
+                        "source_label": "个人提交",
                         "summary": submission_summary(submission, subtask_id),
                     }
 

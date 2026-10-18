@@ -5,7 +5,7 @@ export function CurrentProgressCard({ progress }: { progress: LatestKeyTaskSubmi
   return <section className="rounded-xl border border-slate-200 border-l-4 border-l-blue-700 bg-white p-5 shadow-sm" aria-label="关键任务最新提交">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h2 className="text-base font-bold text-slate-900">最新提交</h2>
-      {progress && <p className="text-xs text-slate-500">{progress.submitter || '未记录提交人'} · {formatDateTime(progress.confirmed_at)}</p>}
+      {progress && <div className="text-xs text-slate-500"><p>提交人：{progress.submitter || '未记录'}</p><p className="mt-1">确认人：{progress.confirmed_by || '未记录'} · {formatDateTime(progress.confirmed_at)} · {progress.source_label || '个人提交'}</p></div>}
     </div>
     {!progress
       ? <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600"><p>还没有已确认的工作提交。</p><p className="mt-1">提交并确认后的最新内容会同步显示在工作推进表中。</p></div>

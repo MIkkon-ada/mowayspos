@@ -447,7 +447,9 @@ export type SubTaskItem = {
   latest_confirmed_submission?: {
     id: number
     submitter: string
+    confirmed_by?: string
     confirmed_at: string
+    source_label?: string
     summary: string
   } | null
   has_any_submission?: boolean

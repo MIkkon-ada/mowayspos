@@ -55,14 +55,14 @@ describe('shared work progress table', () => {
   it('shows each progress and next-step point on its own line', () => {
     const detailedSub = {
       ...subs[0],
-      latest_confirmed_submission: { summary: '完成调研；整理方案\n3、提交评审', confirmed_at: '2026-10-07T10:00:00', submitter: '张三' },
+      latest_confirmed_submission: { summary: '完成调研；整理方案\n3、提交评审', confirmed_at: '2026-10-07T10:00:00', submitter: '张三', confirmed_by: '王主任', source_label: '个人提交' },
       latest_next_step: '1、联系客户；2. 确认排期',
     } as SubTaskItem
     render(<PlanTableViewV2 project={project} tasks={[task]} taskSubMap={{ 1: [detailedSub] }} />)
     const row = screen.getByText('准备方案').closest('tr')!
     expect(within(row.cells[4]).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['完成调研', '整理方案', '提交评审'])
     expect(within(row.cells[5]).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['联系客户', '确认排期'])
-    expect(within(row.cells[4]).getByText('2026-10-07 · 张三')).toBeTruthy()
+    expect(within(row.cells[4]).getByText('2026-10-07 · 确认人：王主任 · 个人提交')).toBeTruthy()
   })
   it('shows approved meeting progress in the work progress table', () => {
     const reviewedSub = {

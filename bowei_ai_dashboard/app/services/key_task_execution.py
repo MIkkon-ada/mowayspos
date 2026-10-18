@@ -206,12 +206,17 @@ def latest_submission_dict(db: Session, key_task_id: int) -> dict[str, Any] | No
     if row is None:
         return None
     progress = current_progress_dict(db, key_task_id)
+    linked_next_step = ""
+    if progress and progress["source_type"] == "update_submission" and progress["source_id"] == row.id:
+        linked_next_step = progress["next_step"]
     return {
         "id": row.id,
         "summary": submission_summary(row, key_task_id),
-        "next_step": progress["next_step"] if progress else "",
+        "next_step": linked_next_step,
         "submitter": row.submitter or "",
+        "confirmed_by": row.confirmed_by or "",
         "confirmed_at": _iso(row.confirmed_at),
+        "source_label": "个人提交",
     }
 
 

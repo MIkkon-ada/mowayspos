@@ -46,7 +46,7 @@ function TaskTableRow({ row, onOpen, onEdit, onOpenAcceptance, optionalColumns }
   const progressSummary = confirmedProgress?.summary?.trim() || submission?.summary
   const progressMeta = confirmedProgress?.summary?.trim()
     ? [confirmedProgress.confirmed_at?.slice(0, 10), confirmedProgress.actor, confirmedProgress.source_label].filter(Boolean).join(' · ')
-    : submission ? [submission.confirmed_at?.slice(0, 10), submission.submitter].filter(Boolean).join(' · ') : ''
+    : submission ? [submission.confirmed_at?.slice(0, 10), `确认人：${submission.confirmed_by || '未记录'}`, submission.source_label || '个人提交'].join(' · ') : ''
   const unconfirmed = subtask?.latest_unconfirmed_submission
   const unconfirmedMeta = unconfirmed
     ? [unconfirmed.confirm_status, unconfirmed.submitter, unconfirmed.created_at?.slice(0, 10)].filter(Boolean).join(' · ')

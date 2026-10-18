@@ -525,30 +525,6 @@ export function VoiceUpdatePage() {
         onToggleTranscript={() => historyState.setShowTranscript((value) => !value)}
         currentUserName={currentUser?.name}
         onResubmitted={async (id) => { await historyState.refreshHistory(); void historyState.handleSelectUpdate(id) }}
-            onRestartFromSubmission={(detailItem) => {
-              resetExtractionState()
-              removeDocument()
-              const taskReports = Array.isArray(detailItem.human_result?.task_reports)
-            ? detailItem.human_result.task_reports as Array<Record<string, unknown>>
-            : []
-          const evidence = taskReports.flatMap((report) =>
-            Array.isArray(report.evidence)
-              ? report.evidence.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
-              : [],
-          )
-          const completed = taskReports
-            .map((report) => typeof report.completed === 'string' ? report.completed.trim() : '')
-            .filter(Boolean)
-          setText(evidence.length > 0
-            ? evidence.join('。')
-            : completed.join('。') || detailItem.transcript_text || '')
-          if (detailItem.project_id) {
-            setReportScope('project')
-            setSelectedProjectId(detailItem.project_id)
-          }
-          historyState.setDetailItem(null)
-          historyState.setShowTranscript(false)
-        }}
       />
     </div>
   )

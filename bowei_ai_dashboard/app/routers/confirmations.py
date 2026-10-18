@@ -2111,6 +2111,11 @@ def resubmit(
     W.require_submission_status(row, SS.RETURNED_TO_SUBMITTER)
     before = crud.to_dict(row)
     project_id = _submission_project_id(db, row)
+    if payload.transcript_text is not None:
+        revised_transcript = payload.transcript_text.strip()
+        if not revised_transcript:
+            raise HTTPException(422, "汇报内容不能为空")
+        row.transcript_text = revised_transcript
     if payload.human_result:
         new_result = dict(payload.human_result)
         if payload.supplement_note:
@@ -2122,7 +2127,18 @@ def resubmit(
         row.human_result_json = json.dumps(existing, ensure_ascii=False)
     row.confirm_status = SS.S_PENDING_OWNER
     row.reject_reason = None
-    crud.log(db, operator, "confirmation_resubmit", "confirmation", row.id, before, {"note": payload.supplement_note or ""})
+    crud.log(
+        db,
+        operator,
+        "confirmation_resubmit",
+        "confirmation",
+        row.id,
+        before,
+        {
+            "note": payload.supplement_note or "",
+            "transcript_text": row.transcript_text,
+        },
+    )
     if project_id:
         from ..services.notify import send as _notify, project_strict_owner_ids
         submitter_id = context.get("person_id")

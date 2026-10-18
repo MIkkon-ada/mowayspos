@@ -286,6 +286,7 @@ class ResubmitRequest(BaseModel):
     supplement_note: str = ""
     operator: str = ""
     human_result: dict[str, Any] | None = None
+    transcript_text: str | None = Field(default=None, min_length=1, max_length=5000)
 
 
 class WorkflowNoteRequest(BaseModel):

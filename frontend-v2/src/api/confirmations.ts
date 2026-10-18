@@ -51,11 +51,13 @@ export function resubmitSubmission(
   supplementNote: string,
   operator: string,
   humanResult?: Record<string, unknown>,
+  transcriptText?: string,
 ): Promise<{ ok?: boolean; submission?: ConfirmationItem }> {
   return postConfirmationAction<{ ok?: boolean; submission?: ConfirmationItem }>(`/api/confirmations/${id}/resubmit`, {
     supplement_note: supplementNote,
     operator,
     human_result: humanResult,
+    transcript_text: transcriptText,
   })
 }
 

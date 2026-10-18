@@ -290,6 +290,39 @@ class TestSubmitterNotificationIdentity:
         ).one()
         assert notification.recipient_id == unique_person.id
 
+
+def test_resubmit_updates_original_transcript_and_keeps_revision_auditable():
+    db = _make_session()
+    team = _seed_team(db)
+    row = _submission(
+        db,
+        submitter=team["submitter"].name,
+        submitter_id=team["submitter"].id,
+        status=SS.S_RETURNED,
+    )
+    row.transcript_text = "原始汇报内容"
+    db.commit()
+
+    result = resubmit(
+        row.id,
+        schemas.ResubmitRequest(
+            transcript_text="修订后的汇报内容",
+            supplement_note="补上延期原因",
+        ),
+        current_user="submitter_account",
+        db=db,
+    )
+
+    assert result["submission"]["transcript_text"] == "修订后的汇报内容"
+    assert result["submission"]["confirm_status"] == SS.S_PENDING_OWNER
+    log = db.query(models.OperationLog).filter_by(
+        action="confirmation_resubmit", target_id=row.id
+    ).one()
+    assert json.loads(log.before_json)["transcript_text"] == "原始汇报内容"
+    assert json.loads(log.after_json)["transcript_text"] == "修订后的汇报内容"
+    assert db.query(models.Achievement).filter_by(source_submission_id=row.id).count() == 0
+    assert db.query(models.Issue).filter_by(source_submission_id=row.id).count() == 0
+
     def test_reject_does_not_create_notification_for_ambiguous_legacy_name(self):
         db = _make_session()
         team = _seed_team(db)

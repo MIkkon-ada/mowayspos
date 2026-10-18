@@ -532,8 +532,8 @@ export function ProjectsMgmtSection() {
     setShowEdit(true)
     setEditProjectId(project.id)
     setEditForm(buildProjectForm(project))
-    const pm = members[project.id] ?? (await getProjectMembers(project.id).catch(() => []))
-    if (!members[project.id] && pm.length > 0) setMembers((prev) => ({ ...prev, [project.id]: pm }))
+    const pm = await getProjectMembers(project.id)
+    setMembers((prev) => ({ ...prev, [project.id]: pm }))
     setEditTeam(buildTeamMapFromMembers(pm))
   }
 
@@ -545,36 +545,49 @@ export function ProjectsMgmtSection() {
   }
 
   async function syncProjectMembers(projectId: number, nextTeam: TeamMap) {
-    const currentMembers = members[projectId] ?? (await getProjectMembers(projectId).catch(() => []))
+    const currentMembers = await getProjectMembers(projectId)
     const currentByRole = new Map<string, ProjectMember[]>()
-    currentMembers.forEach((m) => {
-      const list = currentByRole.get(m.role) ?? []
-      list.push(m); currentByRole.set(m.role, list)
+    currentMembers.forEach((member) => {
+      const list = currentByRole.get(member.role) ?? []
+      list.push(member); currentByRole.set(member.role, list)
     })
-    for (const [role, currentList] of currentByRole) {
-      const nextIds = new Set(nextTeam[role as keyof TeamMap] ?? [])
-      await Promise.all(
-        currentList.filter((m) => !nextIds.has(m.person_id)).map((m) => removeProjectMember(projectId, m.id)),
-      )
-    }
-    const refreshed = await getProjectMembers(projectId)
-    const refreshedByRole = new Map<string, Set<number>>()
-    refreshed.forEach((m) => {
-      const set = refreshedByRole.get(m.role) ?? new Set<number>()
-      set.add(m.person_id); refreshedByRole.set(m.role, set)
+    const currentIdsByRole = new Map<string, Set<number>>()
+    currentMembers.forEach((member) => {
+      const ids = currentIdsByRole.get(member.role) ?? new Set<number>()
+      ids.add(member.person_id); currentIdsByRole.set(member.role, ids)
     })
-    for (const role of Object.keys(nextTeam) as Array<keyof TeamMap>) {
-      for (const personId of nextTeam[role]) {
-        if (!(refreshedByRole.get(role)?.has(personId) ?? false)) {
-          const member = await addProjectMember(projectId, { person_id: personId, role })
-          refreshed.push(member)
-          const set = refreshedByRole.get(role) ?? new Set<number>()
-          set.add(personId); refreshedByRole.set(role, set)
+
+    try {
+      // Add replacements first so an active project never temporarily loses its last owner.
+      for (const role of Object.keys(nextTeam) as Array<keyof TeamMap>) {
+        for (const personId of nextTeam[role]) {
+          if (!(currentIdsByRole.get(role)?.has(personId) ?? false)) {
+            const member = await addProjectMember(projectId, { person_id: personId, role })
+            currentMembers.push(member)
+            const ids = currentIdsByRole.get(role) ?? new Set<number>()
+            ids.add(personId); currentIdsByRole.set(role, ids)
+          }
         }
       }
+
+      // Delete obsolete memberships only after every requested membership exists.
+      for (const [role, currentList] of currentByRole) {
+        const nextIds = new Set(nextTeam[role as keyof TeamMap] ?? [])
+        for (const member of currentList) {
+          if (!nextIds.has(member.person_id)) await removeProjectMember(projectId, member.id)
+        }
+      }
+
+      const refreshed = await getProjectMembers(projectId)
+      setMembers((prev) => ({ ...prev, [projectId]: refreshed }))
+      return refreshed
+    } catch (error) {
+      // A failed API call may follow earlier successful membership changes. Refresh the cache
+      // so another edit starts from persisted IDs and can recover without a page reload.
+      const persisted = await getProjectMembers(projectId).catch(() => null)
+      if (persisted) setMembers((prev) => ({ ...prev, [projectId]: persisted }))
+      throw error
     }
-    setMembers((prev) => ({ ...prev, [projectId]: refreshed }))
-    return refreshed
   }
 
   async function handleSaveProjectEdit() {

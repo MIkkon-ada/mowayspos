@@ -149,3 +149,11 @@ npm.cmd run check:bundle:dist
 在临时预览 SQLite 中用合成会议文档新建一次分析，run 13 状态为 `failed`，错误码 `provider_error`，错误信息为 `provider invocation failed: AI upstream request failed`；对应 AI invocation log 137 的 capability 为 `meeting.analysis`，attempt 1，状态 `failed`，耗时 2ms，错误码 `AI_UPSTREAM_UNKNOWN`。同库历史 run 12 / invocation 136 曾在 2026-10-08 成功，不能代替本次实时服务验收，也不足以定位本次上游失败根因。未再次调用模型，未保存会议草稿或同步工作推进表。
 
 失败后对新建会议表单做只读 DOM 检查：标题“隔离验收样例：任务进度核对会”和地点仍保留，日期输入值为空。代码中的 `followDocumentRun` 失败分支会切回输入步骤，并未显式重置表单；当前证据因此确认了用户可见的数据保留异常，但尚未解释受控表单状态与日期控件为何不一致。会议分析失败时的表单保留仍需先补充可重复的组件级复现，F01-F03 不通过。
+
+## 追加复核（2026-10-18，工作推进表 WBS 主视图）
+
+在当前 6005 隔离预览中用有效项目 ID 4 打开工作推进表。浏览器 DOM 显示 26 项关键任务、0 项已完成、0 项延期、0 项未解决问题；重点工作可折叠分组，未汇报任务明确显示“尚未汇报”，并提供搜索、延期/风险/问题筛选和任务详情入口。1280×720 桌面视口下主表宽 1099px，页面 body 未发生横向溢出，截图检查列标题与行内容可见。该项目样例没有能验证异常状态的任务，因此本次只证明桌面布局和空进展提示，不证明延期/风险/问题数据准确，也不替代 C09。
+
+V2 定向工作推进表测试 33 项通过；`npm.cmd run build` 通过 TypeScript 与 Vite 构建；`npm.cmd run check:bundle:dist` 通过包体积门槛。构建仍提示单个 chunk 超过 500kB，但 ExcelJS 位于非首屏动态 chunk，当前基线检查通过。
+
+计划文档 `2026-09-20-project-work-progress-wbs.md` 写有可见 WBS 编号列；当前 `PlanTableViewV2` 主表使用重点工作分组，专项契约明确不显示“WBS编号”列。此处属于旧计划与当前界面范围的差异，本次验证不将 WBS 编号显示判为通过，也未擅自恢复该列。当前状态应以 2026-10-12 工作推进表优化评审和本分支代码为准，后续验收需明确 WBS 编号是否仍是业务要求。

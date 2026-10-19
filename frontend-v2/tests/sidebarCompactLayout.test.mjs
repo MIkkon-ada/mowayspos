@@ -52,7 +52,7 @@ test('navigation keeps every existing item and permission boundary', () => {
   }
   assert.ok(sidebarSource.includes('AI_CONFIRM_CENTER_LABEL') || navigationModelSource.includes('AI_CONFIRM_CENTER_LABEL'))
 
-  for (const condition of ['showParticipantModules', 'hasActiveProject', 'isPrivileged', "includes('project_ceo')", "includes('owner')", 'currentUser?.is_tech_admin'])
+  for (const condition of ['showParticipantModules', 'isPrivileged', "includes('project_ceo')", "includes('owner')", 'currentUser?.is_tech_admin'])
     assert.ok(`${sidebarSource}\n${navigationModelSource}`.includes(condition), `missing permission condition: ${condition}`)
 })
 

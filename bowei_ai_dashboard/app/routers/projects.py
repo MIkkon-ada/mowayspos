@@ -1016,7 +1016,7 @@ def list_projects(
     q = q.order_by(models.Project.sort_order, models.Project.id)
 
     if not context["can_view_all"]:
-        q = q.filter(models.Project.status.notin_(["archived", PL.S_DRAFT]))
+        q = q.filter(models.Project.status != PL.S_DRAFT)
         visible_ids = resolve_visible_project_ids(context, db, allow_legacy=True)
         if not visible_ids:
             return []

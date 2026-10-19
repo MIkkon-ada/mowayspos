@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AppPage, CurrentUser } from '../types'
-import { useProject } from '../context/ProjectContext'
 import { NotificationBell } from './NotificationBell'
 import { CONFIRMATION_COUNTS_INVALIDATED_EVENT, getConfirmationCounts } from '../api/confirmations'
-import { isProjectActive } from '../domain/projectLifecycleStatus'
 import { getProjectRoleLabel } from '../domain/roleLabels'
 import { systemRoleLabel } from '../domain/roles'
 import { AI_CONFIRM_CENTER_LABEL } from '../domain/displayNames'
@@ -36,7 +34,6 @@ type NavEntry = NavItem | SectionSeparator
 
 export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, onLogout, logoUrl }: SidebarProps) {
   const navigate = useNavigate()
-  const { projects } = useProject()
   const userName = currentUser?.name ?? ''
   const rolePriority = ['owner', 'coordinator', 'project_ceo', 'member']
   const highestRole = rolePriority.find((r) => globalUserRoles.includes(r))
@@ -57,7 +54,6 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
     currentUser?.is_ceo &&
     !globalUserRoles.some((r) => ['owner', 'coordinator', 'project_ceo', 'member'].includes(r))
   )
-  const hasActiveProject = projects.some(isProjectActive)
 
   const [confirmBadge, setConfirmBadge] = useState(0)
 
@@ -93,7 +89,7 @@ export function Sidebar({ activePage, onNavigate, currentUser, globalUserRoles, 
   ]
 
   const executionItems: NavItem[] = [
-    ...(showParticipantModules && hasActiveProject
+    ...(showParticipantModules
       ? [{ page: 'table' as const, label: '工作推进表', icon: <IconTable /> }]
       : []),
   ]

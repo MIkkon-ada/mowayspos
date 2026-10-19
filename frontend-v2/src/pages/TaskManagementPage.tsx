@@ -9,7 +9,7 @@ import { fetchIssues } from '../api/issues'
 import type { SubTaskDetail, SubTaskPayload } from '../api/subtasks'
 import { createUpdate } from '../api/updates'
 import { ApiError } from '../api/client'
-import { getProject, getProjectMembers, getWorkProgressColumns, updateWorkProgressColumns } from '../api/projects'
+import { getProject, getProjects, getProjectMembers, getWorkProgressColumns, updateWorkProgressColumns } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } from '../domain/taskPermission'
 import type { TaskItem, SubTaskItem, Project, ProjectMember, IssueItem } from '../types'
@@ -267,6 +267,7 @@ export function TaskManagementPage() {
   const [progressSubmitState, setProgressSubmitState] = useState<'idle' | 'submitting' | 'done'>('idle')
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null)
   const [resolvedProjectDetail, setResolvedProjectDetail] = useState<Project | null>(null)
+  const [historyTaskProjects, setHistoryTaskProjects] = useState<Project[]>([])
   const [formDefaultProjectId, setFormDefaultProjectId] = useState<number | null>(null)
   const taskCreateAttemptRef = useRef<{ fingerprint: string; requestId: string } | null>(null)
   const effectiveTaskProjectId = viewProjectId ?? currentProjectId ?? autoSelectedTaskProjectId
@@ -279,13 +280,16 @@ export function TaskManagementPage() {
     ? resolvedProjectDetail
     : null
   const resolvedTaskProjects = useMemo(() => {
-    const byId = new Map(projects.map((project) => [project.id, project]))
+    const byId = new Map(historyTaskProjects.map((project) => [project.id, project]))
+    projects.forEach((project) => byId.set(project.id, project))
     if (resolvedProjectForContext) byId.set(resolvedProjectForContext.id, resolvedProjectForContext)
     return [...byId.values()]
-  }, [projects, resolvedProjectForContext])
+  }, [historyTaskProjects, projects, resolvedProjectForContext])
   // 专项下拉选项来自全部可见项目，而非已加载任务
   const availableTaskProjects = useMemo(
-    () => resolvedTaskProjects.filter((project) => isProjectActive(project) || isProjectArchived(project)),
+    () => resolvedTaskProjects
+      .filter((project) => isProjectActive(project) || isProjectArchived(project))
+      .sort((left, right) => Number(isProjectArchived(left)) - Number(isProjectArchived(right))),
     [resolvedTaskProjects],
   )
   const requiresProjectSelection = effectiveTaskProjectId == null && availableTaskProjects.length > 1
@@ -369,6 +373,17 @@ export function TaskManagementPage() {
       })
     return () => { cancelled = true }
   }, [effectiveTaskProjectId, projectFromContext])
+
+  useEffect(() => {
+    let cancelled = false
+    setHistoryTaskProjects([])
+    if (currentUser) {
+      getProjects(true)
+        .then((visibleProjects) => { if (!cancelled) setHistoryTaskProjects(visibleProjects) })
+        .catch(() => { if (!cancelled) toast.error('项目列表加载失败，请刷新后重试。') })
+    }
+    return () => { cancelled = true }
+  }, [currentUser?.account_id, currentUser?.person_id, currentUser?.username, focusRefreshVersion])
 
   useEffect(() => {
     if (selectionProjectRef.current !== effectiveTaskProjectId) clearSelection()
@@ -1133,7 +1148,7 @@ export function TaskManagementPage() {
             onChange={(event) => { handleProjectFilter(event.target.value); setAutoSelectedTaskProjectId(null) }}
           >
             <option value="">选择项目</option>
-            {availableTaskProjects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            {availableTaskProjects.map((project) => <option key={project.id} value={project.id}>{project.name}{isProjectArchived(project) ? '（已归档）' : ''}</option>)}
           </select>
           <span><ChevronDownIcon className="wp-project-picker-icon" /></span>
         </div>

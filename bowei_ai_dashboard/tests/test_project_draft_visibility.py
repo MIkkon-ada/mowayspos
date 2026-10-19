@@ -50,3 +50,16 @@ def test_auth_me_projects_excludes_drafts_for_owner_but_not_ceo():
 
     assert [project["id"] for project in owner_projects] == [2]
     assert [project["id"] for project in ceo_projects] == [1, 2]
+
+
+def test_archive_listing_includes_only_members_archived_projects():
+    db, _, owner = _db()
+    db.add_all([
+        models.Project(id=3, name="Member archive", status="archived", is_active=False),
+        models.Project(id=4, name="Unrelated archive", status="archived", is_active=False),
+        models.ProjectMember(project_id=3, person_id=owner.person_id, role="member"),
+    ])
+    db.commit()
+
+    assert [p["id"] for p in projects.list_projects(current_user=owner.username, db=db)] == [2]
+    assert [p["id"] for p in projects.list_projects(include_archived=True, current_user=owner.username, db=db)] == [2, 3]

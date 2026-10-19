@@ -9,7 +9,7 @@ import { fetchIssues } from '../api/issues'
 import type { SubTaskDetail, SubTaskPayload } from '../api/subtasks'
 import { createUpdate } from '../api/updates'
 import { ApiError } from '../api/client'
-import { getProject, getProjects, getProjectMembers, getWorkProgressColumns, updateWorkProgressColumns } from '../api/projects'
+import { getProject, getProjects, getProjectMembers, getWorkProgressColumns } from '../api/projects'
 import { useProject } from '../context/ProjectContext'
 import { canEditSubTaskStatus, canManageProjectTrash, canManageProjectWork } from '../domain/taskPermission'
 import type { TaskItem, SubTaskItem, Project, ProjectMember, IssueItem } from '../types'
@@ -19,13 +19,12 @@ import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleSt
 import { getKeyTaskAssigneeNames, taskHasKeyTaskAssignee } from '../domain/keyTaskAssigneeFilter'
 import { WorkProgressGridWorkspace } from '../components/task-management/WorkProgressGridWorkspace'
 import type { GridEdit } from '../components/task-management/workProgressGridModel'
-import { buildMobileTaskList, buildPlanRows, summarizeWorkProgress } from '../components/task-management/planTableViewModel'
-import { WORK_PROGRESS_OPTIONAL_COLUMNS, type WorkProgressOptionalColumnKey } from '../components/task-management/workProgressColumnSizing'
+import { buildPlanRows, summarizeWorkProgress } from '../components/task-management/planTableViewModel'
+import type { WorkProgressOptionalColumnKey } from '../components/task-management/workProgressColumnSizing'
 import { parseWorkProgressProjectId, updateWorkProgressProjectQuery } from '../components/task-management/workProgressProjectQuery'
 import { ChevronDownIcon } from '../components/icons/ChevronDownIcon'
 import { KeyTaskExecutionDetailView } from '../components/task-management/KeyTaskExecutionDetailView'
 import { WorkProgressDetailOverlay } from '../components/task-management/WorkProgressDetailOverlay'
-import { MobileTaskList } from '../features/mobile-core-pages/MobileTaskList'
 import { toast } from '../utils/toast'
 import { useWindowFocusVersion } from '../utils/useWindowFocusVersion'
 
@@ -247,25 +246,12 @@ export function TaskManagementPage() {
   const [search, setSearch]           = useState('')
   const [filterStatus, setFilterStatus] = useState(() => searchParams.get('status') ?? '')
   const [filterOwner, setFilterOwner] = useState('')
-  const [filterPageOpen, setFilterPageOpen] = useState(false)
-  const [filterDraft, setFilterDraft] = useState({ status: '', owner: '', search: '' })
   const [quickFilter, setQuickFilter] = useState<'all' | 'overdue' | 'risk' | 'issues' | 'date_unknown'>('all')
   const [issueSnapshot, setIssueSnapshot] = useState<{ projectId: number | null; state: 'idle' | 'loading' | 'loaded' | 'error'; items: IssueItem[] }>({ projectId: null, state: 'idle', items: [] })
   const [operationsOpen, setOperationsOpen] = useState(false)
-  const [columnsOpen, setColumnsOpen] = useState(false)
   const [optionalColumns, setOptionalColumns] = useState<WorkProgressOptionalColumnKey[]>([])
-  const [columnsSaving, setColumnsSaving] = useState(false)
   const [projectStandardExpanded, setProjectStandardExpanded] = useState(false)
   const [showDeleted, setShowDeleted] = useState(false)
-  const [mobileGridOpen, setMobileGridOpen] = useState(() => { try { return sessionStorage.getItem('wp-preferred-mobile-view') === 'grid' } catch { return false } })
-  const [desktopGrid, setDesktopGrid] = useState(() => window.matchMedia('(min-width: 800px)').matches)
-  useEffect(() => {
-    const media = window.matchMedia('(min-width: 800px)')
-    const update = () => setDesktopGrid(media.matches)
-    media.addEventListener('change', update)
-    return () => media.removeEventListener('change', update)
-  }, [])
-  useEffect(() => { try { sessionStorage.setItem('wp-preferred-mobile-view', mobileGridOpen ? 'grid' : 'cards') } catch { /* View preference is optional. */ } }, [mobileGridOpen])
   // URL 是推进表项目范围的唯一来源，确保刷新和前进/后退恢复同一项目。
   const viewProjectId = parseWorkProgressProjectId(searchParams)
   const [autoSelectedTaskProjectId, setAutoSelectedTaskProjectId] = useState<number | null>(null)
@@ -343,7 +329,6 @@ export function TaskManagementPage() {
   useEffect(() => {
     let cancelled = false
     setOptionalColumns([])
-    setColumnsOpen(false)
     if (effectiveTaskProjectId != null) {
       getWorkProgressColumns(effectiveTaskProjectId)
         .then((config) => { if (!cancelled) setOptionalColumns(config.optional_columns) })
@@ -352,19 +337,6 @@ export function TaskManagementPage() {
     return () => { cancelled = true }
   }, [effectiveTaskProjectId])
 
-  async function toggleOptionalColumn(key: WorkProgressOptionalColumnKey) {
-    if (effectiveTaskProjectId == null || columnsSaving) return
-    const next = optionalColumns.includes(key) ? optionalColumns.filter((item) => item !== key) : [...optionalColumns, key]
-    setColumnsSaving(true)
-    try {
-      const saved = await updateWorkProgressColumns(effectiveTaskProjectId, next)
-      setOptionalColumns(saved.optional_columns)
-    } catch {
-      toast.error('保存项目扩展列失败，请重试')
-    } finally {
-      setColumnsSaving(false)
-    }
-  }
 
 
   useEffect(() => {
@@ -552,26 +524,6 @@ export function TaskManagementPage() {
     setSearchParams(updateWorkProgressProjectQuery(searchParams, name))
   }
 
-  function openFilterPage() {
-    setFilterDraft({
-      status: filterStatus,
-      owner: filterOwner,
-      search,
-    })
-    setFilterPageOpen(true)
-    setOperationsOpen(false)
-  }
-
-  function applyFilterDraft() {
-    setFilterStatus(filterDraft.status)
-    setFilterOwner(filterDraft.owner)
-    setSearch(filterDraft.search)
-    setFilterPageOpen(false)
-  }
-
-  function clearFilterDraft() {
-    setFilterDraft({ status: '', owner: '', search: '' })
-  }
 
   function openTrash() {
     clearSelection()
@@ -686,18 +638,6 @@ export function TaskManagementPage() {
   const overview = useMemo(() => planTableReady
     ? summarizeWorkProgress(overviewRows, openProjectIssues)
     : null, [openProjectIssues, overviewRows, planTableReady])
-  const mobilePlan = useMemo(() => buildMobileTaskList({
-    project: focusedProject,
-    tasks,
-    taskSubMap,
-    searchText: search,
-    statusFilter: filterStatus,
-    ownerFilter: filterOwner,
-    quickFilter,
-    issueTaskIds,
-    issueSubtaskIds,
-  }), [focusedProject, tasks, taskSubMap, search, filterStatus, filterOwner, quickFilter, issueTaskIds, issueSubtaskIds])
-
   function assignmentMembers(projectId: number | null | undefined) {
     if (!projectId) return []
     return projectMembersByProject[projectId] ?? []
@@ -1106,7 +1046,7 @@ export function TaskManagementPage() {
   const projectStandardText = focusedProject?.objectives?.trim() || focusedProject?.description?.trim() || ''
 
   return (
-    <div className={`flex-1 min-h-0 flex flex-col overflow-hidden${mobileGridOpen ? ' wp-grid-mode' : ''}`}>
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden wp-grid-mode">
       {formOpen && (
         <TaskFormModal
           task={formTask}
@@ -1177,39 +1117,6 @@ export function TaskManagementPage() {
           <span><ChevronDownIcon className="wp-project-picker-icon" /></span>
         </div>
         <div className="wp-header-controls">
-          {!showDeleted && !mobileGridOpen && effectiveTaskProjectId != null && <div className="wp-filter-anchor min-[800px]:hidden">
-            <button type="button" className="wp-header-button" aria-haspopup="dialog" aria-expanded={columnsOpen} onClick={() => setColumnsOpen((open) => !open)}>字段{optionalColumns.length > 0 ? <span className="wp-filter-count">+{optionalColumns.length}</span> : null}</button>
-            {columnsOpen && <div className="wp-columns-popover" role="dialog" aria-label="工作推进表扩展字段">
-              <strong>项目扩展列</strong>
-              <p>按关键任务填写，项目内成员均可查看。</p>
-              {WORK_PROGRESS_OPTIONAL_COLUMNS.map((column) => <label key={column.key} className="wp-columns-choice">
-                <input type="checkbox" checked={optionalColumns.includes(column.key)} disabled={columnsSaving} onChange={() => void toggleOptionalColumn(column.key)} />
-                <span>{column.label}</span>
-              </label>)}
-            </div>}
-          </div>}
-          <div className="wp-filter-anchor">
-            <button type="button" className="wp-header-button" onClick={() => { if (filterPageOpen) setFilterPageOpen(false); else openFilterPage() }} aria-haspopup="dialog" aria-expanded={filterPageOpen}>
-              筛选{(filterStatus || filterOwner || search) ? <span className="wp-filter-count">{[filterStatus, filterOwner, search].filter(Boolean).length}</span> : null}
-            </button>
-            {filterPageOpen && <div className="wp-filter-popover" role="dialog" aria-labelledby="wp-filter-title">
-              <div className="wp-filter-popover-title"><h2 id="wp-filter-title">筛选条件</h2><button type="button" aria-label="关闭筛选" onClick={() => setFilterPageOpen(false)}>×</button></div>
-              <div className="wp-filter-fields">
-                <label className="wp-filter-field"><span>任务状态</span><select value={filterDraft.status} onChange={(event) => setFilterDraft((draft) => ({ ...draft, status: event.target.value }))}>
-                  <option value="">全部状态</option><option value="未开始">未开始</option><option value="进行中">进行中</option><option value="已完成">已完成</option><option value="延期">延期</option><option value="暂缓">暂缓</option>
-                </select></label>
-                <label className="wp-filter-field"><span>负责人</span><select value={filterDraft.owner} onChange={(event) => setFilterDraft((draft) => ({ ...draft, owner: event.target.value }))}>
-                  <option value="">全部负责人</option>{assigneeNames.map((name) => <option key={name} value={name}>{name}</option>)}
-                </select></label>
-                <label className="wp-filter-field"><span>搜索</span><input value={filterDraft.search} onChange={(event) => setFilterDraft((draft) => ({ ...draft, search: event.target.value }))} placeholder="搜索重点工作、关键任务、责任人" /></label>
-              </div>
-              <footer className="wp-filter-popover-footer">
-                <button type="button" className="wp-filter-clear" onClick={clearFilterDraft}>清空</button><span />
-                <button type="button" className="wp-header-button" onClick={() => setFilterPageOpen(false)}>取消</button>
-                <button type="button" className="wp-header-button wp-header-button--primary" onClick={applyFilterDraft}>应用</button>
-              </footer>
-            </div>}
-          </div>
           <div className="wp-operations-wrap">
             <button type="button" className="wp-header-button" onClick={() => setOperationsOpen((open) => !open)} aria-haspopup="menu" aria-expanded={operationsOpen}>操作</button>
             {operationsOpen && <div className="wp-operations-menu" role="menu">
@@ -1252,20 +1159,12 @@ export function TaskManagementPage() {
           </div>
         </div>
         <div className="wp-overview-bottom">
-          <div className="wp-quick-filters" role="group" aria-label="快速筛选">
-            <button type="button" aria-pressed={quickFilter === 'all' && !filterStatus} onClick={() => { setQuickFilter('all'); setFilterStatus('') }}>全部</button>
-            <button type="button" aria-pressed={quickFilter === 'overdue'} onClick={() => { setQuickFilter('overdue'); setFilterStatus('') }}>延期</button>
-            <button type="button" aria-pressed={quickFilter === 'date_unknown'} onClick={() => { setQuickFilter('date_unknown'); setFilterStatus('') }}>待确认日期</button>
-            <button type="button" aria-pressed={quickFilter === 'risk'} onClick={() => { setQuickFilter('risk'); setFilterStatus('') }}>有风险</button>
-            <button type="button" aria-pressed={quickFilter === 'issues'} disabled={currentIssueSnapshot?.state !== 'loaded'} onClick={() => { setQuickFilter('issues'); setFilterStatus('') }}>关联未解决问题</button>
-          </div>
           {currentIssueSnapshot?.state === 'error' && <span className="wp-issue-unavailable" role="status">问题数据加载失败，数量暂不可用。</span>}
           {(quickFilter !== 'all' || filterStatus || filterOwner || search) && <button type="button" className="wp-reset-filters" onClick={() => { setQuickFilter('all'); setFilterStatus(''); setFilterOwner(''); setSearch('') }}>重置筛选</button>}
           {currentIssueSnapshot && <Link className="wp-issue-link" to={`/work/issues?projectId=${effectiveTaskProjectId}`}>查看问题清单</Link>}
         </div>
       </section>}
 
-      {!showDeleted && <div className="wp-mobile-view-switch min-[800px]:hidden" role="group" aria-label="推进表显示方式"><button type="button" aria-pressed={!mobileGridOpen} onClick={() => setMobileGridOpen(false)}>任务卡片</button><button type="button" aria-pressed={mobileGridOpen} onClick={() => setMobileGridOpen(true)}>表格工作台</button></div>}
       {/* Main */}
       {selectedSubTask && showDeleted ? (
         <KeyTaskExecutionDetailView
@@ -1282,27 +1181,8 @@ export function TaskManagementPage() {
         />
       ) : (
       <div className="flex-1 min-w-0 min-h-0 flex overflow-hidden" style={{ background: '#F8FAFC' }}>
-        {!showDeleted && !mobileGridOpen && <div className="min-[800px]:hidden min-w-0 flex-1 overflow-y-auto bg-slate-50">
-          {hasNoTaskProjects ? (
-            <div className="px-4 py-10 text-center text-sm text-slate-500">{TASK_PROJECT_CONTEXT_EMPTY_MESSAGE}</div>
-          ) : requiresProjectSelection ? (
-            <div className="px-4 py-10 text-center text-sm text-slate-500">{TASK_PROJECT_CONTEXT_REQUIRED_MESSAGE}</div>
-          ) : planTableLoadError ? (
-            <div className="px-4 py-10 text-center" role="alert">
-              <p className="text-sm text-rose-700">{planTableLoadError}</p>
-              <button type="button" className="mt-3 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white" onClick={retryPlanTableSubTasks}>重试加载关键任务</button>
-            </div>
-          ) : (
-            <MobileTaskList
-              tasks={mobilePlan.tasks}
-              subTasksByTaskId={mobilePlan.subTasksByTaskId}
-              loading={!planTableReady && !planTableLoadError}
-              onOpenSubTask={openSubDetail}
-            />
-          )}
-        </div>}
         <div
-          className={showDeleted ? 'flex-1 overflow-y-auto' : `${mobileGridOpen ? 'flex' : 'hidden min-[800px]:flex'} work-progress-plan-shell flex-1 min-w-0 overflow-hidden flex-col`}
+          className={showDeleted ? 'flex-1 overflow-y-auto' : 'flex work-progress-plan-shell flex-1 min-w-0 overflow-hidden flex-col'}
           style={showDeleted
             ? { background: '#F1F5F9', padding: '16px 20px 20px', paddingRight: 20 }
             : { background: '#F8FAFC' }}
@@ -1324,7 +1204,7 @@ export function TaskManagementPage() {
           ) : !showDeleted ? (
             <>
               <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden">
-                {(desktopGrid || mobileGridOpen) && <WorkProgressGridWorkspace
+                <WorkProgressGridWorkspace
                   key={`${currentUser?.account_id ?? currentUser?.username}:${effectiveTaskProjectId}`}
                   storageScope={`${currentUser?.account_id ?? currentUser?.username}:${effectiveTaskProjectId}`}
                   memberNames={gridMemberNames}
@@ -1341,6 +1221,7 @@ export function TaskManagementPage() {
                   quickFilter={quickFilter}
                   issueTaskIds={issueTaskIds}
                   issueSubtaskIds={issueSubtaskIds}
+                  issueDataAvailable={currentIssueSnapshot?.state === 'loaded'}
                   loading={!planTableReady && !planTableLoadError}
                   loadError={planTableLoadError}
                   onRetryLoading={retryPlanTableSubTasks}
@@ -1348,7 +1229,7 @@ export function TaskManagementPage() {
                   onClearOwnerFilter={() => setFilterOwner('')}
                   onOpenSubTask={openSubDetail}
                   onEditSubTask={isProjectActive(focusedProject) && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: focusedProject?.user_roles ?? [] }) ? openSubTaskAssignment : undefined}
-                />}
+                />
               </div>
             </>
           ) : loading ? (

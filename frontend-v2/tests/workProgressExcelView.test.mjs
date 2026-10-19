@@ -359,7 +359,9 @@ test('work-progress assignee filter uses key-task assignees instead of project o
 
   assert.match(source, /getKeyTaskAssigneeNames\(tasks, taskSubMap\)/)
   assert.match(source, /taskHasKeyTaskAssignee\(t, taskSubMap, filterOwner\)/)
-  assert.match(source, /assigneeNames\.map\(\(name\) => <option key=\{name\} value=\{name\}>\{name\}<\/option>\)/)
+  const grid = read('src/components/task-management/WorkProgressGridWorkspace.tsx')
+  assert.match(grid, /getKeyTaskAssigneeNames\(props\.tasks, props\.taskSubMap\)/)
+  assert.match(grid, /assigneeNames\.map\(\(name\) => <option key=\{name\} value=\{name\}>\{name\}<\/option>\)/)
   assert.doesNotMatch(source, /resolvedTaskProjects\.flatMap\(\(p\) => p\.owners/)
 })
 

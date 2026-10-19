@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Project, TaskItem, SubTaskItem } from '../../types'
 import { WorkProgressGridWorkspace } from './WorkProgressGridWorkspace'
@@ -12,6 +12,15 @@ const row = { id: 20, task_id: 10, title: '原任务', assignee: '张三', statu
 const input = { project: { id: 1, name: '项目', status: 'active' } as Project, tasks: [{ id: 10, key_task: '重点工作' } as TaskItem], taskSubMap: { 10: [row] }, memberNames: ['张三'], storageScope: 'member:1', filters: { search: '', status: '', owner: '', quickFilter: 'all' as const }, onFiltersChange: vi.fn() }
 afterEach(() => { cleanup(); localStorage.clear() })
 describe('grid workspace', () => {
+  it('opens directly into one table and keeps layout choices behind settings', () => {
+    render(<WorkProgressGridWorkspace {...input} />)
+    expect(screen.queryByRole('button', { name: '文字视图' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '保存视图' })).toBeNull()
+    expect(screen.queryByLabelText('分组方式')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '视图设置' }))
+    expect(screen.getByRole('dialog', { name: '视图设置' })).toBeTruthy()
+    expect(screen.getByLabelText('分组方式')).toBeTruthy()
+  })
   it('keeps pending input after a failed save', async () => {
     render(<WorkProgressGridWorkspace {...input} onSave={vi.fn().mockRejectedValue(new Error('版本冲突'))} />)
     fireEvent.click(await screen.findByText('模拟单元格编辑'))
@@ -21,16 +30,22 @@ describe('grid workspace', () => {
   })
   it('saves and restores a personal view and keeps other projects separate', () => {
     const view = render(<WorkProgressGridWorkspace {...input} />)
+    fireEvent.click(screen.getByRole('button', { name: '视图设置' }))
     fireEvent.change(screen.getByLabelText('分组方式'), { target: { value: 'owner' } })
+    fireEvent.click(screen.getByText('个人视图'))
     fireEvent.click(screen.getByRole('button', { name: '保存视图' }))
     fireEvent.change(screen.getByLabelText('视图名称'), { target: { value: '按负责人' } })
     fireEvent.click(screen.getByRole('button', { name: '确认保存视图' }))
     view.unmount()
     render(<WorkProgressGridWorkspace {...input} />)
-    expect(screen.getByRole('button', { name: '按负责人' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '视图设置' }))
+    fireEvent.click(screen.getByText('个人视图'))
+    expect(within(screen.getByLabelText('个人视图')).getByRole('option', { name: '按负责人' })).toBeTruthy()
     cleanup()
     render(<WorkProgressGridWorkspace {...input} storageScope="member:2" />)
-    expect(screen.queryByRole('button', { name: '按负责人' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '视图设置' }))
+    fireEvent.click(screen.getByText('个人视图'))
+    expect(within(screen.getByLabelText('个人视图')).queryByRole('option', { name: '按负责人' })).toBeNull()
   })
   it('requires review before retrying against a newer server version', async () => {
     const onSave = vi.fn().mockRejectedValueOnce(new Error('版本冲突')).mockResolvedValue(undefined)

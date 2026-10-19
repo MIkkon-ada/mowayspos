@@ -1385,7 +1385,7 @@ function LifecycleMoreMenu({
 
 export function DetailPanel({
   project, projectMembers, tasks, subtasks, roles, onClose, wide,
-  onEdit, onOwnerSubmit, onOpenApprovalMaterials, onReturn, onWorkProgress, onOpenCloseFlow, onOpenArchive,
+  onEdit, onDispatch, onOwnerSubmit, onOpenApprovalMaterials, onReturn, onWorkProgress, onOpenCloseFlow, onOpenArchive,
 }: {
   project: Project
   projectMembers: ProjectMember[]
@@ -1394,6 +1394,7 @@ export function DetailPanel({
   roles: { isSuperAdmin: boolean; isCompanyCeo: boolean; isRealProjectCeo: boolean; isRealOwner: boolean }
   onClose: () => void
   onEdit: () => void
+  onDispatch: () => void
   onOwnerSubmit: () => void
   onOpenApprovalMaterials: () => void
   onReturn: () => void
@@ -1407,7 +1408,10 @@ export function DetailPanel({
   const teamLine = summarizeProjectRoleLine(projectMembers, project)
   const summary = getDraftSummary(tasks, subtasks, project)
   const stageDesc = STAGE_DESCRIPTIONS[status] ?? ''
-  const actionReminder = ACTION_REMINDERS[status] ?? stageDesc
+  const dispatchReadinessMessage = status === 'draft' ? getProjectDispatchReadinessMessage(project) : null
+  const actionReminder = status === 'draft'
+    ? dispatchReadinessMessage ?? '项目核心信息已齐全；可下发给负责人，结束日期可待定。'
+    : ACTION_REMINDERS[status] ?? stageDesc
   const showReturn = status === 'pending_review' && canProjectAction('project.review_start', {
     isTechAdmin: roles.isSuperAdmin,
     projectRoles: roles.isRealProjectCeo ? ['project_ceo'] : [],
@@ -1438,7 +1442,17 @@ export function DetailPanel({
   // 操作按钮定义
   const actionButtons: Array<{ label: string; primary?: boolean; danger?: boolean; onClick: () => void }> = []
   if (status === 'draft' && canEditDraft) {
-    actionButtons.push({ label: '编辑项目', primary: true, onClick: onEdit })
+    const canDispatch = canProjectAction('project.dispatch', {
+      isTechAdmin: roles.isSuperAdmin,
+      isCompanyCeo: roles.isCompanyCeo,
+      lifecycle: status,
+    })
+    if (canDispatch && dispatchReadinessMessage === null) {
+      actionButtons.push({ label: '下发给负责人', primary: true, onClick: onDispatch })
+      actionButtons.push({ label: '编辑基础信息', onClick: onEdit })
+    } else {
+      actionButtons.push({ label: '编辑项目', primary: true, onClick: onEdit })
+    }
   }
   if (status === 'dispatched' && roles.isRealOwner && canOwnerSubmit) {
     actionButtons.push({ label: '完善项目计划', primary: true, onClick: onOwnerSubmit })

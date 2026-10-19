@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getProject, getProjectMembers, approveProject, returnProject } from '../api/projects'
+import { getProject, getProjectMembers, approveProject, dispatchProject, returnProject } from '../api/projects'
 import { fetchTasks } from '../api/tasks'
 import { fetchSubTasksBatch } from '../api/subtasks'
 import { useProject } from '../context/ProjectContext'
@@ -113,6 +113,16 @@ export default function ProjectDetailPage() {
     finally { setReviewLoading(false) }
   }
 
+  async function handleDispatch() {
+    if (!project) return
+    try {
+      const result = await dispatchProject(project.id)
+      setProject((current) => current ? { ...current, status: result.status, lifecycle_status: result.status } : current)
+      reloadProjects()
+      toast.success(`项目“${project.name}”已下发给负责人`)
+    } catch (error: unknown) { toast.error(error instanceof Error ? error.message : '下发失败，请重试') }
+  }
+
   async function handleReturn(reason?: string) {
     if (!project || reviewLoading) return
     if (reason === undefined) { setApprovalMaterialsProject(project); return }
@@ -187,6 +197,7 @@ export default function ProjectDetailPage() {
           wide
           onClose={goBack}
           onEdit={() => navigate(projectEditPath(project.id))}
+          onDispatch={() => void handleDispatch()}
           onOwnerSubmit={() => navigate(projectOwnerSubmitPath(project.id))}
           onOpenApprovalMaterials={() => {
             setApprovalMaterialsProject(project)

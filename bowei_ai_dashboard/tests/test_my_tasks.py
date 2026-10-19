@@ -107,6 +107,34 @@ def test_my_tasks_keeps_id_bound_task_after_person_rename():
     assert [row["id"] for row in result["tasks"]] == [100]
 
 
+def test_person_rename_endpoint_keeps_id_bound_task_in_my_tasks(monkeypatch):
+    from app import schemas
+    from app.routers import people as people_router
+    from app.services.my_tasks import list_my_tasks
+
+    db = _db()
+    _add_person(db, 1, "旧姓名")
+    _account(db, "owner", 1)
+    _add_project(db, 10, "active", [1])
+    _add_task(db, 10, 100, "旧姓名", 1)
+    db.query(models.ProjectMember).filter_by(project_id=10, person_id=1).one().person_name_snapshot = "旧姓名"
+    db.commit()
+    monkeypatch.setattr(people_router, "_require_admin", lambda _user, _db: None)
+
+    people_router.update_person(
+        1,
+        schemas.PersonPayload(name="新姓名"),
+        current_user="admin",
+        db=db,
+    )
+
+    result = list_my_tasks("owner", db)
+    member = db.query(models.ProjectMember).filter_by(project_id=10, person_id=1).one()
+    assert [row["id"] for row in result["tasks"]] == [100]
+    assert result["tasks"][0]["assignee_id"] == 1
+    assert member.person_name_snapshot == "新姓名"
+
+
 def test_my_tasks_uses_legacy_name_only_when_it_uniquely_maps_to_caller():
     from app.services.my_tasks import list_my_tasks
 

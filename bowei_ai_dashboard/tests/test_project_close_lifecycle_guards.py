@@ -128,6 +128,47 @@ def test_superadmin_archive_allows_only_ended_to_archived():
     assert db.get(models.Project, 1).status == "archived"
 
 
+@pytest.mark.parametrize("actor", ["owner", "coach", "member"])
+def test_only_tech_admin_can_archive_ended_project(actor: str):
+    db, *_ = _seed("ended")
+
+    with pytest.raises(HTTPException) as exc:
+        projects.archive_project(1, current_user=actor, db=db)
+
+    assert exc.value.status_code == 403
+    assert db.get(models.Project, 1).status == "ended"
+    assert db.query(models.OperationLog).filter_by(action="archive_project").count() == 0
+
+
+def test_archive_changes_lifecycle_without_purging_project_history():
+    db, task_id, submission_id, change_id = _seed("ended")
+    meeting = models.Meeting(project_id=1, title="历史会议", transcript_text="会议原文")
+    issue = models.Issue(project_id=1, description="历史问题")
+    achievement = models.Achievement(project_id=1, name="历史成果")
+    db.add_all([meeting, issue, achievement])
+    db.flush()
+    attachment = models.AchievementAttachment(
+        project_id=1, achievement_id=achievement.id, storage_key="1/history",
+        original_name="成果附件.pdf", mime_type="application/pdf", size_bytes=12,
+    )
+    db.add(attachment)
+    db.commit()
+    history_ids = (meeting.id, issue.id, achievement.id, attachment.id)
+
+    result = projects.archive_project(1, current_user="moways", db=db)
+
+    assert result["status"] == "archived"
+    assert db.get(models.Project, 1).status == "archived"
+    assert db.get(models.Task, task_id) is not None
+    assert db.get(models.UpdateSubmission, submission_id) is not None
+    assert db.get(models.MemberChangeRequest, change_id) is not None
+    assert db.get(models.Meeting, history_ids[0]) is not None
+    assert db.get(models.Issue, history_ids[1]) is not None
+    assert db.get(models.Achievement, history_ids[2]) is not None
+    assert db.get(models.AchievementAttachment, history_ids[3]) is not None
+    assert db.query(models.OperationLog).filter_by(action="archive_project").count() == 1
+
+
 @pytest.mark.parametrize(
     "status",
     ["draft", "dispatched", "pending_kickoff", "pending_review", "returned", "active", "pending_close", "ended", "archived"],

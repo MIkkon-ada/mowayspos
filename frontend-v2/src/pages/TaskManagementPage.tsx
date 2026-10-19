@@ -261,6 +261,7 @@ export function TaskManagementPage() {
   const [autoSelectedTaskProjectId, setAutoSelectedTaskProjectId] = useState<number | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [planTableLoading, setPlanTableLoading] = useState(false)
+  const [planTableLoadError, setPlanTableLoadError] = useState<string | null>(null)
   const [progressOpen, setProgressOpen] = useState(false)
   const [progressText, setProgressText] = useState('')
   const [progressSubmitState, setProgressSubmitState] = useState<'idle' | 'submitting' | 'done'>('idle')
@@ -589,11 +590,12 @@ export function TaskManagementPage() {
   }), [planBaseTasks, resolvedTaskProjects, search])
 
   function ensurePlanTableSubTasksLoaded() {
-    if (planTableLoading) return
+    if (planTableLoading || planTableLoadError) return
     const missingTasks = tasks.filter((task) => !(task.id in taskSubMap))
     if (missingTasks.length === 0) return
     const missingIds = missingTasks.map((task) => task.id)
     setPlanTableLoading(true)
+    setPlanTableLoadError(null)
     fetchSubTasksBatch(missingIds, false)
       .then((batch) => {
         setTaskSubMap((prev) => {
@@ -606,20 +608,38 @@ export function TaskManagementPage() {
         })
       })
       .catch(() => {
-        // 批量接口失败：兜底置空，避免反复请求卡住首屏
-        setTaskSubMap((prev) => {
-          const next = { ...prev }
-          missingIds.forEach((taskId) => { next[taskId] = [] })
-          return next
-        })
+        // 保留未加载状态，避免把接口失败伪装成“暂无关键任务”。
+        setPlanTableLoadError('关键任务加载失败，工作推进表暂不可用。请检查网络后重试。')
       })
       .finally(() => setPlanTableLoading(false))
   }
 
+  function retryPlanTableSubTasks() {
+    if (planTableLoading) return
+    setPlanTableLoadError(null)
+    const missingIds = tasks.filter((task) => !(task.id in taskSubMap)).map((task) => task.id)
+    if (!missingIds.length) return
+    setPlanTableLoading(true)
+    fetchSubTasksBatch(missingIds, false)
+      .then((batch) => {
+        setTaskSubMap((prev) => {
+          const next = { ...prev }
+          missingIds.forEach((taskId) => { next[taskId] = batch[String(taskId)] ?? [] })
+          return next
+        })
+      })
+      .catch(() => setPlanTableLoadError('关键任务加载仍然失败，请稍后重试。'))
+      .finally(() => setPlanTableLoading(false))
+  }
+
+  useEffect(() => {
+    setPlanTableLoadError(null)
+  }, [effectiveTaskProjectId])
+
   useEffect(() => {
     if (showDeleted) return
     ensurePlanTableSubTasksLoaded()
-  }, [showDeleted, tasks, planTableLoading, taskSubMap])
+  }, [showDeleted, tasks, planTableLoading, planTableLoadError, taskSubMap])
 
   // 进入计划视图时预加载项目成员列表（用于责任人下拉）
   useEffect(() => {
@@ -627,7 +647,7 @@ export function TaskManagementPage() {
     ensureProjectMembersLoaded(focusedProject.id)
   }, [focusedProject])
 
-  const planTableReady = !planTableLoading && tasks.every((task) => task.id in taskSubMap)
+  const planTableReady = !planTableLoading && !planTableLoadError && tasks.every((task) => task.id in taskSubMap)
   const currentIssueSnapshot = issueSnapshot.projectId === effectiveTaskProjectId ? issueSnapshot : null
   const openProjectIssues = useMemo(() => currentIssueSnapshot?.state === 'loaded'
     ? currentIssueSnapshot.items.filter((issue) => issue.status !== '已解决' && issue.status !== '已关闭')
@@ -1227,11 +1247,16 @@ export function TaskManagementPage() {
             <div className="px-4 py-10 text-center text-sm text-slate-500">{TASK_PROJECT_CONTEXT_EMPTY_MESSAGE}</div>
           ) : requiresProjectSelection ? (
             <div className="px-4 py-10 text-center text-sm text-slate-500">{TASK_PROJECT_CONTEXT_REQUIRED_MESSAGE}</div>
+          ) : planTableLoadError ? (
+            <div className="px-4 py-10 text-center" role="alert">
+              <p className="text-sm text-rose-700">{planTableLoadError}</p>
+              <button type="button" className="mt-3 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white" onClick={retryPlanTableSubTasks}>重试加载关键任务</button>
+            </div>
           ) : (
             <MobileTaskList
               tasks={mobilePlan.tasks}
               subTasksByTaskId={mobilePlan.subTasksByTaskId}
-              loading={!planTableReady}
+              loading={!planTableReady && !planTableLoadError}
               onOpenSubTask={openSubDetail}
             />
           )}
@@ -1270,7 +1295,11 @@ export function TaskManagementPage() {
                   quickFilter={quickFilter}
                   issueTaskIds={issueTaskIds}
                   issueSubtaskIds={issueSubtaskIds}
-                  loading={planTableLoading}
+                  loading={!planTableReady && !planTableLoadError}
+                  loadError={planTableLoadError}
+                  onRetryLoading={retryPlanTableSubTasks}
+                  onClearStatusFilter={() => setFilterStatus('')}
+                  onClearOwnerFilter={() => setFilterOwner('')}
                   onOpenSubTask={openSubDetail}
                   onEditSubTask={isProjectActive(focusedProject) && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: focusedProject?.user_roles ?? [] }) ? openSubTaskAssignment : undefined}
                 />

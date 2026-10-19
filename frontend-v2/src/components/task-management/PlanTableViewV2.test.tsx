@@ -134,6 +134,33 @@ describe('shared work progress table', () => {
     expect(within(table).queryAllByRole('listitem')).toHaveLength(0)
     expect(screen.getByText('尚未拆分关键任务')).toBeTruthy()
   })
+  it('shows a retryable error instead of treating a failed batch load as an empty plan', () => {
+    const onRetry = vi.fn()
+    render(<PlanTableViewV2 project={project} tasks={[task]} taskSubMap={{}} loadError="关键任务加载失败，请重试。" onRetryLoading={onRetry} />)
+
+    expect(screen.getByRole('alert').textContent).toContain('关键任务加载失败，请重试。')
+    expect(screen.queryByRole('table', { name: '工作推进明细' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '重试加载关键任务' }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+  })
+  it('shows result totals that match the currently filtered work and key-task rows', () => {
+    render(<PlanTableViewV2 {...input} searchText="提交审核" />)
+
+    expect(screen.getByRole('status').textContent).toContain('命中 1 项重点工作 · 1 项关键任务')
+    expect(screen.getByRole('table', { name: '工作推进明细' }).querySelectorAll('tbody tr.wp-row-start')).toHaveLength(1)
+  })
+  it('shows applied status and owner conditions with direct clear actions', () => {
+    const onClearStatus = vi.fn()
+    const onClearOwner = vi.fn()
+    render(<PlanTableViewV2 {...input} statusFilter="延期" ownerFilter="张三" onClearStatusFilter={onClearStatus} onClearOwnerFilter={onClearOwner} />)
+
+    expect(screen.getByRole('group', { name: '已应用的详细筛选' }).textContent).toContain('状态：延期')
+    expect(screen.getByRole('group', { name: '已应用的详细筛选' }).textContent).toContain('负责人：张三')
+    fireEvent.click(screen.getByRole('button', { name: '移除状态筛选：延期' }))
+    fireEvent.click(screen.getByRole('button', { name: '移除负责人筛选：张三' }))
+    expect(onClearStatus).toHaveBeenCalledTimes(1)
+    expect(onClearOwner).toHaveBeenCalledTimes(1)
+  })
   it('shows the three project-enabled fields from each key task, while keeping seven default columns', () => {
     const first = { ...subs[0], expected_outcome: '形成诊断报告', goal: '确认核心问题', bowei_role: '博维负责访谈与分析' }
     const view = render(<PlanTableViewV2 project={project} tasks={[task]} taskSubMap={{ 1: [first] }} />)

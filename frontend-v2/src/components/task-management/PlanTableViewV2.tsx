@@ -18,7 +18,11 @@ type Props = {
   issueTaskIds?: ReadonlySet<number>
   issueSubtaskIds?: ReadonlySet<number>
   loading?: boolean
+  loadError?: string | null
   optionalColumns?: readonly WorkProgressOptionalColumnKey[]
+  onRetryLoading?: () => void
+  onClearStatusFilter?: () => void
+  onClearOwnerFilter?: () => void
   onOpenSubTask?: (subtask: SubTaskItem) => void
   onEditSubTask?: (task: TaskItem, subtask: SubTaskItem) => void
 }
@@ -78,7 +82,7 @@ function TaskTableRow({ row, onOpen, onEdit, onOpenAcceptance, optionalColumns }
   </tr>
 }
 
-export function PlanTableViewV2({ project, tasks, taskSubMap, searchText = '', statusFilter = '', ownerFilter = '', quickFilter = 'all', issueTaskIds = new Set<number>(), issueSubtaskIds = new Set<number>(), loading = false, optionalColumns = [], onOpenSubTask, onEditSubTask }: Props) {
+export function PlanTableViewV2({ project, tasks, taskSubMap, searchText = '', statusFilter = '', ownerFilter = '', quickFilter = 'all', issueTaskIds = new Set<number>(), issueSubtaskIds = new Set<number>(), loading = false, loadError = null, optionalColumns = [], onRetryLoading, onClearStatusFilter, onClearOwnerFilter, onOpenSubTask, onEditSubTask }: Props) {
   const [acceptanceTask, setAcceptanceTask] = useState<TaskItem | null>(null)
   const [collapsedWorkstreams, setCollapsedWorkstreams] = useState<Set<number>>(new Set())
   const enabledOptionalColumns = useMemo(() => WORK_PROGRESS_OPTIONAL_COLUMNS.filter((column) => optionalColumns.includes(column.key)).map((column) => column.key), [optionalColumns])
@@ -93,6 +97,7 @@ export function PlanTableViewV2({ project, tasks, taskSubMap, searchText = '', s
     return [...grouped.entries()].map(([taskId, group]) => ({ taskId, ...group }))
   }, [rows])
   const sizingRows = useMemo(() => buildPlanRows({ project, tasks, taskSubMap }), [project, tasks, taskSubMap])
+  const visibleKeyTaskCount = new Set(rows.flatMap((row) => row.subtask ? [row.subtask.id] : [])).size
   const columns = useMemo(() => [
     ...WORK_PROGRESS_VIEW_COLUMNS.slice(0, 1),
     ...WORK_PROGRESS_OPTIONAL_COLUMNS.filter((column) => enabledOptionalColumns.includes(column.key)),
@@ -101,7 +106,18 @@ export function PlanTableViewV2({ project, tasks, taskSubMap, searchText = '', s
   const { scrollRef, widths, startResize, changeWidth, resetWidth } = useWorkProgressColumnLayout(sizingRows, loading, project?.id, enabledOptionalColumns)
   const tableWidth = columns.reduce((sum, column) => sum + widths[column.key], 0)
   if (loading) return <div className="wp-empty" role="status">正在加载项目工作…</div>
+  if (loadError) return <section className="wp-workspace" aria-label="项目工作推进表">
+    <div className="wp-empty" role="alert">
+      <p>{loadError}</p>
+      {onRetryLoading && <button type="button" className="wp-header-button wp-header-button--primary" aria-label="重试加载关键任务" onClick={onRetryLoading}>重试加载关键任务</button>}
+    </div>
+  </section>
   return <section className="wp-workspace" aria-label="项目工作推进表">
+    <div className="wp-results-summary" role="status" aria-live="polite">命中 {groups.length} 项重点工作 · {visibleKeyTaskCount} 项关键任务</div>
+    {(statusFilter || ownerFilter) && <div className="wp-applied-filters" role="group" aria-label="已应用的详细筛选">
+      {statusFilter && <span className="wp-filter-chip">状态：{statusFilter}{onClearStatusFilter && <button type="button" aria-label={`移除状态筛选：${statusFilter}`} onClick={onClearStatusFilter}>×</button>}</span>}
+      {ownerFilter && <span className="wp-filter-chip">负责人：{ownerFilter}{onClearOwnerFilter && <button type="button" aria-label={`移除负责人筛选：${ownerFilter}`} onClick={onClearOwnerFilter}>×</button>}</span>}
+    </div>}
     <div ref={scrollRef} className="wp-table-scroll" key={project?.id}>
       {rows.length ? <table className="wp-table" aria-label="工作推进明细" style={{ width: tableWidth } as CSSProperties}>
         <colgroup>{columns.map((column) => <col key={column.key} className={`wp-col-${column.key}`} style={{ width: widths[column.key] }} />)}</colgroup>

@@ -171,6 +171,11 @@
 .wp-reset-filters, .wp-issue-link { padding: 3px 0; border: 0; background: transparent; color: #3d719d; font-size: 11px; text-decoration: none; cursor: pointer; white-space: nowrap; }
 .wp-reset-filters:hover, .wp-issue-link:hover { color: #205681; text-decoration: underline; text-underline-offset: 2px; }
 .wp-issue-unavailable { color: #a66f21; font-size: 11px; }
+.wp-results-summary { flex: 0 0 auto; padding: 7px 18px; border-bottom: 1px solid #edf1f5; background: #fff; color: #68798c; font-size: 11px; font-variant-numeric: tabular-nums; }
+.wp-applied-filters { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 6px; padding: 7px 18px; border-bottom: 1px solid #edf1f5; background: #fbfcfe; }
+.wp-filter-chip { display: inline-flex; min-height: 24px; align-items: center; gap: 7px; padding: 2px 5px 2px 9px; border: 1px solid #d9e4ef; border-radius: 999px; background: #f2f7fc; color: #425b73; font-size: 11px; }
+.wp-filter-chip button { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border: 0; border-radius: 50%; background: transparent; color: #637b91; font-size: 15px; line-height: 1; cursor: pointer; }
+.wp-filter-chip button:hover { background: #e2ecf5; color: #294a68; }
 .wp-detail-overlay { position: fixed; inset: 0; z-index: 40; display: flex; justify-content: flex-end; background: #142b3b55; }
 .wp-detail-backdrop { position: absolute; inset: 0; border: 0; background: transparent; cursor: default; }
 .wp-detail-panel { position: relative; z-index: 1; display: flex; width: min(760px, 82vw); height: 100%; min-width: 0; flex-direction: column; overflow: hidden; background: #f8fafc; box-shadow: -16px 0 44px #132c3b2b; }

@@ -38,6 +38,7 @@ RESPONSE_VALIDATION_ERROR_CODES = frozenset({
 _SAFE_ERROR_CODES = {
     *RESPONSE_VALIDATION_ERROR_CODES,
     "AI_RESPONSE_INVALID",
+    "AI_CAPABILITY_NOT_CONFIGURED",
     "AI_UPSTREAM_TIMEOUT",
     "AI_UPSTREAM_RATE_LIMIT",
     "AI_UPSTREAM_5XX",
@@ -204,6 +205,12 @@ class AIService:
     def _to_upstream_error(exc: Exception) -> AIUpstreamError:
         if isinstance(exc, AIUpstreamError):
             return exc
+        if isinstance(exc, AICapabilityNotConfigured):
+            return AIUpstreamError(
+                "AI_CAPABILITY_NOT_CONFIGURED",
+                retryable=False,
+                message="AI capability is not configured",
+            )
         if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
             return AIUpstreamError("AI_UPSTREAM_TIMEOUT", retryable=True)
         if isinstance(exc, (ConnectionError, OSError, AsrStartError)):

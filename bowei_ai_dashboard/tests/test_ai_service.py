@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from cryptography.fernet import Fernet
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -146,6 +147,24 @@ def test_non_retryable_error_does_not_try_fallback(db, configured_chat_policy, f
         )
 
     assert fake_adapters.chat_calls == [primary.id]
+
+
+def test_unreadable_local_credential_is_a_configuration_error_not_an_upstream_error(
+    db, configured_chat_policy, fake_adapters
+):
+    with pytest.raises(AIUpstreamError) as raised:
+        AIService(db, adapters=fake_adapters, cipher_key=Fernet.generate_key().decode("ascii")).invoke_chat(
+            Capability.MEETING_ANALYSIS, "prompt"
+        )
+
+    assert raised.value.code == "AI_CAPABILITY_NOT_CONFIGURED"
+    assert fake_adapters.chat_calls == []
+    log = db.query(models.AIInvocationLog).one()
+    assert (log.status, log.error_code, log.attempt_no) == (
+        "failed",
+        "AI_CAPABILITY_NOT_CONFIGURED",
+        1,
+    )
 
 
 def test_task_plan_drafting_has_no_client_request_timeout(db, configured_chat_policy, fake_adapters):

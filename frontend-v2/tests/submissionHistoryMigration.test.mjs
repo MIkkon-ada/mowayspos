@@ -94,10 +94,14 @@ test('history rows show project time source and normalized review state', () => 
   assert.match(source, /normalizeHistoryStatus\(item\.confirm_status\)/)
 })
 
-test('returned history detail reuses the existing resubmitSubmission API client', () => {
-  const source = `${read(PAGE)}\n${read(DETAIL)}`
-  assert.match(source, /resubmitSubmission/)
-  assert.match(source, /修改并重新提交/)
+test('returned history detail re-extracts and resubmits through the existing API client', () => {
+  const detail = read(DETAIL)
+  const page = read(PAGE)
+  const submission = read('src/features/voice-update/useVoiceSubmission.ts')
+  assert.match(detail, /onReviseAndReextract\(\s*detailItem\.id[\s\S]*?transcriptText\.trim\(\)/)
+  assert.match(detail, /修改并重新提取/)
+  assert.match(page, /next\.set\('resubmitId', String\(id\)\)/)
+  assert.match(submission, /resubmitSubmission\(\s*resubmission\.id/)
 })
 
 test('submission success opens history and no longer navigates submitters to confirmations', () => {

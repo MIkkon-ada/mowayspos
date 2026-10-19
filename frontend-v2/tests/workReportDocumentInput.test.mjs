@@ -52,11 +52,14 @@ test('starting a new report clears parsed document text and document metadata to
   )
 })
 
-test('returned report history edits and resubmits without starting a duplicate report', () => {
+test('returned report history re-extracts before resubmitting without creating a duplicate report', () => {
   const detail = read('src/features/voice-update/VoiceUpdateDetailDrawer.tsx')
-  assert.match(
-    detail,
-    /resubmitSubmission\([\s\S]*?detailItem\.id[\s\S]*?transcriptText\.trim\(\)/,
-  )
+  const page = read('src/pages/VoiceUpdatePage.tsx')
+  const submission = read('src/features/voice-update/useVoiceSubmission.ts')
+  assert.match(detail, /onReviseAndReextract\(\s*detailItem\.id[\s\S]*?transcriptText\.trim\(\)/)
   assert.match(detail, /value=\{transcriptText\}/)
+  assert.match(detail, /修改并重新提取/)
+  assert.match(page, /next\.set\('resubmitId', String\(id\)\)/)
+  assert.match(submission, /if \(resubmission\) \{[\s\S]*?resubmitSubmission\(\s*resubmission\.id/)
+  assert.match(submission, /else \{[\s\S]*?createUpdate\(/)
 })

@@ -16,6 +16,7 @@ const STATUS_FILE = 'src/components/task-management/PlanTableStatusBar.tsx'
 const CSS_FILE = 'src/components/task-management/planTableExcelV2.css'
 const VIEW_FILE = 'src/components/task-management/PlanTableViewV2.tsx'
 const DETAIL_FILE = 'src/components/task-management/KeyTaskExecutionDetailView.tsx'
+const WORKSPACE_FILE = 'src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx'
 const PAGE_FILE = 'src/pages/TaskManagementPage.tsx'
 const EXPORT_FILE = 'src/utils/exportPlanTableExcel.ts'
 
@@ -94,11 +95,12 @@ const taskSubMap = {
 
 test('work progress keeps only the plan table while key-task detail remains available', () => {
   const source = read(PAGE_FILE)
+  const workspace = read(WORKSPACE_FILE)
   assert.doesNotMatch(source, /ExecutionProgressView/)
   assert.doesNotMatch(source, /ExecutionProgressView/)
   assert.match(source, /<PlanTableViewV2[\s\S]*?onOpenSubTask=\{openSubDetail\}/)
   assert.match(source, /<KeyTaskExecutionDetailView/)
-  assert.match(source, /aria-label="关键任务执行详情"/)
+  assert.match(workspace, /aria-label="关键任务执行详情"/)
   assert.match(source, /\{selectedSubTask \? <KeyTaskExecutionDetailView/)
   assert.match(source, /fetchSubtaskDetail\(st\.id\)/)
 })
@@ -174,6 +176,8 @@ test('plan rows expose confirmed progress and distinct status markers', async ()
         ...taskSubMap[11][0],
         status: '进行中',
         is_overdue: true,
+        due_kind: 'exact',
+        due_date: '2026-07-10',
         has_risk: true,
         latest_confirmed_submission: {
           id: 9,

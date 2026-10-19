@@ -58,13 +58,14 @@ test('key-task workspace uses the shared SVG chevron for its back control', () =
 test('workspace keeps its history scrollable inside the fixed application shell', () => {
   const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
 
-  assert.match(workspace, /<main className="flex-1 min-h-0 overflow-y-auto bg-slate-50">/)
+  assert.match(workspace, /<main className="flex-1 min-h-0 overflow-y-auto bg-slate-50"(?:\s[^>]*|)>/)
+  assert.match(workspace, /aria-label="关键任务执行详情"/)
   assert.doesNotMatch(workspace, /<main className="min-h-full bg-slate-50">/)
 })
 
 test('workspace owns a flex-safe vertical scroll container', () => {
   const workspace = read('src/components/key-task-workspace/KeyTaskExecutionWorkspace.tsx')
-  assert.match(workspace, /<main className="flex-1 min-h-0 overflow-y-auto bg-slate-50">/)
+  assert.match(workspace, /<main className="flex-1 min-h-0 overflow-y-auto bg-slate-50"(?:\s[^>]*|)>/)
 })
 
 test('execution plan table has the compact approved columns and row action', () => {

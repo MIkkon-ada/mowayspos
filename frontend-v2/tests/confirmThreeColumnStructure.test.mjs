@@ -179,10 +179,15 @@ describe('handler function preservation', () => {
       'Expected handleDecision handler to remain');
   });
 
-  it('submitter resubmit handler moved to work report history detail', () => {
-    const detail = readFileSync(resolve(__dirname, '..', 'src', 'features', 'voice-update', 'VoiceUpdateDetailDrawer.tsx'), 'utf8');
-    assert.ok(/\bhandleResubmit\b/.test(detail) && detail.includes('resubmitSubmission'),
-      'Expected handleResubmit to live in work report history detail');
+  it('returned report detail routes through re-extraction before resubmitting the original record', () => {
+    const root = resolve(__dirname, '..');
+    const detail = readFileSync(resolve(root, 'src', 'features', 'voice-update', 'VoiceUpdateDetailDrawer.tsx'), 'utf8');
+    const page = readFileSync(resolve(root, 'src', 'pages', 'VoiceUpdatePage.tsx'), 'utf8');
+    const submission = readFileSync(resolve(root, 'src', 'features', 'voice-update', 'useVoiceSubmission.ts'), 'utf8');
+    assert.match(detail, /onReviseAndReextract\(\s*detailItem\.id[\s\S]*?transcriptText\.trim\(\)/);
+    assert.match(detail, /修改并重新提取/);
+    assert.match(page, /next\.set\('resubmitId', String\(id\)\)/);
+    assert.match(submission, /resubmitSubmission\(\s*resubmission\.id[\s\S]*?mergedHumanResult[\s\S]*?content/);
   });
 
   it('still has handleTaskCardDecision', () => {

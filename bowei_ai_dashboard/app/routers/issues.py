@@ -866,6 +866,7 @@ def submit_opinion(
 
     before = crud.to_dict(row)
     row.opinion = opinion
+    row.confirmed_by = current_user
     row.status = IF.STATUS_PENDING_OWNER_CONFIRM
     row.edit_count = (row.edit_count or 0) + 1
     crud.log(db, current_user, "issue_submit_opinion", "issue", row.id, before, crud.to_dict(row), project_id=project_id)

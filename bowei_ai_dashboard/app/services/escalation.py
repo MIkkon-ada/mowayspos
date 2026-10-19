@@ -265,12 +265,12 @@ def write_back_to_card(
     if issue.issue_type == IF.TYPE_DECISION:
         card["confirmation_status"] = CARD_CEO_DECIDED
         card["ceo_note"] = issue.opinion or ""
-        card["ceo_operator"] = issue.need_decision_by or ""
+        card["ceo_operator"] = issue.confirmed_by or issue.need_decision_by or ""
         card["ceo_decided_at"] = utc_now().isoformat()
     else:
         card["confirmation_status"] = CARD_COO_GIVEN
         card["coordinator_note"] = issue.opinion or ""
-        card["coordinator_operator"] = issue.need_decision_by or ""
+        card["coordinator_operator"] = issue.confirmed_by or issue.need_decision_by or ""
         card["coordinator_feedback_at"] = utc_now().isoformat()
 
     # 通用回写字段

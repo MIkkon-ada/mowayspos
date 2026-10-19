@@ -4,7 +4,7 @@ import { exportTasksToExcel } from '../utils/exportTasksExcel'
 import { exportPlanTableToExcel } from '../utils/exportPlanTableExcel'
 import { createTask, deleteTask, fetchTaskLogs, fetchTaskUpdates, fetchTasks, updateTask, extractTasksFromOutline, batchCreateTasks, restoreTask } from '../api/tasks'
 import type { TaskLog, TaskPayload, TaskUpdate, TaskDraft } from '../api/tasks'
-import { fetchSubTasks, fetchSubTasksBatch, createSubTask, patchSubTaskStatus, isPendingConfirmation, updateSubTask, deleteSubTask, restoreSubTask, fetchSubtaskDetail } from '../api/subtasks'
+import { fetchSubTasks, fetchSubTasksBatch, createSubTask, patchSubTaskStatus, isPendingConfirmation, updateSubTask, deleteSubTask, restoreSubTask, fetchSubtaskDetail, saveWorkProgressEdits } from '../api/subtasks'
 import { fetchIssues } from '../api/issues'
 import type { SubTaskDetail, SubTaskPayload } from '../api/subtasks'
 import { createUpdate } from '../api/updates'
@@ -17,7 +17,8 @@ import { getProjectDisplayName, getProjectGroupKey, getProjectNameFromGroupKey }
 import { getProjectById, getProjectIdFromRecord } from '../domain/projectIdentity'
 import { isProjectActive, isProjectArchived } from '../domain/projectLifecycleStatus'
 import { getKeyTaskAssigneeNames, taskHasKeyTaskAssignee } from '../domain/keyTaskAssigneeFilter'
-import { PlanTableViewV2 } from '../components/task-management/PlanTableViewV2'
+import { WorkProgressGridWorkspace } from '../components/task-management/WorkProgressGridWorkspace'
+import type { GridEdit } from '../components/task-management/workProgressGridModel'
 import { buildMobileTaskList, buildPlanRows, summarizeWorkProgress } from '../components/task-management/planTableViewModel'
 import { WORK_PROGRESS_OPTIONAL_COLUMNS, type WorkProgressOptionalColumnKey } from '../components/task-management/workProgressColumnSizing'
 import { parseWorkProgressProjectId, updateWorkProgressProjectQuery } from '../components/task-management/workProgressProjectQuery'
@@ -256,6 +257,15 @@ export function TaskManagementPage() {
   const [columnsSaving, setColumnsSaving] = useState(false)
   const [projectStandardExpanded, setProjectStandardExpanded] = useState(false)
   const [showDeleted, setShowDeleted] = useState(false)
+  const [mobileGridOpen, setMobileGridOpen] = useState(() => { try { return sessionStorage.getItem('wp-preferred-mobile-view') === 'grid' } catch { return false } })
+  const [desktopGrid, setDesktopGrid] = useState(() => window.matchMedia('(min-width: 800px)').matches)
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 800px)')
+    const update = () => setDesktopGrid(media.matches)
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
+  useEffect(() => { try { sessionStorage.setItem('wp-preferred-mobile-view', mobileGridOpen ? 'grid' : 'cards') } catch { /* View preference is optional. */ } }, [mobileGridOpen])
   // URL 是推进表项目范围的唯一来源，确保刷新和前进/后退恢复同一项目。
   const viewProjectId = parseWorkProgressProjectId(searchParams)
   const [autoSelectedTaskProjectId, setAutoSelectedTaskProjectId] = useState<number | null>(null)
@@ -303,6 +313,7 @@ export function TaskManagementPage() {
   const focusedProject = projectFromContext ?? resolvedProjectForContext ?? null
   const focusedSubTaskProject = projectForSubTask(resolvedTaskProjects, tasks, selectedSubTask)
   const projectArchived = isProjectArchived(focusedProject)
+  const gridMemberNames = useMemo(() => [...new Set((projectMembersByProject[effectiveTaskProjectId ?? 0] ?? []).map(member => member.person_name_snapshot).filter(Boolean))].sort(), [projectMembersByProject, effectiveTaskProjectId])
   const trashProject = resolvedTaskProjects.find((p) => p.id === effectiveTaskProjectId) ?? null
   const canManageTrash = currentUser?.is_tech_admin || resolvedTaskProjects.some((p) =>
     canManageProjectTrash({ isTechAdmin: false, projectRoles: p.user_roles ?? [] }),
@@ -708,6 +719,19 @@ export function TaskManagementPage() {
     )
   }
 
+  async function saveGridEdits(edits: GridEdit[]) {
+    const projectId = effectiveTaskProjectId
+    if (!projectId) throw new Error('请先选择项目')
+    await saveWorkProgressEdits(projectId, edits)
+    try {
+      const updatedTasks = await fetchTasks(projectId, false)
+      const updatedSubs = await fetchSubTasksBatch(updatedTasks.map(task => task.id), false)
+      if (selectionProjectRef.current !== projectId) return
+      setTasks(updatedTasks)
+      setTaskSubMap(Object.fromEntries(updatedTasks.map(task => [task.id, updatedSubs[String(task.id)] ?? []])))
+    } catch { toast.warning('修改已保存，但表格刷新失败；请刷新页面查看最新数据。') }
+  }
+
   function openSubTaskAssignment(task: TaskItem, subTask?: SubTaskItem | SubTaskDetail | null) {
     const taskProject = projectForTask(resolvedTaskProjects, task)
     if (!isProjectActive(taskProject)) {
@@ -1082,7 +1106,7 @@ export function TaskManagementPage() {
   const projectStandardText = focusedProject?.objectives?.trim() || focusedProject?.description?.trim() || ''
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className={`flex-1 min-h-0 flex flex-col overflow-hidden${mobileGridOpen ? ' wp-grid-mode' : ''}`}>
       {formOpen && (
         <TaskFormModal
           task={formTask}
@@ -1153,7 +1177,7 @@ export function TaskManagementPage() {
           <span><ChevronDownIcon className="wp-project-picker-icon" /></span>
         </div>
         <div className="wp-header-controls">
-          {!showDeleted && effectiveTaskProjectId != null && <div className="wp-filter-anchor">
+          {!showDeleted && !mobileGridOpen && effectiveTaskProjectId != null && <div className="wp-filter-anchor min-[800px]:hidden">
             <button type="button" className="wp-header-button" aria-haspopup="dialog" aria-expanded={columnsOpen} onClick={() => setColumnsOpen((open) => !open)}>字段{optionalColumns.length > 0 ? <span className="wp-filter-count">+{optionalColumns.length}</span> : null}</button>
             {columnsOpen && <div className="wp-columns-popover" role="dialog" aria-label="工作推进表扩展字段">
               <strong>项目扩展列</strong>
@@ -1241,6 +1265,7 @@ export function TaskManagementPage() {
         </div>
       </section>}
 
+      {!showDeleted && <div className="wp-mobile-view-switch min-[800px]:hidden" role="group" aria-label="推进表显示方式"><button type="button" aria-pressed={!mobileGridOpen} onClick={() => setMobileGridOpen(false)}>任务卡片</button><button type="button" aria-pressed={mobileGridOpen} onClick={() => setMobileGridOpen(true)}>表格工作台</button></div>}
       {/* Main */}
       {selectedSubTask && showDeleted ? (
         <KeyTaskExecutionDetailView
@@ -1257,7 +1282,7 @@ export function TaskManagementPage() {
         />
       ) : (
       <div className="flex-1 min-w-0 min-h-0 flex overflow-hidden" style={{ background: '#F8FAFC' }}>
-        {!showDeleted && <div className="min-[800px]:hidden min-w-0 flex-1 overflow-y-auto bg-slate-50">
+        {!showDeleted && !mobileGridOpen && <div className="min-[800px]:hidden min-w-0 flex-1 overflow-y-auto bg-slate-50">
           {hasNoTaskProjects ? (
             <div className="px-4 py-10 text-center text-sm text-slate-500">{TASK_PROJECT_CONTEXT_EMPTY_MESSAGE}</div>
           ) : requiresProjectSelection ? (
@@ -1277,7 +1302,7 @@ export function TaskManagementPage() {
           )}
         </div>}
         <div
-          className={showDeleted ? 'flex-1 overflow-y-auto' : 'hidden min-[800px]:flex work-progress-plan-shell flex-1 min-w-0 overflow-hidden flex-col'}
+          className={showDeleted ? 'flex-1 overflow-y-auto' : `${mobileGridOpen ? 'flex' : 'hidden min-[800px]:flex'} work-progress-plan-shell flex-1 min-w-0 overflow-hidden flex-col`}
           style={showDeleted
             ? { background: '#F1F5F9', padding: '16px 20px 20px', paddingRight: 20 }
             : { background: '#F8FAFC' }}
@@ -1299,7 +1324,13 @@ export function TaskManagementPage() {
           ) : !showDeleted ? (
             <>
               <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden">
-                <PlanTableViewV2
+                {(desktopGrid || mobileGridOpen) && <WorkProgressGridWorkspace
+                  key={`${currentUser?.account_id ?? currentUser?.username}:${effectiveTaskProjectId}`}
+                  storageScope={`${currentUser?.account_id ?? currentUser?.username}:${effectiveTaskProjectId}`}
+                  memberNames={gridMemberNames}
+                  filters={{ search, status: filterStatus, owner: filterOwner, quickFilter }}
+                  onFiltersChange={filters => { setSearch(filters.search); setFilterStatus(filters.status); setFilterOwner(filters.owner); setQuickFilter(filters.quickFilter) }}
+                  onSave={isProjectActive(focusedProject) && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: focusedProject?.user_roles ?? [] }) ? saveGridEdits : undefined}
                   project={focusedProject}
                   tasks={tasks}
                   optionalColumns={optionalColumns}
@@ -1317,7 +1348,7 @@ export function TaskManagementPage() {
                   onClearOwnerFilter={() => setFilterOwner('')}
                   onOpenSubTask={openSubDetail}
                   onEditSubTask={isProjectActive(focusedProject) && canManageProjectWork({ isTechAdmin: currentUser?.is_tech_admin, projectRoles: focusedProject?.user_roles ?? [] }) ? openSubTaskAssignment : undefined}
-                />
+                />}
               </div>
             </>
           ) : loading ? (

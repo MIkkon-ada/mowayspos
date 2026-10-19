@@ -26,6 +26,6 @@ test('legacy detail composition is no longer the source for execution facts', ()
 test('plan table still opens the key-task detail flow from the progress table', () => {
   const page = read('src/pages/TaskManagementPage.tsx')
   const table = read('src/components/task-management/PlanTableViewV2.tsx')
-  assert.match(page, /<PlanTableViewV2[\s\S]*?onOpenSubTask=\{openSubDetail\}/)
+  assert.match(page, /<WorkProgressGridWorkspace[\s\S]*?onOpenSubTask=\{openSubDetail\}/)
   assert.match(table, /onOpen\(subtask\)/)
 })

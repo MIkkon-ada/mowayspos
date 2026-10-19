@@ -7,7 +7,7 @@ import { useWorkProgressColumnLayout } from './useWorkProgressColumnLayout'
 import { ChevronDownIcon } from '../icons/ChevronDownIcon'
 import './workProgressWorkspace.css'
 
-type Props = {
+export type Props = {
   project: Project | null
   tasks: TaskItem[]
   taskSubMap: Record<number, SubTaskItem[]>

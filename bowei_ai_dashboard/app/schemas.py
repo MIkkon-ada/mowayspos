@@ -983,6 +983,47 @@ class SubTaskPayload(BaseModel):
         return _validate_due_semantics(self)
 
 
+class WorkProgressCellChanges(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    assignee: str | None = Field(default=None, min_length=1, max_length=50)
+    start_date: date | None = None
+    due_date: date | None = None
+    completion_criteria: str | None = Field(default=None, max_length=10000)
+    expected_outcome: str | None = Field(default=None, max_length=10000)
+    goal: str | None = Field(default=None, max_length=10000)
+    bowei_role: str | None = Field(default=None, max_length=10000)
+    notes: str | None = Field(default=None, max_length=10000)
+
+    @model_validator(mode="after")
+    def validate_explicit_fields(self):
+        if not self.model_fields_set:
+            raise ValueError("请填写要修改的字段")
+        for field in self.model_fields_set - {"start_date", "due_date"}:
+            value = getattr(self, field)
+            if value is None or (field in {"title", "assignee"} and not value.strip()):
+                raise ValueError("标题和负责人不能为空，文本字段请使用空文本清除")
+        return self
+
+
+class WorkProgressRowEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: int = Field(gt=0)
+    expected_updated_at: datetime
+    changes: WorkProgressCellChanges
+
+
+class WorkProgressEditsPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    edits: list[WorkProgressRowEdit] = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def unique_rows(self):
+        if len({edit.id for edit in self.edits}) != len(self.edits):
+            raise ValueError("同一关键任务的字段请合并后提交")
+        return self
+
+
 class KeyTaskCompletionRequest(BaseModel):
     note: str = Field(default="", max_length=500)
 

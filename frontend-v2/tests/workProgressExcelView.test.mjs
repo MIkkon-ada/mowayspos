@@ -98,7 +98,7 @@ test('work progress keeps only the plan table while key-task detail remains avai
   const workspace = read(WORKSPACE_FILE)
   assert.doesNotMatch(source, /ExecutionProgressView/)
   assert.doesNotMatch(source, /ExecutionProgressView/)
-  assert.match(source, /<PlanTableViewV2[\s\S]*?onOpenSubTask=\{openSubDetail\}/)
+  assert.match(source, /<WorkProgressGridWorkspace[\s\S]*?onOpenSubTask=\{openSubDetail\}/)
   assert.match(source, /<KeyTaskExecutionDetailView/)
   assert.match(workspace, /aria-label="关键任务执行详情"/)
   assert.match(source, /\{selectedSubTask \? <KeyTaskExecutionDetailView/)

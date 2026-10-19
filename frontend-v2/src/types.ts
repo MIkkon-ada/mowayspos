@@ -422,6 +422,7 @@ export type MeetingRevisionItem = {
 // GET /api/tasks/{id}/subtasks 关键任务列表项
 export type SubTaskItem = {
   id: number
+  edit_version?: string | null
   /** 关联的上级重点工作(Workstream) ID */
   task_id: number
   /** 所属项目 ID（冗余字段，便于按项目筛选） */

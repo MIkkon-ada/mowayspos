@@ -1,6 +1,11 @@
 import { apiGet, apiPost, apiPatch, apiDelete } from './client'
 import type { SubTaskItem, KeyTaskItem } from '../types'
 import type { ExecutionSchedule } from './executionSchedules'
+import type { GridEdit } from '../components/task-management/workProgressGridModel'
+
+export function saveWorkProgressEdits(projectId: number, edits: GridEdit[]): Promise<{ updated_ids: number[] }> {
+  return apiPatch(`/api/projects/${projectId}/work-progress/edits`, { edits })
+}
 
 /**
  * SubTaskPayload 业务语义：关键任务创建/更新参数

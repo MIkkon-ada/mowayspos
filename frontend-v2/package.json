@@ -14,6 +14,8 @@
     "test:bundle": "npm run build && npm run check:bundle:dist"
   },
   "dependencies": {
+    "@visactor/vtable": "1.26.8",
+    "@visactor/vtable-editors": "1.26.8",
     "chart.js": "^4.5.1",
     "exceljs": "^4.4.0",
     "playwright": "^1.60.0",
@@ -22,6 +24,10 @@
     "react-icons": "^5.7.0",
     "react-router-dom": "^7.16.0",
     "xlsx": "^0.18.5"
+  },
+  "overrides": {
+    "@visactor/vtable": { "lodash": "4.18.1" },
+    "geojson-flatten": { "minimist": "1.2.8" }
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.3",

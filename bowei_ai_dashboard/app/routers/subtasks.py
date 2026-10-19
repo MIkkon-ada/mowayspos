@@ -1,9 +1,9 @@
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from sqlalchemy import text
+from sqlalchemy import text, update
 
 from .. import crud, models, schemas
 from ..database import get_db
@@ -66,6 +66,9 @@ def _get_task_project_id(task: models.Task, db: Session) -> int | None:
 
 def _apply_work_progress_projection(rows: list[models.SubTask], payloads: list[dict], db: Session) -> None:
     """Attach confirmed and unconfirmed report metadata without N+1 queries."""
+    for row, payload in zip(rows, payloads):
+        # Display timestamps intentionally use seconds; writes require full precision.
+        payload["edit_version"] = row.updated_at.isoformat(timespec="microseconds") + "Z" if row.updated_at else None
     subtask_ids = [row.id for row in rows]
     latest_by_subtask: dict[int, dict] = {}
     latest_progress_by_subtask: dict[int, dict] = {}
@@ -789,6 +792,68 @@ def create_subtask(
     db.commit()
     db.refresh(row)
     return crud.to_dict(row)
+
+
+@router.patch("/api/projects/{project_id}/work-progress/edits")
+def update_work_progress_cells(
+    project_id: int,
+    payload: schemas.WorkProgressEditsPayload,
+    current_user: str = Depends(get_current_user_name),
+    db: Session = Depends(get_db),
+):
+    """Apply explicit cell changes atomically, guarded by each row's version."""
+    current_user = require_login(current_user, db)
+    context = get_user_context_from_db(current_user, db)
+    prepared = []
+    try:
+        for edit in payload.edits:
+            row = db.get(models.SubTask, edit.id)
+            task = db.get(models.Task, row.task_id) if row else None
+            if not row or row.is_deleted or not task or task.is_deleted:
+                raise HTTPException(409, "任务已删除，请刷新表格后重试；本批次未保存")
+            if _get_task_project_id(task, db) != project_id:
+                raise HTTPException(403, "不能修改其他项目的记录")
+            _check_subtask_struct_write(context, task, db)
+            require_project_business_writable(project_id, db)
+            if TS.normalize(row.status) == TS.S_COMPLETED:
+                raise HTTPException(409, "已完成的关键任务请先从详情中重新打开；本批次未保存")
+            version = edit.expected_updated_at
+            if version.tzinfo:
+                version = version.astimezone(timezone.utc).replace(tzinfo=None)
+            if row.updated_at != version:
+                raise HTTPException(409, "记录已被其他操作更新，请刷新后核对；本批次未保存，输入已保留")
+            changes = edit.changes.model_dump(exclude_unset=True)
+            if "title" in changes:
+                changes["title"] = changes["title"].strip()
+            if "assignee" in changes:
+                changes["assignee"] = changes["assignee"].strip()
+                changes["assignee_id"] = _validate_key_task_people(task, changes["assignee"], row.collaborator_ids or [], db)
+            if "due_date" in changes:
+                changes.update(due_kind="exact" if changes["due_date"] else "unknown", due_label=None, due_reference_date=None)
+            start = changes.get("start_date", row.start_date)
+            end = changes.get("due_date", row.due_date)
+            if start and end and end < start:
+                raise HTTPException(422, "截止日期不得早于开始日期；本批次未保存")
+            if "start_date" in changes or "due_date" in changes:
+                due_text = end.isoformat() if end else (row.due_label if "due_date" not in changes else "")
+                changes["plan_time"] = " — ".join(value for value in [start.isoformat() if start else "", due_text or ""] if value)
+            prepared.append((row, version, changes, crud.to_dict(row)))
+
+        for row, version, changes, before in prepared:
+            changed = db.execute(update(models.SubTask).where(
+                models.SubTask.id == row.id,
+                models.SubTask.updated_at == version,
+                models.SubTask.is_deleted.is_(False),
+            ).values(**changes, updated_at=utc_now()).execution_options(synchronize_session=False))
+            if changed.rowcount != 1:
+                raise HTTPException(409, "记录刚刚发生变化，请刷新后核对；本批次未保存")
+            db.expire(row)
+            crud.log(db, current_user, "work_progress_grid_edit", "subtask", row.id, before, crud.to_dict(row), project_id=project_id)
+        db.commit()
+        return {"updated_ids": [edit.id for edit in payload.edits]}
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.patch("/api/subtasks/{row_id}")

@@ -30,6 +30,7 @@ from app.routers.confirmations import (
     transfer_coordinator,
 )
 from app.routers.projects import (
+    archive_project,
     approve_project,
     approve_project_close_request,
     create_project_close_request,
@@ -145,7 +146,10 @@ def _report(project_id: int, subtask_id: int, submitter: str, title: str):
                     "matched_subtask_id": subtask_id,
                     "completed": "完成关键任务并形成阶段成果",
                     "achievements": [{"name": title + "成果", "achievement_type": "技术成果"}],
-                    "subtask_issues": [],
+                    "subtask_issues": (
+                        [{"description": "需要协调外部接口权限", "priority": "高"}]
+                        if title == "统筹反馈流" else []
+                    ),
                 }
             ],
         },
@@ -284,6 +288,14 @@ def test_full_role_lifecycle_runs_from_dispatch_to_close():
     assert db.get(models.UpdateSubmission, first_id).confirm_status == SS.S_COORDINATOR_GIVEN
     confirm(first_id, schemas.ConfirmRequest(operator="owner"), current_user="owner", db=db)
     assert db.get(models.UpdateSubmission, first_id).confirm_status == SS.S_CONFIRMED
+    issue = db.query(models.Issue).filter_by(source_submission_id=first_id).one()
+    achievement = db.query(models.Achievement).filter_by(source_submission_id=first_id).one()
+    assert issue.related_task_id == task.id
+    assert issue.related_subtask_id == subtask.id
+    assert issue.status == "待处理"
+    assert achievement.project_id == project.id
+    assert achievement.related_task_id == task.id
+    assert achievement.related_subtask_id == subtask.id
 
     # 第二条提交走“负责人上报企业教练 → 企业教练批示 → 负责人确认”分支。
     second = asyncio.run(
@@ -340,3 +352,11 @@ def test_full_role_lifecycle_runs_from_dispatch_to_close():
     )
     assert closed["status"] == "approved"
     assert db.get(models.Project, project.id).status == "ended"
+
+    # 技术管理员完成归档后，业务记录与证据仍留在项目历史中。
+    archived = archive_project(project.id, current_user="admin", db=db)
+    assert archived["status"] == "archived"
+    assert db.get(models.Project, project.id).status == "archived"
+    assert db.get(models.Issue, issue.id).project_id == project.id
+    assert db.get(models.Achievement, achievement.id).project_id == project.id
+    assert db.get(models.UpdateSubmission, first_id).confirm_status == SS.S_CONFIRMED

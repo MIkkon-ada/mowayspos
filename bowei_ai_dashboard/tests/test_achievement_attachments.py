@@ -49,7 +49,7 @@ blocked = client.post("/api/achievement-attachments", data={"project_id": "1", "
 assert blocked.status_code == 422, blocked.text
 denied = client.get("/api/achievement-attachments", params={"achievement_id": 1}, cookies=cookies("outsider"))
 assert denied.status_code == 403, denied.text
-uploaded = client.post("/api/achievement-attachments", data={"project_id": "1", "achievement_id": "1"}, files={"file": ("report.pdf", b"pdf", "application/pdf")}, cookies=cookies("member"))
+uploaded = client.post("/api/achievement-attachments", data={"project_id": "1", "achievement_id": "1"}, files={"file": ("测试成果.pdf", b"pdf", "application/pdf")}, cookies=cookies("member"))
 assert uploaded.status_code == 201, uploaded.text
 attachment_id = uploaded.json()["id"]
 assert uploaded.json()["mime_type"] == "application/pdf"
@@ -60,6 +60,7 @@ assert download.status_code == 200 and download.content == b"pdf", download.text
 assert download.headers["content-type"].startswith("application/pdf")
 assert download.headers["x-content-type-options"] == "nosniff"
 assert download.headers["content-disposition"].startswith("attachment;")
+assert "filename*=utf-8''%E6%B5%8B%E8%AF%95%E6%88%90%E6%9E%9C.pdf" in download.headers["content-disposition"]
 original_attachment_path = achievement_attachments._attachment_path
 class UnlinkFailure:
     def unlink(self, **_kwargs): raise OSError("storage temporarily unavailable")

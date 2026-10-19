@@ -27,6 +27,8 @@ from app.routers.confirmations import (
     coordinator_feedback,
     escalate_ceo,
     pending,
+    reject,
+    resubmit,
     transfer_coordinator,
 )
 from app.routers.projects import (
@@ -148,7 +150,7 @@ def _report(project_id: int, subtask_id: int, submitter: str, title: str):
                     "achievements": [{"name": title + "成果", "achievement_type": "技术成果"}],
                     "subtask_issues": (
                         [{"description": "需要协调外部接口权限", "priority": "高"}]
-                        if title == "统筹反馈流" else []
+                        if title.startswith("统筹反馈流") else []
                     ),
                 }
             ],
@@ -269,6 +271,30 @@ def test_full_role_lifecycle_runs_from_dispatch_to_close():
     _assert_forbidden(confirm, first_id, schemas.ConfirmRequest(operator="member"), current_user="member", db=db)
     _assert_forbidden(confirm, first_id, schemas.ConfirmRequest(operator="coach"), current_user="coach", db=db)
     _assert_forbidden(confirm, first_id, schemas.ConfirmRequest(operator="coordinator"), current_user="coordinator", db=db)
+
+    # 负责人退回后，责任人修订汇报并提交新提取结果；旧卡片不会直接写入业务记录。
+    reject(
+        first_id,
+        schemas.RejectRequest(reason="请补充接口权限问题的处理进度", operator="owner"),
+        current_user="owner",
+        db=db,
+    )
+    revised = _report(project.id, subtask.id, people["member"].name, "统筹反馈流修订")
+    resubmitted = resubmit(
+        first_id,
+        schemas.ResubmitRequest(
+            transcript_text=revised.transcript_text,
+            supplement_note="补充接口权限问题及阶段成果",
+            human_result=revised.human_result,
+        ),
+        current_user="member",
+        db=db,
+    )
+    assert resubmitted["submission"]["id"] == first_id
+    assert resubmitted["submission"]["confirm_status"] == SS.S_PENDING_OWNER
+    assert resubmitted["submission"]["transcript_text"] == revised.transcript_text
+    assert db.query(models.Achievement).filter_by(source_submission_id=first_id).count() == 0
+    assert db.query(models.Issue).filter_by(source_submission_id=first_id).count() == 0
 
     # 负责人转交统筹，统筹反馈后回到负责人确认。
     transfer_coordinator(

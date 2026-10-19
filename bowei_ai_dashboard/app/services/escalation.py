@@ -19,7 +19,7 @@ from typing import Any, Literal
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import crud, models
 from ..domain import issue_flow as IF
 from ..time_utils import utc_now
 
@@ -158,6 +158,32 @@ def escalate_card_to_issue(
     if current_status in {CARD_CONFIRMED, CARD_REJECTED}:
         raise HTTPException(409, "该任务卡已确认/退回，不能再转出")
 
+    # 保留卡片与项目关键任务的结构化关联，避免转入问题中心后只剩描述文本。
+    related_subtask_id = card.get("matched_subtask_id")
+    if related_subtask_id is None:
+        related_subtask_id = card.get("related_subtask_id")
+    related_task_id = None
+    if related_subtask_id is not None:
+        try:
+            related_subtask_id = int(related_subtask_id)
+        except (TypeError, ValueError):
+            raise HTTPException(422, "任务卡关联的关键任务标识无效。")
+        subtask = db.get(models.SubTask, related_subtask_id)
+        if subtask is None:
+            raise HTTPException(422, "任务卡关联的关键任务不存在。")
+        related_task_id = subtask.task_id
+        explicit_task_id = card.get("related_task_id") or card.get("matched_task_id")
+        if explicit_task_id is not None:
+            try:
+                explicit_task_id = int(explicit_task_id)
+            except (TypeError, ValueError):
+                raise HTTPException(422, "任务卡关联的重点工作标识无效。")
+            if explicit_task_id != related_task_id:
+                raise HTTPException(422, "任务卡关联的关键任务与重点工作不匹配。")
+        crud.validate_subtask_link(
+            db, project_id, related_task_id, related_subtask_id
+        )
+
     # 构造 Issue
     issue_type = IF.TYPE_DECISION if target == "ceo" else IF.TYPE_COORDINATE
     status = IF.STATUS_PENDING_DECISION if target == "ceo" else IF.STATUS_COORDINATING
@@ -174,6 +200,9 @@ def escalate_card_to_issue(
         source_type=SOURCE_AI_CONFIRMATION,
         source_submission_id=submission.id,
         source_card_index=card_index,
+        expected_resolve_time=str(card.get("plan_end") or "").strip(),
+        related_task_id=related_task_id,
+        related_subtask_id=related_subtask_id,
         opinion="",
         resolution="",
     )

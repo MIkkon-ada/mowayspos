@@ -167,3 +167,19 @@ def _extract_xlsx_text(content: bytes) -> str:
     if not text:
         raise MeetingDocumentTextError("Excel workbook has no readable cells")
     return text
+
+
+def meeting_source_locator(filename: str, document_text: str, char_start: int, char_end: int) -> str:
+    """Convert a verified extracted-text span into a human-readable source location."""
+    if char_start < 0 or char_end <= char_start or char_end > len(document_text):
+        return ""
+    suffix = Path(filename or "").suffix.lower()
+    if suffix == ".docx":
+        page_start = document_text.rfind("\f", 0, char_start) + 1
+        page_number = document_text.count("\f", 0, char_start) + 1
+        paragraph_number = document_text.count("\n", page_start, char_start) + 1
+        return f"第{page_number}页·第{paragraph_number}段"
+    line_number = document_text.count("\n", 0, char_start) + 1
+    if suffix == ".xlsx":
+        return f"第{line_number}行"
+    return f"第{line_number}段"

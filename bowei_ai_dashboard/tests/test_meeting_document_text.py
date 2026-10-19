@@ -5,7 +5,8 @@ from zipfile import ZipFile
 
 import pytest
 
-from app.services.meeting_document_text import MeetingDocumentTextError, extract_meeting_document_text
+from app.services.meeting_document_text import MeetingDocumentTextError, extract_meeting_document_text, meeting_source_locator
+from app.routers.meetings import _attach_meeting_source_locators
 
 
 def _docx_with_paragraphs(*paragraphs: str) -> bytes:
@@ -79,3 +80,33 @@ def test_extracts_excel_cells_for_skill_reference_material():
 def test_rejects_pdf_documents():
     with pytest.raises(MeetingDocumentTextError, match="Word、TXT、Excel"):
         extract_meeting_document_text("minutes.pdf", b"%PDF")
+
+
+def test_meeting_source_locator_maps_docx_page_and_paragraph():
+    text = "标题\n第一页段落\f第二页第一段\n第二页第二段"
+    start = text.index("第二页第二段")
+
+    assert meeting_source_locator("minutes.docx", text, start, start + len("第二页第二段")) == "第2页·第2段"
+
+
+def test_meeting_source_locator_maps_txt_paragraph_and_xlsx_row():
+    text = "标题\n待办事项"
+    start = text.index("待办事项")
+
+    assert meeting_source_locator("minutes.txt", text, start, start + len("待办事项")) == "第2段"
+    assert meeting_source_locator("minutes.xlsx", text, start, start + len("待办事项")) == "第2行"
+
+
+def test_meeting_source_locator_rejects_invalid_offsets():
+    assert meeting_source_locator("minutes.docx", "source", 5, 9) == ""
+
+
+def test_meeting_payload_adds_locator_only_to_verified_source_spans():
+    text = "标题\n原文事实"
+    start = text.index("原文事实")
+    result = {"facts": [{"quote": "原文事实", "char_start": start, "char_end": start + len("原文事实")}, {"quote": "错误引用", "char_start": 0, "char_end": 4}]}
+
+    _attach_meeting_source_locators(result, "minutes.docx", text)
+
+    assert result["facts"][0]["locator"] == "第1页·第2段"
+    assert "locator" not in result["facts"][1]

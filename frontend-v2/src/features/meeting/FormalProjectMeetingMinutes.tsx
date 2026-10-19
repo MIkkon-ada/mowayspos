@@ -26,17 +26,18 @@ const editableMetaFields: Array<[keyof MeetingDraftFields, string]> = [
   ['meeting_date', '会议日期'], ['location', '会议地点'], ['meeting_type', '会议类型'], ['host', '主持人'], ['participants', '参会人员'],
 ]
 
-function evidenceQuotes(evidence: Array<string | ProjectMeetingEvidenceSpan>): string[] {
-  return evidence.map((item) => typeof item === 'string' ? item : item.quote).filter(Boolean)
-}
-
 function EvidenceBlock({ evidence }: { evidence?: ProjectMeetingEvidence | ProjectMeetingEvidenceSpan[] }) {
   const spans = Array.isArray(evidence) ? evidence : evidence?.evidence ?? []
-  const quotes = evidenceQuotes(spans)
-  if (!quotes.length) return null
-  return <span className="sr-only">{quotes.map((quote) => `“${quote}”`).join('；')}</span>
+  if (!spans.length) return null
+  return <div aria-label="查看原文依据" className="mt-2 rounded-md border-l-2 border-slate-200 bg-white/80 px-3 py-2 text-xs text-slate-500">
+    <div className="mb-1 font-semibold text-slate-600">查看原文依据</div>
+    <ul className="space-y-1">{spans.map((item, index) => {
+      const quote = typeof item === 'string' ? item : item.quote
+      const locator = typeof item === 'string' ? '' : item.locator
+      return <li key={`${locator || 'source'}-${index}`} className="whitespace-pre-wrap">{locator ? <span className="mr-1 font-medium text-slate-600">{locator}</span> : null}“{quote}”</li>
+    })}</ul>
+  </div>
 }
-
 function editedFact(item: ProjectMeetingAgentFact, patch: Partial<ProjectMeetingAgentFact>): ProjectMeetingAgentFact {
   return { ...item, ...patch, evidence: [], human_edited: true, needs_confirmation: false, validation: { state: 'ready', errors: [] } }
 }

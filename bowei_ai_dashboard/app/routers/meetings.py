@@ -75,7 +75,7 @@ from ..services.meeting_traceability import normalize_action_items
 from ..services.key_task_execution import record_execution_event
 from ..services.person_identity import person_identity_scope, unique_active_person_id_for_name
 from ..services.request_fingerprint import request_payload_fingerprint
-from ..services.meeting_document_text import MeetingDocumentTextError, extract_meeting_document_text
+from ..services.meeting_document_text import MeetingDocumentTextError, extract_meeting_document_text, meeting_source_locator
 from ..services.standard_meeting_minutes import parse_standard_meeting_minutes
 from ..services.meeting_skill_clarification import (
     BlockingClarificationsError,
@@ -870,6 +870,27 @@ def _word_action_rows_changed(result: dict) -> bool:
     return signatures(preview["action_rows"]) != signatures(current)
 
 
+def _attach_meeting_source_locators(value: Any, filename: str, document_text: str) -> None:
+    """Attach a readable locator to verified evidence spans in the response payload."""
+    if isinstance(value, dict):
+        quote = value.get("quote")
+        char_start = value.get("char_start")
+        char_end = value.get("char_end")
+        if (
+            isinstance(quote, str)
+            and isinstance(char_start, int)
+            and isinstance(char_end, int)
+            and 0 <= char_start < char_end <= len(document_text)
+            and document_text[char_start:char_end] == quote
+        ):
+            value["locator"] = meeting_source_locator(filename, document_text, char_start, char_end)
+        for child in list(value.values()):
+            _attach_meeting_source_locators(child, filename, document_text)
+    elif isinstance(value, list):
+        for child in value:
+            _attach_meeting_source_locators(child, filename, document_text)
+
+
 def _project_meeting_payload(run: models.ProjectMeetingRun, db: Session) -> dict:
     source = db.get(models.MeetingDocumentSource, run.document_source_id)
     meeting = db.query(models.Meeting).filter(models.Meeting.document_source_id == run.document_source_id).first()
@@ -879,6 +900,8 @@ def _project_meeting_payload(run: models.ProjectMeetingRun, db: Session) -> dict
         if meeting else None
     )
     result = _json_value(run.result_json, {})
+    if source and isinstance(result, (dict, list)):
+        _attach_meeting_source_locators(result, source.original_name, run.document_text or "")
     snapshot = _json_value(run.snapshot_json, {})
     standard = snapshot.get("standard_minutes") if isinstance(snapshot.get("standard_minutes"), dict) else None
     has_human_edits = bool(

@@ -7,7 +7,7 @@ import type { ProjectMeetingAgentFact } from '../../api/meetings'
 
 const originalFact: ProjectMeetingAgentFact = {
   content: '原议程',
-  evidence: [{ quote: '原议程' }],
+  evidence: [{ quote: '原议程', locator: '第 1 页·第 1 段' }],
   validation: { state: 'ready', errors: [] },
 }
 
@@ -29,7 +29,9 @@ function ReviewHarness() {
 describe('meeting minutes review', () => {
   it('removes stale AI evidence when a reviewer changes a fact', () => {
     render(<ReviewHarness />)
-    expect(screen.getByText('“原议程”')).toBeTruthy()
+    const sourceQuote = screen.getByText('“原议程”')
+    expect(sourceQuote.closest('li')?.className).not.toContain('sr-only')
+    expect(screen.getByText('第 1 页·第 1 段')).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('第1项内容'), { target: { value: '修订议程' } })
 

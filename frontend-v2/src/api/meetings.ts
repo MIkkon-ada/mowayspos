@@ -370,6 +370,7 @@ export type ProjectMeetingWorkProgressPreview = {
 
 export type ProjectMeetingEvidenceSpan = {
   quote: string
+  locator?: string
   char_start?: number
   char_end?: number
 }

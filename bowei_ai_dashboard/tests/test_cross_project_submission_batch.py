@@ -155,6 +155,45 @@ def test_batch_report_http_route_requires_active_project(status, expected_http_s
         assert db.query(models.UpdateSubmission).count() == 0
 
 
+def test_batch_report_concurrent_duplicate_request_returns_existing_result(monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.database import get_db
+    from app.routers import updates
+
+    db = _session(); _seed(db)
+    original_create = updates.create_submission_batch
+    calls = 0
+
+    def simulate_unique_key_race(payload, *, current_user, db):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            original_create(payload, current_user=current_user, db=db)
+            db.commit()  # Another identical request wins the commit first.
+            raise IntegrityError("INSERT", {}, Exception("duplicate client_request_id"))
+        return original_create(payload, current_user=current_user, db=db)
+
+    monkeypatch.setattr(updates, "create_submission_batch", simulate_unique_key_race)
+    app = FastAPI()
+    app.include_router(updates.router)
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[updates.get_current_user_name] = lambda: "admin"
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/api/updates/batch",
+            json=_payload(cards=[_card(11, 111, "任务A1")]).model_dump(mode="json"),
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["idempotent"] is True
+    assert db.query(models.UpdateSubmissionBatch).count() == 1
+    assert db.query(models.UpdateSubmission).count() == 1
+    assert db.query(models.Notification).count() == 1
+
+
 def test_member_without_access_to_every_project_gets_zero_writes():
     db = _session(); _seed(db)
     with pytest.raises(HTTPException) as exc:
@@ -265,6 +304,42 @@ def test_single_project_request_id_cannot_return_another_submitters_submission()
 
     assert exc.value.status_code == 409
     assert db.query(models.UpdateSubmission).filter_by(client_request_id="single-request").count() == 1
+
+
+def test_single_project_concurrent_duplicate_request_returns_existing_result():
+    from sqlalchemy.exc import IntegrityError
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.database import get_db
+    from app.routers import updates
+
+    db = _session(); _seed(db)
+    original_commit = db.commit
+    raised = False
+
+    def simulate_unique_key_race():
+        nonlocal raised
+        original_commit()
+        if not raised:
+            raised = True
+            raise IntegrityError("INSERT", {}, Exception("duplicate client_request_id"))
+
+    db.commit = simulate_unique_key_race
+    app = FastAPI()
+    app.include_router(updates.router)
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[updates.get_current_user_name] = lambda: "admin"
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/api/updates",
+            json=_single_update_payload().model_dump(mode="json"),
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["idempotent"] is True
+    assert db.query(models.UpdateSubmission).filter_by(client_request_id="single-request").count() == 1
+    assert db.query(models.Notification).count() == 1
 
 
 def test_idempotency_key_cannot_replay_another_submitters_batch():

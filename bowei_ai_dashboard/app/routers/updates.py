@@ -3,6 +3,7 @@ import json
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
@@ -53,6 +54,25 @@ def _update_human_result(row: models.UpdateSubmission) -> dict:
         return json.loads(row.human_result_json or row.ai_result_json or "{}")
     except Exception:
         return {}
+
+
+def _existing_update_retry_result(
+    row: models.UpdateSubmission,
+    *,
+    submitter_id: int | None,
+    request_payload_hash: str,
+) -> dict:
+    if row.submitter_id != submitter_id:
+        raise HTTPException(409, "该请求标识已被其他提交使用")
+    if not row.request_payload_hash:
+        raise HTTPException(409, "该请求对应旧版提交，无法核对内容；请先检查我的汇报记录")
+    if row.request_payload_hash != request_payload_hash:
+        raise HTTPException(409, "该请求标识已用于不同内容，请刷新汇报后重新提交")
+    return {
+        "submission": crud.to_dict(row),
+        "suggestion": json.loads(row.ai_result_json or "{}"),
+        "idempotent": True,
+    }
 
 
 def _can_view_update(context: dict, row: models.UpdateSubmission) -> bool:
@@ -427,6 +447,22 @@ async def create_update_batch(
             db.refresh(row)
         db.refresh(result["batch"])
         return serialize_batch_result(result)
+    except IntegrityError:
+        db.rollback()
+        if payload.client_request_id:
+            existing = db.query(models.UpdateSubmissionBatch).filter(
+                models.UpdateSubmissionBatch.client_request_id == payload.client_request_id
+            ).first()
+            if existing:
+                # Concurrent identical submits can race between lookup and insert.
+                # Re-run the service's actor and payload checks before returning the winner.
+                result = create_submission_batch(payload, current_user=current_user, db=db)
+                db.commit()
+                for row in result["submissions"]:
+                    db.refresh(row)
+                db.refresh(result["batch"])
+                return serialize_batch_result(result)
+        raise
     except Exception:
         db.rollback()
         raise
@@ -507,17 +543,11 @@ async def create_update(
             models.UpdateSubmission.client_request_id == payload.client_request_id
         ).first()
         if existing:
-            if existing.submitter_id != submitter_id:
-                raise HTTPException(409, "该请求标识已被其他提交使用")
-            if not existing.request_payload_hash:
-                raise HTTPException(409, "该请求对应旧版提交，无法核对内容；请先检查我的汇报记录")
-            if existing.request_payload_hash != request_payload_hash:
-                raise HTTPException(409, "该请求标识已用于不同内容，请刷新汇报后重新提交")
-            return {
-                "submission": crud.to_dict(existing),
-                "suggestion": json.loads(existing.ai_result_json or "{}"),
-                "idempotent": True,
-            }
+            return _existing_update_retry_result(
+                existing,
+                submitter_id=submitter_id,
+                request_payload_hash=request_payload_hash,
+            )
 
     cutoff = utc_now() - timedelta(seconds=60)
     dup = _find_recent_duplicate_submission(
@@ -582,7 +612,21 @@ async def create_update(
             submitter=submitter or current_user,
             submitter_id=submitter_id,
         )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if payload.client_request_id and request_payload_hash:
+            existing = db.query(models.UpdateSubmission).filter(
+                models.UpdateSubmission.client_request_id == payload.client_request_id
+            ).first()
+            if existing:
+                return _existing_update_retry_result(
+                    existing,
+                    submitter_id=submitter_id,
+                    request_payload_hash=request_payload_hash,
+                )
+        raise
     db.refresh(row)
     return {"submission": crud.to_dict(row), "suggestion": result}
 

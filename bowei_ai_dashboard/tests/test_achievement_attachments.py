@@ -90,6 +90,19 @@ project_b_attachment_id = project_b_upload.json()["id"]
 assert client.get("/api/achievement-attachments", params={"achievement_id": 2}, cookies=cookies("member")).status_code == 403
 assert client.get(f"/api/achievement-attachments/{project_b_attachment_id}/download", cookies=cookies("member")).status_code == 403
 assert client.delete(f"/api/achievement-attachments/{project_b_attachment_id}", cookies=cookies("owner")).status_code == 200
+readable_attachment = client.post("/api/achievement-attachments", data={"project_id": "2", "achievement_id": "2"}, files={"file": ("归档成果.pdf", b"archive evidence", "application/pdf")}, cookies=cookies("owner"))
+assert readable_attachment.status_code == 201, readable_attachment.text
+readable_id = readable_attachment.json()["id"]
+db = SessionLocal(); db.get(models.Project, 2).status = "ended"; db.commit(); db.close()
+ended_download = client.get(f"/api/achievement-attachments/{readable_id}/download", cookies=cookies("owner"))
+assert ended_download.status_code == 200 and ended_download.content == b"archive evidence", ended_download.text
+db = SessionLocal(); db.get(models.Project, 2).status = "archived"; db.commit(); db.close()
+assert client.get("/api/achievements", params={"project_id": 2}, cookies=cookies("owner")).json()[0]["id"] == 2
+assert client.get("/api/achievement-attachments", params={"achievement_id": 2}, cookies=cookies("owner")).status_code == 200
+archived_download = client.get(f"/api/achievement-attachments/{readable_id}/download", cookies=cookies("owner"))
+assert archived_download.status_code == 200 and archived_download.content == b"archive evidence", archived_download.text
+archive_delete = client.delete(f"/api/achievement-attachments/{readable_id}", cookies=cookies("owner"))
+assert archive_delete.status_code == 403, archive_delete.text
 '''
     database_path = (tmp_path / "attachments.db").resolve()
     env = os.environ.copy()

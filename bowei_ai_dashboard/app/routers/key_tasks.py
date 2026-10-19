@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
+from ..domain import project_lifecycle as PL
 from ..domain import task_status as TS
 from ..permissions import (
     get_all_project_roles,
@@ -142,11 +143,19 @@ def get_execution_workspace(
         .filter(models.Person.id.in_(collaborator_ids))
         .all()
     } if collaborator_ids else {}
-    can_operate = _can_operate(context, project.id, key_task, db)
+    project_status = PL.normalize(project.status)
+    project_writable = (
+        not PL.is_close_frozen(project_status)
+        and project_status != PL.S_ARCHIVED
+    )
+    can_operate = project_writable and _can_operate(context, project.id, key_task, db)
     person_id = context.get("person_id")
     can_submit = bool(
-        can_operate
-        or (person_id and int(person_id) in set(key_task.collaborator_ids or []))
+        project_writable
+        and (
+            can_operate
+            or (person_id and int(person_id) in set(key_task.collaborator_ids or []))
+        )
     )
     key_task_data = {
         "id": key_task.id,
@@ -216,7 +225,7 @@ def get_execution_workspace(
         "permissions": {
             "can_view": True,
             "can_operate": can_operate,
-            "can_edit_key_task": _can_edit_structure(context, project.id, db),
+            "can_edit_key_task": project_writable and _can_edit_structure(context, project.id, db),
             "can_manage_execution_plans": can_operate,
             "can_submit_update": can_submit,
             "can_confirm_completion": can_operate,

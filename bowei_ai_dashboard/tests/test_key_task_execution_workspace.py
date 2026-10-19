@@ -657,3 +657,52 @@ def test_manual_issue_update_adds_a_separate_append_only_timeline_event():
         "issue_updated",
         "issue_created",
     ]
+
+
+def test_patch_subtask_status_updates_state_and_execution_timeline():
+    from app.routers import subtasks
+
+    db = _db()
+    _project, _workstream, key_task = _seed_workspace(db)
+
+    result = subtasks.patch_subtask_status(
+        key_task.id,
+        schemas.StatusRequest(status="已完成"),
+        current_user="owner",
+        db=db,
+    )
+
+    assert result["status"] == "已完成"
+    event = db.query(models.KeyTaskExecutionEvent).filter_by(
+        key_task_id=key_task.id,
+        event_type="key_task_status_changed",
+    ).one()
+    assert event.status_before == "进行中"
+    assert event.status_after == "已完成"
+    assert event.authority == "confirmed"
+
+
+@pytest.mark.parametrize("project_status", ["pending_close", "ended", "archived"])
+def test_frozen_key_task_workspace_exposes_history_without_write_actions(project_status: str):
+    from app.routers import key_tasks
+
+    db = _db()
+    project, _workstream, key_task = _seed_workspace(db)
+    project.status = project_status
+    db.commit()
+
+    workspace = key_tasks.get_execution_workspace(
+        key_task.id,
+        current_user="owner",
+        db=db,
+    )
+
+    assert workspace["project"]["status"] == project_status
+    assert workspace["permissions"]["can_view"] is True
+    assert workspace["permissions"]["can_operate"] is False
+    assert workspace["permissions"]["can_edit_key_task"] is False
+    assert workspace["permissions"]["can_manage_execution_plans"] is False
+    assert workspace["permissions"]["can_submit_update"] is False
+    assert workspace["permissions"]["can_confirm_completion"] is False
+    assert workspace["permissions"]["can_reopen"] is False
+    assert workspace["permissions"]["can_manage_risk"] is False

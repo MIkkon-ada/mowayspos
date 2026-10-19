@@ -858,7 +858,6 @@ def patch_subtask_status(
 
     before_status = row.status or ""
     row.status = payload.status
-    row.edit_count = (row.edit_count or 0) + 1
     project_id = _get_task_project_id(task, db)
     crud.log(
         db,
@@ -874,6 +873,8 @@ def patch_subtask_status(
     # is projected to the execution timeline, but does not replace the source
     # object: SubTask remains the source of truth for the status itself.
     if TS.normalize(before_status) != TS.normalize(payload.status):
+        occurred_at = utc_now()
+        after_status = TS.normalize(payload.status)
         record_execution_event(
             db,
             project_id=project_id,
@@ -881,11 +882,15 @@ def patch_subtask_status(
             event_type="key_task_status_changed",
             source_type="key_task",
             source_id=row.id,
-            dedupe_key=f"key-task:{row.id}:status:{row.edit_count}:{TS.normalize(payload.status)}",
-            actor_name_snapshot=current_user,
-            occurred_at=utc_now(),
-            confirmed_at=utc_now(),
-            effective_at=utc_now(),
+            dedupe_key=(
+                f"key-task:{row.id}:status:{TS.normalize(before_status)}:{after_status}:"
+                f"{occurred_at.isoformat(timespec='microseconds')}"
+            ),
+            actor_name=context.get("name") or current_user,
+            actor_person_id=context.get("person_id"),
+            occurred_at=occurred_at,
+            confirmed_at=occurred_at,
+            effective_at=occurred_at,
             affects_current_progress=True,
             status_before=before_status,
             status_after=payload.status,

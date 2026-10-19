@@ -41,8 +41,26 @@ export type ProjectLifecycleStage = {
 
 const STAGE_NODES = ['立项准备', '启动', '执行', '结束', '归档'] as const
 
-export function isProjectDispatchReady(project: Pick<Project, 'objectives' | 'start_date' | 'end_date'>): boolean {
-  return Boolean(project.objectives?.trim() && isProjectPeriodReady(project.start_date, project.end_date))
+export function getProjectDispatchReadinessMessage(
+  project: Pick<Project, 'objectives' | 'start_date' | 'end_date' | 'owners' | 'coaches'>,
+): string | null {
+  const missing: string[] = []
+  if (!project.objectives?.trim()) missing.push('项目目标')
+  if (!parseCalendarDate(project.start_date)) missing.push('项目开始日期')
+  if (project.end_date?.trim()) {
+    const startDate = parseCalendarDate(project.start_date)
+    const endDate = parseCalendarDate(project.end_date)
+    if (!endDate || !startDate || startDate > endDate) missing.push('项目结束日期（需为有效日期且不早于开始日期）')
+  }
+  if (!project.owners?.length) missing.push('项目负责人')
+  if (!project.coaches?.length) missing.push('企业教练')
+  return missing.length ? `请补齐以下信息后再下发：${missing.join('、')}。` : null
+}
+
+export function isProjectDispatchReady(
+  project: Pick<Project, 'objectives' | 'start_date' | 'end_date' | 'owners' | 'coaches'>,
+): boolean {
+  return getProjectDispatchReadinessMessage(project) === null
 }
 
 function isProjectPeriodReady(startDateValue?: string, endDateValue?: string): boolean {
@@ -102,7 +120,8 @@ export function getProjectTodo(
   const isManagement = roles.isSuperAdmin || roles.isCompanyCeo
 
   if (status === 'draft' && isManagement) {
-    const dispatchReady = isProjectDispatchReady(project)
+    const readinessMessage = getProjectDispatchReadinessMessage(project)
+    const dispatchReady = readinessMessage === null
     return {
       project,
       action: dispatchReady ? 'dispatch' : 'edit',
@@ -112,7 +131,7 @@ export function getProjectTodo(
       title: dispatchReady ? '项目已完成基础信息' : '请先完善项目基础信息',
       description: dispatchReady
         ? '项目目标和开始日期已齐全，可下发给负责人完善项目计划；结束日期可后续补充。'
-        : '请先完善项目目标和开始日期；结束日期可选择待定，再下发给负责人。',
+        : readinessMessage,
       materialChecks,
     }
   }

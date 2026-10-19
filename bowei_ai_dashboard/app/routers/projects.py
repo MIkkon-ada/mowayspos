@@ -2745,18 +2745,23 @@ def dispatch_project(
     if lifecycle != PL.S_DRAFT:
         raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "当前项目阶段不可下发")
 
-    # 兜底校验：下发前必须已配置企业教练(project_ceo)和负责人(owner)
-    # super_admin / company_ceo 也不能绕过此业务校验
+    # 下发前集中报告所有缺失的必需项；管理员不能绕过此业务校验。
     _role_counts = _member_summary(project_id, db)
-    if _role_counts.get("project_ceo", 0) <= 0:
-        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "请先配置企业教练后再下发项目。")
-    if _role_counts.get("owner", 0) <= 0:
-        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "请先配置项目负责人后再下发项目。")
     objectives = (project.objectives or "").strip()
     start_date = (project.start_date or "").strip()
     end_date = (project.end_date or "").strip()
-    if not objectives or not start_date:
-        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "\u8bf7\u5148\u586b\u5199\u9879\u76ee\u76ee\u6807\u548c\u5f00\u59cb\u65e5\u671f\u540e\u518d\u4e0b\u53d1\u9879\u76ee\u3002")
+    missing = []
+    if not objectives:
+        missing.append("项目目标")
+    if not start_date:
+        missing.append("项目开始日期")
+    if _role_counts.get("owner", 0) <= 0:
+        missing.append("项目负责人")
+    if _role_counts.get("project_ceo", 0) <= 0:
+        missing.append("企业教练")
+    if missing:
+        detail = f"请补齐以下信息后再下发：{'、'.join(missing)}。"
+        raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", detail)
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", start_date):
         raise CodedHTTPException(409, "PROJECT_STATE_CONFLICT", "\u9879\u76ee\u5f00\u59cb\u65e5\u671f\u5fc5\u987b\u4f7f\u7528 YYYY-MM-DD \u683c\u5f0f\u3002")
     try:

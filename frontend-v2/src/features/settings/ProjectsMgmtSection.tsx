@@ -37,6 +37,7 @@ import { ProjectCloseFlowDrawer } from './ProjectCloseFlowDrawer'
 import { getProjectCloseMainAction } from '../../domain/projectCloseUi'
 import {
   getProjectLifecycleStage,
+  getProjectDispatchReadinessMessage,
   getProjectOverviewStats,
   getProjectTodo,
   isProjectDispatchReady,
@@ -727,7 +728,7 @@ export function ProjectsMgmtSection() {
 
   async function handleDispatch(project: Project) {
     if (!isProjectDispatchReady(project)) {
-      toast.warning('请先完善项目目标和开始日期；结束日期可选择待定，再下发给负责人')
+      toast.warning(getProjectDispatchReadinessMessage(project) ?? '请检查项目立项信息后再下发。')
       return
     }
     try {

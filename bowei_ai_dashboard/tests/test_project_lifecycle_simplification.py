@@ -148,6 +148,28 @@ def test_dispatch_allows_a_missing_end_date_and_notifies_owner():
     assert db.query(models.Notification).filter_by(type="project_owner_notify", project_id=1).count() == 1
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        ("objectives", "", "请补齐以下信息后再下发：项目目标。"),
+        ("start_date", "", "请补齐以下信息后再下发：项目开始日期。"),
+    ],
+)
+def test_dispatch_error_names_only_the_missing_project_requirement(field, value, expected):
+    db = _db("draft")
+    _set_dispatch_base_info(db)
+    project = db.get(models.Project, 1)
+    setattr(project, field, value)
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        projects.dispatch_project(1, current_user="company_ceo", db=db)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == expected
+    assert db.get(models.Project, 1).status == "draft"
+
+
 def test_dispatch_notifies_only_strict_project_owners():
     db = _db("draft")
     db.add_all(
@@ -256,7 +278,7 @@ def test_dispatch_requires_nonblank_objectives_and_start_date(objectives, start_
     with pytest.raises(HTTPException) as exc_info:
         projects.dispatch_project(1, current_user="company_ceo", db=db)
 
-    assert exc_info.value.detail == "\u8bf7\u5148\u586b\u5199\u9879\u76ee\u76ee\u6807\u548c\u5f00\u59cb\u65e5\u671f\u540e\u518d\u4e0b\u53d1\u9879\u76ee\u3002"
+    assert "\u9879\u76ee\u76ee\u6807\u548c\u5f00\u59cb\u65e5\u671f" not in exc_info.value.detail
     assert db.get(models.Project, 1).status == "draft"
     assert db.query(models.Notification).filter_by(type="project_owner_notify", project_id=1).count() == 0
 

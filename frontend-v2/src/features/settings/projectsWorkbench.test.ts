@@ -68,10 +68,10 @@ describe('projects workbench pure helpers', () => {
 
   it('requires a trimmed objective and ordered calendar dates before dispatch', () => {
     expect(isProjectDispatchReady(project('draft', {
-      objectives: '目标', start_date: '2026-08-01', end_date: '2026-08-31',
+      objectives: '目标', start_date: '2026-08-01', end_date: '2026-08-31', owners: ['PM'], coaches: ['教练'],
     }))).toBe(true)
     expect(isProjectDispatchReady(project('draft', {
-      objectives: '目标', start_date: '2026-08-01', end_date: '',
+      objectives: '目标', start_date: '2026-08-01', end_date: '', owners: ['PM'], coaches: ['教练'],
     }))).toBe(true)
     expect(isProjectDispatchReady(project('draft', {
       objectives: '   ', start_date: '2026-08-01', end_date: '2026-08-31',
@@ -87,6 +87,20 @@ describe('projects workbench pure helpers', () => {
     }))).toBe(false)
   })
 
+  it('names only the dispatch requirements that are actually missing', () => {
+    const management = { isSuperAdmin: true, isCompanyCeo: false, isRealProjectCeo: false, isRealOwner: false }
+    const readyTeam = { owners: ['PM'], coaches: ['教练'] }
+    expect(getProjectTodo(project('draft', {
+      ...readyTeam, objectives: '', start_date: '2026-08-01', end_date: '',
+    }), management, [], [])?.description).toBe('请补齐以下信息后再下发：项目目标。')
+    expect(getProjectTodo(project('draft', {
+      ...readyTeam, objectives: '目标', start_date: '', end_date: '',
+    }), management, [], [])?.description).toBe('请补齐以下信息后再下发：项目开始日期。')
+    expect(getProjectTodo(project('draft', {
+      objectives: '目标', start_date: '2026-08-01', end_date: '', owners: [], coaches: [],
+    }), management, [], [])?.description).toBe('请补齐以下信息后再下发：项目负责人、企业教练。')
+  })
+
   it('shows only role-authorized todo items', () => {
     expect(getProjectTodo(project('draft'), {
       isSuperAdmin: false, isCompanyCeo: false, isRealProjectCeo: false, isRealOwner: true,
@@ -98,7 +112,7 @@ describe('projects workbench pure helpers', () => {
       isSuperAdmin: false, isCompanyCeo: true, isRealProjectCeo: false, isRealOwner: false,
     }, [], [])).toMatchObject({ action: 'edit', actionLabel: '完善基础信息' })
     expect(getProjectTodo(project('draft', {
-      objectives: '明确项目目标', start_date: '2026-08-01', end_date: '2026-08-31',
+      objectives: '明确项目目标', start_date: '2026-08-01', end_date: '2026-08-31', owners: ['PM'], coaches: ['教练'],
     }), {
       isSuperAdmin: true, isCompanyCeo: false, isRealProjectCeo: false, isRealOwner: false,
     }, [], [])).toMatchObject({
@@ -108,7 +122,7 @@ describe('projects workbench pure helpers', () => {
       secondaryActionLabel: '修改基础信息',
     })
     expect(getProjectTodo(project('draft', {
-      objectives: '明确项目目标', start_date: '2026-08-01', end_date: '2026-08-31',
+      objectives: '明确项目目标', start_date: '2026-08-01', end_date: '2026-08-31', owners: ['PM'], coaches: ['教练'],
     }), {
       isSuperAdmin: false, isCompanyCeo: true, isRealProjectCeo: false, isRealOwner: true,
     }, [], [])).toMatchObject({ action: 'dispatch', actionLabel: '下发给负责人' })
